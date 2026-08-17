@@ -1,0 +1,25 @@
+{
+  "name": "agent-status-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run types:check && tsc --noEmit && eslint .",
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "dev": "wrangler dev --local",
+    "test": "vitest run",
+    "types": "wrangler types",
+    "types:check": "wrangler types --check"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

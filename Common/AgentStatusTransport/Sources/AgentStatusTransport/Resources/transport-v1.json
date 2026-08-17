@@ -1,0 +1,12 @@
+{
+  "ciphertext" : "AQIDBA==",
+  "deviceID" : "device-fixture",
+  "hostID" : "host-fixture",
+  "kind" : "data",
+  "nonce" : "AAECAwQFBgcICQoL",
+  "sequence" : 42,
+  "version" : {
+    "major" : 1,
+    "minor" : 0
+  }
+}

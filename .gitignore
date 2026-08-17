@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+Relay/node_modules/
+Relay/.wrangler/
+Relay/coverage/
+Relay/.dev.vars
+*.xcuserstate

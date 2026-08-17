@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Debug agent-status-daemon",
+            "target": "agent-status-daemon",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug agent-status-daemon"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Release agent-status-daemon",
+            "target": "agent-status-daemon",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release agent-status-daemon"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Debug agent-status-helper",
+            "target": "agent-status-helper",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug agent-status-helper"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Release agent-status-helper",
+            "target": "agent-status-helper",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release agent-status-helper"
+        }
+    ]
+}
