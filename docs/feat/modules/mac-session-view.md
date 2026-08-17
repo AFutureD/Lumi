@@ -165,9 +165,9 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-015 Notch 设置集中在主 App
 
 - 条件：用户点击 Notch 顶部设置按钮，或在主 App 选择“Settings > Notch”。
-- 行为：主 App 显示 Theme（Match Mac、Dark、Light）、Surface（Solid、Translucent、Liquid Glass）、Layout（Auto、Notch、Floating）、保持展开、触觉反馈和 Show Notch；启用触觉反馈时会给出一次确认，并在有意义的活动提示出现时反馈。设置按钮不会在 Notch 内打开独立设置页。
-- 结果：Notch 外观与交互设置在主 App 的三栏 Settings 中保存并立即应用。
-- 限制或例外：Theme、Surface 和 Layout 为互斥选项；触觉反馈仍受 Mac 硬件和系统设置限制。
+- 行为：第三栏的 Appearance section 不显示 Theme 和 Layout 控件；Notch 始终使用 Dark Theme 与 Notch Layout。用户可以选择 Solid、Translucent 或 Liquid Glass 表面，选择内建屏幕、主屏幕或一台已连接的指定屏幕，并调整紧凑宽度、展开宽度和展开动画时长。紧凑宽度默认 64 pt，可在 32–240 pt 间按 1 pt 调整；展开宽度默认 520 pt，可在 360–720 pt 间按 4 pt 调整；展开动画默认 0.54 秒，可在 0.15–1.20 秒间按 0.01 秒调整。三项调节都能通过数值左侧的恢复按钮回到默认值，滑块不显示步进刻度点。保持展开、触觉反馈和 Show Notch 继续保留；启用触觉反馈时会给出一次确认，并在有意义的活动提示出现时反馈。
+- 结果：屏幕、尺寸、动画、表面和行为设置保存在主 App 中并立即应用；Notch 设置按钮打开同一个 Notch 设置页面。
+- 限制或例外：物理刘海宽度是紧凑状态的安全下限；指定屏幕断开时，Notch 暂时回到可用的内建屏幕或主屏幕，并在该屏幕重新连接后恢复。触觉反馈仍受 Mac 硬件和系统设置限制。
 
 ## 空状态与故障
 

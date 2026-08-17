@@ -183,6 +183,7 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
     private let workspaceLabel = NSTextField(labelWithString: "")
     private let updatedLabel = NSTextField(labelWithString: "")
     private let headerView = NSView()
+    private let contentColumn = NSView()
     private let headerSeparator = NSBox()
     private let emptyLabel = NSTextField(labelWithString: "No supported events")
     private var displayedTimeline: [TimelineItem] = []
@@ -244,14 +245,18 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
         }
         [headerView, scroll, emptyLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview($0)
+            contentColumn.addSubview($0)
         }
+        contentColumn.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(contentColumn)
         let headerHeightConstraint = headerView.heightAnchor.constraint(equalToConstant: 102)
         self.headerHeightConstraint = headerHeightConstraint
         NSLayoutConstraint.activate([
-            headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            contentColumn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            contentColumn.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            headerView.leadingAnchor.constraint(equalTo: contentColumn.leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: contentColumn.trailingAnchor),
+            headerView.topAnchor.constraint(equalTo: contentColumn.topAnchor),
             headerHeightConstraint,
             avatar.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 24),
             avatar.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 18),
@@ -271,13 +276,13 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
             headerSeparator.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 24),
             headerSeparator.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -24),
             headerSeparator.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.leadingAnchor.constraint(equalTo: contentColumn.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: contentColumn.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scroll.bottomAnchor.constraint(equalTo: contentColumn.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
-        ])
+        ] + AgentStatusDetailLayout.adaptiveWidthConstraints(for: contentColumn, in: view))
         reload()
     }
 

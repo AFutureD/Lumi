@@ -5,6 +5,8 @@ import CoreImage
 
 @MainActor
 final class PairingViewController: NSViewController {
+    static let minimumHorizontalContentWidth: CGFloat = 674
+
     private let relayHost: RelayHostController
     private let statusLabel = NSTextField(labelWithString: "Connecting to Relay…")
     private let qrImageView = NSImageView()
@@ -13,6 +15,11 @@ final class PairingViewController: NSViewController {
     private let copyButton = NSButton(title: "Copy pairing payload", target: nil, action: nil)
     private let generateButton = NSButton(title: "Generate new code", target: nil, action: nil)
     private let deviceStack = NSStackView()
+    private let recordsColumn = NSStackView()
+    private let contentStack = NSStackView()
+    private let rootStack = NSStackView()
+    private var compactRecordsWidthConstraint: NSLayoutConstraint?
+    private var usesCompactLayout: Bool?
     private var pairingPayload: String?
     private var isGenerating = false
 
@@ -41,6 +48,11 @@ final class PairingViewController: NSViewController {
         super.viewDidAppear()
         Task { await relayHost.refreshDevices() }
         if relayHost.isConnected, pairingPayload == nil { generatePairingCode() }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateContentLayout()
     }
 
     private func configureUI() {
@@ -82,30 +94,57 @@ final class PairingViewController: NSViewController {
         deviceStack.orientation = .vertical
         deviceStack.alignment = .leading
         deviceStack.spacing = 10
-        let recordsColumn = NSStackView(views: [recordsTitle, recordsHelp, deviceStack])
+        recordsColumn.setViews([recordsTitle, recordsHelp, deviceStack], in: .leading)
         recordsColumn.orientation = .vertical
         recordsColumn.alignment = .leading
         recordsColumn.spacing = 12
         recordsColumn.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
 
-        let content = NSStackView(views: [qrColumn, recordsColumn])
-        content.orientation = .horizontal
-        content.alignment = .top
-        content.spacing = 44
-        let root = NSStackView(views: [title, introduction, statusLabel, content])
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 14
-        root.edgeInsets = NSEdgeInsets(top: 28, left: 32, bottom: 32, right: 32)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(root)
+        contentStack.addArrangedSubview(qrColumn)
+        contentStack.addArrangedSubview(recordsColumn)
+
+        rootStack.setViews([title, introduction, statusLabel, contentStack], in: .leading)
+        rootStack.orientation = .vertical
+        rootStack.alignment = .leading
+        rootStack.spacing = 14
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(rootStack)
+
+        compactRecordsWidthConstraint = recordsColumn.widthAnchor.constraint(equalTo: rootStack.widthAnchor)
         NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            root.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            root.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
-            introduction.widthAnchor.constraint(lessThanOrEqualToConstant: 700),
-        ])
+            rootStack.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: AgentStatusDetailLayout.topInset
+            ),
+            rootStack.bottomAnchor.constraint(
+                lessThanOrEqualTo: view.bottomAnchor,
+                constant: -AgentStatusDetailLayout.bottomInset
+            ),
+            introduction.widthAnchor.constraint(lessThanOrEqualTo: rootStack.widthAnchor),
+            contentStack.widthAnchor.constraint(lessThanOrEqualTo: rootStack.widthAnchor),
+        ] + AgentStatusDetailLayout.adaptiveWidthConstraints(for: rootStack, in: view))
+        updateContentLayout()
+    }
+
+    private func updateContentLayout() {
+        let availableWidth = min(
+            max(
+                view.bounds.width - (AgentStatusDetailLayout.horizontalInset * 2),
+                AgentStatusDetailLayout.minimumContentWidth
+            ),
+            AgentStatusDetailLayout.maximumContentWidth
+        )
+        let compact = Self.usesCompactContentLayout(availableWidth: availableWidth)
+        guard usesCompactLayout != compact else { return }
+        usesCompactLayout = compact
+        contentStack.orientation = compact ? .vertical : .horizontal
+        contentStack.alignment = compact ? .leading : .top
+        contentStack.spacing = compact ? 24 : 44
+        compactRecordsWidthConstraint?.isActive = compact
+    }
+
+    static func usesCompactContentLayout(availableWidth: CGFloat) -> Bool {
+        availableWidth < minimumHorizontalContentWidth
     }
 
     private func reload() {

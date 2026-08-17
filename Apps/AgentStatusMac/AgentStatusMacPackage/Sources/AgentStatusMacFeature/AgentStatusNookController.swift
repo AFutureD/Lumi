@@ -3,6 +3,16 @@ import NookApp
 import NookComponents
 import SwiftUI
 
+enum AgentStatusNookAdjustmentDefaults {
+    static let compactWidth: CGFloat = 64
+    static let expandedWidth: CGFloat = 520
+    static let expandAnimationDuration: TimeInterval = 0.54
+
+    static let compactWidthRange: ClosedRange<Double> = 32...240
+    static let expandedWidthRange: ClosedRange<Double> = 360...720
+    static let expandAnimationDurationRange: ClosedRange<Double> = 0.15...1.2
+}
+
 @MainActor
 final class AgentStatusNookController {
     let appState: AppState
@@ -18,6 +28,9 @@ final class AgentStatusNookController {
         let model = AgentStatusNookModel(store: store)
         let activityQueue = NookActivityQueue()
         let appState = AppState()
+        appState.replaceAppearancePreferences(
+            Self.normalizedAppearancePreferences(appState.appearancePreferences)
+        )
 
         var configuration = NookConfiguration()
         configuration.setHome {
@@ -42,7 +55,6 @@ final class AgentStatusNookController {
         configuration.setTopBarTrailingItems {
             AgentStatusNookSettingsButton(action: openMainSettings)
         }
-        configuration.expandedWidth = 520
         configuration.showsMenuBarExtra = false
         configuration.branding = NookHostBranding(
             hostName: "Agent Status",
@@ -70,6 +82,21 @@ final class AgentStatusNookController {
                 into: activityQueue
             )
         }
+    }
+
+    static func normalizedAppearancePreferences(
+        _ preferences: NookAppearancePreferences
+    ) -> NookAppearancePreferences {
+        var normalized = preferences
+        normalized.chromePalette = .dark
+        normalized.presentation = .notch
+        normalized.compactNotchWidth = normalized.compactNotchWidth
+            ?? AgentStatusNookAdjustmentDefaults.compactWidth
+        normalized.expandedNotchWidth = normalized.expandedNotchWidth
+            ?? AgentStatusNookAdjustmentDefaults.expandedWidth
+        normalized.expandAnimationDuration = normalized.expandAnimationDuration
+            ?? AgentStatusNookAdjustmentDefaults.expandAnimationDuration
+        return normalized
     }
 
     func start() {

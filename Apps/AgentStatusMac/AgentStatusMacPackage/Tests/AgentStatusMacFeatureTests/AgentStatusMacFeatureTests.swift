@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AgentStatusTransport
+import NookApp
 @testable import AgentStatusMacFeature
 
 @Test func hookMergePreservesExistingIntegrationAndIsIdempotent() throws {
@@ -24,6 +25,51 @@ import AgentStatusTransport
     #expect(removedRoot["custom"] as? Bool == true)
     #expect(removedStop.count == 1)
     #expect(!String(data: removed, encoding: .utf8)!.contains("agent-status-helper"))
+}
+
+@Test @MainActor
+func nookAppearanceIsPinnedAndAdjustmentDefaultsAreFilled() {
+    let original = NookAppearancePreferences(
+        chromePalette: .light,
+        surfaceStyle: .translucent,
+        presentation: .floating,
+        hapticFeedbackEnabled: true,
+        keepNookOpen: true
+    )
+
+    let normalized = AgentStatusNookController.normalizedAppearancePreferences(original)
+
+    #expect(normalized.chromePalette == .dark)
+    #expect(normalized.presentation == .notch)
+    #expect(normalized.surfaceStyle == .translucent)
+    #expect(normalized.hapticFeedbackEnabled)
+    #expect(normalized.keepNookOpen)
+    #expect(normalized.compactNotchWidth == AgentStatusNookAdjustmentDefaults.compactWidth)
+    #expect(normalized.expandedNotchWidth == AgentStatusNookAdjustmentDefaults.expandedWidth)
+    #expect(
+        normalized.expandAnimationDuration
+            == AgentStatusNookAdjustmentDefaults.expandAnimationDuration
+    )
+}
+
+@Test @MainActor
+func nookAppearancePreservesCustomAdjustments() {
+    var original = NookAppearancePreferences.default
+    original.compactNotchWidth = 96
+    original.expandedNotchWidth = 608
+    original.expandAnimationDuration = 0.72
+
+    let normalized = AgentStatusNookController.normalizedAppearancePreferences(original)
+
+    #expect(normalized.compactNotchWidth == 96)
+    #expect(normalized.expandedNotchWidth == 608)
+    #expect(normalized.expandAnimationDuration == 0.72)
+}
+
+@Test @MainActor
+func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
+    #expect(PairingViewController.usesCompactContentLayout(availableWidth: 673))
+    #expect(!PairingViewController.usesCompactContentLayout(availableWidth: 674))
 }
 
 @Test func nookSnapshotShowsTheCurrentTurnUserMessageAndExcludesCompletedSessions() {

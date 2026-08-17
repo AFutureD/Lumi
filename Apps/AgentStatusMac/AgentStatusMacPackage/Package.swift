@@ -15,8 +15,8 @@ let package = Package(
         .package(name: "AgentStatusCommon", path: "../../../Common"),
         .package(name: "AgentStatusTransport", path: "../../../Common/AgentStatusTransport"),
         .package(
-            url: "https://github.com/twinkling-reality/opennook.git",
-            revision: "03e1acd37e28548475d76b2fee5a430f03c9378d"
+            url: "https://github.com/AFutureD/opennook.git",
+            revision: "7b0ca6ca251885aecec5834b374ef4dc0907bd8f"
         ),
         .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "swift-6.2.4-RELEASE"),
     ],

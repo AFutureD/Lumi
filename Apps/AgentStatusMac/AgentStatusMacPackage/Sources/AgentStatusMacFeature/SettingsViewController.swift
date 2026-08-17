@@ -251,7 +251,7 @@ final class SettingsDetailViewController: NSViewController {
     private func installNotchSettings() {
         let header = detailHeader(
             title: "Notch",
-            subtitle: "Configure the Notch surface without leaving the main App."
+            subtitle: "Configure the Notch surface, screen, size, and interaction."
         )
         let hosting = NSHostingController(rootView: AgentStatusNookSettingsView(
             appState: nook.appState,
@@ -266,46 +266,52 @@ final class SettingsDetailViewController: NSViewController {
         view.addSubview(header)
         view.addSubview(hostedView)
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            header.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
-            header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 26),
-            hostedView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
-            hostedView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
-            hostedView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 24),
-            hostedView.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -24),
+            header.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor,
+                constant: AgentStatusDetailLayout.horizontalInset
+            ),
+            header.trailingAnchor.constraint(
+                lessThanOrEqualTo: view.trailingAnchor,
+                constant: -AgentStatusDetailLayout.horizontalInset
+            ),
+            header.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: AgentStatusDetailLayout.topInset
+            ),
+            hostedView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hostedView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            hostedView.topAnchor.constraint(
+                equalTo: header.bottomAnchor,
+                constant: AgentStatusDetailLayout.headerToContentSpacing
+            ),
+            hostedView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
     private func installAppKitContent(title: String, subtitle: String, sections: [NSView]) {
         let header = detailHeader(title: title, subtitle: subtitle)
-        let stack = NSStackView(views: [header] + sections)
+        let arrangedViews = [header] + sections
+        let stack = NSStackView(views: arrangedViews)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 18
-        stack.edgeInsets = NSEdgeInsets(top: 26, left: 32, bottom: 30, right: 32)
+        stack.spacing = AgentStatusDetailLayout.headerToContentSpacing
         stack.translatesAutoresizingMaskIntoConstraints = false
+        arrangedViews.forEach { arrangedView in
+            arrangedView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
 
-        let document = NSView()
-        document.translatesAutoresizingMaskIntoConstraints = false
-        document.addSubview(stack)
-        let scroll = NSScrollView()
-        scroll.documentView = document
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scroll)
+        view.addSubview(stack)
+
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: view.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: document.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-        ])
+            stack.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: AgentStatusDetailLayout.topInset
+            ),
+            stack.bottomAnchor.constraint(
+                lessThanOrEqualTo: view.bottomAnchor,
+                constant: -AgentStatusDetailLayout.bottomInset
+            ),
+        ] + AgentStatusDetailLayout.adaptiveWidthConstraints(for: stack, in: view))
     }
 
     private func detailHeader(title: String, subtitle: String) -> NSView {
@@ -324,26 +330,31 @@ final class SettingsDetailViewController: NSViewController {
     private func section(title: String, views: [NSView]) -> NSView {
         let heading = NSTextField(labelWithString: title)
         heading.font = .systemFont(ofSize: 15, weight: .semibold)
-        let stack = NSStackView(views: [heading] + views)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 9
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let contentStack = NSStackView(views: views)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 9
+        contentStack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         container.layer?.cornerRadius = 10
-        container.addSubview(stack)
+        container.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 520),
+            contentStack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: container.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-        return container
+
+        let sectionStack = NSStackView(views: [heading, container])
+        sectionStack.orientation = .vertical
+        sectionStack.alignment = .leading
+        sectionStack.spacing = 10
+        container.widthAnchor.constraint(equalTo: sectionStack.widthAnchor).isActive = true
+        return sectionStack
     }
 
     private func secondary(_ value: String) -> NSTextField {
@@ -446,93 +457,5 @@ final class SettingsDetailViewController: NSViewController {
 
     private func showError(_ error: Error) {
         NSAlert(error: error).runModal()
-    }
-}
-
-private struct AgentStatusNookSettingsView: View {
-    @ObservedObject var appState: AppState
-    let showNook: @MainActor () -> Void
-    let toggleKeepOpen: @MainActor () -> Void
-
-    var body: some View {
-        Form {
-            Section("Appearance") {
-                Picker("Theme", selection: paletteBinding) {
-                    Text("Match Mac").tag(NookChromePalette.followSystem)
-                    Text("Dark").tag(NookChromePalette.dark)
-                    Text("Light").tag(NookChromePalette.light)
-                }
-                .pickerStyle(.segmented)
-
-                Picker("Surface", selection: surfaceBinding) {
-                    Text("Solid").tag(NookSurfaceStyle.solid)
-                    Text("Translucent").tag(NookSurfaceStyle.translucent)
-                    Text("Liquid Glass").tag(NookSurfaceStyle.liquidGlass)
-                }
-                .pickerStyle(.segmented)
-
-                Picker("Layout", selection: presentationBinding) {
-                    Text("Auto").tag(NookPresentation.auto)
-                    Text("Notch").tag(NookPresentation.notch)
-                    Text("Floating").tag(NookPresentation.floating)
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Section("Behavior") {
-                Toggle("Stay expanded after the pointer leaves", isOn: keepOpenBinding)
-                Toggle("Haptic feedback", isOn: hapticBinding)
-                Button("Show Notch") { showNook() }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(maxWidth: 720, alignment: .topLeading)
-    }
-
-    private var paletteBinding: Binding<NookChromePalette> {
-        preferenceBinding(\.chromePalette)
-    }
-
-    private var surfaceBinding: Binding<NookSurfaceStyle> {
-        preferenceBinding(\.surfaceStyle)
-    }
-
-    private var presentationBinding: Binding<NookPresentation> {
-        preferenceBinding(\.presentation)
-    }
-
-    private var hapticBinding: Binding<Bool> {
-        Binding(
-            get: { appState.appearancePreferences.hapticFeedbackEnabled },
-            set: { next in
-                var preferences = appState.appearancePreferences
-                preferences.hapticFeedbackEnabled = next
-                appState.replaceAppearancePreferences(preferences)
-                NookHaptics.confirm(enabled: next)
-            }
-        )
-    }
-
-    private var keepOpenBinding: Binding<Bool> {
-        Binding(
-            get: { appState.keepNookOpen },
-            set: { next in
-                guard next != appState.keepNookOpen else { return }
-                toggleKeepOpen()
-            }
-        )
-    }
-
-    private func preferenceBinding<Value>(
-        _ keyPath: WritableKeyPath<NookAppearancePreferences, Value>
-    ) -> Binding<Value> {
-        Binding(
-            get: { appState.appearancePreferences[keyPath: keyPath] },
-            set: { next in
-                var preferences = appState.appearancePreferences
-                preferences[keyPath: keyPath] = next
-                appState.replaceAppearancePreferences(preferences)
-            }
-        )
     }
 }

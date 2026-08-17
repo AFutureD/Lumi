@@ -40,7 +40,7 @@
 
 完成信号：目标 Session 出现在列表中，右栏时间线随 Agent 活动变化。
 
-用户需要调整 Notch 时，在 Notch 点击设置按钮，或在主 App 选择“Settings > Notch”。主 App 显示三栏设置，并提供 Theme、Surface、Layout、保持展开、触觉反馈和 Show Notch；规则见 [MAC-R-015](../modules/mac-session-view.md#mac-r-015-notch-设置集中在主-app)。
+用户需要调整 Notch 时，在 Notch 点击设置按钮，或在主 App 选择“Settings > Notch”。第三栏的 Appearance section 不显示固定的 Theme 和 Layout 控件；页面提供 Surface、显示屏幕、可恢复的紧凑宽度、展开宽度、展开动画、保持展开、触觉反馈和 Show Notch。完整取值规则见 [MAC-R-015](../modules/mac-session-view.md#mac-r-015-notch-设置集中在主-app)。
 
 ## 刷新与删除
 

@@ -25,7 +25,7 @@ final class MainWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .automatic
-        window.minSize = NSSize(width: 900, height: 600)
+        window.minSize = NSSize(width: 940, height: 600)
         window.center()
 
         super.init(window: window)
@@ -113,7 +113,7 @@ final class RootSplitViewController: NSSplitViewController {
         contentListItem.canCollapse = true
 
         let detailItem = NSSplitViewItem(viewController: detailTabs)
-        detailItem.minimumThickness = 400
+        detailItem.minimumThickness = AgentStatusDetailLayout.minimumColumnWidth
 
         addSplitViewItem(navigationItem)
         addSplitViewItem(contentListItem)

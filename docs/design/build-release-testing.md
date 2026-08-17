@@ -32,7 +32,7 @@ Xcode App target 只负责入口、资源、Info.plist、entitlements 和打包�
 | GRDB | 7.10.0 exact |
 | SwiftNIO | 2.101.3 exact |
 | Swift Testing | `swift-6.2.4-RELEASE` revision |
-| OpenNook | revision `03e1acd37e28548475d76b2fee5a430f03c9378d` |
+| OpenNook | `https://github.com/AFutureD/opennook.git`，固定 revision `7b0ca6ca251885aecec5834b374ef4dc0907bd8f` |
 | Relay | TypeScript 5.9.3、Wrangler 4.123.0、pnpm 11.19.0 |
 
 各 SwiftPM Package 提交自己的 `Package.resolved`；Relay 提交 `pnpm-lock.yaml`。

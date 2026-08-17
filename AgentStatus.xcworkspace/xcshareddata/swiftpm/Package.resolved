@@ -1,5 +1,5 @@
 {
-  "originHash" : "c39348169b25a27f452a5e7bd21032bb41c89694d1a8b9b7e7bc57fbc1faf9c5",
+  "originHash" : "05aa6d40b412258d3e9cb7af86aea9c7faf87c05db48aaddfbd58da2574b536c",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -13,9 +13,9 @@
     {
       "identity" : "opennook",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/twinkling-reality/opennook.git",
+      "location" : "https://github.com/AFutureD/opennook.git",
       "state" : {
-        "revision" : "03e1acd37e28548475d76b2fee5a430f03c9378d"
+        "revision" : "7b0ca6ca251885aecec5834b374ef4dc0907bd8f"
       }
     },
     {
