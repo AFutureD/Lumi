@@ -175,8 +175,10 @@ private final class TimelineViewController: UITableViewController {
 
     private var visibleTimeline: [TimelineItem] {
         session?.timeline.filter {
-            if case .unknown = $0.payload { return false }
-            return true
+            switch $0.payload {
+            case .message, .tool, .plan, .subagent, .error: true
+            case .unknown, .modelConfiguration, .internalContext, .usageMetrics: false
+            }
         } ?? []
     }
 }
@@ -189,6 +191,9 @@ private extension TimelinePayload {
         case .plan: "Plan"
         case let .subagent(value): "Sub-agent · \(value.name)"
         case .error: "Error"
+        case .modelConfiguration: "Model configuration"
+        case let .internalContext(value): "Internal context · \(value.kind)"
+        case .usageMetrics: "Usage metrics"
         case let .unknown(value): value.kind
         }
     }
@@ -200,6 +205,12 @@ private extension TimelinePayload {
         case let .plan(value): value.steps.map { "• \($0.text) [\($0.status.rawValue)]" }.joined(separator: "\n")
         case let .subagent(value): value.status.rawValue
         case let .error(value): "\(value.title): \(value.message)"
+        case let .modelConfiguration(value):
+            [value.model, value.provider, value.reasoningEffort]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+        case .internalContext: "Retained in Session data"
+        case let .usageMetrics(value): "\(value.total?.totalTokens ?? value.last?.totalTokens ?? 0) tokens"
         case let .unknown(value): value.summary ?? "Unsupported event"
         }
     }

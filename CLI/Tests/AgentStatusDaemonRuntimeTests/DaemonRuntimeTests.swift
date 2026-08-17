@@ -1,3 +1,4 @@
+import AgentStatusCodex
 import AgentStatusCore
 import AgentStatusDaemonRuntime
 import AgentStatusIPCClient
@@ -184,6 +185,68 @@ import Testing
     #expect(secondDetail?.timeline.count == 2)
 }
 
+@Test func rolloutWatcherSynchronizesCodexTitlesAndSubagentIdentity() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-title-sync-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = InMemorySessionRepository()
+    let sessionID = SessionID("titled-session")
+    let date = Date(timeIntervalSince1970: 100)
+    #expect(try await repository.apply(AgentIngressEvent(
+        eventID: EventID("create"),
+        sessionID: sessionID,
+        agent: .codex,
+        occurredAt: date,
+        lifecycle: .waitingForInput,
+        phase: .idle
+    )))
+    let capture = EventCapture()
+    let originalIdentity = CodexThreadIdentity(
+        sessionID: sessionID,
+        threadSource: "subagent",
+        agentNickname: "Hypatia",
+        agentPath: "/root/docs_review",
+        parentSessionID: SessionID("parent-session"),
+        subagentDepth: 1,
+        subagentKind: "thread_spawn"
+    )
+    let provider = MutableThreadIdentityProvider(identities: [sessionID: originalIdentity])
+    let watcher = CodexRolloutWatcher(
+        rootDirectory: directory,
+        repository: repository,
+        threadIdentities: provider,
+        onEvent: capture.append
+    )
+
+    await watcher.scanOnce()
+    provider.set(CodexThreadIdentity(
+        sessionID: sessionID,
+        title: "Renamed Subagent",
+        threadSource: "subagent",
+        agentNickname: "Hypatia",
+        agentPath: "/root/docs_review",
+        parentSessionID: SessionID("parent-session"),
+        subagentDepth: 1,
+        subagentKind: "thread_spawn"
+    ))
+    await watcher.scanOnce()
+    provider.set(originalIdentity)
+    await watcher.scanOnce()
+
+    let roundTripped = try #require(try await repository.listSessions(limit: 10).first)
+    #expect(roundTripped.title == "Hypatia · docs_review")
+    #expect(roundTripped.agent == .codexSubagent)
+    #expect(roundTripped.lineage?.parentSessionID == SessionID("parent-session"))
+    #expect(roundTripped.updatedAt == date)
+    #expect(roundTripped.lastActivityAt == date)
+    #expect(capture.events.map(\.title) == [
+        "Hypatia · docs_review",
+        "Renamed Subagent",
+        "Hypatia · docs_review",
+    ])
+}
+
 @Test func firstRunBaselineIgnoresExistingSessionsAndRecordsNewFiles() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-status-baseline-\(UUID().uuidString)", isDirectory: true)
@@ -226,6 +289,27 @@ private final class EventCapture: @unchecked Sendable {
     func append(_ event: AgentIngressEvent) {
         lock.lock()
         storage.append(event)
+        lock.unlock()
+    }
+}
+
+private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var identities: [SessionID: CodexThreadIdentity]
+
+    init(identities: [SessionID: CodexThreadIdentity]) {
+        self.identities = identities
+    }
+
+    func identity(for sessionID: SessionID) -> CodexThreadIdentity? {
+        lock.lock()
+        defer { lock.unlock() }
+        return identities[sessionID]
+    }
+
+    func set(_ identity: CodexThreadIdentity) {
+        lock.lock()
+        identities[identity.sessionID] = identity
         lock.unlock()
     }
 }

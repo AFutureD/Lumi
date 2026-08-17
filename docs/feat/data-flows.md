@@ -1,6 +1,6 @@
 # 业务数据结构与流转
 
-> 验证状态：开发预览。daemon、Mac 与 iOS 模拟器已通过同一合成 Session 的创建、时间线同步和删除验证；真实 Codex Hook 与 iPhone 实机仍待验收。
+> 验证状态：开发预览。daemon、Mac 与 iOS 模拟器已通过同一合成 Session 的创建、时间线同步和删除验证；模型配置、内部上下文和消耗指标已通过结构化解析、保存与跨端编译验证；真实 Codex Hook 与 iPhone 实机仍待验收。
 
 本页描述三类用户相关数据：Session 状态与时间线、设备与通道、配对授权。
 
@@ -18,12 +18,13 @@ flowchart LR
 
 ## Session 状态与时间线
 
-- **用户相关数据**：Session 标题、Agent、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent 和错误。
+- **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标。
 - **创建来源**：启用 Agent Status 后新建的 Codex Session。
-- **更新来源**：用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、完成、中断或错误。
+- **更新来源**：Codex `threads` 元数据提供权威标题、主 Session / Subagent 类型和 Subagent 父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。
 - **主要消费者**：Mac 主窗口、Notch，以及在线的已配对 iPhone。
 - **保留方式**：不按时间自动删除；用户可删除单条或清空全部。
-- **隐私边界**：reasoning、系统指令、环境快照和原始 transcript 不进入产品时间线。
+- **展示边界**：主活动时间线显示消息、工具、计划、子 Agent、错误和已进入 Timeline 的未知记录；模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情在独立模块展示这些诊断数据；iPhone 当前仍只展示活动时间线。
+- **隐私边界**：每类最新内部上下文会完整保留来源提供的嵌套内容，可能包含 reasoning、基础指令、线程上下文、世界状态、压缩历史，以及其中出现的路径、凭据、环境信息或工具内容。本地副本及已配对设备都必须视为高敏感数据；当前没有内容级脱敏保证。Agent Status 未识别的其他事件和完整原始日志文件不会被另外复制。
 
 ### 从 Agent 事件到三端一致
 
@@ -66,9 +67,9 @@ flowchart LR
 
 | 位置 | 保存内容 | 用户可见行为 |
 | --- | --- | --- |
-| daemon | 该 Mac 已加入 Agent Status 的 Session | 本机权威数据；不自动过期 |
-| Mac App | 与 daemon 同步的本地副本 | 快速启动和浏览；断线时仍可查看最近同步内容 |
-| iPhone App | 每台已配对 Mac 的独立同步副本 | 只有收到在线状态与当前快照后展示 |
+| daemon | 该 Mac 已加入 Agent Status 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
+| Mac App | 与 daemon 同步的完整本地副本 | 快速启动和浏览；断线时仍可查看最近同步内容 |
+| iPhone App | 每台已配对 Mac 的独立完整同步副本 | 只有收到在线状态与当前快照后展示主活动数据 |
 | Relay | 设备授权和运行所需信息 | 不提供 Session 正文或历史查询 |
 
 ## 离线与恢复

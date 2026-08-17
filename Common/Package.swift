@@ -35,6 +35,7 @@ let package = Package(
             name: "AgentStatusCodex",
             dependencies: [
                 "AgentStatusCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
             ]
         ),
@@ -68,6 +69,7 @@ let package = Package(
             name: "AgentStatusCodexTests",
             dependencies: [
                 "AgentStatusCodex",
+                .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]

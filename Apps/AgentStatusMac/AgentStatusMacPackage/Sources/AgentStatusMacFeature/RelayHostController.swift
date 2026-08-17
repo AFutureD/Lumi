@@ -278,11 +278,6 @@ final class RelayHostController {
                 sentUnavailable = true
             } else {
                 let wasUnavailable = sentUnavailable
-                if !wasUnavailable,
-                   let lastSentDetails,
-                   lastSentDetails.map(\.summary) == store.sessions {
-                    return
-                }
                 details = try await store.snapshotDetails()
                 guard RelayPublishDecision.shouldSendSnapshot(
                     wasUnavailable: wasUnavailable,

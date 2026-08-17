@@ -6,6 +6,7 @@ import Foundation
 public final class CodexRolloutWatcher: @unchecked Sendable {
     private let rootDirectory: URL
     private let repository: any SessionRepository
+    private let threadIdentities: any CodexThreadIdentityProviding
     private let adapter: CodexAdapter
     private let pollIntervalSeconds: Double
     private let logger: @Sendable (String) -> Void
@@ -18,13 +19,21 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     public init(
         rootDirectory: URL,
         repository: any SessionRepository,
+        threadIdentities: (any CodexThreadIdentityProviding)? = nil,
         pollIntervalSeconds: Double = 2,
         logger: @escaping @Sendable (String) -> Void = { _ in },
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void = { _ in }
     ) {
         self.rootDirectory = rootDirectory
         self.repository = repository
-        adapter = CodexAdapter()
+        let resolvedThreadIdentities = threadIdentities ?? CodexThreadIdentityStore(
+            databasePath: rootDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("state_5.sqlite")
+                .path
+        )
+        self.threadIdentities = resolvedThreadIdentities
+        adapter = CodexAdapter(threads: resolvedThreadIdentities)
         self.pollIntervalSeconds = pollIntervalSeconds
         self.logger = logger
         self.onEvent = onEvent
@@ -48,6 +57,7 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     }
 
     public func scanOnce() async {
+        await synchronizeThreadIdentities()
         guard FileManager.default.fileExists(atPath: rootDirectory.path) else { return }
         let files = rolloutFiles()
         for (fileURL, values) in files {
@@ -123,6 +133,34 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
             } catch {
                 return
             }
+        }
+    }
+
+    private func synchronizeThreadIdentities() async {
+        do {
+            let summaries = try await repository.listSessions(limit: 10_000)
+            let identities = threadIdentities.identities(for: summaries.map(\.id))
+            for summary in summaries {
+                guard let identity = identities[summary.id] else { continue }
+                let title = identity.displayTitle ?? summary.title
+                let agent = identity.agentKind
+                guard title != summary.title
+                    || agent != summary.agent
+                    || identity.lineage != summary.lineage else { continue }
+                let event = AgentIngressEvent(
+                    eventID: EventID(
+                        "codex-thread-identity:\(summary.id.rawValue):\(UUID().uuidString)"
+                    ),
+                    sessionID: summary.id,
+                    agent: agent,
+                    occurredAt: Date(),
+                    title: title,
+                    lineage: identity.lineage
+                )
+                if try await repository.apply(event) { onEvent(event) }
+            }
+        } catch {
+            logger("thread_identity_sync_failed error=\(error)")
         }
     }
 

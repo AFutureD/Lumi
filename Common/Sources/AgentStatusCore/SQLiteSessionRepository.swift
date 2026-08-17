@@ -107,8 +107,13 @@ public actor SQLiteSessionRepository: SessionRepository {
             if let item = event.timelineItem {
                 try db.execute(
                     sql: """
-                        INSERT OR IGNORE INTO timeline(id, session_id, occurred_at, item)
+                        INSERT INTO timeline(id, session_id, occurred_at, item)
                         VALUES(?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            session_id = excluded.session_id,
+                            occurred_at = excluded.occurred_at,
+                            item = excluded.item
+                        WHERE excluded.occurred_at >= timeline.occurred_at
                         """,
                     arguments: [
                         item.id.rawValue,

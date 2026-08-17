@@ -6,10 +6,10 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 
 跨进程和跨设备模型由 `AgentStatusTransport` 唯一声明：
 
-- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间和注意力标记。
+- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力标记，以及可选 Subagent lineage。
 - `SessionDetail`：一个 Summary、完整或分页 Timeline、下一页游标。
 - `TimelineItem`：稳定 ID、Session ID、可选 Turn ID、时间和 payload。
-- `TimelinePayload`：消息、工具、计划、子 Agent、错误和 unknown。
+- `TimelinePayload`：消息、工具、计划、子 Agent、错误、模型配置、内部上下文、消耗指标和 unknown。
 - `AgentIngressEvent`：Adapter 输出的归一化事件，是 reducer 的唯一输入。
 
 生命周期和 Turn 阶段分开：
@@ -18,13 +18,15 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 | --- | --- |
 | Session lifecycle | Starting、Running、Waiting For Input、Completed、Failed、Interrupted、unknown |
 | Turn phase | Idle、Thinking、Executing、Responding、Waiting For Approval、unknown |
+| Agent kind | Codex、Codex Subagent、unknown |
 
-未知枚举值会保留原始字符串。旧客户端可以忽略无法展示的 Timeline 类型，而不让整个数据流解码失败。
+未知枚举值会保留原始字符串。旧客户端可以忽略无法展示的 Timeline 类型，而不让整个数据流解码失败。模型配置、内部上下文和消耗指标作为结构化 Timeline payload 持久化并进入完整快照，Mac 的 Session 详情会在独立模块展示这些诊断类 payload，iOS 主活动列表仍会过滤；同一 Session 的同类诊断 payload 只保留最新记录。
 
 ## 数据拥有者
 
 | 位置 | 数据角色 | 保存内容 | 默认路径或介质 |
 | --- | --- | --- | --- |
+| Codex state | 外部只读元数据源 | Thread 标题、主 Session / Subagent 类型和 lineage；不复制整张表 | `${CODEX_HOME:-~/.codex}/state_5.sqlite` 的 `threads` |
 | daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记 | `~/Library/Application Support/Agent Status/sessions.sqlite3` |
 | Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Agent Status Mac/sessions.sqlite3` |
 | iOS App | 每 Mac 通道缓存 | 对应 Mac 最近收到的完整快照 | Application Support 下 `Agent Status/Channels/<hostID>.sqlite3` |
@@ -48,7 +50,7 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration：
 | `ignored_sessions` | 删除/基线 tombstone | 阻止后到事件重新创建 Session |
 | `metadata` | repository 状态 | 当前保存首次 rollout baseline 标记 |
 
-`summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。日期使用 ISO 8601，键稳定排序。
+`summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。Summary 中的 Subagent lineage 包含 Thread source、父 Session ID、深度、昵称、职责、Agent path 和 Subagent kind。日期使用 ISO 8601，键稳定排序。
 
 客户端快照替换在一个 GRDB write transaction 内执行：先删除现有 `sessions`，由外键级联删除 Timeline，再插入新快照。
 
@@ -59,6 +61,7 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration：
 - 删除 Agent Status 数据不会删除 Codex rollout 或 Codex 自身历史。
 - iOS 用户移除一个 Mac 时，只清空该通道的凭据、连接和本地同步内容。
 - Relay 不保存业务快照，因此没有 Relay 侧 Session 保留期限。
+- 模型配置、内部上下文和消耗指标遵循 Session 的同一保留与删除规则，不单独过期。
 
 ## 本地通信协议
 
@@ -162,8 +165,10 @@ sequenceDiagram
 - Hook Event ID：对原始 Hook JSON 做 SHA-256。
 - rollout Event ID：对文件路径、byte offset 和 JSONL 行做 SHA-256。
 - `processed_events` 拒绝相同 Event ID。
-- `timeline.id` 使用 `INSERT OR IGNORE` 避免相同 Timeline item 重复。
+- `processed_events` 先拒绝重复输入；普通 Timeline 使用唯一 Event 派生 ID，诊断 Timeline 使用稳定类别 ID并以最新记录替换旧值。
 - 早于当前 `updatedAt` 的事件仍可贡献 `startedAt` 和 Timeline，但不能回退标题、lifecycle 或 phase。
+- 模型配置、内部上下文和消耗指标会写入 Timeline，但不推进 Session 的 `updatedAt`、`lastActivityAt` 或注意力状态。
+- 同一诊断类别只有时间不早于现有记录的新事件才能替换；批次乱序不会让旧诊断覆盖新值。
 - Timeline 按 `occurredAt`、`id` 稳定排序。
 
 幂等保证针对相同 Event ID。Hook 与 rollout 对同一语义事件生成不同 ID，当前没有跨来源内容级去重。
@@ -190,7 +195,7 @@ sequenceDiagram
 - Mac UI 不直接查询 daemon；它观察 `MacSessionStore`，详情从本地 SQLite 延迟读取。
 - Notch 只读取 Mac 已同步缓存，最多加载四个可展示 Session 的详情。
 - Relay 发布也读取 Mac 缓存，不额外触发 daemon snapshot。
-- `dataRevision` 只在 Session 或选中详情实际改变时增加，避免健康状态刷新引发无意义 UI/Relay 更新。
+- `dataRevision` 在任意 Session 或 Timeline 数据成功持久化后增加；完整快照替换会比较全部 SessionDetail，确保未选中 Session 的诊断变化也能触发 Relay。仅健康状态通知不增加，避免无数据变化时发布。
 - iOS 可以预读本地 SQLite，但状态门禁要求“WSS 已连接 + Host 在线 + 已收到当前快照”才暴露 Session 给 UI。
 
 ## 故障与恢复
@@ -208,13 +213,14 @@ sequenceDiagram
 
 - 本地 frame：8 MiB。
 - Relay HTTP body：64 KiB。
-- Relay WebSocket JSON message：2 MiB。
+- Relay WebSocket 外层 JSON message：2 MiB；密文经过 Base64 后，明文快照安全预算约 1.5 MiB且还需扣除路由头、nonce 与认证标签。
 - Session list 请求上限：10,000。
 - Timeline 单页上限：500。
 - Relay 短暂重放：60 秒、约 64 帧、仅内存。
 - 远程 frame 当前为 JSON text，`Data` 字段会以 Base64 表达。
+- reasoning、世界状态和压缩历史可能显著增加 Timeline 与完整快照体积；诊断数据按类别只保留最新记录，但达到现有 frame 上限时请求仍会失败，当前没有分片或压缩。
 
-远程完整快照接近 2 MiB 时需要引入分片、压缩或增量同步；当前实现没有自动降级。
+远程明文快照接近约 1.5 MiB 时就需要引入分片、压缩或增量同步；当前没有精确预检或自动降级。
 
 ## 相关文档
 

@@ -8,7 +8,7 @@
 
 1. [整体架构设计](system-architecture.md)：进程、Target、Package、设备关系和权威边界。
 2. [数据、通信与保存设计](data-communication-storage.md)：Session 模型、本地 IPC、远程同步、SQLite 和删除语义。
-3. [Agent Hook 设计](agent-hook.md)：Hook 安装、helper、rollout watcher、事件归一化和隐私过滤。
+3. [Agent Hook 设计](agent-hook.md)：Hook 安装、helper、rollout watcher、事件归一化和敏感数据边界。
 4. [Relay、配对与安全设计](relay-pairing-security.md)：Cloudflare Durable Object、配对、E2EE、序号和撤销。
 5. [App 与运行时设计](application-runtime.md)：macOS、Notch、iOS、缓存、刷新和并发边界。
 6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Universal 2、Relay 部署和 CI。
@@ -43,7 +43,7 @@
 | Agent | 产生 Session 事件的工具；v1 为 Codex |
 | Session | 一次可持续多个 Turn 的 Agent 会话 |
 | Turn | Session 内的一轮用户请求与 Agent 响应 |
-| Timeline | 用户消息、Assistant 消息、工具、计划、子 Agent 和错误的有序集合 |
+| Timeline | 用户活动以及保留的模型配置、内部上下文和消耗指标的有序集合；Mac 详情分模块展示，iPhone 主界面只展示用户活动 |
 | daemon | 本地后台服务和 Session 权威存储 |
 | helper | Codex Hook 调用的无状态命令行程序 |
 | channel | 一台 Mac 与一台 iPhone 的逻辑授权、密钥和序号域 |

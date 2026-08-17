@@ -35,7 +35,7 @@ flowchart TD
 主窗口只有一个 `NSSplitViewController` 层级：
 
 1. 左栏：Sessions、iPhone、Settings 全局导航。
-2. 中栏：Session 列表或 Settings 分类。
+2. 中栏：可折叠的 Main Session / Subagent Outline，或 Settings 分类。
 3. 右栏：Session 详情、iPhone 配对页或 Settings 详情。
 
 Sessions 和 Settings 保持三栏；iPhone 配对页折叠中栏，让 QR 和设备记录占据右侧区域。
@@ -57,7 +57,7 @@ Mac 外部 Session 内容只有三个入口：
 ### 缓存和性能
 
 - Session 列表先读本地 SQLite，启动不等待 daemon。
-- 详情只在选择变化或 Summary 变化时重新加载。
+- 详情在选择、Summary 或当前选中 Session 的 Timeline 数据变化时重新加载；其他 Session 的诊断变化只推进数据 revision 和 Relay 发布。
 - Timeline 每次从 SQLite 以 500 项分页拼接。
 - Agent event 用 Event ID 字典合并，同一短时间批次只触发一次 reload。
 - snapshot 请求等待正在写入的事件批次完成，避免全量替换与增量写交错。
@@ -119,7 +119,7 @@ iOS 即使已经从 SQLite 载入旧 Session，也只有同时满足以下条件
 - Secondary：只读 Timeline。
 - Pair：摄像头 QR scanner；摄像头不可用时允许 Paste。
 - Device：增加另一台 Mac，或删除一个本地通道。
-- unknown Timeline 不显示，但不会中断其他内容。
+- Mac Session 详情的 Activity 模块会显示已进入 Timeline 的 unknown 记录；iPhone 当前不显示 unknown，但不会中断其他内容。
 
 ## 并发边界
 

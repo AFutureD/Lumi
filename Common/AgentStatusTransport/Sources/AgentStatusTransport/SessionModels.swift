@@ -2,11 +2,13 @@ import Foundation
 
 public enum AgentKind: Hashable, Sendable {
     case codex
+    case codexSubagent
     case unknown(String)
 
     public var rawValue: String {
         switch self {
         case .codex: "codex"
+        case .codexSubagent: "codex_subagent"
         case let .unknown(value): value
         }
     }
@@ -15,7 +17,11 @@ public enum AgentKind: Hashable, Sendable {
 extension AgentKind: Codable {
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
-        self = value == "codex" ? .codex : .unknown(value)
+        self = switch value {
+        case "codex": .codex
+        case "codex_subagent": .codexSubagent
+        default: .unknown(value)
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -105,6 +111,34 @@ extension TurnPhase: Codable {
     }
 }
 
+public struct SessionLineage: Codable, Hashable, Sendable {
+    public let threadSource: String?
+    public let parentSessionID: SessionID?
+    public let subagentDepth: Int?
+    public let agentNickname: String?
+    public let agentRole: String?
+    public let agentPath: String?
+    public let subagentKind: String?
+
+    public init(
+        threadSource: String? = nil,
+        parentSessionID: SessionID? = nil,
+        subagentDepth: Int? = nil,
+        agentNickname: String? = nil,
+        agentRole: String? = nil,
+        agentPath: String? = nil,
+        subagentKind: String? = nil
+    ) {
+        self.threadSource = threadSource
+        self.parentSessionID = parentSessionID
+        self.subagentDepth = subagentDepth
+        self.agentNickname = agentNickname
+        self.agentRole = agentRole
+        self.agentPath = agentPath
+        self.subagentKind = subagentKind
+    }
+}
+
 public struct SessionSummary: Codable, Hashable, Sendable {
     public let id: SessionID
     public let agent: AgentKind
@@ -116,6 +150,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     public let updatedAt: Date
     public let lastActivityAt: Date
     public let needsAttention: Bool
+    public let lineage: SessionLineage?
 
     public init(
         id: SessionID,
@@ -127,7 +162,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         startedAt: Date,
         updatedAt: Date,
         lastActivityAt: Date,
-        needsAttention: Bool = false
+        needsAttention: Bool = false,
+        lineage: SessionLineage? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -139,6 +175,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.lastActivityAt = lastActivityAt
         self.needsAttention = needsAttention
+        self.lineage = lineage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -152,6 +189,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case updatedAt
         case lastActivityAt
         case needsAttention
+        case lineage
     }
 }
 

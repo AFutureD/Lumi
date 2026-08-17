@@ -3,11 +3,13 @@ import AgentStatusTransport
 import AppKit
 
 @MainActor
-final class SessionListViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class SessionListViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private let store: MacSessionStore
-    private let table = NSTableView()
+    private let outline = NSOutlineView()
     private let emptyLabel = NSTextField(labelWithString: "No Sessions")
+    private var hierarchy = SessionListHierarchy(roots: [], nodesByID: [:])
     private var displayedSessions: [SessionSummary] = []
+    private var collapsedSessionIDs: Set<SessionID> = []
     private var isReloading = false
 
     init(store: MacSessionStore) {
@@ -24,17 +26,19 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sessions"))
         column.resizingMask = .autoresizingMask
-        table.addTableColumn(column)
-        table.headerView = nil
-        table.rowHeight = 84
-        table.intercellSpacing = .zero
-        table.style = .fullWidth
-        table.selectionHighlightStyle = .regular
-        table.delegate = self
-        table.dataSource = self
+        outline.addTableColumn(column)
+        outline.outlineTableColumn = column
+        outline.headerView = nil
+        outline.rowHeight = 78
+        outline.intercellSpacing = .zero
+        outline.style = .fullWidth
+        outline.selectionHighlightStyle = .regular
+        outline.indentationPerLevel = 14
+        outline.delegate = self
+        outline.dataSource = self
 
         let scroll = NSScrollView()
-        scroll.documentView = table
+        scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -56,21 +60,50 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
         reload()
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { displayedSessions.count }
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        (item as? SessionListNode)?.children.count ?? hierarchy.roots.count
+    }
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < displayedSessions.count else { return nil }
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        let nodes = (item as? SessionListNode)?.children ?? hierarchy.roots
+        return nodes[index]
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        guard let node = item as? SessionListNode else { return false }
+        return !node.children.isEmpty
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        viewFor tableColumn: NSTableColumn?,
+        item: Any
+    ) -> NSView? {
+        guard let node = item as? SessionListNode else { return nil }
         let identifier = NSUserInterfaceItemIdentifier("SessionRow")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? SessionRowView
+        let cell = outlineView.makeView(withIdentifier: identifier, owner: self) as? SessionRowView
             ?? SessionRowView(identifier: identifier)
-        cell.configure(with: displayedSessions[row])
+        cell.configure(with: node.summary)
         return cell
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) {
+    func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isReloading else { return }
-        let row = table.selectedRow
-        store.select(row >= 0 && row < displayedSessions.count ? displayedSessions[row].id : nil)
+        let row = outline.selectedRow
+        let sessionID = (row >= 0 ? outline.item(atRow: row) as? SessionListNode : nil)?.summary.id
+        store.select(sessionID)
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard !isReloading,
+              let node = notification.userInfo?["NSObject"] as? SessionListNode else { return }
+        collapsedSessionIDs.remove(node.summary.id)
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard !isReloading,
+              let node = notification.userInfo?["NSObject"] as? SessionListNode else { return }
+        collapsedSessionIDs.insert(node.summary.id)
     }
 
     private func reload() {
@@ -82,15 +115,24 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
         let changed = updated != displayedSessions
         displayedSessions = updated
         emptyLabel.isHidden = !updated.isEmpty
-        if changed { table.reloadData() }
+        if changed {
+            hierarchy = SessionListHierarchy.build(from: updated)
+            outline.reloadData()
+            for node in hierarchy.nodesByID.values where !node.children.isEmpty {
+                if !collapsedSessionIDs.contains(node.summary.id) {
+                    outline.expandItem(node)
+                }
+            }
+        }
 
         if let selected = store.selectedSession,
-           let row = displayedSessions.firstIndex(where: { $0.id == selected.summary.id }) {
-            if table.selectedRow != row {
-                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+           let node = hierarchy.nodesByID[selected.summary.id] {
+            let row = outline.row(forItem: node)
+            if row >= 0, outline.selectedRow != row {
+                outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             }
-        } else if table.selectedRow != -1 {
-            table.deselectAll(nil)
+        } else if outline.selectedRow != -1 {
+            outline.deselectAll(nil)
         }
     }
 }
@@ -98,9 +140,9 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
 @MainActor
 private final class SessionRowView: NSTableCellView {
     private let titleLabel = NSTextField(labelWithString: "")
-    private let timeLabel = NSTextField(labelWithString: "")
+    private let agentLabel = NSTextField(labelWithString: "")
+    private let statusIcon = NSImageView()
     private let statusLabel = NSTextField(labelWithString: "")
-    private let workspaceLabel = NSTextField(labelWithString: "")
     private let separator = NSBox()
     private var statusTone: SessionStatusTone = .gray
 
@@ -110,29 +152,34 @@ private final class SessionRowView: NSTableCellView {
 
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
-        timeLabel.font = .systemFont(ofSize: 11)
-        statusLabel.font = .systemFont(ofSize: 12)
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.usesSingleLineMode = true
+        agentLabel.font = .systemFont(ofSize: 11)
+        agentLabel.lineBreakMode = .byTruncatingTail
+        statusIcon.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Session status")
+        statusIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .regular)
+        statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.lineBreakMode = .byTruncatingTail
-        workspaceLabel.font = .systemFont(ofSize: 11)
-        workspaceLabel.lineBreakMode = .byTruncatingMiddle
         separator.boxType = .separator
 
-        [titleLabel, timeLabel, statusLabel, workspaceLabel, separator].forEach {
+        [titleLabel, agentLabel, statusIcon, statusLabel, separator].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            timeLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
-            statusLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
-            workspaceLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            workspaceLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            workspaceLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 4),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 11),
+            agentLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            agentLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            agentLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
+            statusIcon.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            statusIcon.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
+            statusIcon.widthAnchor.constraint(equalToConstant: 9),
+            statusIcon.heightAnchor.constraint(equalToConstant: 9),
+            statusLabel.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 5),
+            statusLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            statusLabel.topAnchor.constraint(equalTo: agentLabel.bottomAnchor, constant: 4),
             separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -147,28 +194,22 @@ private final class SessionRowView: NSTableCellView {
     }
 
     func configure(with session: SessionSummary) {
-        titleLabel.stringValue = session.title
-        timeLabel.stringValue = SessionDateFormatting.listTime(session.lastActivityAt)
-        statusLabel.stringValue = "\(session.lifecycle.displayName) · \(session.phase.displayName)"
-        let workspace = session.workspace.flatMap { URL(fileURLWithPath: $0).lastPathComponent }
-        workspaceLabel.stringValue = workspace?.isEmpty == false ? workspace! : session.agent.displayName
-        workspaceLabel.toolTip = session.workspace
+        let presentation = SessionListRowPresentation(session: session)
+        titleLabel.stringValue = presentation.title
+        titleLabel.toolTip = presentation.title
+        agentLabel.stringValue = "Agent · \(presentation.agent)"
+        statusLabel.stringValue = presentation.status
         statusTone = session.statusTone
         updateColors()
     }
 
     private func updateColors() {
         let selected = backgroundStyle == .emphasized
-        titleLabel.textColor = selected ? .alternateSelectedControlTextColor : .labelColor
-        timeLabel.textColor = selected
-            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
-            : .secondaryLabelColor
-        statusLabel.textColor = selected
-            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.9)
-            : statusTone.appKitColor
-        workspaceLabel.textColor = selected
-            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75)
-            : .tertiaryLabelColor
+        let selectedText = NSColor.alternateSelectedControlTextColor
+        titleLabel.textColor = selected ? selectedText : .labelColor
+        agentLabel.textColor = selected ? selectedText.withAlphaComponent(0.8) : .secondaryLabelColor
+        statusIcon.contentTintColor = selected ? selectedText : statusTone.appKitColor
+        statusLabel.textColor = selected ? selectedText.withAlphaComponent(0.9) : statusTone.appKitColor
         separator.isHidden = selected
     }
 }
@@ -179,14 +220,15 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
     private let table = NSTableView()
     private let avatar = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Select a Session")
-    private let statusLabel = NSTextField(labelWithString: "Session messages and tool activity appear here.")
+    private let statusLabel = NSTextField(labelWithString: "")
     private let workspaceLabel = NSTextField(labelWithString: "")
     private let updatedLabel = NSTextField(labelWithString: "")
     private let headerView = NSView()
     private let contentColumn = NSView()
     private let headerSeparator = NSBox()
-    private let emptyLabel = NSTextField(labelWithString: "No supported events")
-    private var displayedTimeline: [TimelineItem] = []
+    private let emptyLabel = NSTextField(labelWithString: "Select a Session")
+    private var modules: [SessionDetailModulePresentation] = []
+    private var entries: [SessionDetailTableEntry] = []
     private var headerHeightConstraint: NSLayoutConstraint?
 
     init(store: MacSessionStore) {
@@ -210,6 +252,8 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
 
         titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.usesSingleLineMode = true
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.textColor = .secondaryLabelColor
         workspaceLabel.font = .systemFont(ofSize: 12)
@@ -217,17 +261,17 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
         workspaceLabel.lineBreakMode = .byTruncatingMiddle
         updatedLabel.font = .systemFont(ofSize: 11)
         updatedLabel.textColor = .tertiaryLabelColor
-
         headerSeparator.boxType = .separator
 
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("timeline"))
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("session-detail"))
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
         table.headerView = nil
-        table.rowHeight = 88
+        table.rowHeight = 76
         table.usesAutomaticRowHeights = true
         table.intercellSpacing = .zero
         table.selectionHighlightStyle = .none
+        table.floatsGroupRows = false
         table.delegate = self
         table.dataSource = self
 
@@ -249,6 +293,7 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
         }
         contentColumn.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(contentColumn)
+
         let headerHeightConstraint = headerView.heightAnchor.constraint(equalToConstant: 102)
         self.headerHeightConstraint = headerHeightConstraint
         NSLayoutConstraint.activate([
@@ -286,92 +331,168 @@ final class SessionDetailViewController: NSViewController, NSTableViewDataSource
         reload()
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { displayedTimeline.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        guard row < entries.count else { return false }
+        if case .module = entries[row] { return true }
+        return false
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < displayedTimeline.count else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("TimelineRow")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? TimelineRowView
-            ?? TimelineRowView(identifier: identifier)
-        cell.configure(with: displayedTimeline[row])
-        return cell
+        guard row < entries.count else { return nil }
+        switch entries[row] {
+        case let .module(kind):
+            let identifier = NSUserInterfaceItemIdentifier("SessionModuleHeader")
+            let view = tableView.makeView(withIdentifier: identifier, owner: self) as? SessionModuleHeaderView
+                ?? SessionModuleHeaderView(identifier: identifier)
+            view.configure(with: kind)
+            return view
+        case let .row(presentation) where presentation.usesStructuredText:
+            let identifier = NSUserInterfaceItemIdentifier("StructuredSessionDetailRow")
+            let view = tableView.makeView(withIdentifier: identifier, owner: self) as? StructuredSessionDetailRowView
+                ?? StructuredSessionDetailRowView(identifier: identifier)
+            view.configure(with: presentation)
+            return view
+        case let .row(presentation):
+            let identifier = NSUserInterfaceItemIdentifier("SessionDetailRow")
+            let view = tableView.makeView(withIdentifier: identifier, owner: self) as? SessionDetailRowView
+                ?? SessionDetailRowView(identifier: identifier)
+            view.configure(with: presentation)
+            return view
+        }
     }
 
     private func reload() {
         guard isViewLoaded else { return }
         let detail = store.selectedSession
-        let updated = detail?.timeline.filter {
-            if case .unknown = $0.payload { return false }
-            return true
-        } ?? []
-        let changed = updated != displayedTimeline
-        displayedTimeline = updated
-        emptyLabel.stringValue = detail == nil ? "Select a Session" : "No supported events"
-        emptyLabel.isHidden = !updated.isEmpty
+        let updatedModules = detail.map(SessionDetailPresentationBuilder.modules(for:)) ?? []
+        let updatedEntries = updatedModules.flatMap { module in
+            [.module(module.kind)] + module.rows.map(SessionDetailTableEntry.row)
+        }
+        let changed = updatedModules != modules
+        modules = updatedModules
+        entries = updatedEntries
+        emptyLabel.isHidden = detail != nil
 
         if let summary = detail?.summary {
             headerView.isHidden = false
             headerHeightConstraint?.constant = 102
             avatar.isHidden = false
-            titleLabel.stringValue = summary.title
+            titleLabel.stringValue = SessionListRowPresentation(session: summary).title
+            titleLabel.toolTip = summary.title
             statusLabel.stringValue = "\(summary.agent.displayName) · \(summary.lifecycle.displayName) · \(summary.phase.displayName)"
             statusLabel.textColor = summary.statusTone.appKitColor
-            workspaceLabel.stringValue = summary.workspace ?? ""
+            workspaceLabel.stringValue = summary.workspace ?? "No workspace"
+            workspaceLabel.toolTip = summary.workspace
             updatedLabel.stringValue = SessionDateFormatting.detailTime(summary.lastActivityAt)
         } else {
             headerView.isHidden = true
             headerHeightConstraint?.constant = 0
             avatar.isHidden = true
             titleLabel.stringValue = "Select a Session"
-            statusLabel.stringValue = "Session messages and tool activity appear here."
+            titleLabel.toolTip = nil
+            statusLabel.stringValue = ""
             statusLabel.textColor = .secondaryLabelColor
             workspaceLabel.stringValue = ""
+            workspaceLabel.toolTip = nil
             updatedLabel.stringValue = ""
         }
         if changed { table.reloadData() }
     }
 }
 
+private enum SessionDetailTableEntry: Equatable {
+    case module(SessionDetailModuleKind)
+    case row(SessionDetailRowPresentation)
+}
+
 @MainActor
-private final class TimelineRowView: NSTableCellView {
+private final class SessionModuleHeaderView: NSTableCellView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let timeLabel = NSTextField(labelWithString: "")
-    private let bodyLabel = NSTextField(wrappingLabelWithString: "")
+    private let separator = NSBox()
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
 
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        icon.contentTintColor = .secondaryLabelColor
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        separator.boxType = .separator
+
+        [icon, titleLabel, separator].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
+            icon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 18),
+            titleLabel.bottomAnchor.constraint(equalTo: separator.topAnchor, constant: -10),
+            separator.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(with kind: SessionDetailModuleKind) {
+        icon.image = NSImage(systemSymbolName: kind.symbolName, accessibilityDescription: kind.title)
+        titleLabel.stringValue = kind.title
+    }
+}
+
+@MainActor
+private final class SessionDetailRowView: NSTableCellView {
+    private let icon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let metadataLabel = NSTextField(labelWithString: "")
+    private let bodyLabel = NSTextField(wrappingLabelWithString: "")
+    private let separator = NSBox()
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         icon.contentTintColor = .secondaryLabelColor
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        timeLabel.font = .systemFont(ofSize: 11)
-        timeLabel.textColor = .tertiaryLabelColor
+        metadataLabel.font = .systemFont(ofSize: 11)
+        metadataLabel.textColor = .tertiaryLabelColor
+        metadataLabel.lineBreakMode = .byTruncatingHead
         bodyLabel.font = .systemFont(ofSize: 13)
         bodyLabel.textColor = .labelColor
         bodyLabel.maximumNumberOfLines = 0
-
-        let separator = NSBox()
+        bodyLabel.isSelectable = true
         separator.boxType = .separator
-        [icon, titleLabel, timeLabel, bodyLabel, separator].forEach {
+
+        [icon, titleLabel, metadataLabel, bodyLabel, separator].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 26),
-            icon.topAnchor.constraint(equalTo: topAnchor, constant: 17),
+            icon.topAnchor.constraint(equalTo: topAnchor, constant: 15),
             icon.widthAnchor.constraint(equalToConstant: 18),
             icon.heightAnchor.constraint(equalToConstant: 18),
             titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: metadataLabel.leadingAnchor, constant: -12),
             titleLabel.firstBaselineAnchor.constraint(equalTo: icon.firstBaselineAnchor),
-            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -26),
-            timeLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
+            metadataLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -26),
+            metadataLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
             bodyLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             bodyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -26),
             bodyLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 7),
-            bodyLabel.bottomAnchor.constraint(equalTo: separator.topAnchor, constant: -16),
+            bodyLabel.bottomAnchor.constraint(equalTo: separator.topAnchor, constant: -14),
             separator.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -381,73 +502,110 @@ private final class TimelineRowView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func configure(with item: TimelineItem) {
+    func configure(with presentation: SessionDetailRowPresentation) {
         icon.image = NSImage(
-            systemSymbolName: item.payload.symbolName,
-            accessibilityDescription: item.payload.title
+            systemSymbolName: presentation.symbolName,
+            accessibilityDescription: presentation.title
         )
-        titleLabel.stringValue = item.payload.title
-        timeLabel.stringValue = SessionDateFormatting.detailTime(item.occurredAt)
-        bodyLabel.stringValue = item.payload.body
+        titleLabel.stringValue = presentation.title
+        metadataLabel.stringValue = presentation.metadata ?? ""
+        metadataLabel.isHidden = presentation.metadata == nil
+        bodyLabel.stringValue = presentation.body
+    }
+}
+
+@MainActor
+private final class StructuredSessionDetailRowView: NSTableCellView {
+    private let icon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let metadataLabel = NSTextField(labelWithString: "")
+    private let textView = NSTextView()
+    private let textScroll = NSScrollView()
+    private let separator = NSBox()
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        icon.contentTintColor = .secondaryLabelColor
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        metadataLabel.font = .systemFont(ofSize: 11)
+        metadataLabel.textColor = .tertiaryLabelColor
+        metadataLabel.lineBreakMode = .byTruncatingHead
+
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.textColor = .labelColor
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+
+        textScroll.documentView = textView
+        textScroll.hasVerticalScroller = true
+        textScroll.autohidesScrollers = true
+        textScroll.borderType = .bezelBorder
+        separator.boxType = .separator
+
+        [icon, titleLabel, metadataLabel, textScroll, separator].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 26),
+            icon.topAnchor.constraint(equalTo: topAnchor, constant: 15),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: metadataLabel.leadingAnchor, constant: -12),
+            titleLabel.firstBaselineAnchor.constraint(equalTo: icon.firstBaselineAnchor),
+            metadataLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -26),
+            metadataLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
+            textScroll.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            textScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -26),
+            textScroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            textScroll.heightAnchor.constraint(equalToConstant: 220),
+            textScroll.bottomAnchor.constraint(equalTo: separator.topAnchor, constant: -14),
+            separator.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(with presentation: SessionDetailRowPresentation) {
+        icon.image = NSImage(
+            systemSymbolName: presentation.symbolName,
+            accessibilityDescription: presentation.title
+        )
+        titleLabel.stringValue = presentation.title
+        metadataLabel.stringValue = presentation.metadata ?? ""
+        metadataLabel.isHidden = presentation.metadata == nil
+        textView.string = presentation.body
+        textView.scrollToBeginningOfDocument(nil)
     }
 }
 
 private enum SessionDateFormatting {
-    static func listTime(_ date: Date) -> String {
-        if Calendar.current.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
-        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
-        return date.formatted(.dateTime.month(.abbreviated).day())
-    }
-
     static func detailTime(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 
-private extension AgentKind {
-    var displayName: String {
-        switch self {
-        case .codex: "Codex"
-        case let .unknown(value): value.capitalized
-        }
-    }
-}
-
-private extension TimelinePayload {
+private extension SessionDetailModuleKind {
     var symbolName: String {
         switch self {
-        case let .message(value): value.role == .user ? "person" : "sparkles"
-        case .tool: "hammer"
-        case .plan: "checklist"
-        case .subagent: "person.2"
-        case .error: "exclamationmark.triangle"
-        case .unknown: "questionmark.circle"
-        }
-    }
-
-    var title: String {
-        switch self {
-        case let .message(value): value.role == .user ? "User" : "Assistant"
-        case let .tool(value): "Tool · \(value.name) · \(value.status.rawValue.capitalized)"
-        case .plan: "Plan"
-        case let .subagent(value): "Sub-agent · \(value.name)"
-        case .error: "Error"
-        case let .unknown(value): value.kind
-        }
-    }
-
-    var body: String {
-        switch self {
-        case let .message(value): value.text
-        case let .tool(value): value.summary ?? "No details"
-        case let .plan(value): value.steps.map {
-            "\($0.status == .completed ? "✓" : "•") \($0.text)"
-        }.joined(separator: "\n")
-        case let .subagent(value): value.status.rawValue.capitalized
-        case let .error(value): "\(value.title): \(value.message)"
-        case let .unknown(value): value.summary ?? "Unsupported event"
+        case .overview: "info.circle"
+        case .modelConfiguration: "cpu"
+        case .usage: "gauge.with.dots.needle.67percent"
+        case .internalContext: "lock.doc"
+        case .activity: "list.bullet.rectangle"
         }
     }
 }

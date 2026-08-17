@@ -26,19 +26,19 @@
    - 数据变化：只增加 Agent Status Hook，其他集成保留。
    - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)。
 3. 回到侧边栏“Sessions”，再新建一个 Codex Session 并提交任务。
-   - 系统反馈：Session 出现在主窗口中栏；Notch 展开后显示标题、状态和当前 Turn 用户消息。
+   - 系统反馈：Main Session 以标题、Agent 类型和状态出现在主窗口中栏；Subagent 作为可折叠子项显示在所属 Main Session 下。Notch 展开后显示标题、状态和当前 Turn 用户消息。
    - 数据变化：启用前已经存在的旧 Session 不会自动导入。
-   - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)。
+   - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)。
 4. 在中栏选择目标 Session。
-   - 系统反馈：右栏显示状态、工作目录和时间线。
+   - 系统反馈：右栏分成 Overview、Model Configuration、Usage、Internal Context 和 Activity；无数据的模块显示明确空状态。
    - 数据变化：只改变查看对象。
-   - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)。
+   - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)。
 5. 继续使用 Codex。
-   - 系统反馈：收到 Agent 事件时，列表和详情自动更新。
+   - 系统反馈：收到 Agent 事件时，列表状态和对应详情模块自动更新；结构化内容可选择，并可在模块内部滚动查看。
    - 数据变化：新活动同步到本地保存内容。
-   - 规则引用：[MAC-R-003](../modules/mac-session-view.md#mac-r-003-只采集用户可见活动)。
+   - 规则引用：[MAC-R-003](../modules/mac-session-view.md#mac-r-003-展示活动并保留-session-诊断数据)。
 
-完成信号：目标 Session 出现在列表中，右栏时间线随 Agent 活动变化。
+完成信号：目标 Main Session 以权威标题、Agent 和状态出现在列表中，Subagent 可展开/折叠，右栏五个模块随 Agent 活动变化。
 
 用户需要调整 Notch 时，在 Notch 点击设置按钮，或在主 App 选择“Settings > Notch”。第三栏的 Appearance section 不显示固定的 Theme 和 Layout 控件；页面提供 Surface、显示屏幕、可恢复的紧凑宽度、展开宽度、展开动画、保持展开、触觉反馈和 Show Notch。完整取值规则见 [MAC-R-015](../modules/mac-session-view.md#mac-r-015-notch-设置集中在主-app)。
 

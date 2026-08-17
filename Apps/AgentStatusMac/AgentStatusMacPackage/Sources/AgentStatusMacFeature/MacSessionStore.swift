@@ -163,10 +163,19 @@ public final class MacSessionStore {
                     if let failure = response.failure { throw failure }
                     let details = (response.sessionDetails ?? [])
                         .sorted { $0.summary.updatedAt > $1.summary.updatedAt }
+                    let previousDetails = try await self.snapshotDetails()
+                    let snapshotDataChanged = Dictionary(
+                        uniqueKeysWithValues: previousDetails.map { ($0.summary.id, $0) }
+                    ) != Dictionary(
+                        uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
+                    )
                     if let cache = self.cache { try await cache.replaceSnapshot(details) }
                     self.health = response.health
                     self.connectionError = nil
-                    await self.reloadFromCache(reloadSelected: true)
+                    await self.reloadFromCache(
+                        reloadSelected: true,
+                        persistedDataChanged: snapshotDataChanged
+                    )
                 } catch {
                     self.handleConnectionFailure(error)
                 }
@@ -209,7 +218,10 @@ public final class MacSessionStore {
             }
             if appliedAny {
                 self.connectionError = nil
-                await self.reloadFromCache(reloadSelected: selectedChanged)
+                await self.reloadFromCache(
+                    reloadSelected: selectedChanged,
+                    persistedDataChanged: true
+                )
             }
             self.eventApplyTask = nil
             if !self.pendingEvents.isEmpty, !Task.isCancelled {
@@ -218,7 +230,10 @@ public final class MacSessionStore {
         }
     }
 
-    private func reloadFromCache(reloadSelected: Bool) async {
+    private func reloadFromCache(
+        reloadSelected: Bool,
+        persistedDataChanged: Bool = false
+    ) async {
         guard let cache else { return }
         do {
             let updated = try await cache.listSessions(limit: 10_000)
@@ -242,7 +257,11 @@ public final class MacSessionStore {
             sessions = updated
             pendingSelectionID = selectedID
             selectedSession = detail
-            notifyObservers(dataChanged: previousSessions != updated || previousDetail != detail)
+            notifyObservers(
+                dataChanged: persistedDataChanged
+                    || previousSessions != updated
+                    || previousDetail != detail
+            )
         } catch {
             connectionError = "Unable to read the macOS sync database: \(error)"
             notifyObservers()

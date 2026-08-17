@@ -126,6 +126,88 @@ public struct ErrorTimelinePayload: Codable, Hashable, Sendable {
     }
 }
 
+public struct ModelConfigurationTimelinePayload: Codable, Hashable, Sendable {
+    public let source: String
+    public let model: String?
+    public let provider: String?
+    public let contextWindow: Int64?
+    public let reasoningEffort: String?
+    public let clientVersion: String?
+    public let settings: JSONValue
+
+    public init(
+        source: String,
+        model: String? = nil,
+        provider: String? = nil,
+        contextWindow: Int64? = nil,
+        reasoningEffort: String? = nil,
+        clientVersion: String? = nil,
+        settings: JSONValue
+    ) {
+        self.source = source
+        self.model = model
+        self.provider = provider
+        self.contextWindow = contextWindow
+        self.reasoningEffort = reasoningEffort
+        self.clientVersion = clientVersion
+        self.settings = settings
+    }
+}
+
+public struct InternalContextTimelinePayload: Codable, Hashable, Sendable {
+    public let kind: String
+    public let content: JSONValue
+
+    public init(kind: String, content: JSONValue) {
+        self.kind = kind
+        self.content = content
+    }
+}
+
+public struct TokenUsage: Codable, Hashable, Sendable {
+    public let inputTokens: Int64
+    public let cachedInputTokens: Int64
+    public let cacheWriteInputTokens: Int64
+    public let outputTokens: Int64
+    public let reasoningOutputTokens: Int64
+    public let totalTokens: Int64
+
+    public init(
+        inputTokens: Int64 = 0,
+        cachedInputTokens: Int64 = 0,
+        cacheWriteInputTokens: Int64 = 0,
+        outputTokens: Int64 = 0,
+        reasoningOutputTokens: Int64 = 0,
+        totalTokens: Int64 = 0
+    ) {
+        self.inputTokens = inputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheWriteInputTokens = cacheWriteInputTokens
+        self.outputTokens = outputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
+        self.totalTokens = totalTokens
+    }
+}
+
+public struct UsageMetricsTimelinePayload: Codable, Hashable, Sendable {
+    public let last: TokenUsage?
+    public let total: TokenUsage?
+    public let modelContextWindow: Int64?
+    public let rateLimits: JSONValue?
+
+    public init(
+        last: TokenUsage? = nil,
+        total: TokenUsage? = nil,
+        modelContextWindow: Int64? = nil,
+        rateLimits: JSONValue? = nil
+    ) {
+        self.last = last
+        self.total = total
+        self.modelContextWindow = modelContextWindow
+        self.rateLimits = rateLimits
+    }
+}
+
 public struct UnknownTimelinePayload: Codable, Hashable, Sendable {
     public let kind: String
     public let summary: String?
@@ -147,6 +229,9 @@ public enum TimelinePayload: Hashable, Sendable {
     case plan(PlanTimelinePayload)
     case subagent(SubagentTimelinePayload)
     case error(ErrorTimelinePayload)
+    case modelConfiguration(ModelConfigurationTimelinePayload)
+    case internalContext(InternalContextTimelinePayload)
+    case usageMetrics(UsageMetricsTimelinePayload)
     case unknown(UnknownTimelinePayload)
 }
 
@@ -158,22 +243,39 @@ extension TimelinePayload: Codable {
         case plan
         case subagent
         case error
+        case modelConfiguration
+        case internalContext
+        case usageMetrics
         case unknown
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
-        self = switch type {
-        case "message": .message(try container.decode(MessageTimelinePayload.self, forKey: .message))
-        case "tool": .tool(try container.decode(ToolTimelinePayload.self, forKey: .tool))
-        case "plan": .plan(try container.decode(PlanTimelinePayload.self, forKey: .plan))
-        case "subagent": .subagent(try container.decode(SubagentTimelinePayload.self, forKey: .subagent))
-        case "error": .error(try container.decode(ErrorTimelinePayload.self, forKey: .error))
-        default: .unknown(
-            try container.decodeIfPresent(UnknownTimelinePayload.self, forKey: .unknown)
-                ?? UnknownTimelinePayload(kind: type)
-        )
+        let unknown = try container.decodeIfPresent(UnknownTimelinePayload.self, forKey: .unknown)
+            ?? UnknownTimelinePayload(kind: type)
+        switch type {
+        case "message": self = .message(try container.decode(MessageTimelinePayload.self, forKey: .message))
+        case "tool": self = .tool(try container.decode(ToolTimelinePayload.self, forKey: .tool))
+        case "plan": self = .plan(try container.decode(PlanTimelinePayload.self, forKey: .plan))
+        case "subagent": self = .subagent(try container.decode(SubagentTimelinePayload.self, forKey: .subagent))
+        case "error": self = .error(try container.decode(ErrorTimelinePayload.self, forKey: .error))
+        case "model_configuration":
+            self = try container.decodeIfPresent(
+                ModelConfigurationTimelinePayload.self,
+                forKey: .modelConfiguration
+            ).map(TimelinePayload.modelConfiguration) ?? .unknown(unknown)
+        case "internal_context":
+            self = try container.decodeIfPresent(
+                InternalContextTimelinePayload.self,
+                forKey: .internalContext
+            ).map(TimelinePayload.internalContext) ?? .unknown(unknown)
+        case "usage_metrics":
+            self = try container.decodeIfPresent(
+                UsageMetricsTimelinePayload.self,
+                forKey: .usageMetrics
+            ).map(TimelinePayload.usageMetrics) ?? .unknown(unknown)
+        default: self = .unknown(unknown)
         }
     }
 
@@ -195,6 +297,15 @@ extension TimelinePayload: Codable {
         case let .error(payload):
             try container.encode("error", forKey: .type)
             try container.encode(payload, forKey: .error)
+        case let .modelConfiguration(payload):
+            try container.encode("model_configuration", forKey: .type)
+            try container.encode(payload, forKey: .modelConfiguration)
+        case let .internalContext(payload):
+            try container.encode("internal_context", forKey: .type)
+            try container.encode(payload, forKey: .internalContext)
+        case let .usageMetrics(payload):
+            try container.encode("usage_metrics", forKey: .type)
+            try container.encode(payload, forKey: .usageMetrics)
         case let .unknown(payload):
             try container.encode(payload.kind, forKey: .type)
             try container.encode(payload, forKey: .unknown)

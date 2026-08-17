@@ -134,7 +134,7 @@ pnpm exec wrangler deploy
 - reducer 幂等与乱序不回退。
 - GRDB 保存、删除、tombstone 和 snapshot 原子替换。
 - Hook 与 rollout 解析。
-- reasoning/world state 排除。
+- 模型配置、reasoning/world state/压缩上下文和 Token/rate-limit 保留。
 - 三端状态颜色语义。
 
 ### daemon/helper

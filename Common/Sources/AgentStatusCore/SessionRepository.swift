@@ -43,7 +43,9 @@ public enum SessionReduction {
         applying event: AgentIngressEvent,
         to current: SessionSummary?
     ) -> SessionSummary {
-        let shouldUpdateVisibleState = current == nil || event.occurredAt >= current!.updatedAt
+        let advancesVisibleActivity = event.advancesVisibleActivity
+        let shouldUpdateVisibleState = current == nil
+            || (advancesVisibleActivity && event.occurredAt >= current!.updatedAt)
         let lifecycle = shouldUpdateVisibleState
             ? (event.lifecycle ?? current?.lifecycle ?? .starting)
             : (current?.lifecycle ?? .starting)
@@ -54,23 +56,63 @@ public enum SessionReduction {
         case .waitingForInput, .failed, .interrupted: true
         default: false
         }
+        let isIdentityOnly = event.title != nil
+            && event.workspace == nil
+            && event.lifecycle == nil
+            && event.phase == nil
+            && event.timelineItem == nil
+        let agent = if isIdentityOnly {
+            event.agent
+        } else if shouldUpdateVisibleState {
+            if event.lineage == nil,
+               event.agent == .codex,
+               current?.agent == .codexSubagent {
+                current!.agent
+            } else {
+                event.agent
+            }
+        } else {
+            current?.agent ?? event.agent
+        }
+        let agentName = agent.rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+        let title = if isIdentityOnly || shouldUpdateVisibleState {
+            event.title ?? current?.title ?? "\(agentName) Session"
+        } else {
+            current?.title ?? "\(agentName) Session"
+        }
 
         return SessionSummary(
             id: event.sessionID,
-            agent: event.agent,
-            title: shouldUpdateVisibleState
-                ? (event.title ?? current?.title ?? "Codex Session")
-                : (current?.title ?? "Codex Session"),
+            agent: agent,
+            title: title,
             workspace: shouldUpdateVisibleState
                 ? (event.workspace ?? current?.workspace)
                 : current?.workspace,
             lifecycle: lifecycle,
             phase: phase,
             startedAt: min(current?.startedAt ?? event.occurredAt, event.occurredAt),
-            updatedAt: max(current?.updatedAt ?? event.occurredAt, event.occurredAt),
-            lastActivityAt: max(current?.lastActivityAt ?? event.occurredAt, event.occurredAt),
-            needsAttention: needsAttention
+            updatedAt: advancesVisibleActivity
+                ? max(current?.updatedAt ?? event.occurredAt, event.occurredAt)
+                : (current?.updatedAt ?? event.occurredAt),
+            lastActivityAt: advancesVisibleActivity
+                ? max(current?.lastActivityAt ?? event.occurredAt, event.occurredAt)
+                : (current?.lastActivityAt ?? event.occurredAt),
+            needsAttention: needsAttention,
+            lineage: event.lineage ?? current?.lineage
         )
+    }
+}
+
+private extension AgentIngressEvent {
+    var advancesVisibleActivity: Bool {
+        if workspace != nil || lifecycle != nil || phase != nil { return true }
+        guard let payload = timelineItem?.payload else { return false }
+        return switch payload {
+        case .message, .tool, .plan, .subagent, .error: true
+        case .modelConfiguration, .internalContext, .usageMetrics, .unknown: false
+        }
     }
 }
 
@@ -95,16 +137,20 @@ public actor InMemorySessionRepository: SessionRepository {
         )
         if let item = event.timelineItem {
             var items = timeline[event.sessionID, default: []]
-            if !items.contains(where: { $0.id == item.id }) {
-                items.append(item)
-                items.sort { lhs, rhs in
-                    if lhs.occurredAt == rhs.occurredAt {
-                        return lhs.id.rawValue < rhs.id.rawValue
-                    }
-                    return lhs.occurredAt < rhs.occurredAt
+            if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
+                if item.occurredAt >= items[existingIndex].occurredAt {
+                    items[existingIndex] = item
                 }
-                timeline[event.sessionID] = items
+            } else {
+                items.append(item)
             }
+            items.sort { lhs, rhs in
+                if lhs.occurredAt == rhs.occurredAt {
+                    return lhs.id.rawValue < rhs.id.rawValue
+                }
+                return lhs.occurredAt < rhs.occurredAt
+            }
+            timeline[event.sessionID] = items
         }
         return true
     }

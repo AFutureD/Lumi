@@ -11,6 +11,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
     public let lifecycle: SessionLifecycle?
     public let phase: TurnPhase?
     public let timelineItem: TimelineItem?
+    public let lineage: SessionLineage?
 
     public init(
         eventID: EventID,
@@ -22,7 +23,8 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         workspace: String? = nil,
         lifecycle: SessionLifecycle? = nil,
         phase: TurnPhase? = nil,
-        timelineItem: TimelineItem? = nil
+        timelineItem: TimelineItem? = nil,
+        lineage: SessionLineage? = nil
     ) {
         self.eventID = eventID
         self.sessionID = sessionID
@@ -34,6 +36,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         self.lifecycle = lifecycle
         self.phase = phase
         self.timelineItem = timelineItem
+        self.lineage = lineage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -47,6 +50,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         case lifecycle
         case phase
         case timelineItem
+        case lineage
     }
 }
 

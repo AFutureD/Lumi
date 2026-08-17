@@ -25,7 +25,7 @@ The completed feature must provide:
 - macOS and iOS builds using a complete supported Xcode installation.
 - Runtime evidence for App launch, Mail-style navigation, manual refresh, deletion, pairing, device revocation and remote Timeline display.
 - Relay type-check, Worker-runtime tests, deployed health check and protocol-fixture consistency.
-- A real Codex Hook-to-daemon-to-Mac-to-iPhone trace containing no reasoning, system instructions or environment snapshot data.
+- A real Codex Hook-to-daemon-to-Mac-to-iPhone trace that retains structured model configuration, full mapped internal context and consumption metrics, verifies encrypted device delivery, and treats every synchronized copy as sensitive.
 - Product documentation derived from reachable and verified behavior under `docs/feat/`.
 
 ## Risks and Current Constraints
@@ -61,8 +61,8 @@ The completed feature must provide:
 ### AppKit macOS client
 
 - **Target:** native Mail-style three-column Session browser, iPhone pairing page, Settings, toolbar and Notch.
-- **Delivered:** one standard split hierarchy with full-height sidebar, context-list middle column and detail column. Sessions uses list/detail, Settings uses category/detail, and only iPhone collapses the middle column. Refresh is positioned above the Session list and Delete above detail. The old custom panel was replaced by a pinned OpenNook revision: the expanded surface lists up to four current Session titles, statuses and current-Turn user messages, uses the ActivityNook queue for meaningful updates, and opens the main App's Notch settings. Session colors use one shared semantic palette across the Mac list, detail, Notch and iPhone.
-- **Verification evidence:** macOS build-and-run succeeds under Xcode 26.6; accessibility and screenshot inspection confirm the OpenNook Session content, Notch gear-to-main-Settings path, Settings three-column layout and Notch options. Manual Refresh, confirmation-based deletion and iPhone pairing/revocation remain exercised. Mac feature tests pass 5/5, including current-Turn message selection, Completed-session exclusion, Completed transition activity, full eligible-session counting and approval-transition coalescing.
+- **Delivered:** one standard split hierarchy with full-height sidebar, context-list middle column and detail column. The Session list is a native collapsible Outline showing authoritative Codex `threads.title`, Codex / Codex Subagent type and lifecycle/Turn status; Subagent lineage nests child Sessions under their Main Session and is shown in Overview. Detail is rewritten into Overview, Model Configuration, Usage, Internal Context and Activity modules. Settings uses category/detail, and only iPhone collapses the middle column. Refresh is positioned above the Session list and Delete above detail. The old custom panel was replaced by a pinned OpenNook revision: the expanded surface lists up to four current Session titles, statuses and current-Turn user messages, uses the ActivityNook queue for meaningful updates, and opens the main App's Notch settings. Session colors use one shared semantic palette across the Mac list, detail, Notch and iPhone.
+- **Verification evidence:** macOS build-and-run succeeds under Xcode 26.6; Computer Use accessibility inspection confirms live `threads.title`, two current Subagents nested under the Main Session, collapse/expand behavior, Subagent Overview lineage, and one-line list/detail-header rendering for a stored multiline title while Overview retains the original value. OpenNook content, Notch gear-to-main-Settings path, Settings three-column layout and Notch options remain inspected. Manual Refresh, confirmation-based deletion and iPhone pairing/revocation remain exercised. Mac feature tests pass 11/11, including hierarchy nesting/orphan/cycle handling, multiline-title normalization, title/Agent/status presentation, five-module full detail, current-Turn message selection, Completed-session exclusion, activity diffing, appearance normalization and pairing layout.
 - **Remaining risk:** final visual acceptance across window sizes, Developer ID packaging and clean-machine LaunchAgent behavior remain pending.
 
 ### UIKit iOS client
@@ -78,6 +78,13 @@ The completed feature must provide:
 - **Delivered:** feature overview, Mac/iPhone modules, two end-to-end journeys, data flow, friction paths, CI jobs and bundle verification tooling. `docs/design/` now records the implemented system architecture, data/IPC/SQLite lifecycle, Hook and rollout ingestion, Relay pairing/E2EE, App runtime, build and release boundaries. Documentation reflects manual retention, fixed Relay configuration, persistent three-end storage, multiple channels, single Session deletion and the Mail-style Mac layout.
 - **Verification evidence:** design claims are traced to current source, tests and build configuration; relative link and stale-claim checks are rerun after documentation review; transport-boundary checks confirm no duplicate DTO declarations and shared golden fixtures.
 - **Remaining risk:** documentation must be reviewed again after real Codex Hook, physical iPhone and release packaging acceptance.
+
+### Retained Session diagnostics
+
+- **Target:** retain model configuration, internal context and consumption metrics without flooding the user-facing activity timeline.
+- **Delivered:** structured payloads for model/provider/effort/thread settings, reasoning/base instructions/Turn context/world state/compacted history, and Token/context-window/rate-limit data. Each diagnostic category keeps its latest record in the existing persistent Timeline and encrypted full-snapshot path. Mac shows the retained data in dedicated Session detail modules while keeping it out of Activity; iPhone keeps it out of its primary activity list.
+- **Verification evidence:** Transport 8/8, Common 20/20, CLI 9/9 and Mac Feature 11/11 tests pass; sanitized Codable, Codex `threads` title/Subagent parsing, identity round-trip changes, temporary state-read failure, GRDB replacement persistence and Relay full-detail diff tests cover the retained payloads and rewritten Mac presentation; macOS and iOS Simulator targets compile with the expanded shared model.
+- **Remaining risk:** the installed daemon was replaced from the current Debug app and live title/Subagent ingestion was verified; large internal-context snapshots still share the existing local and Relay frame limits.
 
 ### Repository structure
 

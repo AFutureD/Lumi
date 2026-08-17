@@ -5,8 +5,13 @@ import Foundation
 
 public struct CodexAdapter: AgentAdapter {
     public let agentKind: AgentKind = .codex
+    private let threads: any CodexThreadIdentityProviding
 
-    public init() {}
+    public init(
+        threads: any CodexThreadIdentityProviding = CodexThreadIdentityStore()
+    ) {
+        self.threads = threads
+    }
 
     public func events(fromHookData data: Data) throws -> [AgentIngressEvent] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -23,6 +28,7 @@ public struct CodexAdapter: AgentAdapter {
         let eventID = EventID(Self.digest(data: data, prefix: "hook:"))
         let timelineID = TimelineItemID(eventID.rawValue + ":timeline")
         let workspace = root.string("cwd")
+        let threadIdentity = threads.identity(for: sessionID)
 
         func event(
             lifecycle: SessionLifecycle? = nil,
@@ -42,12 +48,14 @@ public struct CodexAdapter: AgentAdapter {
                 eventID: eventID,
                 sessionID: sessionID,
                 turnID: turnID,
-                agent: .codex,
+                agent: threadIdentity?.agentKind ?? .codex,
                 occurredAt: occurredAt,
+                title: threadIdentity?.displayTitle,
                 workspace: workspace,
                 lifecycle: lifecycle,
                 phase: phase,
-                timelineItem: item
+                timelineItem: item,
+                lineage: threadIdentity?.lineage
             )
         }
 
@@ -147,30 +155,81 @@ public struct CodexAdapter: AgentAdapter {
             guard let rawID = payload.string("id") ?? payload.string("session_id") else {
                 throw AgentAdapterError.missingSessionID
             }
-            return [AgentIngressEvent(
+            let sessionID = SessionID(rawID)
+            let threadIdentity = threads.identity(for: sessionID)
+            var events = [AgentIngressEvent(
                 eventID: EventID(stableID),
-                sessionID: SessionID(rawID),
-                agent: .codex,
+                sessionID: sessionID,
+                agent: threadIdentity?.agentKind ?? .codex,
                 occurredAt: occurredAt,
+                title: threadIdentity?.displayTitle,
                 workspace: payload.string("cwd"),
                 lifecycle: .starting,
-                phase: .idle
+                phase: .idle,
+                lineage: threadIdentity?.lineage
             )]
+
+            let modelKeys = [
+                "model_provider", "cli_version", "source", "originator", "history_mode",
+                "memory_mode", "context_window", "dynamic_tools",
+            ]
+            if let settings = payload.jsonValue(keys: modelKeys) {
+                events.append(AgentIngressEvent(
+                    eventID: EventID(stableID + ":model_configuration"),
+                    sessionID: sessionID,
+                    agent: threadIdentity?.agentKind ?? .codex,
+                    occurredAt: occurredAt,
+                    timelineItem: TimelineItem(
+                        id: TimelineItemID("diagnostic:\(sessionID.rawValue):model_configuration:session_meta"),
+                        sessionID: sessionID,
+                        occurredAt: occurredAt,
+                        payload: .modelConfiguration(ModelConfigurationTimelinePayload(
+                            source: "session_meta",
+                            provider: payload.string("model_provider"),
+                            clientVersion: payload.string("cli_version"),
+                            settings: settings
+                        ))
+                    )
+                ))
+            }
+
+            if let baseInstructions = payload.jsonValue("base_instructions") {
+                events.append(AgentIngressEvent(
+                    eventID: EventID(stableID + ":internal_context:base_instructions"),
+                    sessionID: sessionID,
+                    agent: threadIdentity?.agentKind ?? .codex,
+                    occurredAt: occurredAt,
+                    timelineItem: TimelineItem(
+                        id: TimelineItemID("diagnostic:\(sessionID.rawValue):internal_context:base_instructions"),
+                        sessionID: sessionID,
+                        occurredAt: occurredAt,
+                        payload: .internalContext(InternalContextTimelinePayload(
+                            kind: "base_instructions",
+                            content: baseInstructions
+                        ))
+                    )
+                ))
+            }
+            return events
         }
 
         guard let sessionID = context.sessionID else { return [] }
         let turnID = payload.string("turn_id").map(TurnID.init)
+        let threadIdentity = threads.identity(for: sessionID)
 
         func makeEvent(
             lifecycle: SessionLifecycle? = nil,
             phase: TurnPhase? = nil,
             timeline: TimelinePayload? = nil,
-            suffix: String = ""
+            suffix: String = "",
+            diagnosticKey: String? = nil
         ) -> AgentIngressEvent {
             let eventID = EventID(stableID + suffix)
             let timelineItem = timeline.map {
                 TimelineItem(
-                    id: TimelineItemID(eventID.rawValue + ":timeline"),
+                    id: diagnosticKey.map {
+                        TimelineItemID("diagnostic:\(sessionID.rawValue):\($0)")
+                    } ?? TimelineItemID(eventID.rawValue + ":timeline"),
                     sessionID: sessionID,
                     turnID: turnID,
                     occurredAt: occurredAt,
@@ -181,12 +240,69 @@ public struct CodexAdapter: AgentAdapter {
                 eventID: eventID,
                 sessionID: sessionID,
                 turnID: turnID,
-                agent: .codex,
+                agent: threadIdentity?.agentKind ?? .codex,
                 occurredAt: occurredAt,
+                title: threadIdentity?.displayTitle,
                 lifecycle: lifecycle,
                 phase: phase,
-                timelineItem: timelineItem
+                timelineItem: timelineItem,
+                lineage: threadIdentity?.lineage
             )
+        }
+
+        if recordType == "turn_context" {
+            var events: [AgentIngressEvent] = []
+            let modelKeys = [
+                "model", "effort", "personality", "collaboration_mode", "multi_agent_version",
+                "realtime_active",
+            ]
+            if let settings = payload.jsonValue(keys: modelKeys) {
+                events.append(makeEvent(
+                    timeline: .modelConfiguration(ModelConfigurationTimelinePayload(
+                        source: "turn_context",
+                        model: payload.string("model"),
+                        reasoningEffort: payload.string("effort"),
+                        settings: settings
+                    )),
+                    suffix: ":model_configuration",
+                    diagnosticKey: "model_configuration:turn_context"
+                ))
+            }
+            if let content = try? JSONValue(jsonObject: payload) {
+                events.append(makeEvent(
+                    timeline: .internalContext(InternalContextTimelinePayload(
+                        kind: "turn_context",
+                        content: content
+                    )),
+                    suffix: ":internal_context",
+                    diagnosticKey: "internal_context:turn_context"
+                ))
+            }
+            return events
+        }
+
+        if recordType == "world_state" || recordType == "compacted" {
+            guard let content = try? JSONValue(jsonObject: payload) else { return [] }
+            let diagnosticKey: String
+            if recordType == "world_state" {
+                if payload.bool("full") == true {
+                    diagnosticKey = "internal_context:world_state:full"
+                } else {
+                    let stateKeys = payload.dictionary("state")?.keys.sorted().joined(separator: ",") ?? "unknown"
+                    let keyDigest = Self.digest(data: Data(stateKeys.utf8), prefix: "")
+                    diagnosticKey = "internal_context:world_state:delta:\(keyDigest)"
+                }
+            } else {
+                diagnosticKey = "internal_context:compacted"
+            }
+            return [makeEvent(
+                timeline: .internalContext(InternalContextTimelinePayload(
+                    kind: recordType,
+                    content: content
+                )),
+                suffix: ":internal_context",
+                diagnosticKey: diagnosticKey
+            )]
         }
 
         if recordType == "event_msg", let type = payload.string("type") {
@@ -207,6 +323,48 @@ public struct CodexAdapter: AgentAdapter {
                 )]
             case "task_started":
                 return [makeEvent(lifecycle: .running, phase: .thinking)]
+            case "agent_reasoning", "context_compacted":
+                guard let content = try? JSONValue(jsonObject: payload) else { return [] }
+                return [makeEvent(
+                    timeline: .internalContext(InternalContextTimelinePayload(
+                        kind: type,
+                        content: content
+                    )),
+                    suffix: ":internal_context",
+                    diagnosticKey: "internal_context:\(type)"
+                )]
+            case "thread_settings_applied":
+                guard let settingsDictionary = payload.dictionary("thread_settings"),
+                      let settings = try? JSONValue(jsonObject: settingsDictionary) else { return [] }
+                return [makeEvent(
+                    timeline: .modelConfiguration(ModelConfigurationTimelinePayload(
+                        source: "thread_settings_applied",
+                        model: settingsDictionary.string("model"),
+                        provider: settingsDictionary.string("model_provider_id"),
+                        reasoningEffort: settingsDictionary.string("reasoning_effort"),
+                        settings: settings
+                    )),
+                    suffix: ":model_configuration",
+                    diagnosticKey: "model_configuration:thread_settings"
+                )]
+            case "token_count":
+                let info = payload.dictionary("info")
+                let last = info?.dictionary("last_token_usage").map(TokenUsage.init(codexPayload:))
+                let total = info?.dictionary("total_token_usage").map(TokenUsage.init(codexPayload:))
+                let rateLimits = payload.jsonValue("rate_limits")
+                guard last != nil || total != nil || info?.int64("model_context_window") != nil || rateLimits != nil else {
+                    return []
+                }
+                return [makeEvent(
+                    timeline: .usageMetrics(UsageMetricsTimelinePayload(
+                        last: last,
+                        total: total,
+                        modelContextWindow: info?.int64("model_context_window"),
+                        rateLimits: rateLimits
+                    )),
+                    suffix: ":usage_metrics",
+                    diagnosticKey: "usage_metrics"
+                )]
             case "task_complete":
                 if let error = payload.string("error"), !error.isEmpty {
                     return [makeEvent(
@@ -364,14 +522,27 @@ public struct CodexAdapter: AgentAdapter {
             )]
         }
 
-        // reasoning, system context, world_state, compacted history, and unknown records
-        // are intentionally excluded from the product model.
+        if recordType == "response_item", payload.string("type") == "reasoning",
+           let content = try? JSONValue(jsonObject: payload) {
+            return [makeEvent(
+                timeline: .internalContext(InternalContextTimelinePayload(
+                    kind: "reasoning",
+                    content: content
+                )),
+                suffix: ":internal_context",
+                diagnosticKey: "internal_context:reasoning"
+            )]
+        }
+
+        // Unknown rollout records remain excluded until their shape and privacy
+        // boundary are explicitly modeled.
         return []
     }
 
     private static func digest(data: Data, prefix: String) -> String {
         prefix + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
+
 }
 
 private extension Dictionary where Key == String, Value == Any {
@@ -391,6 +562,25 @@ private extension Dictionary where Key == String, Value == Any {
         if let value = self[key] as? Int { return value }
         if let value = self[key] as? NSNumber { return value.intValue }
         return nil
+    }
+
+    func int64(_ key: String) -> Int64? {
+        if let value = self[key] as? Int64 { return value }
+        if let value = self[key] as? Int { return Int64(value) }
+        if let value = self[key] as? NSNumber { return value.int64Value }
+        return nil
+    }
+
+    func jsonValue(_ key: String) -> JSONValue? {
+        guard let value = self[key] else { return nil }
+        return try? JSONValue(jsonObject: value)
+    }
+
+    func jsonValue(keys: [String]) -> JSONValue? {
+        let values = keys.reduce(into: [String: JSONValue]()) { result, key in
+            if let value = jsonValue(key) { result[key] = value }
+        }
+        return values.isEmpty ? nil : .object(values)
     }
 
     func date(_ key: String) -> Date? {
@@ -414,5 +604,18 @@ private extension Dictionary where Key == String, Value == Any {
             return Int64(seconds.doubleValue * 1_000)
         }
         return nil
+    }
+}
+
+private extension TokenUsage {
+    init(codexPayload payload: [String: Any]) {
+        self.init(
+            inputTokens: payload.int64("input_tokens") ?? 0,
+            cachedInputTokens: payload.int64("cached_input_tokens") ?? 0,
+            cacheWriteInputTokens: payload.int64("cache_write_input_tokens") ?? 0,
+            outputTokens: payload.int64("output_tokens") ?? 0,
+            reasoningOutputTokens: payload.int64("reasoning_output_tokens") ?? 0,
+            totalTokens: payload.int64("total_tokens") ?? 0
+        )
     }
 }

@@ -56,6 +56,21 @@
 
 **完成信号**：连接错误消失，列表与 daemon 当前数据一致。
 
+## Session 标题仍显示 Codex Session
+
+**用户会看到**：Codex 侧已经有可识别标题，但 Agent Status 列表仍显示 `Codex Session`，Subagent 也没有放在 Main Session 下。
+
+**可能原因**：运行中的 daemon 还是升级前版本，尚未从 Codex `state_5.sqlite` 同步标题与 Subagent lineage；只重启 Mac App 不会替换已经注册的 daemon 进程。
+
+**恢复步骤**：
+
+1. 打开“Settings > Daemon”。
+2. 点击“Stop & Uninstall daemon”。
+3. 点击“Install & Start daemon”。
+4. 返回 Sessions，点击刷新图标（Refresh Sessions）取得完整快照。
+
+**完成信号**：Main Session 显示与 Codex 一致的标题；有 parent 的 Subagent 显示为可折叠子项，并标记为 `Codex Subagent`。
+
 ## Delete Session 失败
 
 **用户会看到**：确认删除后 Session 仍保留，并显示连接错误。

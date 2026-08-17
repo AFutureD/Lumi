@@ -50,14 +50,22 @@ import Testing
     let sessionID = SessionID("session-1")
     let summary = SessionSummary(
         id: sessionID,
-        agent: .codex,
+        agent: .codexSubagent,
         title: "Implement transport",
         workspace: "/tmp/project",
         lifecycle: .running,
         phase: .executing,
         startedAt: date,
         updatedAt: date,
-        lastActivityAt: date
+        lastActivityAt: date,
+        lineage: SessionLineage(
+            threadSource: "subagent",
+            parentSessionID: SessionID("parent-session"),
+            subagentDepth: 1,
+            agentNickname: "Hypatia",
+            agentPath: "/root/docs_review",
+            subagentKind: "thread_spawn"
+        )
     )
     let item = TimelineItem(
         id: TimelineItemID("item-1"),
@@ -71,6 +79,64 @@ import Testing
     let encoded = try TransportCoding.makeEncoder().encode(detail)
     let decoded = try TransportCoding.makeDecoder().decode(SessionDetail.self, from: encoded)
     #expect(decoded == detail)
+}
+
+@Test func diagnosticTimelinePayloadsRoundTripStructuredJSON() throws {
+    let payloads: [TimelinePayload] = [
+        .modelConfiguration(ModelConfigurationTimelinePayload(
+            source: "turn_context",
+            model: "gpt-5.6",
+            provider: "openai",
+            contextWindow: 258_000,
+            reasoningEffort: "high",
+            clientVersion: "1.0",
+            settings: .object(["realtime": .boolean(false)])
+        )),
+        .internalContext(InternalContextTimelinePayload(
+            kind: "world_state",
+            content: .object([
+                "instructions": .array([.string("one"), .string("two")]),
+                "window": .number(2),
+            ])
+        )),
+        .usageMetrics(UsageMetricsTimelinePayload(
+            last: TokenUsage(inputTokens: 10, outputTokens: 5, totalTokens: 15),
+            total: TokenUsage(inputTokens: 100, outputTokens: 50, totalTokens: 150),
+            modelContextWindow: 258_000,
+            rateLimits: .object(["used_percent": .number(12.5)])
+        )),
+    ]
+
+    for payload in payloads {
+        let encoded = try TransportCoding.makeEncoder().encode(payload)
+        let decoded = try TransportCoding.makeDecoder().decode(TimelinePayload.self, from: encoded)
+        #expect(decoded == payload)
+    }
+}
+
+@Test func jsonValuePreservesFoundationBooleanAndNumberKinds() throws {
+    let object = try #require(JSONSerialization.jsonObject(with: Data(#"{"enabled":true,"count":9007199254740993,"ratio":1.5}"#.utf8)) as? [String: Any])
+    let value = try JSONValue(jsonObject: object)
+    #expect(value == .object([
+        "enabled": .boolean(true),
+        "count": .number(9_007_199_254_740_993),
+        "ratio": .number(1.5),
+    ]))
+
+    let encoded = try TransportCoding.makeEncoder().encode(value)
+    let decoded = try TransportCoding.makeDecoder().decode(JSONValue.self, from: encoded)
+    #expect(decoded == value)
+}
+
+@Test func newlyKnownTimelineTypeStillDecodesAnOlderUnknownReencoding() throws {
+    let data = Data("""
+    {"type":"model_configuration","unknown":{"kind":"model_configuration","summary":"upgrade required"}}
+    """.utf8)
+    let decoded = try TransportCoding.makeDecoder().decode(TimelinePayload.self, from: data)
+    #expect(decoded == .unknown(UnknownTimelinePayload(
+        kind: "model_configuration",
+        summary: "upgrade required"
+    )))
 }
 
 @Test func deleteSessionRequestRoundTripsWithItsSessionID() throws {

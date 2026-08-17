@@ -47,6 +47,7 @@ let package = Package(
             name: "AgentStatusDaemonRuntimeTests",
             dependencies: [
                 "AgentStatusDaemonRuntime",
+                .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
