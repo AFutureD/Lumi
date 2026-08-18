@@ -558,33 +558,21 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     )
 }
 
-@Test func sessionActivityWindowKeepsRecentMessages() {
-    let activities = (0..<120).map { index in
-        SessionActivityPresentation(
-            id: "activity-\(index)",
-            category: .assistant,
-            content: "Activity \(index)",
-            occurredAt: "\(index)",
-            rawItem: activityItem(
-                id: "activity-\(index)",
-                sessionID: SessionID("window"),
-                date: Date(timeIntervalSince1970: TimeInterval(index)),
-                payload: .message(MessageTimelinePayload(role: .assistant, text: "Activity \(index)"))
-            )
-        )
-    }
-
-    let initial = SessionActivityWindowPolicy.window(
-        activities: activities,
-        limit: SessionActivityWindowPolicy.initialLimit
-    )
-    #expect(initial.activities.count == 10)
-    #expect(initial.activities.first?.id == "activity-110")
-    #expect(initial.hiddenCount == 110)
-
-    let expanded = SessionActivityWindowPolicy.window(activities: activities, limit: 60)
-    #expect(expanded.activities.first?.id == "activity-60")
-    #expect(expanded.hiddenCount == 60)
+@Test func sessionActivityCategoriesMapToTimelineLanes() {
+    #expect([
+        SessionActivityCategory.system,
+        .context,
+        .user,
+    ].map(\.lane) == [.input, .input, .input])
+    #expect([
+        SessionActivityCategory.tool,
+        .subagent,
+        .other,
+    ].map(\.lane) == [.tools, .tools, .tools])
+    #expect([
+        SessionActivityCategory.assistantReasoning,
+        .assistant,
+    ].map(\.lane) == [.model, .model])
 }
 
 @Test func sessionPageRendererBuildsOnItsOwnActor() async throws {

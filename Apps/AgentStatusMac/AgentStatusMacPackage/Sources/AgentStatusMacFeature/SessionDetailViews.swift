@@ -4,26 +4,33 @@ import SwiftUI
 @MainActor
 struct SessionDetailScrollableView: View {
     let presentation: SessionPagePresentation?
-    let activityWindow: SessionActivityWindow?
     let onPreview: (SessionActivityPresentation) -> Void
-    let onLoadOlder: () -> Void
 
     var body: some View {
-        ScrollView {
-            if let presentation, let activityWindow {
-                VStack(alignment: .leading, spacing: 28) {
-                    summary(sections: presentation.summarySections)
-                    activity(window: activityWindow)
+        ScrollViewReader { activityScrollProxy in
+            ScrollView {
+                if let presentation {
+                    LazyVStack(
+                        alignment: .leading,
+                        spacing: 28,
+                        pinnedViews: [.sectionHeaders]
+                    ) {
+                        summary(sections: presentation.summarySections)
+                        activitySection(
+                            presentation.activities,
+                            scrollProxy: activityScrollProxy
+                        )
+                    }
+                    .frame(
+                        minWidth: AgentStatusDetailLayout.minimumContentWidth,
+                        maxWidth: AgentStatusDetailLayout.maximumContentWidth,
+                        alignment: .topLeading
+                    )
+                    .padding(.horizontal, AgentStatusDetailLayout.horizontalInset)
+                    .padding(.top, AgentStatusDetailLayout.topInset)
+                    .padding(.bottom, AgentStatusDetailLayout.bottomInset)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .frame(
-                    minWidth: AgentStatusDetailLayout.minimumContentWidth,
-                    maxWidth: AgentStatusDetailLayout.maximumContentWidth,
-                    alignment: .topLeading
-                )
-                .padding(.horizontal, AgentStatusDetailLayout.horizontalInset)
-                .padding(.top, AgentStatusDetailLayout.topInset)
-                .padding(.bottom, AgentStatusDetailLayout.bottomInset)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
         .background(Color.white)
@@ -45,22 +52,12 @@ struct SessionDetailScrollableView: View {
         }
     }
 
-    private func activity(window: SessionActivityWindow) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Activity")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Text(
-                    window.hiddenCount > 0
-                        ? "\(window.activities.count) of \(window.totalCount)"
-                        : "\(window.totalCount)"
-                )
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.tertiary)
-            }
-
-            if window.activities.isEmpty {
+    private func activitySection(
+        _ activities: [SessionActivityPresentation],
+        scrollProxy: ScrollViewProxy
+    ) -> some View {
+        Section {
+            if activities.isEmpty {
                 Text("No Activity")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -68,7 +65,7 @@ struct SessionDetailScrollableView: View {
                     .padding(.vertical, 18)
             } else {
                 LazyVStack(spacing: 0) {
-                    ForEach(window.activities, id: \.id) { activity in
+                    ForEach(activities, id: \.id) { activity in
                         Button {
                             onPreview(activity)
                         } label: {
@@ -78,22 +75,125 @@ struct SessionDetailScrollableView: View {
                         .accessibilityLabel(
                             "\(activity.category.tag), \(activity.content), \(activity.occurredAt)"
                         )
+                        .id(sessionActivityRowID(for: activity))
 
-                        if activity.id != window.activities.last?.id {
+                        if activity.id != activities.last?.id {
                             Divider()
                                 .padding(.leading, 110)
                         }
                     }
                 }
             }
+        } header: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Activity")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Text("\(activities.count)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
 
-            if window.hiddenCount > 0 {
-                let loadCount = min(SessionActivityWindowPolicy.batchSize, window.hiddenCount)
-                Button("Show \(loadCount) older · \(window.hiddenCount) hidden", action: onLoadOlder)
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
+                if !activities.isEmpty {
+                    SessionActivityTimeline(activities: activities) { activity in
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            scrollProxy.scrollTo(
+                                sessionActivityRowID(for: activity),
+                                anchor: .center
+                            )
+                        }
+                    }
+                }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+            .background(Color.white)
+            .overlay(alignment: .bottom) {
+                Divider()
             }
         }
+    }
+}
+
+private func sessionActivityRowID(for activity: SessionActivityPresentation) -> String {
+    "activity-row:\(activity.id)"
+}
+
+private struct SessionActivityTimeline: View {
+    private static let cellSize: CGFloat = 13
+    private static let rowSpacing: CGFloat = 4
+
+    let activities: [SessionActivityPresentation]
+    let onSelect: (SessionActivityPresentation) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .trailing, spacing: Self.rowSpacing) {
+                ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
+                    Text(lane.title)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(height: Self.cellSize)
+                }
+            }
+            .frame(width: 36, alignment: .trailing)
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                LazyHStack(alignment: .top, spacing: 4) {
+                    ForEach(activities, id: \.id) { activity in
+                        VStack(spacing: Self.rowSpacing) {
+                            ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
+                                if activity.category.lane == lane {
+                                    Button {
+                                        onSelect(activity)
+                                    } label: {
+                                        SessionActivityTimelineCell(category: activity.category)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("\(activity.category.tag): \(activity.content)")
+                                    .accessibilityLabel(
+                                        "Jump to \(activity.category.tag), \(activity.content)"
+                                    )
+                                } else {
+                                    Color.clear
+                                        .frame(width: Self.cellSize, height: Self.cellSize)
+                                        .accessibilityHidden(true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 6)
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
+        }
+    }
+}
+
+private struct SessionActivityTimelineCell: View {
+    private let cellSize: CGFloat = 13
+    let category: SessionActivityCategory
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+            .fill(category.backgroundColor)
+            .frame(width: cellSize, height: cellSize)
+            .overlay {
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                    .stroke(
+                        category == .system
+                            ? Color(nsColor: .separatorColor)
+                            : .clear,
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(Rectangle())
     }
 }
 

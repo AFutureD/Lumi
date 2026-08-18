@@ -8,7 +8,7 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 
 - **入口**：启动 Agent Status；侧边栏包含“Sessions”“iPhone”“Settings”。
 - **前置条件**：macOS 15 或更高版本；daemon 已安装并运行。
-- **主要结果**：用户可从列表查看 Session 标题、Agent 类型和状态，并在分模块详情中查看完整 Session 信息、模型配置、消耗、内部上下文和活动；也可手动刷新、删除单个 Session，或清空全部 Agent Status 历史。
+- **主要结果**：用户可从列表查看 Session 标题、Agent 类型和状态，并在 Summary 与 Activity 中查看 Session 信息、模型配置、消耗和完整活动历史；也可手动刷新、删除单个 Session，或清空全部 Agent Status 历史。
 - **只读边界**：查看和删除 Agent Status 中的记录不会审批、终止或修改 Codex Session。
 - **相关旅程**：[在 Mac 上跟进一次 Codex Session](../journeys/observe-session-locally.md)。
 
@@ -17,8 +17,8 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 ### Sessions：标准三栏
 
 1. 左栏是全高侧边栏，负责在 Sessions、iPhone 和 Settings 之间导航。
-2. 中栏是可折叠的 Session Outline，顶层 Main Session 按最近活动时间排序；Subagent 根据 Parent Session ID 递归放在所属 Session 下。每行只显示 Session 标题、Agent 类型，以及由生命周期和 Turn 阶段组成的状态。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；详情页头部遵循相同规则，Overview 仍保留原始标题。Codex 标题读取本机 Codex `threads` 数据；Subagent 显示为 `Codex Subagent`，空标题回退为昵称与 Agent path 摘要。首次读取不到元数据时使用“Codex Session”；已同步过的 Subagent 在临时读取失败时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
-3. 右栏把所有已保存信息分成 Overview、Model Configuration、Usage、Internal Context 和 Activity 五个模块。Overview 显示 Session 元数据；中间三个模块显示最新模型配置、消耗和内部上下文；Activity 显示消息、工具、计划、子 Agent、错误和可识别的未知记录。
+2. 中栏是可折叠的 Session Outline，顶层 Main Session 按最近活动时间排序；Subagent 根据 Parent Session ID 递归放在所属 Session 下。每行只显示 Session 标题、Agent 类型，以及由生命周期和 Turn 阶段组成的状态。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；详情页头部遵循相同规则，Overview 仍保留原始标题。可取得 Codex 标题时显示权威标题；Subagent 显示为 `Codex Subagent`，空标题回退为昵称与 Agent path 摘要。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
+3. 右栏分成 Summary 和 Activity。Summary 用卡片展示 Overview、可选的 Lineage、Model Configuration 与 Usage；Activity 按时间显示全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录。Activity 标题下方提供 Input、Tools、Model 三行横向时间轴；滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部，点击任一方格会跳到对应记录。
 4. 刷新图标（Refresh Sessions）位于 Session 列表上方；删除图标（Delete Session）位于详情上方。
 
 “iPhone”页面收起中栏，让配对内容使用剩余区域。“Settings”继续保持三栏：左栏是产品导航，中栏列出 General、Notch、Daemon、Agents 和 About，右栏显示当前设置详情。
@@ -46,7 +46,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
    - 系统反馈：首个受支持 Agent 事件到达后，Session 出现在中栏。
    - 规则引用：[MAC-R-011](#mac-r-011-只记录启用后的新-session)。
 
-完成信号：daemon 显示已连接；新 Session 以“标题、Agent、状态”出现在列表中，五个详情模块随 Agent 事件更新。
+完成信号：daemon 显示已连接；新 Session 以“标题、Agent、状态”出现在列表中，Summary 与 Activity 随 Agent 事件更新。
 
 ## 日常操作
 
@@ -81,9 +81,9 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-003 展示活动并保留 Session 诊断数据
 
 - 条件：新 Session 产生受支持的 Agent 事件。
-- 行为：Activity 模块整理消息、工具、计划、子 Agent、错误和可识别的未知记录；同一 Session 还保留模型配置、内部上下文和消耗指标。
-- 结果：Activity 保持可读，同时模型配置、reasoning、基础指令、世界状态、压缩历史和 Token 使用按类别保留最新记录并同步；这些诊断记录在各自详情模块中展示，不混入 Activity。重复事件不产生重复记录，乱序事件不回退可见状态。
-- 限制或例外：每类最新诊断记录会完整保存来源提供的嵌套内容，其中可能出现路径、凭据、环境信息或工具内容；当前没有内容级脱敏保证。Agent Status 未映射且未进入 Session Timeline 的原始事件不会另外复制。
+- 行为：Activity 整理消息、系统与上下文、reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Summary 展示 Session 元数据、模型配置和消耗指标。
+- 结果：用户能在 Activity 中按发生顺序查看对话与执行上下文，并在 Summary 中查看当前配置和 Token 使用。重复事件不产生重复记录，乱序事件不回退可见状态。
+- 限制或例外：每类最新诊断记录会完整保存来源提供的嵌套内容，其中可能出现路径、凭据、环境信息或工具内容；当前没有内容级脱敏保证。只有 Agent Status 能识别为活动的记录会显示，其他来源事件不会另行保留。
 
 ### MAC-R-004 查看不控制 Agent
 
@@ -172,9 +172,16 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-016 Session 列表与详情按信息层级展示
 
 - 条件：Sessions 页面存在一个或多个 Session，用户选择其中一条。
-- 行为：列表行显示 Codex 权威标题、Agent 类型和“生命周期 · Turn 阶段”状态；Main Session 使用原生 disclosure 展开或折叠全部直接和嵌套 Subagent，用户的折叠状态在本次 App 运行期间保留。Subagent 额外保留父 Session ID、深度、昵称、职责、Agent path 和来源类型。详情固定分为 Overview、Model Configuration、Usage、Internal Context 和 Activity 五个模块；Subagent lineage 进入 Overview。结构化模型配置、消耗与上下文使用可选择文本，并在模块内部滚动。
-- 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏访问当前副本保存的全部字段；Timeline ID 和 Turn ID 与对应记录一起显示，便于定位来源。
-- 限制或例外：没有数据的模块仍显示并给出明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示。Internal Context 可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
+- 行为：列表行显示 Codex 权威标题、Agent 类型和“生命周期 · Turn 阶段”状态；Main Session 使用原生 disclosure 展开或折叠全部直接和嵌套 Subagent，用户的折叠状态在本次 App 运行期间保留。Subagent 额外保留父 Session ID、深度、昵称、职责、Agent path 和来源类型。详情固定分为 Summary 与 Activity；Subagent lineage 进入 Summary，Activity 行可打开对应记录的完整原始内容。
+- 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的摘要与活动记录。
+- 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示。Activity 的系统与上下文记录可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
+
+### MAC-R-017 Activity 全量显示并支持时间轴定位
+
+- 条件：用户选择的 Session 包含一条或多条 Activity。
+- 行为：Activity 按发生顺序显示全部记录，不要求分批加载。标题下方的横向时间轴让每条记录占一个等宽正方形，并分入 Input（System、Context、User）、Tools（Tool、Subagent、其他）或 Model（Assistant、Reasoning）三行。滚动进入 Activity 后，标题、记录数量和时间轴固定在详情顶部，活动记录继续在下方滚动；用户点击方格后，详情滚动到对应记录。
+- 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
+- 限制或例外：时间轴只改变当前详情的查看位置，不修改或控制 Codex Session。
 
 ## 空状态与故障
 

@@ -18,7 +18,6 @@ final class SessionDetailViewController: NSViewController {
     private var renderGeneration = 0
     private var displayedSessionID: SessionID?
     private var presentation: SessionPagePresentation?
-    private var activityLimit = SessionActivityWindowPolicy.initialLimit
 
     init(store: MacSessionStore) {
         self.store = store
@@ -90,7 +89,6 @@ final class SessionDetailViewController: NSViewController {
             presentationTask?.cancel()
             renderGeneration &+= 1
             presentation = nil
-            activityLimit = SessionActivityWindowPolicy.initialLimit
             titleLabel.stringValue = "Select a Session"
             hostingView.rootView = makeScrollableView()
             emptyLabel.isHidden = false
@@ -103,7 +101,6 @@ final class SessionDetailViewController: NSViewController {
 
         if sessionChanged {
             presentation = nil
-            activityLimit = SessionActivityWindowPolicy.initialLimit
             hostingView.rootView = makeScrollableView()
         }
 
@@ -131,31 +128,12 @@ final class SessionDetailViewController: NSViewController {
     }
 
     private func makeScrollableView() -> SessionDetailScrollableView {
-        let activityWindow = presentation.map {
-            SessionActivityWindowPolicy.window(
-                activities: $0.activities,
-                limit: activityLimit
-            )
-        }
         return SessionDetailScrollableView(
             presentation: presentation,
-            activityWindow: activityWindow,
             onPreview: { [weak self] activity in
                 self?.showRawData(for: activity)
-            },
-            onLoadOlder: { [weak self] in
-                self?.loadOlderActivity()
             }
         )
-    }
-
-    private func loadOlderActivity() {
-        guard let presentation else { return }
-        activityLimit = min(
-            presentation.activities.count,
-            activityLimit + SessionActivityWindowPolicy.batchSize
-        )
-        hostingView.rootView = makeScrollableView()
     }
 
     private func showRawData(for activity: SessionActivityPresentation) {

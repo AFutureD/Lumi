@@ -57,6 +57,33 @@ enum SessionActivityCategory: String, Equatable, Sendable {
     }
 }
 
+enum SessionActivityLane: String, CaseIterable, Equatable, Sendable {
+    case input
+    case tools
+    case model
+
+    var title: String {
+        switch self {
+        case .input: "Input"
+        case .tools: "Tools"
+        case .model: "Model"
+        }
+    }
+}
+
+extension SessionActivityCategory {
+    var lane: SessionActivityLane {
+        switch self {
+        case .system, .context, .user:
+            .input
+        case .tool, .subagent, .other:
+            .tools
+        case .assistantReasoning, .assistant:
+            .model
+        }
+    }
+}
+
 struct SessionActivityPresentation: Equatable, Sendable {
     let id: String
     let category: SessionActivityCategory
@@ -70,29 +97,6 @@ struct SessionPagePresentation: Equatable, Sendable {
     let title: String
     let summarySections: [SessionSummarySectionPresentation]
     let activities: [SessionActivityPresentation]
-}
-
-struct SessionActivityWindow: Equatable, Sendable {
-    let activities: [SessionActivityPresentation]
-    let hiddenCount: Int
-
-    var totalCount: Int { activities.count + hiddenCount }
-}
-
-enum SessionActivityWindowPolicy {
-    static let initialLimit = 10
-    static let batchSize = 50
-
-    static func window(
-        activities: [SessionActivityPresentation],
-        limit: Int
-    ) -> SessionActivityWindow {
-        let visibleLimit = min(activities.count, max(0, limit))
-        return SessionActivityWindow(
-            activities: Array(activities.suffix(visibleLimit)),
-            hiddenCount: activities.count - visibleLimit
-        )
-    }
 }
 
 actor SessionPagePresentationRenderer {
