@@ -56,6 +56,16 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "missing_event", message: "The ingest request has no event.")
                 }
+            case .ingestBatch:
+                let events = envelope.payload.events ?? []
+                var accepted = 0
+                for event in events {
+                    if try await repository.apply(event) {
+                        accepted += 1
+                        subscriptions.publish(event)
+                    }
+                }
+                payload = IPCResponse(status: accepted > 0 ? .accepted : .ok, acceptedCount: accepted)
             case .listSessions:
                 payload = IPCResponse(
                     status: .ok,
@@ -96,6 +106,22 @@ public actor DaemonService {
             case .clearHistory:
                 _ = try await repository.deleteAllSessions()
                 payload = IPCResponse(status: .ok)
+            case .getRolloutCursor:
+                if let path = envelope.payload.path {
+                    payload = IPCResponse(
+                        status: .ok,
+                        rolloutCursor: try await repository.rolloutCursor(path: path)
+                    )
+                } else {
+                    payload = failure(code: "missing_path", message: "The cursor request has no path.")
+                }
+            case .saveRolloutCursor:
+                if let cursor = envelope.payload.rolloutCursor {
+                    try await repository.saveRolloutCursor(cursor)
+                    payload = IPCResponse(status: .ok, rolloutCursor: cursor)
+                } else {
+                    payload = failure(code: "missing_cursor", message: "The cursor request has no cursor.")
+                }
             case let .unknown(operation):
                 payload = failure(code: "unknown_operation", message: "Unknown operation: \(operation)")
             }
@@ -116,7 +142,7 @@ public actor DaemonService {
         let sessions = try await repository.listSessions(limit: 10_000)
         let activeCount = sessions.filter {
             switch $0.lifecycle {
-            case .starting, .running, .waitingForInput: true
+            case .starting, .running, .waitingForInput, .compacting: true
             default: false
             }
         }.count
@@ -143,6 +169,7 @@ public actor DaemonService {
         for summary in summaries {
             var cursor: PaginationCursor?
             var timeline: [TimelineItem] = []
+            var turns: [TurnSummary] = []
             repeat {
                 guard let page = try await repository.sessionDetail(
                     id: summary.id,
@@ -150,9 +177,10 @@ public actor DaemonService {
                     limit: 500
                 ) else { break }
                 timeline.append(contentsOf: page.timeline)
+                turns = page.turns
                 cursor = page.nextCursor
             } while cursor != nil
-            result.append(SessionDetail(summary: summary, timeline: timeline))
+            result.append(SessionDetail(summary: summary, turns: turns, timeline: timeline))
         }
 
         return result

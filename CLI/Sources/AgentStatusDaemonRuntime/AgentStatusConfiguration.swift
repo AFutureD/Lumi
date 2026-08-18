@@ -7,19 +7,24 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     public let databasePath: String
     public let codexSessionsDirectory: URL
     public let rolloutPollIntervalSeconds: Double
+    /// The in-daemon rollout tailer is a fallback; the helper now reads the
+    /// transcript on every hook. Enable with `AGENT_STATUS_ROLLOUT_WATCHER=1`.
+    public let rolloutWatcherEnabled: Bool
 
     public init(
         supportDirectory: URL,
         socketPath: String,
         databasePath: String,
         codexSessionsDirectory: URL,
-        rolloutPollIntervalSeconds: Double = 2
+        rolloutPollIntervalSeconds: Double = 2,
+        rolloutWatcherEnabled: Bool = false
     ) {
         self.supportDirectory = supportDirectory
         self.socketPath = socketPath
         self.databasePath = databasePath
         self.codexSessionsDirectory = codexSessionsDirectory
         self.rolloutPollIntervalSeconds = rolloutPollIntervalSeconds
+        self.rolloutWatcherEnabled = rolloutWatcherEnabled
     }
 
     public static func `default`(
@@ -41,7 +46,10 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
                 homeDirectory: homeDirectory
             ),
             databasePath: databasePath,
-            codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true)
+            codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true),
+            rolloutWatcherEnabled: ["1", "true", "yes"].contains(
+                (environment["AGENT_STATUS_ROLLOUT_WATCHER"] ?? "").lowercased()
+            )
         )
     }
 

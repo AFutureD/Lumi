@@ -143,15 +143,18 @@ import Testing
     #expect(store.identity(for: SessionID("missing")) == nil)
 }
 
-@Test func rolloutRetainsReasoningAndWorldStateAsInternalContext() throws {
+@Test func rolloutMapsReasoningAndWorldStateToAgentDomain() throws {
     let adapter = CodexAdapter()
     let context = RolloutRecordContext(
         path: "/tmp/rollout.jsonl",
         byteOffset: 20,
         sessionID: SessionID("session-1")
     )
-    let reasoning = Data("""
+    let encryptedReasoning = Data("""
     {"timestamp":"2026-08-16T10:00:00Z","type":"response_item","payload":{"type":"reasoning","summary":["private"]}}
+    """.utf8)
+    let reasoning = Data("""
+    {"timestamp":"2026-08-16T10:00:00Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"Let me look"}}
     """.utf8)
     let worldState = Data("""
     {"timestamp":"2026-08-16T10:00:00Z","type":"world_state","payload":{"full":true,"state":{"secret":"private"}}}
@@ -160,6 +163,8 @@ import Testing
     {"timestamp":"2026-08-16T10:01:00Z","type":"world_state","payload":{"full":false,"state":{"environments":{"timezone":"UTC"}}}}
     """.utf8)
 
+    // The encrypted response item is a duplicate of `agent_reasoning`.
+    #expect(try adapter.events(fromRolloutLine: encryptedReasoning, context: context).isEmpty)
     let reasoningEvents = try adapter.events(fromRolloutLine: reasoning, context: context)
     let worldStateEvents = try adapter.events(fromRolloutLine: worldState, context: context)
     let worldStateDeltaEvents = try adapter.events(
@@ -171,13 +176,14 @@ import Testing
         )
     )
 
-    guard case let .internalContext(reasoningPayload)? = reasoningEvents.first?.timelineItem?.payload,
-          case let .internalContext(worldStatePayload)? = worldStateEvents.first?.timelineItem?.payload else {
-        Issue.record("Expected retained internal context payloads")
+    guard case let .reasoning(reasoningPayload)? = reasoningEvents.first?.timelineItem?.payload,
+          case let .context(worldStatePayload)? = worldStateEvents.first?.timelineItem?.payload else {
+        Issue.record("Expected reasoning and turn-context payloads")
         return
     }
-    #expect(reasoningPayload.kind == "reasoning")
+    #expect(reasoningPayload.text == "Let me look")
     #expect(worldStatePayload.kind == "world_state")
+    #expect(worldStatePayload.scope == .turn)
     #expect(worldStateEvents.first?.timelineItem?.id != worldStateDeltaEvents.first?.timelineItem?.id)
 }
 
@@ -192,13 +198,18 @@ import Testing
     )
     #expect(sessionEvents.first?.sessionID == SessionID("session-1"))
     #expect(sessionEvents.count == 3)
+    guard case .sessionMarker(let marker)? = sessionEvents.first?.timelineItem?.payload else {
+        Issue.record("Expected a session-started marker")
+        return
+    }
+    #expect(marker.kind == .sessionStarted)
     #expect(sessionEvents.contains {
         guard case let .modelConfiguration(configuration)? = $0.timelineItem?.payload else { return false }
         return configuration.provider == "openai" && configuration.clientVersion == "1.2.3"
     })
     #expect(sessionEvents.contains {
-        guard case .internalContext = $0.timelineItem?.payload else { return false }
-        return true
+        guard case let .context(context)? = $0.timelineItem?.payload else { return false }
+        return context.scope == .session && context.kind == "base_instructions"
     })
 
     let completionLine = Data("""
@@ -213,7 +224,14 @@ import Testing
         )
     )
     #expect(completionEvents.first?.lifecycle == .waitingForInput)
-    #expect(completionEvents.first?.timelineItem == nil)
+    #expect(completionEvents.first?.turnID == TurnID("turn-1"))
+    #expect(completionEvents.first?.turn?.outcome == .completed)
+    guard case let .turnEnd(turnEnd)? = completionEvents.first?.timelineItem?.payload else {
+        Issue.record("Expected a turn end item")
+        return
+    }
+    #expect(turnEnd.message == "not duplicated")
+    #expect(completionEvents.first?.timelineItem?.id == TimelineItemIDs.turnEnd(SessionID("session-1"), turnID: TurnID("turn-1")))
 }
 
 @Test func rolloutParsesTurnModelConfigurationAndContext() throws {
@@ -298,14 +316,14 @@ import Testing
     )
 
     guard case let .modelConfiguration(configuration)? = settingsEvents.first?.timelineItem?.payload,
-          case let .internalContext(internalContext)? = compactedEvents.first?.timelineItem?.payload else {
+          case let .context(compacted)? = compactedEvents.first?.timelineItem?.payload else {
         Issue.record("Expected thread settings and compacted context")
         return
     }
     #expect(configuration.model == "gpt-5.6")
     #expect(configuration.provider == "openai")
     #expect(configuration.reasoningEffort == "xhigh")
-    #expect(internalContext.kind == "compacted")
+    #expect(compacted.kind == "compacted")
 }
 
 @Test func rolloutParsesPlanSnapshot() throws {
@@ -332,7 +350,7 @@ import Testing
     #expect(plan.steps.map(\.status) == [.completed, .inProgress])
 }
 
-private struct FixedThreadIdentities: CodexThreadIdentityProviding {
+struct FixedThreadIdentities: CodexThreadIdentityProviding {
     let identities: [SessionID: CodexThreadIdentity]
 
     func identity(for sessionID: SessionID) -> CodexThreadIdentity? {

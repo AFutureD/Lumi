@@ -1,0 +1,232 @@
+import AgentStatusCore
+import AgentStatusTransport
+import Foundation
+import Testing
+@testable import AgentStatusCodex
+
+/// In-memory daemon stand-in with the daemon's reductions applied inline.
+final class MemoryDaemonPort: HelperDaemonPort, @unchecked Sendable {
+    private(set) var ingested: [AgentIngressEvent] = []
+    private var cursors: [String: RolloutCursor] = [:]
+    private var summaries: [SessionID: SessionSummary] = [:]
+    private var turnsBySession: [SessionID: [TurnID: TurnSummary]] = [:]
+    private var items: [SessionID: [TimelineItemID: TimelineItem]] = [:]
+    private var seen: Set<EventID> = []
+
+    func ingest(_ events: [AgentIngressEvent]) throws {
+        ingested.append(contentsOf: events)
+        for event in events where seen.insert(event.eventID).inserted {
+            summaries[event.sessionID] = SessionReduction.summary(applying: event, to: summaries[event.sessionID])
+            if let turnID = event.turnID ?? event.turn?.id,
+               let turn = TurnReduction.summary(applying: event, to: turnsBySession[event.sessionID]?[turnID]) {
+                turnsBySession[event.sessionID, default: [:]][turnID] = turn
+            }
+            if let item = event.timelineItem {
+                let existing = items[event.sessionID]?[item.id]
+                if existing == nil || item.occurredAt >= existing!.occurredAt {
+                    items[event.sessionID, default: [:]][item.id] = item
+                }
+            }
+        }
+    }
+
+    func rolloutCursor(path: String) throws -> RolloutCursor? { cursors[path] }
+    func saveRolloutCursor(_ cursor: RolloutCursor) throws { cursors[cursor.path] = cursor }
+
+    func turns(sessionID: SessionID) throws -> [TurnSummary] {
+        (turnsBySession[sessionID]?.values).map(Array.init)?.sorted { $0.startedAt < $1.startedAt } ?? []
+    }
+
+    func detail(_ sessionID: SessionID) -> SessionDetail? {
+        guard let summary = summaries[sessionID] else { return nil }
+        return SessionDetail(
+            summary: summary,
+            turns: (try? turns(sessionID: sessionID)) ?? [],
+            timeline: (items[sessionID]?.values).map(Array.init) ?? []
+        )
+    }
+}
+
+private func temporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("helper-pipeline-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+private func hook(_ fields: [String: Any]) -> Data {
+    try! JSONSerialization.data(withJSONObject: fields)
+}
+
+@Test func claudeHooksAndTranscriptFoldIntoOneTurnWithoutDuplicates() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "11111111-2222-3333-4444-555555555555"
+    let prompt = "prompt-aaaa"
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    let transcript = projectDir.appendingPathComponent("\(session).jsonl")
+
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+    let base: [String: Any] = [
+        "session_id": session, "transcript_path": transcript.path, "cwd": "/tmp/proj",
+        "permission_mode": "default", "prompt_id": prompt,
+    ]
+
+    // Turn 1: prompt hook before the transcript has flushed anything.
+    try "".write(to: transcript, atomically: true, encoding: .utf8)
+    var report = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "list files"]) { $1 }))
+    #expect(report.provider == .claude)
+    #expect(report.richSourcePath == transcript.path)
+
+    // Transcript catches up: user record + assistant thinking + tool_use.
+    let lines: [[String: Any]] = [
+        ["type": "user", "uuid": "u1", "sessionId": session, "promptId": prompt, "timestamp": "2026-08-18T14:35:28.342Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "list files\n\n<system-reminder>be brief</system-reminder>"]],
+        ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-08-18T14:35:30.000Z",
+         "message": ["role": "assistant", "model": "claude-opus-4-7", "content": [
+            ["type": "thinking", "thinking": "I should run ls"],
+            ["type": "tool_use", "id": "toolu_1", "name": "Bash", "input": ["command": "ls"]],
+         ], "usage": ["input_tokens": 6, "cache_read_input_tokens": 100, "output_tokens": 20]]],
+    ]
+    try lines.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n").appending("\n")
+        .write(to: transcript, atomically: true, encoding: .utf8)
+    report = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": "toolu_1", "tool_input": ["command": "ls"]]) { $1 }))
+    #expect(report.richSourceLinesRead == 2)
+
+    // Result lands in transcript, then PostToolUse + Stop hooks.
+    let more: [[String: Any]] = [
+        ["type": "user", "uuid": "u2", "sessionId": session, "timestamp": "2026-08-18T14:35:31.000Z",
+         "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "toolu_1", "content": "a\nb", "is_error": false]]],
+         "toolUseResult": ["stdout": "a\nb"]],
+        ["type": "assistant", "uuid": "a2", "sessionId": session, "timestamp": "2026-08-18T14:35:33.000Z",
+         "message": ["role": "assistant", "model": "claude-opus-4-7", "content": [["type": "text", "text": "Two files."]]]],
+    ]
+    let handle = try FileHandle(forWritingTo: transcript)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data((more.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n") + "\n").utf8))
+    try handle.close()
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_use_id": "toolu_1", "tool_response": ["stdout": "a\nb"]]) { $1 }))
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop", "last_assistant_message": "Two files."]) { $1 }))
+
+    let detail = try #require(port.detail(SessionID(session)))
+    #expect(detail.summary.agent == .claude)
+    #expect(detail.summary.lifecycle == .waitingForInput)
+    #expect(detail.turns.count == 1)
+    let turn = detail.turns[0]
+    #expect(turn.id == TurnID(prompt))
+    #expect(turn.prompt == "list files")
+    #expect(turn.outcome == .completed)
+    #expect(turn.toolCallCount == 1)
+
+    let rows = TimelineProjection.rows(from: detail.timeline)
+    let tags = rows.map(\.tag)
+    #expect(tags == [.user, .context, .reasoning, .tool, .result, .assistant, .turnEnd] || tags == [.context, .user, .reasoning, .tool, .result, .assistant, .turnEnd])
+    #expect(rows.filter { $0.tag == .tool }.count == 1)
+    #expect(rows.filter { $0.tag == .result }.count == 1)
+    #expect(rows.first { $0.tag == .result }?.toolUseID == "toolu_1")
+    #expect(rows.first { $0.tag == .result }?.text.hasPrefix("Bash") == true)
+    #expect(rows.first { $0.tag == .assistant }?.status == .succeeded)
+    #expect(rows.allSatisfy { $0.tag == .context || $0.turnID == TurnID(prompt) })
+
+    // Nothing new: cursor at end, no extra events beyond the hook.
+    let before = port.ingested.count
+    let idle = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_use_id": "toolu_1"]) { $1 }))
+    #expect(idle.richSourceLinesRead == 0)
+    #expect(port.ingested.count == before + 1)
+}
+
+@Test func codexHooksAndRolloutFoldIntoTurnWithToolPairs() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "01a01326-61da-7b30-8555-2b71d86d5ab4"
+    let day = home.appendingPathComponent(".codex/sessions/2026/08/18", isDirectory: true)
+    try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+    let rollout = day.appendingPathComponent("rollout-2026-08-18T12-34-37-\(session).jsonl")
+
+    let records: [[String: Any]] = [
+        ["timestamp": "2026-08-18T04:34:37.000Z", "type": "session_meta", "payload": ["id": session, "cwd": "/tmp/proj", "model_provider": "openai", "cli_version": "0.9", "base_instructions": "be good"]],
+        ["timestamp": "2026-08-18T04:35:00.000Z", "type": "turn_context", "payload": ["turn_id": "turn-1", "model": "gpt-5", "effort": "high", "cwd": "/tmp/proj"]],
+        ["timestamp": "2026-08-18T04:35:01.000Z", "type": "event_msg", "payload": ["type": "task_started", "turn_id": "turn-1"]],
+        ["timestamp": "2026-08-18T04:35:01.500Z", "type": "event_msg", "payload": ["type": "user_message", "message": "fix the bug"]],
+        ["timestamp": "2026-08-18T04:35:05.000Z", "type": "event_msg", "payload": ["type": "agent_reasoning", "text": "Looking at the code"]],
+        ["timestamp": "2026-08-18T04:35:10.000Z", "type": "response_item", "payload": ["type": "custom_tool_call", "call_id": "call_1", "name": "exec", "input": "ls -la"]],
+        ["timestamp": "2026-08-18T04:35:11.000Z", "type": "response_item", "payload": ["type": "custom_tool_call_output", "call_id": "call_1", "output": "{\"output\":\"total 0\",\"metadata\":{\"exit_code\":0}}"]],
+        ["timestamp": "2026-08-18T04:35:12.000Z", "type": "response_item", "payload": ["type": "function_call", "call_id": "call_2", "name": "shell", "arguments": "{\"command\":[\"false\"]}"]],
+        ["timestamp": "2026-08-18T04:35:13.000Z", "type": "response_item", "payload": ["type": "function_call_output", "call_id": "call_2", "output": "{\"output\":\"\",\"metadata\":{\"exit_code\":1}}"]],
+        ["timestamp": "2026-08-18T04:35:20.000Z", "type": "event_msg", "payload": ["type": "agent_message", "message": "Fixed it."]],
+        ["timestamp": "2026-08-18T04:35:21.000Z", "type": "event_msg", "payload": ["type": "task_complete", "turn_id": "turn-1", "last_agent_message": "Fixed it."]],
+    ]
+    try records.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n").appending("\n")
+        .write(to: rollout, atomically: true, encoding: .utf8)
+
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(
+        port: port,
+        environment: ["CODEX_HOME": home.appendingPathComponent(".codex").path],
+        homeDirectory: home,
+        codexAdapter: CodexAdapter(threads: FixedThreadIdentities(identities: [:]))
+    )
+    let base: [String: Any] = ["session_id": session, "turn_id": "turn-1", "cwd": "/tmp/proj"]
+    let report = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop", "last_assistant_message": "Fixed it."]) { $1 }))
+    #expect(report.provider == .codex)
+    #expect(report.richSourcePath == rollout.path)
+    #expect(report.richSourceLinesRead == records.count)
+
+    let detail = try #require(port.detail(SessionID(session)))
+    #expect(detail.summary.workspace == "/tmp/proj")
+    #expect(detail.turns.count == 1)
+    #expect(detail.turns[0].id == TurnID("turn-1"))
+    #expect(detail.turns[0].prompt == "fix the bug")
+    #expect(detail.turns[0].outcome == .completed)
+    #expect(detail.turns[0].toolCallCount == 2)
+
+    let rows = TimelineProjection.rows(from: detail.timeline)
+    #expect(rows.map(\.tag) == [.session, .contextGroup, .context, .user, .reasoning, .tool, .result, .tool, .failed, .assistant, .turnEnd])
+    #expect(rows[0].spansLanes)
+    #expect(rows[1].count == 1)          // base instructions (model configuration is header metadata)
+    #expect(rows[5].toolUseID == "call_1" && rows[6].toolUseID == "call_1")
+    #expect(rows[6].text.contains("exec"))
+    #expect(rows[8].tag == .failed && rows[8].toolUseID == "call_2")
+    #expect(rows[9].status == .succeeded)
+    #expect(rows.dropFirst(2).allSatisfy { $0.turnID == TurnID("turn-1") })
+
+    // Cursor persisted at end of file; a second read is empty.
+    let cursor = try #require(try port.rolloutCursor(path: rollout.path))
+    #expect(cursor.byteOffset == cursor.fileSize)
+    #expect(try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop"]) { $1 })).richSourceLinesRead == 0)
+}
+
+@Test func providerDetectionPrefersExplicitThenHeuristics() {
+    #expect(HelperIngestPipeline.provider(for: ["turn_id": "t"], selection: .claude, environment: [:]) == .claude)
+    #expect(HelperIngestPipeline.provider(for: [:], selection: .auto, environment: ["CLAUDE_PROJECT_DIR": "/x"]) == .claude)
+    #expect(HelperIngestPipeline.provider(for: ["transcript_path": "/Users/x/.claude/projects/a/b.jsonl"], selection: .auto, environment: [:]) == .claude)
+    #expect(HelperIngestPipeline.provider(for: ["turn_id": "t"], selection: .auto, environment: [:]) == .codex)
+    #expect(HelperIngestPipeline.provider(for: [:], selection: .auto, environment: [:]) == .codex)
+}
+
+@Test func hookOnlyModeEmitsToolAndPromptItems() throws {
+    let events = try ClaudeAdapter().events(fromHookData: hook([
+        "session_id": "s", "prompt_id": "p", "hook_event_name": "PreToolUse",
+        "tool_name": "Edit", "tool_use_id": "tu", "tool_input": ["file_path": "/a/b.swift"],
+    ]), options: .hookOnly)
+    #expect(events.count == 1)
+    guard case let .tool(tool)? = events[0].timelineItem?.payload else {
+        Issue.record("expected tool item"); return
+    }
+    #expect(tool.name == "Edit" && tool.toolUseID == "tu" && tool.summary == "/a/b.swift")
+    #expect(events[0].timelineItem?.id == TimelineItemIDs.toolCall(SessionID("s"), toolUseID: "tu"))
+
+    let rich = try ClaudeAdapter().events(fromHookData: hook([
+        "session_id": "s", "prompt_id": "p", "hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_use_id": "tu",
+    ]), options: .withRichSource)
+    #expect(rich[0].timelineItem == nil)
+    #expect(rich[0].phase == .executing)
+
+    let permission = try CodexAdapter(threads: FixedThreadIdentities(identities: [:])).events(fromHookData: hook([
+        "session_id": "s", "turn_id": "t", "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+    ]))
+    #expect(permission[0].timelineItem == nil)
+    #expect(permission[0].lifecycle == .waitingForInput && permission[0].phase == .waitingForApproval)
+}

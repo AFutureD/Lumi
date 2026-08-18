@@ -170,7 +170,7 @@ import Testing
     let watcher = CodexRolloutWatcher(rootDirectory: directory, repository: repository)
     await watcher.scanOnce()
     let firstDetail = try await repository.sessionDetail(id: SessionID("session-1"), cursor: nil, limit: 100)
-    #expect(firstDetail?.timeline.count == 1)
+    #expect(firstDetail?.timeline.count == 2)   // session-started marker + user prompt
 
     let handle = try FileHandle(forWritingTo: rollout)
     try handle.seekToEnd()
@@ -182,7 +182,7 @@ import Testing
 
     await watcher.scanOnce()
     let secondDetail = try await repository.sessionDetail(id: SessionID("session-1"), cursor: nil, limit: 100)
-    #expect(secondDetail?.timeline.count == 2)
+    #expect(secondDetail?.timeline.count == 3)
 }
 
 @Test func rolloutWatcherSkipsForkedParentHistoryUntilSubagentTrigger() async throws {

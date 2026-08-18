@@ -39,8 +39,11 @@ let package = Package(
         .executableTarget(
             name: "AgentStatusHelper",
             dependencies: [
+                .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "NIOCore", package: "swift-nio"),
             ]
         ),
         .testTarget(

@@ -3,6 +3,8 @@ import AgentStatusTransport
 import CryptoKit
 import Foundation
 
+/// Reduces Codex hook payloads and rollout JSONL records into Agent-domain
+/// events (`AgentIngressEvent`: lifecycle, phase, turn, timeline item).
 public struct CodexAdapter: AgentAdapter {
     public let agentKind: AgentKind = .codex
     private let threads: any CodexThreadIdentityProviding
@@ -13,7 +15,9 @@ public struct CodexAdapter: AgentAdapter {
         self.threads = threads
     }
 
-    public func events(fromHookData data: Data) throws -> [AgentIngressEvent] {
+    // MARK: - Hooks
+
+    public func events(fromHookData data: Data, options: HookIngestOptions) throws -> [AgentIngressEvent] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw AgentAdapterError.malformedJSON
         }
@@ -26,18 +30,21 @@ public struct CodexAdapter: AgentAdapter {
         let turnID = root.string("turn_id").map(TurnID.init)
         let occurredAt = root.date("timestamp") ?? Date()
         let eventID = EventID(Self.digest(data: data, prefix: "hook:"))
-        let timelineID = TimelineItemID(eventID.rawValue + ":timeline")
         let workspace = root.string("cwd")
+        let model = root.string("model")
         let threadIdentity = threads.identity(for: sessionID)
+        let rich = options.richSourceAvailable
 
         func event(
             lifecycle: SessionLifecycle? = nil,
             phase: TurnPhase? = nil,
-            timeline: TimelinePayload? = nil
+            turn: TurnSummary? = nil,
+            timeline: TimelinePayload? = nil,
+            itemID: TimelineItemID? = nil
         ) -> AgentIngressEvent {
             let item = timeline.map {
                 TimelineItem(
-                    id: timelineID,
+                    id: itemID ?? TimelineItemID(eventID.rawValue + ":timeline"),
                     sessionID: sessionID,
                     turnID: turnID,
                     occurredAt: occurredAt,
@@ -54,90 +61,169 @@ public struct CodexAdapter: AgentAdapter {
                 workspace: workspace,
                 lifecycle: lifecycle,
                 phase: phase,
+                turn: turn,
                 timelineItem: item,
                 lineage: threadIdentity?.lineage
             )
         }
 
-        return switch eventName {
+        func turnUpdate(
+            phase: TurnPhase,
+            prompt: String? = nil,
+            endedAt: Date? = nil,
+            outcome: TurnOutcome? = nil,
+            lastAssistantMessage: String? = nil
+        ) -> TurnSummary? {
+            guard let turnID else { return nil }
+            return TurnSummary(
+                id: turnID,
+                sessionID: sessionID,
+                phase: phase,
+                prompt: prompt,
+                startedAt: occurredAt,
+                endedAt: endedAt,
+                outcome: outcome,
+                lastAssistantMessage: lastAssistantMessage
+            )
+        }
+
+        let toolName = root.string("tool_name") ?? "Tool"
+        let toolUseID = root.string("tool_use_id")
+
+        switch eventName {
         case "SessionStart":
-            [event(lifecycle: .starting, phase: .idle)]
+            return [event(
+                lifecycle: .starting,
+                phase: .idle,
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(
+                    kind: .sessionStarted,
+                    detail: root.string("source"),
+                    model: model
+                )),
+                itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted)
+            )]
+
         case "UserPromptSubmit":
-            [event(
+            let prompt = root.string("prompt")
+            return [event(
                 lifecycle: .running,
                 phase: .thinking,
-                timeline: root.string("prompt").map {
-                    .message(MessageTimelinePayload(role: .user, text: $0))
-                }
+                turn: turnUpdate(phase: .thinking, prompt: prompt),
+                timeline: rich ? nil : prompt.map { .message(MessageTimelinePayload(role: .user, text: $0)) },
+                itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) }
             )]
+
         case "PreToolUse":
-            [event(
+            return [event(
                 lifecycle: .running,
                 phase: .executing,
-                timeline: .tool(ToolTimelinePayload(
-                    name: root.string("tool_name") ?? "Tool",
-                    status: .started
-                ))
+                timeline: rich ? nil : .tool(ToolTimelinePayload(
+                    name: toolName,
+                    summary: AdapterText.summary(ofToolInput: root["tool_input"]),
+                    status: .started,
+                    toolUseID: toolUseID
+                )),
+                itemID: toolUseID.map { TimelineItemIDs.toolCall(sessionID, toolUseID: $0) }
             )]
+
         case "PostToolUse":
-            [event(
+            let response = root.dictionary("tool_response") ?? root
+            let failed = response.containsFailure || root.containsFailure
+            return [event(
                 lifecycle: .running,
-                phase: .responding,
-                timeline: .tool(ToolTimelinePayload(
-                    name: root.string("tool_name") ?? "Tool",
-                    status: root.containsFailure ? .failed : .succeeded
-                ))
+                phase: .thinking,
+                timeline: rich ? nil : .tool(ToolTimelinePayload(
+                    name: toolName,
+                    summary: AdapterText.excerpt(Self.responseText(root["tool_response"])),
+                    status: failed ? .failed : .succeeded,
+                    toolUseID: toolUseID
+                )),
+                itemID: toolUseID.map { TimelineItemIDs.toolResult(sessionID, toolUseID: $0) }
             )]
+
         case "PermissionRequest":
-            [event(
-                lifecycle: .waitingForInput,
-                phase: .waitingForApproval,
-                timeline: .tool(ToolTimelinePayload(
-                    name: root.string("tool_name") ?? "Tool",
-                    summary: "Waiting for approval",
-                    status: .started
-                ))
-            )]
+            // Permission requests never enter the Timeline; they only mark
+            // the session as waiting on the human.
+            return [event(lifecycle: .waitingForInput, phase: .waitingForApproval)]
+
         case "SubagentStart":
-            [event(
+            let agentID = root.string("agent_id") ?? eventID.rawValue
+            return [event(
                 lifecycle: .running,
-                phase: .executing,
+                phase: .subagentRunning,
                 timeline: .subagent(SubagentTimelinePayload(
                     name: root.string("agent_type") ?? "Subagent",
                     agentSessionID: root.string("agent_id"),
                     status: .started
-                ))
+                )),
+                itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "started")
             )]
+
         case "SubagentStop":
-            [event(
+            let agentID = root.string("agent_id") ?? eventID.rawValue
+            return [event(
                 lifecycle: .running,
-                phase: .responding,
+                phase: .thinking,
                 timeline: .subagent(SubagentTimelinePayload(
                     name: root.string("agent_type") ?? "Subagent",
                     agentSessionID: root.string("agent_id"),
                     status: .completed
-                ))
+                )),
+                itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "stopped")
             )]
+
         case "Stop":
-            [event(
+            let last = root.string("last_assistant_message")
+            return [event(
                 lifecycle: .waitingForInput,
                 phase: .idle,
-                timeline: root.string("last_assistant_message").map {
-                    .message(MessageTimelinePayload(role: .assistant, text: $0))
-                }
+                turn: turnUpdate(phase: .idle, endedAt: occurredAt, outcome: .completed, lastAssistantMessage: last),
+                timeline: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: last)),
+                itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
             )]
+
         case "SessionEnd":
-            [event(lifecycle: .completed, phase: .idle)]
-        case "PreCompact", "PostCompact":
-            [event(lifecycle: .running)]
+            return [event(
+                lifecycle: .completed,
+                phase: .idle,
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(
+                    kind: .sessionEnded,
+                    detail: root.string("reason")
+                )),
+                itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionEnded)
+            )]
+
+        case "PreCompact":
+            return [event(
+                lifecycle: .compacting,
+                phase: .compacting,
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(
+                    kind: .compactionStarted,
+                    detail: root.string("trigger")
+                ))
+            )]
+
+        case "PostCompact":
+            return [event(
+                lifecycle: .running,
+                phase: .thinking,
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(
+                    kind: .compactionEnded,
+                    detail: root.string("trigger")
+                ))
+            )]
+
         default:
-            []
+            return []
         }
     }
 
+    // MARK: - Rollout JSONL
+
     public func events(
         fromRolloutLine data: Data,
-        context: RolloutRecordContext
+        context: RolloutRecordContext,
+        state: inout RolloutReadState
     ) throws -> [AgentIngressEvent] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let recordType = root.string("type"),
@@ -157,15 +243,26 @@ public struct CodexAdapter: AgentAdapter {
             }
             let sessionID = SessionID(rawID)
             let threadIdentity = threads.identity(for: sessionID)
+            let agent = threadIdentity?.agentKind ?? .codex
             var events = [AgentIngressEvent(
                 eventID: EventID(stableID),
                 sessionID: sessionID,
-                agent: threadIdentity?.agentKind ?? .codex,
+                agent: agent,
                 occurredAt: occurredAt,
                 title: threadIdentity?.displayTitle,
                 workspace: payload.string("cwd"),
                 lifecycle: .starting,
                 phase: .idle,
+                timelineItem: TimelineItem(
+                    id: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted),
+                    sessionID: sessionID,
+                    occurredAt: occurredAt,
+                    payload: .sessionMarker(SessionMarkerTimelinePayload(
+                        kind: .sessionStarted,
+                        detail: payload.string("thread_source") ?? payload.string("source").flatMap { $0.isEmpty ? nil : $0 },
+                        model: nil
+                    ))
+                ),
                 lineage: threadIdentity?.lineage
             )]
 
@@ -177,15 +274,16 @@ public struct CodexAdapter: AgentAdapter {
                 events.append(AgentIngressEvent(
                     eventID: EventID(stableID + ":model_configuration"),
                     sessionID: sessionID,
-                    agent: threadIdentity?.agentKind ?? .codex,
+                    agent: agent,
                     occurredAt: occurredAt,
                     timelineItem: TimelineItem(
-                        id: TimelineItemID("diagnostic:\(sessionID.rawValue):model_configuration:session_meta"),
+                        id: TimelineItemIDs.diagnostic(sessionID, key: "model_configuration:session_meta"),
                         sessionID: sessionID,
                         occurredAt: occurredAt,
                         payload: .modelConfiguration(ModelConfigurationTimelinePayload(
                             source: "session_meta",
                             provider: payload.string("model_provider"),
+                            contextWindow: payload.int64("context_window"),
                             clientVersion: payload.string("cli_version"),
                             settings: settings
                         ))
@@ -195,16 +293,18 @@ public struct CodexAdapter: AgentAdapter {
 
             if let baseInstructions = payload.jsonValue("base_instructions") {
                 events.append(AgentIngressEvent(
-                    eventID: EventID(stableID + ":internal_context:base_instructions"),
+                    eventID: EventID(stableID + ":context:base_instructions"),
                     sessionID: sessionID,
-                    agent: threadIdentity?.agentKind ?? .codex,
+                    agent: agent,
                     occurredAt: occurredAt,
                     timelineItem: TimelineItem(
-                        id: TimelineItemID("diagnostic:\(sessionID.rawValue):internal_context:base_instructions"),
+                        id: TimelineItemIDs.diagnostic(sessionID, key: "context:base_instructions"),
                         sessionID: sessionID,
                         occurredAt: occurredAt,
-                        payload: .internalContext(InternalContextTimelinePayload(
+                        payload: .context(ContextTimelinePayload(
+                            scope: .session,
                             kind: "base_instructions",
+                            summary: "Base instructions",
                             content: baseInstructions
                         ))
                     )
@@ -214,22 +314,28 @@ public struct CodexAdapter: AgentAdapter {
         }
 
         guard let sessionID = context.sessionID else { return [] }
-        let turnID = payload.string("turn_id").map(TurnID.init)
+        if let explicitTurn = payload.string("turn_id"), !explicitTurn.isEmpty {
+            state.currentTurnID = TurnID(explicitTurn)
+        }
+        let turnID = state.currentTurnID
         let threadIdentity = threads.identity(for: sessionID)
+        let agent = threadIdentity?.agentKind ?? .codex
 
         func makeEvent(
             lifecycle: SessionLifecycle? = nil,
             phase: TurnPhase? = nil,
+            turn: TurnSummary? = nil,
             timeline: TimelinePayload? = nil,
             suffix: String = "",
+            itemID: TimelineItemID? = nil,
             diagnosticKey: String? = nil
         ) -> AgentIngressEvent {
             let eventID = EventID(stableID + suffix)
             let timelineItem = timeline.map {
                 TimelineItem(
-                    id: diagnosticKey.map {
-                        TimelineItemID("diagnostic:\(sessionID.rawValue):\($0)")
-                    } ?? TimelineItemID(eventID.rawValue + ":timeline"),
+                    id: itemID
+                        ?? diagnosticKey.map { TimelineItemIDs.diagnostic(sessionID, key: $0) }
+                        ?? TimelineItemID(eventID.rawValue + ":timeline"),
                     sessionID: sessionID,
                     turnID: turnID,
                     occurredAt: occurredAt,
@@ -240,13 +346,49 @@ public struct CodexAdapter: AgentAdapter {
                 eventID: eventID,
                 sessionID: sessionID,
                 turnID: turnID,
-                agent: threadIdentity?.agentKind ?? .codex,
+                agent: agent,
                 occurredAt: occurredAt,
                 title: threadIdentity?.displayTitle,
                 lifecycle: lifecycle,
                 phase: phase,
+                turn: turn,
                 timelineItem: timelineItem,
                 lineage: threadIdentity?.lineage
+            )
+        }
+
+        func toolCall(name: String, callID: String?, input: Any?) -> AgentIngressEvent {
+            if let callID {
+                state.toolNames[callID] = name
+                state.openToolUseIDs.append(callID)
+            }
+            return makeEvent(
+                lifecycle: .running,
+                phase: .executing,
+                timeline: .tool(ToolTimelinePayload(
+                    name: name,
+                    summary: AdapterText.summary(ofToolInput: input),
+                    status: .started,
+                    toolUseID: callID
+                )),
+                itemID: callID.map { TimelineItemIDs.toolCall(sessionID, toolUseID: $0) }
+            )
+        }
+
+        func toolResult(name: String?, callID: String?, failed: Bool, output: String?, duration: Int64?) -> AgentIngressEvent {
+            let resolvedName = name ?? callID.flatMap { state.toolNames[$0] } ?? "Tool"
+            if let callID { state.openToolUseIDs.removeAll { $0 == callID } }
+            return makeEvent(
+                lifecycle: .running,
+                phase: .thinking,
+                timeline: .tool(ToolTimelinePayload(
+                    name: resolvedName,
+                    summary: AdapterText.excerpt(output),
+                    status: failed ? .failed : .succeeded,
+                    durationMilliseconds: duration,
+                    toolUseID: callID
+                )),
+                itemID: callID.map { TimelineItemIDs.toolResult(sessionID, toolUseID: $0) }
             )
         }
 
@@ -274,13 +416,17 @@ public struct CodexAdapter: AgentAdapter {
                 ))
             }
             if let content = try? JSONValue(jsonObject: payload) {
+                let summary = [payload.string("model"), payload.string("effort"), payload.string("cwd")]
+                    .compactMap { $0 }.joined(separator: " · ")
                 events.append(makeEvent(
-                    timeline: .internalContext(InternalContextTimelinePayload(
+                    timeline: .context(ContextTimelinePayload(
+                        scope: .turn,
                         kind: "turn_context",
+                        summary: summary.isEmpty ? nil : summary,
                         content: content
                     )),
-                    suffix: ":internal_context",
-                    diagnosticKey: "internal_context:turn_context"
+                    suffix: ":context",
+                    diagnosticKey: turnID.map { "context:turn_context:\($0.rawValue)" } ?? "context:turn_context"
                 ))
             }
             return events
@@ -291,34 +437,47 @@ public struct CodexAdapter: AgentAdapter {
             let diagnosticKey: String
             if recordType == "world_state" {
                 if payload.bool("full") == true {
-                    diagnosticKey = "internal_context:world_state:full"
+                    diagnosticKey = "context:world_state:full"
                 } else {
                     let stateKeys = payload.dictionary("state")?.keys.sorted().joined(separator: ",") ?? "unknown"
                     let keyDigest = Self.digest(data: Data(stateKeys.utf8), prefix: "")
-                    diagnosticKey = "internal_context:world_state:delta:\(keyDigest)"
+                    diagnosticKey = "context:world_state:delta:\(keyDigest)"
                 }
             } else {
-                diagnosticKey = "internal_context:compacted"
+                diagnosticKey = "context:compacted:\(context.byteOffset)"
             }
             return [makeEvent(
-                timeline: .internalContext(InternalContextTimelinePayload(
+                timeline: .context(ContextTimelinePayload(
+                    scope: .turn,
                     kind: recordType,
+                    summary: recordType == "compacted" ? "Compaction summary" : "World state",
                     content: content
                 )),
-                suffix: ":internal_context",
+                suffix: ":context",
                 diagnosticKey: diagnosticKey
             )]
         }
 
         if recordType == "event_msg", let type = payload.string("type") {
             switch type {
+            case "task_started":
+                let turn = turnID.map {
+                    TurnSummary(id: $0, sessionID: sessionID, phase: .thinking, startedAt: occurredAt)
+                }
+                return [makeEvent(lifecycle: .running, phase: .thinking, turn: turn)]
+
             case "user_message":
                 guard let message = payload.string("message"), !message.isEmpty else { return [] }
                 return [makeEvent(
                     lifecycle: .running,
                     phase: .thinking,
-                    timeline: .message(MessageTimelinePayload(role: .user, text: message))
+                    turn: turnID.map {
+                        TurnSummary(id: $0, sessionID: sessionID, phase: .thinking, prompt: message, startedAt: occurredAt)
+                    },
+                    timeline: .message(MessageTimelinePayload(role: .user, text: message)),
+                    itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) }
                 )]
+
             case "agent_message":
                 guard let message = payload.string("message"), !message.isEmpty else { return [] }
                 return [makeEvent(
@@ -326,18 +485,27 @@ public struct CodexAdapter: AgentAdapter {
                     phase: .responding,
                     timeline: .message(MessageTimelinePayload(role: .assistant, text: message))
                 )]
-            case "task_started":
-                return [makeEvent(lifecycle: .running, phase: .thinking)]
-            case "agent_reasoning", "context_compacted":
+
+            case "agent_reasoning":
+                guard let text = payload.string("text"), !text.isEmpty else { return [] }
+                return [makeEvent(
+                    lifecycle: .running,
+                    phase: .thinking,
+                    timeline: .reasoning(ReasoningTimelinePayload(text: text))
+                )]
+
+            case "context_compacted":
                 guard let content = try? JSONValue(jsonObject: payload) else { return [] }
                 return [makeEvent(
-                    timeline: .internalContext(InternalContextTimelinePayload(
+                    timeline: .context(ContextTimelinePayload(
+                        scope: .turn,
                         kind: type,
+                        summary: "Context compacted",
                         content: content
                     )),
-                    suffix: ":internal_context",
-                    diagnosticKey: "internal_context:\(type)"
+                    suffix: ":context"
                 )]
+
             case "thread_settings_applied":
                 guard let settingsDictionary = payload.dictionary("thread_settings"),
                       let settings = try? JSONValue(jsonObject: settingsDictionary) else { return [] }
@@ -352,6 +520,7 @@ public struct CodexAdapter: AgentAdapter {
                     suffix: ":model_configuration",
                     diagnosticKey: "model_configuration:thread_settings"
                 )]
+
             case "token_count":
                 let info = payload.dictionary("info")
                 let last = info?.dictionary("last_token_usage").map(TokenUsage.init(codexPayload:))
@@ -370,97 +539,99 @@ public struct CodexAdapter: AgentAdapter {
                     suffix: ":usage_metrics",
                     diagnosticKey: "usage_metrics"
                 )]
+
             case "task_complete":
+                let last = payload.string("last_agent_message")
                 if let error = payload.string("error"), !error.isEmpty {
                     return [makeEvent(
                         lifecycle: .failed,
                         phase: .idle,
-                        timeline: .error(ErrorTimelinePayload(
-                            title: "Codex turn failed",
-                            message: error,
-                            recoverable: true
-                        ))
+                        turn: turnID.map {
+                            TurnSummary(id: $0, sessionID: sessionID, phase: .idle, startedAt: occurredAt, endedAt: occurredAt, outcome: .failed)
+                        },
+                        timeline: .turnEnd(TurnEndTimelinePayload(outcome: .failed, message: error)),
+                        itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
                     )]
                 }
-                return [makeEvent(lifecycle: .waitingForInput, phase: .idle)]
+                return [makeEvent(
+                    lifecycle: .waitingForInput,
+                    phase: .idle,
+                    turn: turnID.map {
+                        TurnSummary(id: $0, sessionID: sessionID, phase: .idle, startedAt: occurredAt, endedAt: occurredAt, outcome: .completed, lastAssistantMessage: last)
+                    },
+                    timeline: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: last)),
+                    itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
+                )]
+
             case "turn_aborted":
                 return [makeEvent(
                     lifecycle: .interrupted,
                     phase: .idle,
-                    timeline: .error(ErrorTimelinePayload(
-                        title: "Turn interrupted",
-                        message: payload.string("reason") ?? "The Codex turn was interrupted.",
-                        recoverable: true
-                    ))
+                    turn: turnID.map {
+                        TurnSummary(id: $0, sessionID: sessionID, phase: .idle, startedAt: occurredAt, endedAt: occurredAt, outcome: .aborted)
+                    },
+                    timeline: .turnEnd(TurnEndTimelinePayload(
+                        outcome: .aborted,
+                        message: payload.string("reason") ?? "The Codex turn was interrupted."
+                    )),
+                    itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
                 )]
+
             case "exec_command_begin":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .executing,
-                    timeline: .tool(ToolTimelinePayload(name: "Shell command", status: .started))
-                )]
+                let command = (payload.array("command") as? [String])?.joined(separator: " ")
+                    ?? payload.string("command")
+                return [toolCall(name: "Shell command", callID: payload.string("call_id"), input: command)]
+
             case "exec_command_end":
-                let succeeded = (payload.int("exit_code") ?? 0) == 0
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .responding,
-                    timeline: .tool(ToolTimelinePayload(
-                        name: "Shell command",
-                        status: succeeded ? .succeeded : .failed,
-                        durationMilliseconds: payload.durationMilliseconds
-                    ))
+                let exitCode = payload.int("exit_code") ?? 0
+                return [toolResult(
+                    name: nil,
+                    callID: payload.string("call_id"),
+                    failed: exitCode != 0,
+                    output: payload.string("formatted_output") ?? payload.string("aggregated_output") ?? payload.string("stdout") ?? (exitCode == 0 ? nil : payload.string("stderr")),
+                    duration: payload.durationMilliseconds
                 )]
+
             case "patch_apply_begin":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .executing,
-                    timeline: .tool(ToolTimelinePayload(name: "Apply patch", status: .started))
-                )]
+                return [toolCall(name: "Apply patch", callID: payload.string("call_id"), input: payload.dictionary("changes")?.keys.sorted().joined(separator: ", "))]
+
             case "patch_apply_end":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .responding,
-                    timeline: .tool(ToolTimelinePayload(
-                        name: "Apply patch",
-                        status: payload.bool("success") == false ? .failed : .succeeded,
-                        durationMilliseconds: payload.durationMilliseconds
-                    ))
+                return [toolResult(
+                    name: nil,
+                    callID: payload.string("call_id"),
+                    failed: payload.bool("success") == false,
+                    output: payload.string("stdout") ?? payload.string("stderr"),
+                    duration: payload.durationMilliseconds
                 )]
+
             case "dynamic_tool_call_request":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .executing,
-                    timeline: .tool(ToolTimelinePayload(
-                        name: payload.string("tool") ?? "Tool",
-                        status: .started
-                    ))
-                )]
+                return [toolCall(name: payload.string("tool") ?? "Tool", callID: payload.string("call_id"), input: payload["arguments"] ?? payload["input"])]
+
             case "dynamic_tool_call_response":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .responding,
-                    timeline: .tool(ToolTimelinePayload(
-                        name: payload.string("tool") ?? "Tool",
-                        status: payload.bool("success") == false ? .failed : .succeeded,
-                        durationMilliseconds: payload.durationMilliseconds
-                    ))
+                return [toolResult(
+                    name: payload.string("tool"),
+                    callID: payload.string("call_id"),
+                    failed: payload.bool("success") == false,
+                    output: Self.responseText(payload["output"] ?? payload["result"]),
+                    duration: payload.durationMilliseconds
                 )]
+
             case "mcp_tool_call_begin":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .executing,
-                    timeline: .tool(ToolTimelinePayload(name: "MCP tool", status: .started))
-                )]
+                let invocation = payload.dictionary("invocation")
+                let name = [invocation?.string("server"), invocation?.string("tool")].compactMap { $0 }.joined(separator: "/")
+                return [toolCall(name: name.isEmpty ? "MCP tool" : name, callID: payload.string("call_id"), input: invocation?["arguments"])]
+
             case "mcp_tool_call_end":
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .responding,
-                    timeline: .tool(ToolTimelinePayload(
-                        name: payload.dictionary("invocation")?.string("tool") ?? "MCP tool",
-                        status: payload.containsFailure ? .failed : .succeeded,
-                        durationMilliseconds: payload.durationMilliseconds
-                    ))
+                let invocation = payload.dictionary("invocation")
+                let name = [invocation?.string("server"), invocation?.string("tool")].compactMap { $0 }.joined(separator: "/")
+                return [toolResult(
+                    name: name.isEmpty ? nil : name,
+                    callID: payload.string("call_id"),
+                    failed: payload.containsFailure,
+                    output: Self.responseText(payload["result"]),
+                    duration: payload.durationMilliseconds
                 )]
+
             case "sub_agent_activity":
                 let kind = payload.string("kind") ?? "started"
                 let status: SubagentTimelinePayload.Status = switch kind {
@@ -469,74 +640,95 @@ public struct CodexAdapter: AgentAdapter {
                 case "waiting": .waiting
                 default: .started
                 }
+                let agentID = payload.string("agent_thread_id") ?? payload.string("event_id") ?? "\(context.byteOffset)"
                 return [makeEvent(
                     lifecycle: .running,
-                    phase: status == .started ? .executing : .responding,
+                    phase: status == .started ? .subagentRunning : .thinking,
                     timeline: .subagent(SubagentTimelinePayload(
                         name: payload.string("agent_path") ?? "Subagent",
                         agentSessionID: payload.string("agent_thread_id"),
                         status: status
-                    ))
+                    )),
+                    itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: status == .started ? "started" : (status == .waiting ? "waiting" : "stopped"))
                 )]
+
             case "web_search_begin", "image_generation_begin":
                 let name = type == "web_search_begin" ? "Web search" : "Image generation"
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .executing,
-                    timeline: .tool(ToolTimelinePayload(name: name, status: .started))
-                )]
+                return [toolCall(name: name, callID: payload.string("call_id"), input: payload.string("query"))]
+
             case "web_search_end", "image_generation_end", "view_image_tool_call":
                 let name = type == "web_search_end" ? "Web search" : (type == "image_generation_end" ? "Image generation" : "View image")
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: .responding,
-                    timeline: .tool(ToolTimelinePayload(
-                        name: name,
-                        status: payload.containsFailure ? .failed : .succeeded,
-                        durationMilliseconds: payload.durationMilliseconds
-                    ))
+                return [toolResult(
+                    name: name,
+                    callID: payload.string("call_id"),
+                    failed: payload.containsFailure,
+                    output: payload.string("query"),
+                    duration: payload.durationMilliseconds
                 )]
+
             default:
                 return []
             }
         }
 
-        if recordType == "response_item",
-           payload.string("type") == "custom_tool_call",
-           payload.string("name") == "update_plan",
-           let input = payload.string("input"),
-           let inputData = input.data(using: .utf8),
-           let planRoot = try? JSONSerialization.jsonObject(with: inputData) as? [String: Any],
-           let rawSteps = planRoot["plan"] as? [[String: Any]] {
-            let steps = rawSteps.compactMap { step -> PlanTimelinePayload.Step? in
-                guard let text = step.string("step") else { return nil }
-                let status: PlanTimelinePayload.Step.Status = switch step.string("status") {
-                case "in_progress": .inProgress
-                case "completed": .completed
-                default: .pending
+        if recordType == "response_item", let type = payload.string("type") {
+            switch type {
+            case "custom_tool_call", "function_call":
+                let name = payload.string("name") ?? "Tool"
+                let callID = payload.string("call_id")
+                if name == "update_plan", let plan = Self.plan(from: payload.string("input") ?? payload.string("arguments")) {
+                    return [makeEvent(lifecycle: .running, phase: .thinking, timeline: .plan(plan))]
                 }
-                return PlanTimelinePayload.Step(text: text, status: status)
-            }
-            return [makeEvent(
-                lifecycle: .running,
-                phase: .thinking,
-                timeline: .plan(PlanTimelinePayload(
-                    explanation: planRoot.string("explanation"),
-                    steps: steps
-                ))
-            )]
-        }
+                return [toolCall(name: name, callID: callID, input: payload["input"] ?? payload["arguments"])]
 
-        if recordType == "response_item", payload.string("type") == "reasoning",
-           let content = try? JSONValue(jsonObject: payload) {
-            return [makeEvent(
-                timeline: .internalContext(InternalContextTimelinePayload(
-                    kind: "reasoning",
-                    content: content
-                )),
-                suffix: ":internal_context",
-                diagnosticKey: "internal_context:reasoning"
-            )]
+            case "custom_tool_call_output", "function_call_output":
+                let output = Self.responseText(payload["output"])
+                return [toolResult(
+                    name: nil,
+                    callID: payload.string("call_id"),
+                    failed: Self.outputIndicatesFailure(payload["output"]),
+                    output: output,
+                    duration: nil
+                )]
+
+            case "message":
+                // Assistant / plain user messages arrive as `event_msg` too;
+                // only the injected instruction blocks are new information.
+                let role = payload.string("role") ?? ""
+                let text = Self.messageText(payload["content"])
+                guard let text, !text.isEmpty else { return [] }
+                if role == "developer" {
+                    return [makeEvent(
+                        timeline: .context(ContextTimelinePayload(
+                            scope: .turn,
+                            kind: "developer_instructions",
+                            summary: AdapterText.excerpt(text),
+                            content: .string(text)
+                        )),
+                        suffix: ":context"
+                    )]
+                }
+                if role == "user", let kind = Self.injectedContextKind(text) {
+                    return [makeEvent(
+                        timeline: .context(ContextTimelinePayload(
+                            scope: .turn,
+                            kind: kind,
+                            summary: AdapterText.excerpt(text.replacingOccurrences(of: "<\(kind)>", with: "")),
+                            content: .string(text)
+                        )),
+                        suffix: ":context"
+                    )]
+                }
+                return []
+
+            case "reasoning":
+                // `event_msg.agent_reasoning` carries the readable text; the
+                // response item is the encrypted duplicate.
+                return []
+
+            default:
+                return []
+            }
         }
 
         // Unknown rollout records remain excluded until their shape and privacy
@@ -544,71 +736,93 @@ public struct CodexAdapter: AgentAdapter {
         return []
     }
 
+    // MARK: - Helpers
+
     private static func digest(data: Data, prefix: String) -> String {
         prefix + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-}
-
-private extension Dictionary where Key == String, Value == Any {
-    func string(_ key: String) -> String? {
-        self[key] as? String
-    }
-
-    func dictionary(_ key: String) -> [String: Any]? {
-        self[key] as? [String: Any]
-    }
-
-    func bool(_ key: String) -> Bool? {
-        self[key] as? Bool
-    }
-
-    func int(_ key: String) -> Int? {
-        if let value = self[key] as? Int { return value }
-        if let value = self[key] as? NSNumber { return value.intValue }
-        return nil
-    }
-
-    func int64(_ key: String) -> Int64? {
-        if let value = self[key] as? Int64 { return value }
-        if let value = self[key] as? Int { return Int64(value) }
-        if let value = self[key] as? NSNumber { return value.int64Value }
-        return nil
-    }
-
-    func jsonValue(_ key: String) -> JSONValue? {
-        guard let value = self[key] else { return nil }
-        return try? JSONValue(jsonObject: value)
-    }
-
-    func jsonValue(keys: [String]) -> JSONValue? {
-        let values = keys.reduce(into: [String: JSONValue]()) { result, key in
-            if let value = jsonValue(key) { result[key] = value }
+    /// Text of a `content` array (`[{type:input_text|output_text|text, text}]`) or string.
+    static func messageText(_ content: Any?) -> String? {
+        if let text = content as? String { return text }
+        guard let blocks = content as? [Any] else { return nil }
+        let parts = blocks.compactMap { block -> String? in
+            guard let block = block as? [String: Any] else { return nil }
+            return block.string("text")
         }
-        return values.isEmpty ? nil : .object(values)
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
-    func date(_ key: String) -> Date? {
-        guard let value = string(key) else { return nil }
-        return try? Date(value, strategy: .iso8601)
+    /// Best-effort readable output for tool results in their many shapes.
+    static func responseText(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        if let text = value as? String {
+            // `{"output":"...","metadata":{...}}` encoded as a JSON string.
+            if text.hasPrefix("{"),
+               let data = text.data(using: .utf8),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let inner = object.string("output") {
+                return inner
+            }
+            // Python-ish repr of a content array: pull the text field.
+            if text.hasPrefix("[{"), let range = text.range(of: "'text': '") ?? text.range(of: "\"text\": \"") {
+                let rest = text[range.upperBound...]
+                let end = rest.firstIndex(where: { $0 == "'" || $0 == "\"" }) ?? rest.endIndex
+                return String(rest[..<end]).replacingOccurrences(of: "\\n", with: "\n")
+            }
+            return text
+        }
+        if let dictionary = value as? [String: Any] {
+            if let output = dictionary.string("output") { return output }
+            if let content = dictionary["content"], let text = messageText(content) { return text }
+            if let text = dictionary.string("text") { return text }
+            return nil
+        }
+        if let array = value as? [Any] { return messageText(array) }
+        return nil
     }
 
-    var containsFailure: Bool {
-        if bool("success") == false { return true }
-        if bool("is_error") == true { return true }
-        if self["error"] is String { return true }
-        if dictionary("result")?.bool("isError") == true { return true }
+    static func outputIndicatesFailure(_ value: Any?) -> Bool {
+        if let dictionary = value as? [String: Any] {
+            if dictionary.containsFailure { return true }
+            if let exit = dictionary.dictionary("metadata")?.int("exit_code"), exit != 0 { return true }
+            return false
+        }
+        guard let text = value as? String else { return false }
+        if text.hasPrefix("{"),
+           let data = text.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return outputIndicatesFailure(object)
+        }
         return false
     }
 
-    var durationMilliseconds: Int64? {
-        if let milliseconds = self["duration_ms"] as? NSNumber {
-            return milliseconds.int64Value
+    /// `<environment_context>` / `<user_instructions>` / `# AGENTS.md …` blocks.
+    static func injectedContextKind(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("<"), let close = trimmed.firstIndex(of: ">") {
+            let tag = trimmed[trimmed.index(after: trimmed.startIndex)..<close]
+            if !tag.contains(" "), !tag.hasPrefix("/") { return String(tag) }
         }
-        if let seconds = self["duration"] as? NSNumber {
-            return Int64(seconds.doubleValue * 1_000)
-        }
+        if trimmed.hasPrefix("# AGENTS.md") { return "agents_md" }
         return nil
+    }
+
+    static func plan(from input: String?) -> PlanTimelinePayload? {
+        guard let input,
+              let inputData = input.data(using: .utf8),
+              let planRoot = try? JSONSerialization.jsonObject(with: inputData) as? [String: Any],
+              let rawSteps = planRoot["plan"] as? [[String: Any]] else { return nil }
+        let steps = rawSteps.compactMap { step -> PlanTimelinePayload.Step? in
+            guard let text = step.string("step") else { return nil }
+            let status: PlanTimelinePayload.Step.Status = switch step.string("status") {
+            case "in_progress": .inProgress
+            case "completed": .completed
+            default: .pending
+            }
+            return PlanTimelinePayload.Step(text: text, status: status)
+        }
+        return PlanTimelinePayload(explanation: planRoot.string("explanation"), steps: steps)
     }
 }
 
