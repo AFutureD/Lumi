@@ -40,6 +40,9 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         outline.backgroundColor = .clear
         outline.delegate = self
         outline.dataSource = self
+        // 4A: clicking anywhere on a parent row toggles its subagents (selection still happens).
+        outline.target = self
+        outline.action = #selector(rowClicked)
 
         let scroll = NSScrollView()
         scroll.documentView = outline
@@ -176,6 +179,13 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         )
     }
 
+    @objc private func rowClicked() {
+        let row = outline.clickedRow
+        guard row >= 0, let node = outline.item(atRow: row) as? SessionListNode,
+              !node.children.isEmpty else { return }
+        toggle(node)
+    }
+
     private func toggle(_ node: SessionListNode) {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
@@ -265,8 +275,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     }
 }
 
-/// 4A row grid: `[18 chevron][18 icon][title][time]` over `[·][dot][status][count]`.
-/// Children are not indented; hierarchy is drawn in the leading gutter.
+/// 4A row grid: `[18 icon][title][time]` over `[·][● status][count]`.
+/// Children are not indented; the tree guide runs down the icon axis.
 @MainActor
 private final class SessionRowView: NSTableCellView {
     struct Layout {
@@ -285,13 +295,14 @@ private final class SessionRowView: NSTableCellView {
     static let rowHeight: CGFloat = 54 + rowGap
 
     private static let padding: CGFloat = 10
-    private static let gutter: CGFloat = 18
+    private static let iconColumn: CGFloat = 18
     private static let columnGap: CGFloat = 8
     private static let firstRowCenterY: CGFloat = 9 + 8
     private static let secondRowCenterY: CGFloat = 9 + 16 + 5 + 7
-    private static var guideX: CGFloat { listInset + padding + gutter / 2 }
+    /// Icon axis: row padding + half the icon column (19pt from the row's left edge).
+    private static var guideX: CGFloat { listInset + padding + iconColumn / 2 }
+    private static var titleX: CGFloat { listInset + padding + iconColumn + columnGap }
 
-    private let chevronButton = NSButton(frame: .zero)
     private let agentIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
@@ -300,25 +311,12 @@ private final class SessionRowView: NSTableCellView {
     private let countPill = NSButton(frame: .zero)
     private var layoutInfo = Layout(level: 0, hasChildren: false, isExpanded: false, childCount: 0, isLastSibling: true)
     private var updatedAt = Date()
-    private var isChevronExpanded = false
 
     var onToggle: (() -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
-
-        chevronButton.isBordered = false
-        chevronButton.imagePosition = .imageOnly
-        chevronButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Toggle subagents")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold))
-        chevronButton.contentTintColor = NSColor(white: 90 / 255, alpha: 1)
-        chevronButton.wantsLayer = true
-        chevronButton.layer?.cornerRadius = 4
-        chevronButton.layer?.backgroundColor = NSColor(red: 120 / 255, green: 120 / 255, blue: 128 / 255, alpha: 0.1).cgColor
-        chevronButton.target = self
-        chevronButton.action = #selector(toggle)
-        chevronButton.toolTip = "Toggle subagents"
 
         agentIcon.imageScaling = .scaleProportionallyUpOrDown
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -339,44 +337,34 @@ private final class SessionRowView: NSTableCellView {
         countPill.wantsLayer = true
         countPill.layer?.cornerRadius = 8
         countPill.layer?.backgroundColor = AgentStatusDesign.Color.chipFill.cgColor
-        countPill.font = .systemFont(ofSize: 10, weight: .semibold)
-        countPill.contentTintColor = NSColor(white: 90 / 255, alpha: 1)
         countPill.target = self
         countPill.action = #selector(toggle)
         countPill.toolTip = "Show subagents"
 
-        [chevronButton, agentIcon, titleLabel, timeLabel, statusDot, statusLabel, countPill].forEach {
+        [agentIcon, titleLabel, timeLabel, statusDot, statusLabel, countPill].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
 
-        let col1 = Self.listInset + Self.padding
-        let col2 = col1 + Self.gutter + Self.columnGap
-        let col3 = col2 + Self.gutter + Self.columnGap
         NSLayoutConstraint.activate([
-            chevronButton.centerXAnchor.constraint(equalTo: leadingAnchor, constant: col1 + Self.gutter / 2),
-            chevronButton.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.firstRowCenterY),
-            chevronButton.widthAnchor.constraint(equalToConstant: 16),
-            chevronButton.heightAnchor.constraint(equalToConstant: 16),
-
-            agentIcon.centerXAnchor.constraint(equalTo: leadingAnchor, constant: col2 + Self.gutter / 2),
+            agentIcon.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Self.guideX),
             agentIcon.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.firstRowCenterY),
             agentIcon.widthAnchor.constraint(equalToConstant: 16),
             agentIcon.heightAnchor.constraint(equalToConstant: 16),
 
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: col3),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.titleX),
             titleLabel.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.firstRowCenterY),
 
             timeLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 10),
             timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(Self.listInset + Self.padding)),
             timeLabel.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.firstRowCenterY),
 
-            statusDot.centerXAnchor.constraint(equalTo: agentIcon.centerXAnchor),
+            // Status line starts on the title's left edge: dot, 6pt gap, text.
+            statusDot.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             statusDot.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.secondRowCenterY),
             statusDot.widthAnchor.constraint(equalToConstant: 7),
             statusDot.heightAnchor.constraint(equalToConstant: 7),
-
-            statusLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
             statusLabel.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.secondRowCenterY),
 
             countPill.leadingAnchor.constraint(greaterThanOrEqualTo: statusLabel.trailingAnchor, constant: 10),
@@ -411,22 +399,16 @@ private final class SessionRowView: NSTableCellView {
         statusDot.layer?.backgroundColor = tone.appKitColor.cgColor
         refreshRelativeTime()
 
-        if isChild {
-            agentIcon.image = Self.squareSymbol("microbe", pointSize: 12, weight: .medium, side: 16, description: "Subagent")
-            agentIcon.contentTintColor = NSColor(red: 150 / 255, green: 150 / 255, blue: 155 / 255, alpha: 1)
-            agentIcon.toolTip = "Subagent"
-        } else {
+        // Subagent rows leave the icon column to the tree guide.
+        agentIcon.isHidden = isChild
+        if !isChild {
             agentIcon.image = AgentIcons.image(for: session.agent, pointSize: 16)
             agentIcon.contentTintColor = .secondaryLabelColor
             agentIcon.toolTip = presentation.agent
         }
 
-        chevronButton.isHidden = !layout.hasChildren
-        setChevronExpanded(layout.isExpanded, animated: false)
-
         let showCount = layout.hasChildren && !layout.isExpanded
         countPill.isHidden = !showCount
-        countPill.title = "\(layout.childCount)"
         countPill.attributedTitle = NSAttributedString(
             string: "\(layout.childCount)",
             attributes: [
@@ -439,7 +421,7 @@ private final class SessionRowView: NSTableCellView {
                 }(),
             ]
         )
-        countPill.contentTintColor = NSColor(white: 90 / 255, alpha: 1)
+        toolTip = layout.hasChildren ? (layout.isExpanded ? "Click to hide subagents" : "Click to show subagents") : nil
         needsDisplay = true
     }
 
@@ -448,43 +430,7 @@ private final class SessionRowView: NSTableCellView {
     }
 
     @objc private func toggle() {
-        setChevronExpanded(!isChevronExpanded, animated: true)
         onToggle?()
-    }
-
-    private func setChevronExpanded(_ expanded: Bool, animated: Bool) {
-        isChevronExpanded = expanded
-        chevronButton.image = Self.squareSymbol(
-            expanded ? "chevron.down" : "chevron.right",
-            pointSize: 9,
-            weight: .bold,
-            side: 16,
-            description: expanded ? "Hide subagents" : "Show subagents"
-        )
-    }
-
-    /// Symbols have uneven bounding boxes; centre them on a fixed square so the
-    /// gutter glyphs never shift when they change.
-    private static func squareSymbol(
-        _ name: String,
-        pointSize: CGFloat,
-        weight: NSFont.Weight,
-        side: CGFloat,
-        description: String
-    ) -> NSImage? {
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: description)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)) else {
-            return nil
-        }
-        let canvas = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            let size = symbol.size
-            let origin = NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
-            symbol.draw(in: NSRect(origin: origin, size: size))
-            return true
-        }
-        canvas.isTemplate = true
-        canvas.accessibilityDescription = description
-        return canvas
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -495,16 +441,20 @@ private final class SessionRowView: NSTableCellView {
         AgentStatusDesign.Color.elbow.setStroke()
 
         if layoutInfo.level > 0 {
-            // Elbow from the row above into this row's first line.
-            let bottom = Self.firstRowCenterY + 0.5
+            // Elbow: down from the parent's icon, turning toward this row's title
+            // (`left:19; top:-10; width:9; height:28; radius 5`).
+            let bottom = Self.firstRowCenterY + 1
             path.move(to: NSPoint(x: x, y: 0))
-            path.appendArc(from: NSPoint(x: x, y: bottom), to: NSPoint(x: x + 10, y: bottom), radius: 4)
-            path.line(to: NSPoint(x: x + 10, y: bottom))
+            path.appendArc(from: NSPoint(x: x, y: bottom), to: NSPoint(x: x + 9, y: bottom), radius: 5)
+            path.line(to: NSPoint(x: x + 9, y: bottom))
         }
-        let continuesBelow = (layoutInfo.hasChildren && layoutInfo.isExpanded)
-            || (layoutInfo.level > 0 && !layoutInfo.isLastSibling)
-        if continuesBelow {
-            path.move(to: NSPoint(x: x, y: Self.firstRowCenterY + (layoutInfo.level > 0 ? 0.5 : 1)))
+        if layoutInfo.hasChildren, layoutInfo.isExpanded {
+            // Trunk starts just below the icon (`top:27`).
+            path.move(to: NSPoint(x: x, y: Self.firstRowCenterY + 10))
+            path.line(to: NSPoint(x: x, y: bounds.height))
+        } else if layoutInfo.level > 0, !layoutInfo.isLastSibling {
+            // Continues through the elbow corner (`top:17`).
+            path.move(to: NSPoint(x: x, y: Self.firstRowCenterY))
             path.line(to: NSPoint(x: x, y: bounds.height))
         }
         path.stroke()
