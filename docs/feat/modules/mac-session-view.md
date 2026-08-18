@@ -17,8 +17,8 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 ### Sessions：标准三栏
 
 1. 左栏是全高侧边栏，负责在 Sessions、iPhone 和 Settings 之间导航。
-2. 中栏是可折叠的 Session Outline，顶层 Main Session 按最近活动时间排序；Subagent 根据 Parent Session ID 递归放在所属 Session 下。每行只显示 Session 标题、Agent 类型，以及由生命周期和 Turn 阶段组成的状态。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；详情页头部遵循相同规则，Overview 仍保留原始标题。可取得 Codex 标题时显示权威标题；Subagent 显示为 `Codex Subagent`，空标题回退为昵称与 Agent path 摘要。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
-3. 右栏分成 Summary 和 Activity。Summary 用卡片展示 Overview、可选的 Lineage、Model Configuration 与 Usage；Activity 按时间显示全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录。Activity 标题下方提供 Input、Tools、Model 三行横向时间轴；滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部，点击任一方格会跳到对应记录。
+2. 中栏是可折叠的 Session Outline，顶层 Main Session 按最近活动时间排序；Subagent 根据 Parent Session ID 递归放在所属 Session 下。每行只显示 Session 标题、Agent 类型，以及由生命周期和 Turn 阶段组成的状态。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；详情页头部遵循相同规则，Overview 仍保留原始标题。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
+3. 右栏分成 Summary 和 Activity。Summary 用卡片展示 Overview、可选的 Lineage、Model Configuration 与 Usage；Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录。Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 标题下方提供 Input、Tools、Model 三行横向时间轴；滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部，点击任一方格会跳到对应记录。
 4. 刷新图标（Refresh Sessions）位于 Session 列表上方；删除图标（Delete Session）位于详情上方。
 
 “iPhone”页面收起中栏，让配对内容使用剩余区域。“Settings”继续保持三栏：左栏是产品导航，中栏列出 General、Notch、Daemon、Agents 和 About，右栏显示当前设置详情。
@@ -172,16 +172,23 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-016 Session 列表与详情按信息层级展示
 
 - 条件：Sessions 页面存在一个或多个 Session，用户选择其中一条。
-- 行为：列表行显示 Codex 权威标题、Agent 类型和“生命周期 · Turn 阶段”状态；Main Session 使用原生 disclosure 展开或折叠全部直接和嵌套 Subagent，用户的折叠状态在本次 App 运行期间保留。Subagent 额外保留父 Session ID、深度、昵称、职责、Agent path 和来源类型。详情固定分为 Summary 与 Activity；Subagent lineage 进入 Summary，Activity 行可打开对应记录的完整原始内容。
+- 行为：列表行显示 Session 标题、Agent 类型和“生命周期 · Turn 阶段”状态；Main Session 使用原生 disclosure 展开或折叠全部直接和嵌套 Subagent，用户的折叠状态在本次 App 运行期间保留。Subagent 额外保留父 Session ID、深度、昵称、职责、Agent path 和来源类型。详情固定分为 Summary 与 Activity；Subagent lineage 进入 Summary，Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
 - 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的摘要与活动记录。
 - 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示。Activity 的系统与上下文记录可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
 
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 
 - 条件：用户选择的 Session 包含一条或多条 Activity。
-- 行为：Activity 按发生顺序显示全部记录，不要求分批加载。标题下方的横向时间轴让每条记录占一个等宽正方形，并分入 Input（System、Context、User）、Tools（Tool、Subagent、其他）或 Model（Assistant、Reasoning）三行。滚动进入 Activity 后，标题、记录数量和时间轴固定在详情顶部，活动记录继续在下方滚动；用户点击方格后，详情滚动到对应记录。
+- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。标题下方的横向时间轴让每条记录占一个等宽正方形，并分入 Input（System、Context、User）、Tools（Tool、Subagent、其他）或 Model（Assistant、Reasoning）三行。滚动进入 Activity 后，标题、记录数量和时间轴固定在详情顶部，活动记录继续在下方滚动；用户点击方格后，详情滚动到对应记录。
 - 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
 - 限制或例外：时间轴只改变当前详情的查看位置，不修改或控制 Codex Session。
+
+### MAC-R-018 Subagent 使用自己的标题与活动
+
+- 条件：Codex 为 Main Session 启动一个 Subagent，Agent Status 收到该 Subagent 的身份和任务活动。
+- 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
+- 结果：用户在父子层级中能按任务辨认 Subagent，打开详情时只看到该 Subagent 实际开始工作后的活动。
+- 限制或例外：缺少父子关系的旧格式或孤立 Subagent 仍保留在顶层；其可用身份信息不足时显示通用 Subagent 名称。
 
 ## 空状态与故障
 

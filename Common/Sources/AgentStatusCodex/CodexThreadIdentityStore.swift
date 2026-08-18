@@ -12,6 +12,7 @@ public struct CodexThreadIdentity: Hashable, Sendable {
     public let parentSessionID: SessionID?
     public let subagentDepth: Int?
     public let subagentKind: String?
+    public let titleIsInheritedUserMessage: Bool
 
     public init(
         sessionID: SessionID,
@@ -22,7 +23,8 @@ public struct CodexThreadIdentity: Hashable, Sendable {
         agentPath: String? = nil,
         parentSessionID: SessionID? = nil,
         subagentDepth: Int? = nil,
-        subagentKind: String? = nil
+        subagentKind: String? = nil,
+        titleIsInheritedUserMessage: Bool = false
     ) {
         self.sessionID = sessionID
         self.title = title
@@ -33,6 +35,7 @@ public struct CodexThreadIdentity: Hashable, Sendable {
         self.parentSessionID = parentSessionID
         self.subagentDepth = subagentDepth
         self.subagentKind = subagentKind
+        self.titleIsInheritedUserMessage = titleIsInheritedUserMessage
     }
 
     public var isSubagent: Bool {
@@ -54,7 +57,7 @@ public struct CodexThreadIdentity: Hashable, Sendable {
     }
 
     public var displayTitle: String? {
-        if let title = Self.nonEmpty(title) { return title }
+        if !titleIsInheritedUserMessage, let title = Self.nonEmpty(title) { return title }
         guard isSubagent else { return nil }
         let pathName = agentPath.flatMap {
             Self.nonEmpty(URL(fileURLWithPath: $0).lastPathComponent)
@@ -105,7 +108,8 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
             try Row.fetchOne(
                 db,
                 sql: """
-                    SELECT id, title, thread_source, agent_nickname, agent_role, agent_path, source
+                    SELECT id, title, first_user_message, has_user_event,
+                           thread_source, agent_nickname, agent_role, agent_path, source
                     FROM threads WHERE id = ? LIMIT 1
                     """,
                 arguments: [sessionID.rawValue]
@@ -120,7 +124,8 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT id, title, thread_source, agent_nickname, agent_role, agent_path, source
+                    SELECT id, title, first_user_message, has_user_event,
+                           thread_source, agent_nickname, agent_role, agent_path, source
                     FROM threads WHERE id IN (\(placeholders))
                     """,
                 arguments: StatementArguments(sessionIDs.map(\.rawValue))
@@ -143,12 +148,24 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
 
     private static func identity(from row: Row) -> CodexThreadIdentity {
         let sessionID = SessionID(row["id"] as String)
+        let title = row["title"] as String?
+        let firstUserMessage = row["first_user_message"] as String?
+        let hasUserEvent = (row["has_user_event"] as Int64?) == 1
+        let threadSource = row["thread_source"] as String?
         let source: String = row["source"]
         let subagent = subagentMetadata(from: source)
+        let isSubagent = threadSource == "subagent"
+            || subagent.parentID != nil
+            || subagent.kind != nil
+        let titleIsInheritedUserMessage = isSubagent
+            && !hasUserEvent
+            && CodexThreadIdentity.nonEmpty(title) != nil
+            && CodexThreadIdentity.nonEmpty(title)
+                == CodexThreadIdentity.nonEmpty(firstUserMessage)
         return CodexThreadIdentity(
             sessionID: sessionID,
-            title: row["title"],
-            threadSource: row["thread_source"],
+            title: title,
+            threadSource: threadSource,
             agentNickname: CodexThreadIdentity.nonEmpty(row["agent_nickname"] as String?)
                 ?? subagent.nickname,
             agentRole: CodexThreadIdentity.nonEmpty(row["agent_role"] as String?)
@@ -157,7 +174,8 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
                 ?? subagent.path,
             parentSessionID: subagent.parentID.map(SessionID.init),
             subagentDepth: subagent.depth,
-            subagentKind: subagent.kind
+            subagentKind: subagent.kind,
+            titleIsInheritedUserMessage: titleIsInheritedUserMessage
         )
     }
 

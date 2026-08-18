@@ -26,19 +26,19 @@
    - 数据变化：只增加 Agent Status Hook，其他集成保留。
    - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)。
 3. 回到侧边栏“Sessions”，再新建一个 Codex Session 并提交任务。
-   - 系统反馈：Main Session 以标题、Agent 类型和状态出现在主窗口中栏；Subagent 作为可折叠子项显示在所属 Main Session 下。Notch 展开后显示标题、状态和当前 Turn 用户消息。
+   - 系统反馈：Main Session 以标题、Agent 类型和状态出现在主窗口中栏；Subagent 作为可折叠子项显示在所属 Main Session 下，并使用自己的名称或任务身份，不复用父 Session 请求作为标题。Notch 展开后显示标题、状态和当前 Turn 用户消息。
    - 数据变化：启用前已经存在的旧 Session 不会自动导入。
-   - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)。
+   - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 4. 在中栏选择目标 Session。
-   - 系统反馈：右栏显示 Summary 与 Activity；Activity 展示全部记录，并在标题下方用 Input、Tools、Model 三行时间轴概览会话。滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部；点击时间轴方格可跳到对应记录。
+   - 系统反馈：右栏显示 Summary 与 Activity；Activity 展示属于当前 Session 的全部记录，并在标题下方用 Input、Tools、Model 三行时间轴概览会话。Subagent 为执行任务获得的父 Session 历史不会重复出现在其 Activity。滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部；点击时间轴方格可跳到对应记录。
    - 数据变化：只改变查看对象。
-   - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-017](../modules/mac-session-view.md#mac-r-017-activity-全量显示并支持时间轴定位)。
+   - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-017](../modules/mac-session-view.md#mac-r-017-activity-全量显示并支持时间轴定位)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 5. 继续使用 Codex。
    - 系统反馈：收到 Agent 事件时，列表状态、Summary 和 Activity 自动更新；Summary 中的结构化值可以选择，详情页面可连续滚动查看。
    - 数据变化：新活动同步到本地保存内容。
    - 规则引用：[MAC-R-003](../modules/mac-session-view.md#mac-r-003-展示活动并保留-session-诊断数据)。
 
-完成信号：目标 Main Session 以权威标题、Agent 和状态出现在列表中，Subagent 可展开/折叠，右栏 Summary 与全量 Activity 随 Agent 活动变化。
+完成信号：目标 Main Session 以权威标题、Agent 和状态出现在列表中；Subagent 以自己的名称或任务身份显示并可展开/折叠，右栏 Summary 与属于所选 Session 的全量 Activity 随 Agent 活动变化。
 
 用户需要调整 Notch 时，在 Notch 点击设置按钮，或在主 App 选择“Settings > Notch”。第三栏的 Appearance section 不显示固定的 Theme 和 Layout 控件；页面提供 Surface、显示屏幕、可恢复的紧凑宽度、展开宽度、展开动画、保持展开、触觉反馈和 Show Notch。完整取值规则见 [MAC-R-015](../modules/mac-session-view.md#mac-r-015-notch-设置集中在主-app)。
 

@@ -20,10 +20,10 @@ flowchart LR
 
 - **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标。
 - **创建来源**：启用 Agent Status 后新建的 Codex Session。
-- **更新来源**：Codex `threads` 元数据提供权威标题、主 Session / Subagent 类型和 Subagent 父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。
+- **更新来源**：Codex Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。
 - **主要消费者**：Mac 主窗口、Notch，以及在线的已配对 iPhone。
 - **保留方式**：不按时间自动删除；用户可删除单条或清空全部。
-- **展示边界**：主活动时间线显示消息、工具、计划、子 Agent、错误和已进入 Timeline 的未知记录；模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情在独立模块展示这些诊断数据；iPhone 当前仍只展示活动时间线。
+- **展示边界**：主活动时间线显示属于当前 Session 的消息、工具、计划、子 Agent、错误和已进入 Timeline 的未知记录；Subagent 为执行任务获得的父 Session 历史不重复显示为自身活动。模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情在独立模块展示这些诊断数据；iPhone 当前仍只展示活动时间线。规则见 [MAC-R-018](modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 - **隐私边界**：每类最新内部上下文会完整保留来源提供的嵌套内容，可能包含 reasoning、基础指令、线程上下文、世界状态、压缩历史，以及其中出现的路径、凭据、环境信息或工具内容。本地副本及已配对设备都必须视为高敏感数据；当前没有内容级脱敏保证。Agent Status 未识别的其他事件和完整原始日志文件不会被另外复制。
 
 ### 从 Agent 事件到三端一致

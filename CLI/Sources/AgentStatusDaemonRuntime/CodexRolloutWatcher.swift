@@ -65,8 +65,9 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
             let fileSize = UInt64(values.fileSize ?? 0)
             guard needsScan(path: fileURL.path, fileSize: fileSize) else { continue }
             do {
-                try await scan(fileURL, fileSize: fileSize)
-                markScanned(path: fileURL.path, fileSize: fileSize)
+                if try await scan(fileURL, fileSize: fileSize) {
+                    markScanned(path: fileURL.path, fileSize: fileSize)
+                }
             } catch {
                 logger("rollout_scan_failed path=\(fileURL.lastPathComponent) error=\(error)")
             }
@@ -164,7 +165,7 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         }
     }
 
-    private func scan(_ url: URL, fileSize: UInt64) async throws {
+    private func scan(_ url: URL, fileSize: UInt64) async throws -> Bool {
         let path = url.path
         var cursor = try await repository.rolloutCursor(path: path)
         var offset = cursor?.byteOffset ?? 0
@@ -179,25 +180,46 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
                     sessionID: Self.ignoredExistingSession
                 ))
             }
-            return
+            return true
         }
 
         if fileSize < offset {
             offset = 0
             sessionID = nil
         }
-        guard fileSize > offset else { return }
+        guard fileSize > offset else { return true }
 
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         try handle.seek(toOffset: offset)
-        guard let data = try handle.readToEnd(), !data.isEmpty else { return }
+        guard let data = try handle.readToEnd(), !data.isEmpty else { return true }
+
+        let initialHistory = Self.initialSubagentHistory(in: data, offset: offset)
+        if case .waitingForTrigger = initialHistory {
+            logger("rollout_scan_waiting_for_subagent_trigger path=\(url.lastPathComponent)")
+            return false
+        }
 
         var lineStart = data.startIndex
         var consumed = 0
         while let newline = data[lineStart...].firstIndex(of: 0x0A) {
             if newline > lineStart {
                 let line = Data(data[lineStart..<newline])
+                let shouldProcess = switch initialHistory {
+                case .none:
+                    true
+                case let .ready(metadataOffset, triggerOffset):
+                    consumed == metadataOffset || consumed >= triggerOffset
+                case .waitingForTrigger:
+                    false
+                }
+                guard shouldProcess else {
+                    let next = data.index(after: newline)
+                    consumed += data.distance(from: lineStart, to: next)
+                    lineStart = next
+                    if lineStart == data.endIndex { break }
+                    continue
+                }
                 let context = RolloutRecordContext(
                     path: path,
                     byteOffset: offset + UInt64(consumed),
@@ -222,6 +244,50 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
             sessionID: sessionID
         )
         try await repository.saveRolloutCursor(cursor!)
+        return true
+    }
+
+    private static func initialSubagentHistory(
+        in data: Data,
+        offset: UInt64
+    ) -> InitialSubagentHistory {
+        guard offset == 0 else { return .none }
+
+        var lineStart = data.startIndex
+        var consumed = 0
+        var metadataOffset: Int?
+        var isThreadSpawn = false
+
+        while let newline = data[lineStart...].firstIndex(of: 0x0A) {
+            if newline > lineStart,
+               let object = try? JSONSerialization.jsonObject(
+                   with: Data(data[lineStart..<newline])
+               ) as? [String: Any],
+               let type = object["type"] as? String,
+               let payload = object["payload"] as? [String: Any] {
+                if metadataOffset == nil {
+                    metadataOffset = consumed
+                    let source = payload["source"] as? [String: Any]
+                    let subagent = source?["subagent"] as? [String: Any]
+                    isThreadSpawn = type == "session_meta"
+                        && subagent?["thread_spawn"] is [String: Any]
+                    if !isThreadSpawn { return .none }
+                } else if type == "inter_agent_communication_metadata",
+                          payload["trigger_turn"] as? Bool == true {
+                    return .ready(
+                        metadataOffset: metadataOffset ?? 0,
+                        triggerOffset: consumed
+                    )
+                }
+            }
+
+            let next = data.index(after: newline)
+            consumed += data.distance(from: lineStart, to: next)
+            lineStart = next
+            if lineStart == data.endIndex { break }
+        }
+
+        return isThreadSpawn ? .waitingForTrigger : .none
     }
 
     private func existingSessionID(in url: URL) -> SessionID? {
@@ -237,4 +303,10 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         }
         return nil
     }
+}
+
+private enum InitialSubagentHistory {
+    case none
+    case waitingForTrigger
+    case ready(metadataOffset: Int, triggerOffset: Int)
 }

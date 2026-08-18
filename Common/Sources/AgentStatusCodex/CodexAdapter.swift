@@ -250,6 +250,11 @@ public struct CodexAdapter: AgentAdapter {
             )
         }
 
+        if recordType == "inter_agent_communication_metadata",
+           payload.bool("trigger_turn") == true {
+            return [makeEvent(lifecycle: .running, phase: .thinking)]
+        }
+
         if recordType == "turn_context" {
             var events: [AgentIngressEvent] = []
             let modelKeys = [

@@ -43,6 +43,8 @@ import Testing
             CREATE TABLE threads (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
+                first_user_message TEXT NOT NULL DEFAULT '',
+                has_user_event INTEGER NOT NULL DEFAULT 0,
                 thread_source TEXT,
                 agent_nickname TEXT,
                 agent_role TEXT,
@@ -57,12 +59,14 @@ import Testing
         try db.execute(
             sql: """
                 INSERT INTO threads(
-                    id, title, thread_source, agent_nickname, agent_path, source
-                ) VALUES(?, ?, ?, ?, ?, ?)
+                    id, title, first_user_message, thread_source,
+                    agent_nickname, agent_path, source
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
                 """,
             arguments: [
                 "subagent-1",
-                "",
+                "Parent request inherited by the subagent",
+                "Parent request inherited by the subagent",
                 "subagent",
                 "Hypatia",
                 "/root/docs_review",
@@ -78,22 +82,64 @@ import Testing
                 #"{"subagent":{"other":"guardian"}}"#,
             ]
         )
+        try db.execute(
+            sql: """
+                INSERT INTO threads(
+                    id, title, first_user_message, thread_source,
+                    agent_nickname, agent_path, source
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+            arguments: [
+                "named-subagent",
+                "Independent review",
+                "Parent request",
+                "subagent",
+                "Noether",
+                "/root/independent_review",
+                #"{"subagent":{"thread_spawn":{"parent_thread_id":"session-1","depth":1,"agent_path":"/root/independent_review","agent_nickname":"Noether","agent_role":null}}}"#,
+            ]
+        )
+        try db.execute(
+            sql: """
+                INSERT INTO threads(
+                    id, title, first_user_message, has_user_event, thread_source,
+                    agent_nickname, agent_path, source
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            arguments: [
+                "user-titled-subagent",
+                "Direct subagent request",
+                "Direct subagent request",
+                1,
+                "subagent",
+                "Curie",
+                "/root/direct_request",
+                #"{"subagent":{"thread_spawn":{"parent_thread_id":"session-1","depth":1,"agent_path":"/root/direct_request","agent_nickname":"Curie","agent_role":null}}}"#,
+            ]
+        )
     }
 
     let store = CodexThreadIdentityStore(databasePath: databasePath)
     let regular = try #require(store.identity(for: SessionID("session-1")))
     let subagent = try #require(store.identity(for: SessionID("subagent-1")))
     let guardian = try #require(store.identity(for: SessionID("guardian-1")))
+    let namedSubagent = try #require(store.identity(for: SessionID("named-subagent")))
+    let userTitledSubagent = try #require(store.identity(for: SessionID("user-titled-subagent")))
 
     #expect(regular.displayTitle == "[macOS] Session list and detail")
     #expect(regular.agentKind == .codex)
     #expect(subagent.displayTitle == "Hypatia · docs_review")
+    #expect(subagent.titleIsInheritedUserMessage)
     #expect(subagent.agentKind == .codexSubagent)
     #expect(subagent.parentSessionID == SessionID("session-1"))
     #expect(subagent.subagentDepth == 1)
     #expect(guardian.displayTitle == "Guardian")
     #expect(guardian.agentKind == .codexSubagent)
     #expect(guardian.parentSessionID == nil)
+    #expect(namedSubagent.displayTitle == "Independent review")
+    #expect(!namedSubagent.titleIsInheritedUserMessage)
+    #expect(userTitledSubagent.displayTitle == "Direct subagent request")
+    #expect(!userTitledSubagent.titleIsInheritedUserMessage)
     #expect(store.identity(for: SessionID("missing")) == nil)
 }
 

@@ -185,6 +185,88 @@ import Testing
     #expect(secondDetail?.timeline.count == 2)
 }
 
+@Test func rolloutWatcherSkipsForkedParentHistoryUntilSubagentTrigger() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-subagent-rollout-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let rollout = directory.appendingPathComponent("rollout.jsonl")
+    let childID = SessionID("child-session")
+    let parentID = SessionID("parent-session")
+    let inheritedPrefix = #"""
+    {"timestamp":"2026-08-18T04:19:27Z","type":"session_meta","payload":{"id":"child-session","cwd":"/tmp/project","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-session","depth":1,"agent_path":"/root/docs_review","agent_nickname":"Hypatia","agent_role":null}}}}}
+    {"timestamp":"2026-08-18T04:19:27Z","type":"session_meta","payload":{"id":"parent-session","cwd":"/tmp/project","source":"vscode"}}
+    {"timestamp":"2026-08-18T04:19:27Z","type":"event_msg","payload":{"type":"task_started","turn_id":"parent-turn"}}
+    {"timestamp":"2026-08-18T04:19:27Z","type":"event_msg","payload":{"type":"user_message","message":"Inherited parent request"}}
+    {"timestamp":"2026-08-18T04:19:27Z","type":"event_msg","payload":{"type":"agent_message","message":"Inherited parent response"}}
+    {"timestamp":"2026-08-18T04:19:28Z","type":"event_msg","payload":{"type":"task_started","turn_id":"child-turn"}}
+
+    """#
+    try Data((inheritedPrefix + "\n").utf8).write(to: rollout)
+
+    let repository = InMemorySessionRepository()
+    let identity = CodexThreadIdentity(
+        sessionID: childID,
+        threadSource: "subagent",
+        agentNickname: "Hypatia",
+        agentPath: "/root/docs_review",
+        parentSessionID: parentID,
+        subagentDepth: 1,
+        subagentKind: "thread_spawn"
+    )
+    let identities = MutableThreadIdentityProvider(identities: [childID: identity])
+    let watcher = CodexRolloutWatcher(
+        rootDirectory: directory,
+        repository: repository,
+        threadIdentities: identities
+    )
+
+    await watcher.scanOnce()
+    #expect(try await repository.listSessions(limit: 10).isEmpty)
+    #expect(try await repository.rolloutCursor(path: rollout.path) == nil)
+
+    let handle = try FileHandle(forWritingTo: rollout)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data((#"""
+    {"timestamp":"2026-08-18T04:19:30Z","type":"inter_agent_communication_metadata","payload":{"trigger_turn":true}}
+    {"timestamp":"2026-08-18T04:19:31Z","type":"event_msg","payload":{"type":"agent_message","message":"Child review started"}}
+
+    """# + "\n").utf8))
+    try handle.close()
+
+    let restartedWatcher = CodexRolloutWatcher(
+        rootDirectory: directory,
+        repository: repository,
+        threadIdentities: identities
+    )
+    await restartedWatcher.scanOnce()
+
+    let incrementalHandle = try FileHandle(forWritingTo: rollout)
+    try incrementalHandle.seekToEnd()
+    try incrementalHandle.write(contentsOf: Data((#"""
+    {"timestamp":"2026-08-18T04:19:32Z","type":"event_msg","payload":{"type":"agent_message","message":"Child review continued"}}
+
+    """# + "\n").utf8))
+    try incrementalHandle.close()
+
+    let secondRestartedWatcher = CodexRolloutWatcher(
+        rootDirectory: directory,
+        repository: repository,
+        threadIdentities: identities
+    )
+    await secondRestartedWatcher.scanOnce()
+
+    let summaries = try await repository.listSessions(limit: 10)
+    let detail = try #require(try await repository.sessionDetail(id: childID, cursor: nil, limit: 100))
+    #expect(summaries.map(\.id) == [childID])
+    #expect(summaries.first?.title == "Hypatia · docs_review")
+    #expect(detail.timeline.compactMap { item -> String? in
+        guard case let .message(message) = item.payload else { return nil }
+        return message.text
+    } == ["Child review started", "Child review continued"])
+    #expect(try await repository.sessionDetail(id: parentID, cursor: nil, limit: 100) == nil)
+}
+
 @Test func rolloutWatcherSynchronizesCodexTitlesAndSubagentIdentity() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-status-title-sync-\(UUID().uuidString)", isDirectory: true)
