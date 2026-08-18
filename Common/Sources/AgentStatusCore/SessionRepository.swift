@@ -1,27 +1,7 @@
 import AgentStatusTransport
 import Foundation
 
-public struct RolloutCursor: Codable, Hashable, Sendable {
-    public let path: String
-    public let byteOffset: UInt64
-    public let fileSize: UInt64
-    public let sessionID: SessionID?
-    public let updatedAt: Date
-
-    public init(
-        path: String,
-        byteOffset: UInt64,
-        fileSize: UInt64,
-        sessionID: SessionID? = nil,
-        updatedAt: Date = Date()
-    ) {
-        self.path = path
-        self.byteOffset = byteOffset
-        self.fileSize = fileSize
-        self.sessionID = sessionID
-        self.updatedAt = updatedAt
-    }
-}
+public typealias RolloutCursor = AgentStatusTransport.RolloutCursor
 
 public protocol SessionRepository: Sendable {
     @discardableResult
@@ -105,13 +85,98 @@ public enum SessionReduction {
     }
 }
 
+/// Folds one ingress event into the Turn aggregate it belongs to. Works for
+/// helpers that send an explicit `turn` and for bare events that only carry
+/// `turnID` + a timeline item (phase, prompt, counters are derived).
+public enum TurnReduction {
+    public static func summary(
+        applying event: AgentIngressEvent,
+        to current: TurnSummary?
+    ) -> TurnSummary? {
+        guard let turnID = event.turnID ?? event.turn?.id else { return nil }
+        var base = current ?? TurnSummary(
+            id: turnID,
+            sessionID: event.sessionID,
+            phase: event.phase ?? .idle,
+            startedAt: event.occurredAt
+        )
+        if let explicit = event.turn {
+            base = base.merging(explicit)
+        }
+
+        var phase = event.turn?.phase ?? event.phase ?? base.phase
+        var prompt = base.prompt
+        var endedAt = base.endedAt
+        var outcome = base.outcome
+        var toolCalls = base.toolCallCount
+        var subagents = base.subagentCount
+        var lastAssistant = base.lastAssistantMessage
+
+        if let payload = event.timelineItem?.payload {
+            switch payload {
+            case let .message(message):
+                if message.role == .user, prompt == nil { prompt = message.text }
+                if message.role == .assistant { lastAssistant = message.text }
+            case let .tool(tool):
+                if tool.status == .started { toolCalls += 1 }
+            case let .subagent(subagent):
+                if subagent.status == .started { subagents += 1 }
+            case let .turnEnd(end):
+                endedAt = endedAt ?? event.occurredAt
+                outcome = outcome ?? end.outcome
+                if let message = end.message { lastAssistant = message }
+                phase = .idle
+            case let .error(error):
+                if outcome == nil, !error.recoverable {
+                    outcome = .failed
+                    endedAt = event.occurredAt
+                }
+            default:
+                break
+            }
+        }
+        // A closed turn never regresses to an in-flight phase from a late event.
+        if outcome != nil, event.turn?.outcome == nil, event.timelineItem == nil {
+            phase = base.phase
+        }
+
+        return TurnSummary(
+            id: base.id,
+            sessionID: base.sessionID,
+            index: base.index,
+            phase: phase,
+            prompt: prompt,
+            startedAt: min(base.startedAt, event.occurredAt),
+            endedAt: endedAt,
+            outcome: outcome,
+            toolCallCount: toolCalls,
+            subagentCount: subagents,
+            lastAssistantMessage: lastAssistant
+        )
+    }
+}
+
+public extension AgentIngressEvent {
+    /// A hidden (deleted / archived) session comes back only when the human
+    /// engages it again: a new prompt or a (re)start — never on passive
+    /// backfill or a straggling tool event.
+    var resurrectsHiddenSession: Bool {
+        if turn?.prompt != nil { return true }
+        switch timelineItem?.payload {
+        case let .message(message)?: return message.role == .user
+        case let .sessionMarker(marker)?: return marker.kind == .sessionStarted
+        default: return false
+        }
+    }
+}
+
 private extension AgentIngressEvent {
     var advancesVisibleActivity: Bool {
         if workspace != nil || lifecycle != nil || phase != nil { return true }
         guard let payload = timelineItem?.payload else { return false }
         return switch payload {
-        case .message, .tool, .plan, .subagent, .error: true
-        case .modelConfiguration, .internalContext, .usageMetrics, .unknown: false
+        case .message, .reasoning, .tool, .plan, .subagent, .error, .sessionMarker, .turnEnd: true
+        case .context, .modelConfiguration, .internalContext, .usageMetrics, .unknown: false
         }
     }
 }
@@ -119,6 +184,7 @@ private extension AgentIngressEvent {
 public actor InMemorySessionRepository: SessionRepository {
     private var sessions: [SessionID: SessionSummary] = [:]
     private var timeline: [SessionID: [TimelineItem]] = [:]
+    private var turns: [SessionID: [TurnID: TurnSummary]] = [:]
     private var eventIDs: Set<EventID> = []
     private var cursors: [String: RolloutCursor] = [:]
     private var ignoredSessionIDs: Set<SessionID> = []
@@ -128,13 +194,20 @@ public actor InMemorySessionRepository: SessionRepository {
 
     @discardableResult
     public func apply(_ event: AgentIngressEvent) async throws -> Bool {
-        guard !ignoredSessionIDs.contains(event.sessionID) else { return false }
+        if ignoredSessionIDs.contains(event.sessionID) {
+            guard event.resurrectsHiddenSession else { return false }
+            ignoredSessionIDs.remove(event.sessionID)
+        }
         guard eventIDs.insert(event.eventID).inserted else { return false }
 
         sessions[event.sessionID] = SessionReduction.summary(
             applying: event,
             to: sessions[event.sessionID]
         )
+        if let turnID = event.turnID ?? event.turn?.id,
+           let turn = TurnReduction.summary(applying: event, to: turns[event.sessionID]?[turnID]) {
+            turns[event.sessionID, default: [:]][turnID] = turn
+        }
         if let item = event.timelineItem {
             var items = timeline[event.sessionID, default: []]
             if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
@@ -177,12 +250,27 @@ public actor InMemorySessionRepository: SessionRepository {
         let nextCursor = nextOffset < items.count
             ? PaginationCursor(value: String(nextOffset))
             : nil
-        return SessionDetail(summary: summary, timeline: page, nextCursor: nextCursor)
+        return SessionDetail(
+            summary: summary,
+            turns: sortedTurns(id),
+            timeline: page,
+            nextCursor: nextCursor
+        )
+    }
+
+    private func sortedTurns(_ id: SessionID) -> [TurnSummary] {
+        (turns[id]?.values).map(Array.init)?.sorted {
+            if $0.startedAt == $1.startedAt { return $0.id.rawValue < $1.id.rawValue }
+            return $0.startedAt < $1.startedAt
+        } ?? []
     }
 
     public func replaceSnapshot(_ details: [SessionDetail]) async throws {
         sessions = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0.summary) })
         timeline = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0.timeline) })
+        turns = Dictionary(uniqueKeysWithValues: details.map { detail in
+            (detail.summary.id, Dictionary(uniqueKeysWithValues: detail.turns.map { ($0.id, $0) }))
+        })
     }
 
     public func deleteAllSessions() async throws -> Int {
@@ -190,6 +278,7 @@ public actor InMemorySessionRepository: SessionRepository {
         ignoredSessionIDs.formUnion(sessions.keys)
         sessions.removeAll()
         timeline.removeAll()
+        turns.removeAll()
         eventIDs.removeAll()
         return count
     }
@@ -197,6 +286,7 @@ public actor InMemorySessionRepository: SessionRepository {
     public func deleteSession(id: SessionID) async throws -> Bool {
         ignoredSessionIDs.insert(id)
         timeline.removeValue(forKey: id)
+        turns.removeValue(forKey: id)
         return sessions.removeValue(forKey: id) != nil
     }
 
@@ -215,7 +305,11 @@ public actor InMemorySessionRepository: SessionRepository {
     public func sessionDetails(limit: Int = 500) async throws -> [SessionDetail] {
         var result: [SessionDetail] = []
         for summary in try await listSessions(limit: limit) {
-            result.append(SessionDetail(summary: summary, timeline: timeline[summary.id, default: []]))
+            result.append(SessionDetail(
+                summary: summary,
+                turns: sortedTurns(summary.id),
+                timeline: timeline[summary.id, default: []]
+            ))
         }
         return result
     }

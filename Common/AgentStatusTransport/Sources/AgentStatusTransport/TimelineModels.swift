@@ -20,6 +20,9 @@ public struct MessageTimelinePayload: Codable, Hashable, Sendable {
     }
 }
 
+/// One tool message. `started` is the *call* (PreToolUse / `assistant.tool_use`);
+/// `succeeded` / `failed` is the *result* (PostToolUse / `user.tool_result`).
+/// Call and result are separate timeline items paired by `toolUseID`.
 public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     public enum Status: String, Codable, Hashable, Sendable {
         case started
@@ -31,24 +34,104 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     public let summary: String?
     public let status: Status
     public let durationMilliseconds: Int64?
+    public let toolUseID: String?
 
     public init(
         name: String,
         summary: String? = nil,
         status: Status,
-        durationMilliseconds: Int64? = nil
+        durationMilliseconds: Int64? = nil,
+        toolUseID: String? = nil
     ) {
         self.name = name
         self.summary = summary
         self.status = status
         self.durationMilliseconds = durationMilliseconds
+        self.toolUseID = toolUseID
     }
+
+    public var isCall: Bool { status == .started }
+    public var isResult: Bool { status != .started }
 
     private enum CodingKeys: String, CodingKey {
         case name
         case summary
         case status
         case durationMilliseconds
+        case toolUseID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        status = try c.decode(Status.self, forKey: .status)
+        durationMilliseconds = try c.decodeIfPresent(Int64.self, forKey: .durationMilliseconds)
+        toolUseID = try c.decodeIfPresent(String.self, forKey: .toolUseID)
+    }
+}
+
+/// Model reasoning / thinking text (Claude `thinking` block, Codex reasoning).
+public struct ReasoningTimelinePayload: Codable, Hashable, Sendable {
+    public let text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+}
+
+/// Context injected into the model that the user did not type. `session`
+/// scope: instructions files, configuration, model settings, cwd changes.
+/// `turn` scope: attachments, system reminders, hook-injected context,
+/// expanded skills, compaction summaries.
+public struct ContextTimelinePayload: Codable, Hashable, Sendable {
+    public enum Scope: String, Codable, Hashable, Sendable {
+        case session
+        case turn
+    }
+
+    public let scope: Scope
+    public let kind: String
+    public let summary: String?
+    public let content: JSONValue?
+
+    public init(scope: Scope, kind: String, summary: String? = nil, content: JSONValue? = nil) {
+        self.scope = scope
+        self.kind = kind
+        self.summary = summary
+        self.content = content
+    }
+}
+
+/// Session lifecycle boundary rendered as a full-width marker row.
+public struct SessionMarkerTimelinePayload: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Hashable, Sendable {
+        case sessionStarted = "session_started"
+        case sessionEnded = "session_ended"
+        case compactionStarted = "compaction_started"
+        case compactionEnded = "compaction_ended"
+    }
+
+    public let kind: Kind
+    /// `source` for start, `reason` for end, `trigger` for compaction.
+    public let detail: String?
+    public let model: String?
+
+    public init(kind: Kind, detail: String? = nil, model: String? = nil) {
+        self.kind = kind
+        self.detail = detail
+        self.model = model
+    }
+}
+
+/// Closes a turn (Stop hook / `task_complete` / `turn_aborted`).
+public struct TurnEndTimelinePayload: Codable, Hashable, Sendable {
+    public let outcome: TurnOutcome
+    public let message: String?
+
+    public init(outcome: TurnOutcome, message: String? = nil) {
+        self.outcome = outcome
+        self.message = message
     }
 }
 
@@ -225,10 +308,14 @@ public struct UnknownTimelinePayload: Codable, Hashable, Sendable {
 
 public enum TimelinePayload: Hashable, Sendable {
     case message(MessageTimelinePayload)
+    case reasoning(ReasoningTimelinePayload)
     case tool(ToolTimelinePayload)
     case plan(PlanTimelinePayload)
     case subagent(SubagentTimelinePayload)
     case error(ErrorTimelinePayload)
+    case context(ContextTimelinePayload)
+    case sessionMarker(SessionMarkerTimelinePayload)
+    case turnEnd(TurnEndTimelinePayload)
     case modelConfiguration(ModelConfigurationTimelinePayload)
     case internalContext(InternalContextTimelinePayload)
     case usageMetrics(UsageMetricsTimelinePayload)
@@ -239,10 +326,14 @@ extension TimelinePayload: Codable {
     private enum CodingKeys: String, CodingKey {
         case type
         case message
+        case reasoning
         case tool
         case plan
         case subagent
         case error
+        case context
+        case sessionMarker
+        case turnEnd
         case modelConfiguration
         case internalContext
         case usageMetrics
@@ -256,10 +347,22 @@ extension TimelinePayload: Codable {
             ?? UnknownTimelinePayload(kind: type)
         switch type {
         case "message": self = .message(try container.decode(MessageTimelinePayload.self, forKey: .message))
+        case "reasoning":
+            self = try container.decodeIfPresent(ReasoningTimelinePayload.self, forKey: .reasoning)
+                .map(TimelinePayload.reasoning) ?? .unknown(unknown)
         case "tool": self = .tool(try container.decode(ToolTimelinePayload.self, forKey: .tool))
         case "plan": self = .plan(try container.decode(PlanTimelinePayload.self, forKey: .plan))
         case "subagent": self = .subagent(try container.decode(SubagentTimelinePayload.self, forKey: .subagent))
         case "error": self = .error(try container.decode(ErrorTimelinePayload.self, forKey: .error))
+        case "context":
+            self = try container.decodeIfPresent(ContextTimelinePayload.self, forKey: .context)
+                .map(TimelinePayload.context) ?? .unknown(unknown)
+        case "session_marker":
+            self = try container.decodeIfPresent(SessionMarkerTimelinePayload.self, forKey: .sessionMarker)
+                .map(TimelinePayload.sessionMarker) ?? .unknown(unknown)
+        case "turn_end":
+            self = try container.decodeIfPresent(TurnEndTimelinePayload.self, forKey: .turnEnd)
+                .map(TimelinePayload.turnEnd) ?? .unknown(unknown)
         case "model_configuration":
             self = try container.decodeIfPresent(
                 ModelConfigurationTimelinePayload.self,
@@ -285,6 +388,18 @@ extension TimelinePayload: Codable {
         case let .message(payload):
             try container.encode("message", forKey: .type)
             try container.encode(payload, forKey: .message)
+        case let .reasoning(payload):
+            try container.encode("reasoning", forKey: .type)
+            try container.encode(payload, forKey: .reasoning)
+        case let .context(payload):
+            try container.encode("context", forKey: .type)
+            try container.encode(payload, forKey: .context)
+        case let .sessionMarker(payload):
+            try container.encode("session_marker", forKey: .type)
+            try container.encode(payload, forKey: .sessionMarker)
+        case let .turnEnd(payload):
+            try container.encode("turn_end", forKey: .type)
+            try container.encode(payload, forKey: .turnEnd)
         case let .tool(payload):
             try container.encode("tool", forKey: .type)
             try container.encode(payload, forKey: .tool)

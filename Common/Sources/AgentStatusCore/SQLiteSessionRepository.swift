@@ -58,7 +58,47 @@ public actor SQLiteSessionRepository: SessionRepository {
                 );
                 """)
         }
+        migrator.registerMigration("agent-status-v2-turns") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS turns (
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    turn_id TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    summary BLOB NOT NULL,
+                    PRIMARY KEY(session_id, turn_id)
+                );
+                CREATE INDEX IF NOT EXISTS turns_session_time
+                    ON turns(session_id, started_at, turn_id);
+                """)
+        }
         try migrator.migrate(database)
+    }
+
+    private static func fetchTurns(_ db: Database, sessionID: SessionID, decoder: JSONDecoder) throws -> [TurnSummary] {
+        let data = try Data.fetchAll(
+            db,
+            sql: "SELECT summary FROM turns WHERE session_id = ? ORDER BY started_at ASC, turn_id ASC",
+            arguments: [sessionID.rawValue]
+        )
+        return try data.map { try decoder.decode(TurnSummary.self, from: $0) }
+    }
+
+    private static func upsertTurn(_ db: Database, _ turn: TurnSummary, encoder: JSONEncoder) throws {
+        try db.execute(
+            sql: """
+                INSERT INTO turns(session_id, turn_id, started_at, summary)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(session_id, turn_id) DO UPDATE SET
+                    started_at = excluded.started_at,
+                    summary = excluded.summary
+                """,
+            arguments: [
+                turn.sessionID.rawValue,
+                turn.id.rawValue,
+                turn.startedAt.timeIntervalSince1970,
+                try encoder.encode(turn),
+            ]
+        )
     }
 
     @discardableResult
@@ -71,7 +111,12 @@ public actor SQLiteSessionRepository: SessionRepository {
                 sql: "SELECT EXISTS(SELECT 1 FROM ignored_sessions WHERE id = ?)",
                 arguments: [event.sessionID.rawValue]
             ) ?? false
-            guard !ignored else { return false }
+            if ignored {
+                // A hidden session comes back only on live activity (a
+                // lifecycle-bearing event), never on passive backfill.
+                guard event.resurrectsHiddenSession else { return false }
+                try db.execute(sql: "DELETE FROM ignored_sessions WHERE id = ?", arguments: [event.sessionID.rawValue])
+            }
 
             let duplicate = try Bool.fetchOne(
                 db,
@@ -103,6 +148,18 @@ public actor SQLiteSessionRepository: SessionRepository {
                     summary.lastActivityAt.timeIntervalSince1970,
                 ]
             )
+
+            if let turnID = event.turnID ?? event.turn?.id {
+                let currentTurnData = try Data.fetchOne(
+                    db,
+                    sql: "SELECT summary FROM turns WHERE session_id = ? AND turn_id = ?",
+                    arguments: [event.sessionID.rawValue, turnID.rawValue]
+                )
+                let currentTurn = try currentTurnData.map { try decoder.decode(TurnSummary.self, from: $0) }
+                if let turn = TurnReduction.summary(applying: event, to: currentTurn) {
+                    try Self.upsertTurn(db, turn, encoder: encoder)
+                }
+            }
 
             if let item = event.timelineItem {
                 try db.execute(
@@ -171,6 +228,7 @@ public actor SQLiteSessionRepository: SessionRepository {
             let items = try data.map { try decoder.decode(TimelineItem.self, from: $0) }
             return SessionDetail(
                 summary: summary,
+                turns: try Self.fetchTurns(db, sessionID: id, decoder: decoder),
                 timeline: Array(items.prefix(pageSize)),
                 nextCursor: items.count > pageSize
                     ? PaginationCursor(value: String(offset + pageSize))
@@ -243,6 +301,9 @@ public actor SQLiteSessionRepository: SessionRepository {
                         summary.lastActivityAt.timeIntervalSince1970,
                     ]
                 )
+                for turn in detail.turns {
+                    try Self.upsertTurn(db, turn, encoder: encoder)
+                }
                 for item in detail.timeline {
                     try db.execute(
                         sql: """

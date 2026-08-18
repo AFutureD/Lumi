@@ -3,15 +3,41 @@ import Foundation
 public enum AgentKind: Hashable, Sendable {
     case codex
     case codexSubagent
+    case claude
+    case claudeSubagent
     case unknown(String)
 
     public var rawValue: String {
         switch self {
         case .codex: "codex"
         case .codexSubagent: "codex_subagent"
+        case .claude: "claude"
+        case .claudeSubagent: "claude_subagent"
         case let .unknown(value): value
         }
     }
+
+    /// The provider family regardless of parent/subagent role.
+    public var provider: AgentProvider {
+        switch self {
+        case .codex, .codexSubagent: .codex
+        case .claude, .claudeSubagent: .claude
+        case .unknown: .unknown
+        }
+    }
+
+    public var isSubagent: Bool {
+        switch self {
+        case .codexSubagent, .claudeSubagent: true
+        case .codex, .claude, .unknown: false
+        }
+    }
+}
+
+public enum AgentProvider: String, Codable, Hashable, Sendable {
+    case codex
+    case claude
+    case unknown
 }
 
 extension AgentKind: Codable {
@@ -20,6 +46,8 @@ extension AgentKind: Codable {
         self = switch value {
         case "codex": .codex
         case "codex_subagent": .codexSubagent
+        case "claude": .claude
+        case "claude_subagent": .claudeSubagent
         default: .unknown(value)
         }
     }
@@ -30,10 +58,13 @@ extension AgentKind: Codable {
     }
 }
 
+/// Session-level lifecycle (Agent domain, layer A).
+/// `waitingForInput` doubles as "idle between turns"; `completed` is "ended".
 public enum SessionLifecycle: Hashable, Sendable {
     case starting
     case running
     case waitingForInput
+    case compacting
     case completed
     case failed
     case interrupted
@@ -44,10 +75,19 @@ public enum SessionLifecycle: Hashable, Sendable {
         case .starting: "starting"
         case .running: "running"
         case .waitingForInput: "waiting_for_input"
+        case .compacting: "compacting"
         case .completed: "completed"
         case .failed: "failed"
         case .interrupted: "interrupted"
         case let .unknown(value): value
+        }
+    }
+
+    /// True while the agent process is expected to still be alive.
+    public var isLive: Bool {
+        switch self {
+        case .starting, .running, .waitingForInput, .compacting: true
+        case .completed, .failed, .interrupted, .unknown: false
         }
     }
 }
@@ -59,6 +99,7 @@ extension SessionLifecycle: Codable {
         case "starting": .starting
         case "running": .running
         case "waiting_for_input": .waitingForInput
+        case "compacting": .compacting
         case "completed": .completed
         case "failed": .failed
         case "interrupted": .interrupted
@@ -72,12 +113,15 @@ extension SessionLifecycle: Codable {
     }
 }
 
+/// Turn-level phase (Agent domain, layer A). `idle` means no turn is in flight.
 public enum TurnPhase: Hashable, Sendable {
     case idle
     case thinking
     case executing
     case responding
     case waitingForApproval
+    case subagentRunning
+    case compacting
     case unknown(String)
 
     public var rawValue: String {
@@ -87,6 +131,8 @@ public enum TurnPhase: Hashable, Sendable {
         case .executing: "executing"
         case .responding: "responding"
         case .waitingForApproval: "waiting_for_approval"
+        case .subagentRunning: "subagent_running"
+        case .compacting: "compacting"
         case let .unknown(value): value
         }
     }
@@ -101,6 +147,8 @@ extension TurnPhase: Codable {
         case "executing": .executing
         case "responding": .responding
         case "waiting_for_approval": .waitingForApproval
+        case "subagent_running": .subagentRunning
+        case "compacting": .compacting
         default: .unknown(value)
         }
     }
@@ -108,6 +156,94 @@ extension TurnPhase: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
+    }
+}
+
+/// How a turn ended. `nil` on `TurnSummary` means the turn is still open.
+public enum TurnOutcome: String, Codable, Hashable, Sendable {
+    case completed
+    case failed
+    case aborted
+}
+
+/// Agent-domain Turn aggregate. Produced by the helper, merged by the daemon
+/// (later fields win; counters take the maximum), read by clients.
+public struct TurnSummary: Codable, Hashable, Sendable {
+    public let id: TurnID
+    public let sessionID: SessionID
+    public let index: Int?
+    public let phase: TurnPhase
+    public let prompt: String?
+    public let startedAt: Date
+    public let endedAt: Date?
+    public let outcome: TurnOutcome?
+    public let toolCallCount: Int
+    public let subagentCount: Int
+    public let lastAssistantMessage: String?
+
+    public init(
+        id: TurnID,
+        sessionID: SessionID,
+        index: Int? = nil,
+        phase: TurnPhase,
+        prompt: String? = nil,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        outcome: TurnOutcome? = nil,
+        toolCallCount: Int = 0,
+        subagentCount: Int = 0,
+        lastAssistantMessage: String? = nil
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.index = index
+        self.phase = phase
+        self.prompt = prompt
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.outcome = outcome
+        self.toolCallCount = toolCallCount
+        self.subagentCount = subagentCount
+        self.lastAssistantMessage = lastAssistantMessage
+    }
+
+    public var isOpen: Bool { endedAt == nil && outcome == nil }
+
+    /// Folds a newer partial update into the stored aggregate.
+    public func merging(_ update: TurnSummary) -> TurnSummary {
+        TurnSummary(
+            id: id,
+            sessionID: sessionID,
+            index: update.index ?? index,
+            phase: update.phase,
+            prompt: update.prompt ?? prompt,
+            startedAt: min(startedAt, update.startedAt),
+            endedAt: update.endedAt ?? endedAt,
+            outcome: update.outcome ?? outcome,
+            toolCallCount: max(toolCallCount, update.toolCallCount),
+            subagentCount: max(subagentCount, update.subagentCount),
+            lastAssistantMessage: update.lastAssistantMessage ?? lastAssistantMessage
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionID, index, phase, prompt, startedAt, endedAt, outcome
+        case toolCallCount, subagentCount, lastAssistantMessage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(TurnID.self, forKey: .id)
+        sessionID = try c.decode(SessionID.self, forKey: .sessionID)
+        index = try c.decodeIfPresent(Int.self, forKey: .index)
+        phase = try c.decodeIfPresent(TurnPhase.self, forKey: .phase) ?? .idle
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+        outcome = try c.decodeIfPresent(TurnOutcome.self, forKey: .outcome)
+        toolCallCount = try c.decodeIfPresent(Int.self, forKey: .toolCallCount) ?? 0
+        subagentCount = try c.decodeIfPresent(Int.self, forKey: .subagentCount) ?? 0
+        lastAssistantMessage = try c.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
     }
 }
 
@@ -195,23 +331,35 @@ public struct SessionSummary: Codable, Hashable, Sendable {
 
 public struct SessionDetail: Codable, Hashable, Sendable {
     public let summary: SessionSummary
+    public let turns: [TurnSummary]
     public let timeline: [TimelineItem]
     public let nextCursor: PaginationCursor?
 
     public init(
         summary: SessionSummary,
+        turns: [TurnSummary] = [],
         timeline: [TimelineItem],
         nextCursor: PaginationCursor? = nil
     ) {
         self.summary = summary
+        self.turns = turns
         self.timeline = timeline
         self.nextCursor = nextCursor
     }
 
     private enum CodingKeys: String, CodingKey {
         case summary
+        case turns
         case timeline
         case nextCursor
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try c.decode(SessionSummary.self, forKey: .summary)
+        turns = try c.decodeIfPresent([TurnSummary].self, forKey: .turns) ?? []
+        timeline = try c.decodeIfPresent([TimelineItem].self, forKey: .timeline) ?? []
+        nextCursor = try c.decodeIfPresent(PaginationCursor.self, forKey: .nextCursor)
     }
 }
 

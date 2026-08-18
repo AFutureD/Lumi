@@ -12,7 +12,7 @@ public enum SessionStatusTone: Equatable, Sendable {
         phase: TurnPhase
     ) -> SessionStatusTone {
         switch lifecycle {
-        case .starting, .running:
+        case .starting, .running, .compacting:
             .blue
         case .waitingForInput:
             phase == .idle ? .green : .orange
