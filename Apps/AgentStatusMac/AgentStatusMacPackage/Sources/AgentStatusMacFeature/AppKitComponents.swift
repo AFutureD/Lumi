@@ -6,12 +6,16 @@ import AppKit
 @MainActor
 final class RoundedSelectionRowView: NSTableRowView {
     var horizontalInset: CGFloat = AgentStatusDesign.Layout.listHorizontalInset
+    /// Space kept below the pill (rows that carry their own inter-row gap).
+    var bottomInset: CGFloat = 0
 
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard selectionHighlightStyle != .none else { return }
-        let rect = bounds.insetBy(dx: horizontalInset, dy: 0)
+        var rect = bounds.insetBy(dx: horizontalInset, dy: 0)
+        rect.size.height -= bottomInset
+        if !isFlipped { rect.origin.y += bottomInset }
         let path = NSBezierPath(
             roundedRect: rect,
             xRadius: AgentStatusDesign.Layout.selectionCornerRadius,

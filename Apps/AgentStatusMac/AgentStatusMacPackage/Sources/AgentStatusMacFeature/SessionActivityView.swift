@@ -5,13 +5,22 @@ import SwiftUI
 /// transient jump highlight, and whether the list is pinned to the bottom.
 @MainActor
 final class SessionActivityState: ObservableObject {
-    @Published var laneFilter: ActivityLaneFilter = .all
+    private static let timelineModeKey = "AgentStatus.Activity.TimelineMode"
+
+    /// Lanes vs single line; a user preference, so it survives session changes.
+    @Published var timelineMode: ActivityTimelineMode {
+        didSet { UserDefaults.standard.set(timelineMode.rawValue, forKey: Self.timelineModeKey) }
+    }
     @Published var highlightedID: String?
     var followsBottom = false
     private var highlightTask: Task<Void, Never>?
 
+    init() {
+        timelineMode = UserDefaults.standard.string(forKey: Self.timelineModeKey)
+            .flatMap(ActivityTimelineMode.init(rawValue:)) ?? .lanes
+    }
+
     func reset() {
-        laneFilter = .all
         highlightedID = nil
         followsBottom = false
         highlightTask?.cancel()
@@ -38,9 +47,7 @@ struct SessionActivityView: View {
     let onPreview: (SessionActivityPresentation) -> Void
 
     private var visibleActivities: [SessionActivityPresentation] {
-        guard let presentation else { return [] }
-        guard state.laneFilter != .all else { return presentation.activities }
-        return presentation.activities.filter { state.laneFilter.includes($0.category.lane) }
+        presentation?.activities ?? []
     }
 
     var body: some View {
@@ -99,20 +106,23 @@ struct SessionActivityView: View {
                     .padding(.vertical, 1)
                     .background(AgentStatusDesign.Color.UI.chipFill, in: Capsule())
                 Spacer(minLength: 8)
-                Picker("Lane", selection: $state.laneFilter) {
-                    ForEach(ActivityLaneFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        state.timelineMode = state.timelineMode.toggled
                     }
+                } label: {
+                    Image(systemName: "arrow.up.and.line.horizontal.and.arrow.down")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 14, height: 12)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                .buttonStyle(.glass)
                 .controlSize(.small)
-                .frame(width: 236)
-                .accessibilityLabel("Filter Activity by lane")
+                .help(state.timelineMode == .lanes ? "Show one timeline row" : "Show three lanes")
+                .accessibilityLabel("Toggle timeline density")
             }
 
             if !activities.isEmpty {
-                SessionActivityTimeline(activities: activities) { activity in
+                SessionActivityTimeline(activities: activities, mode: state.timelineMode) { activity in
                     withAnimation(.easeInOut(duration: 0.22)) {
                         proxy.scrollTo(sessionActivityRowID(for: activity), anchor: .center)
                     }
@@ -140,16 +150,22 @@ private struct SessionActivityTimeline: View {
     private static let spacing = AgentStatusDesign.Layout.laneCellSpacing
 
     let activities: [SessionActivityPresentation]
+    let mode: ActivityTimelineMode
     let onSelect: (SessionActivityPresentation) -> Void
+
+    private var stripHeight: CGFloat {
+        mode == .lanes ? Self.cellSize * 3 + Self.spacing * 2 : Self.cellSize
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .trailing, spacing: Self.spacing) {
-                ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
-                    Text(lane.title)
-                        .font(AgentStatusDesign.Font.UI.laneName)
-                        .foregroundStyle(.secondary)
-                        .frame(height: Self.cellSize)
+                if mode == .lanes {
+                    ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
+                        laneLabel(lane.title)
+                    }
+                } else {
+                    laneLabel("Timeline")
                 }
             }
             .frame(width: AgentStatusDesign.Layout.laneNameWidth, alignment: .trailing)
@@ -157,35 +173,48 @@ private struct SessionActivityTimeline: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: Self.spacing) {
                     ForEach(activities, id: \.id) { activity in
-                        VStack(spacing: Self.spacing) {
-                            ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
-                                if activity.category.lane == lane {
-                                    Button {
-                                        onSelect(activity)
-                                    } label: {
-                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                            .fill(activity.category.laneCellColor)
+                        if mode == .lanes {
+                            VStack(spacing: Self.spacing) {
+                                ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
+                                    if activity.category.lane == lane {
+                                        cell(for: activity)
+                                    } else {
+                                        Color.clear
                                             .frame(width: Self.cellSize, height: Self.cellSize)
-                                            .contentShape(Rectangle())
+                                            .accessibilityHidden(true)
                                     }
-                                    .buttonStyle(.plain)
-                                    .help("\(activity.category.tag): \(activity.content)")
-                                    .accessibilityLabel(
-                                        "Jump to \(activity.category.tag), \(activity.content)"
-                                    )
-                                } else {
-                                    Color.clear
-                                        .frame(width: Self.cellSize, height: Self.cellSize)
-                                        .accessibilityHidden(true)
                                 }
                             }
+                        } else {
+                            cell(for: activity)
                         }
                     }
                 }
             }
-            .frame(height: Self.cellSize * 3 + Self.spacing * 2)
+            .frame(height: stripHeight)
         }
-        .frame(height: Self.cellSize * 3 + Self.spacing * 2)
+        .frame(height: stripHeight)
+    }
+
+    private func laneLabel(_ title: String) -> some View {
+        Text(title)
+            .font(AgentStatusDesign.Font.UI.laneName)
+            .foregroundStyle(.secondary)
+            .frame(height: Self.cellSize)
+    }
+
+    private func cell(for activity: SessionActivityPresentation) -> some View {
+        Button {
+            onSelect(activity)
+        } label: {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(activity.category.laneCellColor)
+                .frame(width: Self.cellSize, height: Self.cellSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(activity.category.tag): \(activity.content)")
+        .accessibilityLabel("Jump to \(activity.category.tag), \(activity.content)")
     }
 }
 

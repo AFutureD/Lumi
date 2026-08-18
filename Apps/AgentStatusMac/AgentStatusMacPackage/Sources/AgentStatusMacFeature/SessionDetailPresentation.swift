@@ -72,32 +72,12 @@ enum SessionActivityLane: String, CaseIterable, Equatable, Sendable {
     }
 }
 
-/// Segmented filter above the Activity list; applies to the timeline and rows alike.
-enum ActivityLaneFilter: String, CaseIterable, Equatable, Sendable, Identifiable {
-    case all
-    case input
-    case tools
-    case model
+/// Activity timeline density: three lanes or one line.
+enum ActivityTimelineMode: String, Equatable, Sendable {
+    case lanes
+    case single
 
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: "All"
-        case .input: "Input"
-        case .tools: "Tools"
-        case .model: "Model"
-        }
-    }
-
-    func includes(_ lane: SessionActivityLane) -> Bool {
-        switch self {
-        case .all: true
-        case .input: lane == .input
-        case .tools: lane == .tools
-        case .model: lane == .model
-        }
-    }
+    var toggled: ActivityTimelineMode { self == .lanes ? .single : .lanes }
 }
 
 /// Header metrics derived from usage and timing; no extra data source.
@@ -123,6 +103,20 @@ struct SessionMetricsPresentation: Equatable, Sendable {
 
     func elapsedText(now: Date) -> String {
         SessionElapsedFormatter.string(from: max(0, (endedAt ?? now).timeIntervalSince(startedAt)))
+    }
+}
+
+/// `now` / `12s` / `4m` / `1h` / `yesterday` / `3d` for the Sessions list.
+enum SessionRelativeTimeFormatter {
+    static func string(from date: Date, now: Date = .now) -> String {
+        let interval = max(0, now.timeIntervalSince(date))
+        let seconds = Int(interval)
+        if seconds < 10 { return "now" }
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3_600 { return "\(seconds / 60)m" }
+        if seconds < 86_400 { return "\(seconds / 3_600)h" }
+        if seconds < 172_800 { return "yesterday" }
+        return "\(seconds / 86_400)d"
     }
 }
 

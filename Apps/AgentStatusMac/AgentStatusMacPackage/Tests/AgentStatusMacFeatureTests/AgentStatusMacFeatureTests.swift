@@ -603,14 +603,22 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     #expect(SessionListHierarchy.filtering([main, child, other], query: "nope").isEmpty)
 }
 
-@Test func activityLaneFilterMatchesLanes() {
-    #expect(ActivityLaneFilter.all.includes(.input))
-    #expect(ActivityLaneFilter.all.includes(.model))
-    #expect(ActivityLaneFilter.input.includes(.input))
-    #expect(!ActivityLaneFilter.input.includes(.tools))
-    #expect(ActivityLaneFilter.tools.includes(.tools))
-    #expect(ActivityLaneFilter.model.includes(.model))
-    #expect(!ActivityLaneFilter.model.includes(.input))
+@Test func timelineModeTogglesBetweenLanesAndSingle() {
+    #expect(ActivityTimelineMode.lanes.toggled == .single)
+    #expect(ActivityTimelineMode.single.toggled == .lanes)
+}
+
+@Test func relativeTimeFormatterUsesListUnits() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    func text(_ secondsAgo: TimeInterval) -> String {
+        SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-secondsAgo), now: now)
+    }
+    #expect(text(3) == "now")
+    #expect(text(12) == "12s")
+    #expect(text(4 * 60 + 5) == "4m")
+    #expect(text(3_600 + 30) == "1h")
+    #expect(text(30 * 3_600) == "yesterday")
+    #expect(text(3 * 86_400) == "3d")
 }
 
 @Test func elapsedFormatterUsesCompactUnits() {

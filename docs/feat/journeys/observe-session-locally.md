@@ -30,7 +30,7 @@
    - 数据变化：启用前已经存在的旧 Session 不会自动导入。
    - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 4. 在中栏选择目标 Session。
-   - 系统反馈：工具栏显示 Session 标题，subheader 显示 Agent、状态药丸和工作目录；右栏 Activity 展示属于当前 Session 的全部记录，粘顶 header 提供 All / Input / Tools / Model 分段筛选和 Input、Tools、Model 三行时间轴，点击方格可跳到对应记录并短暂高亮；右侧 Inspector 显示 Token / Context / Elapsed 指标与 Overview、Model、Usage 字段。Subagent 为执行任务获得的父 Session 历史不会重复出现在其 Activity。
+   - 系统反馈：工具栏显示 Session 标题，subheader 显示 Agent、状态药丸和工作目录；右栏 Activity 展示属于当前 Session 的全部记录，粘顶 header 提供可在三泳道与单行之间切换的时间轴，点击方格可跳到对应记录并短暂高亮；右侧 Inspector 显示 Token / Context / Elapsed 指标与 Overview、Model、Usage 字段。Subagent 为执行任务获得的父 Session 历史不会重复出现在其 Activity。
    - 数据变化：只改变查看对象。
    - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-017](../modules/mac-session-view.md#mac-r-017-activity-全量显示并支持时间轴定位)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 5. 继续使用 Codex。
