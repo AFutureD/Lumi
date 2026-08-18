@@ -409,8 +409,8 @@ private final class SessionRowView: NSTableCellView {
         refreshRelativeTime()
 
         if isChild {
-            agentIcon.image = NSImage(systemSymbolName: "arrow.turn.down.right", accessibilityDescription: "Subagent")?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium))
+            agentIcon.image = NSImage(systemSymbolName: "microbe", accessibilityDescription: "Subagent")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
             agentIcon.contentTintColor = NSColor(red: 150 / 255, green: 150 / 255, blue: 155 / 255, alpha: 1)
             agentIcon.toolTip = "Subagent"
         } else {

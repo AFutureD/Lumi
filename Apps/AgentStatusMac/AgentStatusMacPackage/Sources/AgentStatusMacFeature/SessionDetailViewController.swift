@@ -203,10 +203,11 @@ final class SessionDetailSplitViewController: NSSplitViewController {
         let activityController = NSViewController()
         activityController.view = activity
         let inspectorController = NSViewController()
+        // Lighter than `.underWindowBackground`: a within-window sheet material.
         let effect = NSVisualEffectView()
-        effect.material = .underWindowBackground
-        effect.blendingMode = .behindWindow
-        effect.state = .followsWindowActiveState
+        effect.material = .sheet
+        effect.blendingMode = .withinWindow
+        effect.state = .active
         inspector.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(inspector)
         NSLayoutConstraint.activate([

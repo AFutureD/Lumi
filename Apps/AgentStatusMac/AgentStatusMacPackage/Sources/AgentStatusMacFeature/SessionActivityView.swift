@@ -111,7 +111,9 @@ struct SessionActivityView: View {
                         state.timelineMode = state.timelineMode.toggled
                     }
                 } label: {
-                    Image(systemName: "arrow.up.and.line.horizontal.and.arrow.down")
+                    Image(systemName: state.timelineMode == .lanes
+                        ? "arrow.down.and.line.horizontal.and.arrow.up"
+                        : "arrow.up.and.line.horizontal.and.arrow.down")
                         .font(.system(size: 11, weight: .medium))
                         .frame(width: 14, height: 12)
                 }
