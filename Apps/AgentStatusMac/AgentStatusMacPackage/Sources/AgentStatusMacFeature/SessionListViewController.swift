@@ -9,7 +9,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     private let emptyLabel = NSTextField(labelWithString: "No Sessions")
     private var hierarchy = SessionListHierarchy(roots: [], nodesByID: [:])
     private var displayedSessions: [SessionSummary] = []
-    private var collapsedSessionIDs: Set<SessionID> = []
+    /// Parents start collapsed; only rows the user expanded stay open across reloads.
+    private var expandedSessionIDs: Set<SessionID> = []
     private var filterText = ""
     private var isReloading = false
     private var relativeTimeTimer: Timer?
@@ -149,14 +150,14 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     func outlineViewItemDidExpand(_ notification: Notification) {
         guard !isReloading,
               let node = notification.userInfo?["NSObject"] as? SessionListNode else { return }
-        collapsedSessionIDs.remove(node.summary.id)
+        expandedSessionIDs.insert(node.summary.id)
         reloadRow(for: node)
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
         guard !isReloading,
               let node = notification.userInfo?["NSObject"] as? SessionListNode else { return }
-        collapsedSessionIDs.insert(node.summary.id)
+        expandedSessionIDs.remove(node.summary.id)
         reloadRow(for: node)
     }
 
@@ -248,7 +249,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                 hierarchy = updatedHierarchy
                 outline.reloadData()
                 let parents = hierarchy.nodesByID.values.filter { !$0.children.isEmpty }
-                for node in parents where !collapsedSessionIDs.contains(node.summary.id) {
+                for node in parents where expandedSessionIDs.contains(node.summary.id) {
                     outline.expandItem(node)
                 }
                 // Parent rows were built before their children were expanded; refresh
@@ -331,7 +332,8 @@ private final class SessionRowView: NSTableCellView {
 
         countPill.isBordered = false
         countPill.wantsLayer = true
-        countPill.layer?.cornerRadius = 8
+        countPill.layer?.cornerRadius = 4
+        countPill.layer?.cornerCurve = .continuous
         countPill.layer?.backgroundColor = AgentStatusDesign.Color.chipFill.cgColor
         countPill.target = self
         countPill.action = #selector(toggle)

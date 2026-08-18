@@ -29,6 +29,9 @@ final class MainWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .none
+        // Without a transparent titlebar AppKit draws a hard "scroll pocket" line
+        // under the toolbar wherever the column content does not scroll beneath it.
+        window.titlebarAppearsTransparent = true
         window.minSize = NSSize(width: 1_200, height: 640)
 
         super.init(window: window)
