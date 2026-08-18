@@ -22,7 +22,7 @@ Agent Status aggregates multiple Codex Agents and Sessions on one Mac, displays 
 
 ## Prerequisites
 
-- macOS 15 or later.
+- macOS 26 or later.
 - iOS 18 or later.
 - Stable Xcode 26 selected for App builds.
 - Swift 6.2.

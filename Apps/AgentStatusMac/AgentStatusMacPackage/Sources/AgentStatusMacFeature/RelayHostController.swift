@@ -68,7 +68,7 @@ final class RelayHostController {
     private(set) var devices: [RelayDeviceRecord] = []
     private(set) var isConnected = false
     private(set) var lastError: String?
-    var onChange: (() -> Void)?
+    private var observers: [UUID: () -> Void] = [:]
 
     init(store: MacSessionStore, relayURL: URL = RelayBuildConfiguration.url) {
         self.store = store
@@ -97,6 +97,18 @@ final class RelayHostController {
         }
     }
 
+    /// Multiple views (Pairing, sidebar, toolbar) observe connection and device changes.
+    @discardableResult
+    func observe(_ observer: @escaping () -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = observer
+        return id
+    }
+
+    private func notifyObservers() {
+        observers.values.forEach { $0() }
+    }
+
     deinit {
         connectionTask?.cancel()
         refreshTask?.cancel()
@@ -116,7 +128,7 @@ final class RelayHostController {
         await socket?.disconnect()
         socket = nil
         isConnected = false
-        onChange?()
+        notifyObservers()
     }
 
     private func configure(relayURL: URL) async {
@@ -144,7 +156,7 @@ final class RelayHostController {
         } catch {
             lastError = String(describing: error)
         }
-        onChange?()
+        notifyObservers()
     }
 
     func createPairingOffer() async throws -> PairingOffer {
@@ -186,7 +198,7 @@ final class RelayHostController {
             lastError = String(describing: error)
         }
         if devices != previousDevices || lastError != previousError {
-            onChange?()
+            notifyObservers()
         }
     }
 
@@ -201,7 +213,7 @@ final class RelayHostController {
             await refreshDevices()
         } catch {
             lastError = String(describing: error)
-            onChange?()
+            notifyObservers()
         }
     }
 
@@ -229,7 +241,7 @@ final class RelayHostController {
                     guard !Task.isCancelled else { return }
                     self?.isConnected = false
                     self?.lastError = String(describing: error)
-                    self?.onChange?()
+                    self?.notifyObservers()
                     self?.scheduleReconnect(after: error)
                 }
             }
@@ -244,7 +256,7 @@ final class RelayHostController {
             lastError = String(describing: error)
             scheduleReconnect(after: error)
         }
-        onChange?()
+        notifyObservers()
     }
 
     private func scheduleReconnect(after error: Error) {
@@ -316,7 +328,7 @@ final class RelayHostController {
             lastError = nil
         } catch {
             lastError = String(describing: error)
-            onChange?()
+            notifyObservers()
         }
     }
 

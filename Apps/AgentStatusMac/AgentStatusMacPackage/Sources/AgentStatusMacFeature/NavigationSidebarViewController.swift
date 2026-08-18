@@ -13,25 +13,42 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
     }
 
     private let rows: [Row] = [
-        .section("MONITOR"),
+        .section("Monitor"),
         .destination(.sessions, title: "Sessions", symbol: "rectangle.split.2x1"),
-        .section("CONNECTIONS"),
-        .destination(.pairing, title: "iPhone", symbol: "iphone.gen3.radiowaves.left.and.right"),
-        .section("APPLICATION"),
+        .section("Connections"),
+        .destination(.pairing, title: "iPhone", symbol: "iphone"),
+        .section("Application"),
         .destination(.settings, title: "Settings", symbol: "gearshape"),
     ]
+    private let store: MacSessionStore
+    private let relayHost: RelayHostController
     private let table = NSTableView()
     private var isSelecting = false
     private var selectedTab: MainWindowController.Tab = .sessions
+    private var displayedSessionCount = 0
+    private var displayedRelayConnected = false
     var onSelection: ((MainWindowController.Tab) -> Void)?
+
+    init(store: MacSessionStore, relayHost: RelayHostController) {
+        self.store = store
+        self.relayHost = relayHost
+        super.init(nibName: nil, bundle: nil)
+        store.observe { [weak self] in self?.reloadDetails() }
+        relayHost.observe { [weak self] in self?.reloadDetails() }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
     override func loadView() {
         view = NSView()
         table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("navigation")))
         table.headerView = nil
-        table.style = .sourceList
+        table.style = .plain
         table.floatsGroupRows = false
-        table.intercellSpacing = NSSize(width: 0, height: 2)
+        table.intercellSpacing = .zero
+        table.backgroundColor = .clear
+        table.selectionHighlightStyle = .regular
         table.delegate = self
         table.dataSource = self
 
@@ -41,12 +58,15 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scroll)
+        // Content sits 14pt from the sidebar edges; the selection capsule extends 4pt beyond.
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        displayedSessionCount = store.sessions.count
+        displayedRelayConnected = relayHost.isConnected
         applySelection()
     }
 
@@ -62,38 +82,50 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        rows[row].tab == nil ? 28 : 38
+        switch rows[row] {
+        case .section:
+            row == 0
+                ? AgentStatusDesign.Layout.sidebarFirstGroupHeight
+                : AgentStatusDesign.Layout.sidebarGroupHeight
+        case .destination:
+            AgentStatusDesign.Layout.sidebarRowHeight
+        }
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("SidebarRow")
+        if let existing = tableView.makeView(withIdentifier: identifier, owner: self) as? RoundedSelectionRowView {
+            return existing
+        }
+        let rowView = RoundedSelectionRowView()
+        rowView.horizontalInset = 0
+        rowView.identifier = identifier
+        return rowView
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         switch rows[row] {
         case let .section(title):
-            let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: 11, weight: .semibold)
-            label.textColor = .secondaryLabelColor
-            return label
-        case let .destination(_, title, symbol):
             let cell = NSTableCellView()
-            let icon = NSImageView(image: NSImage(
-                systemSymbolName: symbol,
-                accessibilityDescription: title
-            ) ?? NSImage())
-            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
             let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: 13, weight: .medium)
-            let stack = NSStackView(views: [icon, label])
-            stack.orientation = .horizontal
-            stack.alignment = .centerY
-            stack.spacing = 9
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(stack)
+            label.font = AgentStatusDesign.Font.group
+            label.textColor = .secondaryLabelColor
+            label.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(label)
+            cell.textField = label
             NSLayoutConstraint.activate([
-                icon.widthAnchor.constraint(equalToConstant: 18),
-                icon.heightAnchor.constraint(equalToConstant: 18),
-                stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-                stack.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
-                stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+                label.bottomAnchor.constraint(
+                    equalTo: cell.bottomAnchor,
+                    constant: -AgentStatusDesign.Layout.sidebarGroupBottomInset
+                ),
             ])
+            return cell
+        case let .destination(tab, title, symbol):
+            let cell = SidebarDestinationCell()
+            cell.configure(title: title, symbol: symbol)
+            configureDetail(for: tab, in: cell)
             return cell
         }
     }
@@ -117,5 +149,108 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
         isSelecting = true
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         isSelecting = false
+    }
+
+    private func configureDetail(for tab: MainWindowController.Tab, in cell: SidebarDestinationCell) {
+        switch tab {
+        case .sessions:
+            cell.showCount(store.sessions.count)
+        case .pairing:
+            cell.showDot(relayHost.isConnected)
+        case .settings:
+            cell.showNothing()
+        }
+    }
+
+    /// Only the affected rows reload; selection and geometry are untouched.
+    private func reloadDetails() {
+        guard isViewLoaded else { return }
+        var indexes = IndexSet()
+        if store.sessions.count != displayedSessionCount {
+            displayedSessionCount = store.sessions.count
+            if let row = rows.firstIndex(where: { $0.tab == .sessions }) { indexes.insert(row) }
+        }
+        if relayHost.isConnected != displayedRelayConnected {
+            displayedRelayConnected = relayHost.isConnected
+            if let row = rows.firstIndex(where: { $0.tab == .pairing }) { indexes.insert(row) }
+        }
+        guard !indexes.isEmpty else { return }
+        for row in indexes {
+            guard let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarDestinationCell,
+                  let tab = rows[row].tab else { continue }
+            configureDetail(for: tab, in: cell)
+        }
+    }
+}
+
+@MainActor
+private final class SidebarDestinationCell: NSTableCellView {
+    private let icon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let dot = NSView()
+
+    init() {
+        super.init(frame: .zero)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        icon.contentTintColor = .controlAccentColor
+        icon.imageScaling = .scaleProportionallyDown
+        label.font = AgentStatusDesign.Font.body
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        detailLabel.font = AgentStatusDesign.Font.body
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.alignment = .right
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3.5
+        dot.layer?.backgroundColor = AgentStatusDesign.Color.connected.cgColor
+
+        [icon, label, detailLabel, dot].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        imageView = icon
+        textField = label
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            detailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 4),
+            detailLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            detailLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 7),
+            dot.heightAnchor.constraint(equalToConstant: 7),
+        ])
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailLabel.setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(title: String, symbol: String) {
+        label.stringValue = title
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    }
+
+    func showCount(_ count: Int) {
+        detailLabel.stringValue = "\(count)"
+        detailLabel.isHidden = false
+        dot.isHidden = true
+    }
+
+    func showDot(_ visible: Bool) {
+        detailLabel.isHidden = true
+        dot.isHidden = !visible
+    }
+
+    func showNothing() {
+        detailLabel.isHidden = true
+        dot.isHidden = true
     }
 }

@@ -10,6 +10,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     private var hierarchy = SessionListHierarchy(roots: [], nodesByID: [:])
     private var displayedSessions: [SessionSummary] = []
     private var collapsedSessionIDs: Set<SessionID> = []
+    private var filterText = ""
     private var isReloading = false
 
     init(store: MacSessionStore) {
@@ -29,11 +30,13 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
         outline.headerView = nil
-        outline.rowHeight = 78
-        outline.intercellSpacing = .zero
-        outline.style = .fullWidth
+        outline.rowHeight = AgentStatusDesign.Layout.listRowHeight
+        outline.intercellSpacing = NSSize(width: 0, height: 1)
+        outline.style = .plain
         outline.selectionHighlightStyle = .regular
-        outline.indentationPerLevel = 14
+        outline.indentationPerLevel = 0
+        outline.indentationMarkerFollowsCell = false
+        outline.backgroundColor = .clear
         outline.delegate = self
         outline.dataSource = self
 
@@ -41,6 +44,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.font = .systemFont(ofSize: 13)
@@ -57,6 +61,15 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
+        view.additionalSafeAreaInsets = NSEdgeInsets(top: 6, left: 0, bottom: 0, right: 0)
+        reload()
+    }
+
+    /// Toolbar search field → title / agent / workspace filter.
+    func apply(filter: String) {
+        guard filter != filterText else { return }
+        filterText = filter
+        displayedSessions = []
         reload()
     }
 
@@ -74,6 +87,20 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         return !node.children.isEmpty
     }
 
+    func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
+        false
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("SessionRowContainer")
+        if let row = outlineView.makeView(withIdentifier: identifier, owner: self) as? RoundedSelectionRowView {
+            return row
+        }
+        let row = RoundedSelectionRowView()
+        row.identifier = identifier
+        return row
+    }
+
     func outlineView(
         _ outlineView: NSOutlineView,
         viewFor tableColumn: NSTableColumn?,
@@ -83,7 +110,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         let identifier = NSUserInterfaceItemIdentifier("SessionRow")
         let cell = outlineView.makeView(withIdentifier: identifier, owner: self) as? SessionRowView
             ?? SessionRowView(identifier: identifier)
-        cell.configure(with: node.summary)
+        cell.configure(with: node.summary, level: outlineView.level(forItem: item))
         return cell
     }
 
@@ -111,9 +138,11 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         isReloading = true
         defer { isReloading = false }
 
-        let updated = store.sessions
+        let sorted = store.sessions.sorted { $0.updatedAt > $1.updatedAt }
+        let updated = SessionListHierarchy.filtering(sorted, query: filterText)
         let changed = updated != displayedSessions
         displayedSessions = updated
+        emptyLabel.stringValue = filterText.isEmpty ? "No Sessions" : "No matching Sessions"
         emptyLabel.isHidden = !updated.isEmpty
         if changed {
             let updatedHierarchy = SessionListHierarchy.build(from: updated)
@@ -153,79 +182,114 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     }
 }
 
+/// `[agent icon] Title` / `● Running · Thinking`; subagents indent, drop the icon
+/// and draw an elbow connector to their parent.
 @MainActor
 private final class SessionRowView: NSTableCellView {
+    private let agentIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let agentLabel = NSTextField(labelWithString: "")
-    private let statusIcon = NSImageView()
+    private let statusDot = NSView()
     private let statusLabel = NSTextField(labelWithString: "")
-    private let separator = NSBox()
+    private var titleLeading: NSLayoutConstraint!
+    private var statusLeading: NSLayoutConstraint!
+    private var level = 0
     private var statusTone: SessionStatusTone = .gray
+
+    private static let baseInset = AgentStatusDesign.Layout.listHorizontalInset + AgentStatusDesign.Layout.listRowInset
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        agentIcon.imageScaling = .scaleProportionallyUpOrDown
+        titleLabel.font = AgentStatusDesign.Font.rowTitle
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.usesSingleLineMode = true
-        agentLabel.font = .systemFont(ofSize: 11)
-        agentLabel.lineBreakMode = .byTruncatingTail
-        statusIcon.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "Session status")
-        statusIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .regular)
-        statusLabel.font = .systemFont(ofSize: 11)
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 3.5
+        statusLabel.font = AgentStatusDesign.Font.caption
         statusLabel.lineBreakMode = .byTruncatingTail
-        separator.boxType = .separator
+        statusLabel.maximumNumberOfLines = 1
 
-        [titleLabel, agentLabel, statusIcon, statusLabel, separator].forEach {
+        [agentIcon, titleLabel, statusDot, statusLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
+        titleLeading = titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.baseInset + 22)
+        statusLeading = statusDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.baseInset + 22)
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 11),
-            agentLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            agentLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            agentLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
-            statusIcon.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            statusIcon.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
-            statusIcon.widthAnchor.constraint(equalToConstant: 9),
-            statusIcon.heightAnchor.constraint(equalToConstant: 9),
-            statusLabel.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 5),
+            agentIcon.trailingAnchor.constraint(equalTo: titleLabel.leadingAnchor, constant: -6),
+            agentIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            agentIcon.widthAnchor.constraint(equalToConstant: 16),
+            agentIcon.heightAnchor.constraint(equalToConstant: 16),
+            titleLeading,
+            titleLabel.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -(AgentStatusDesign.Layout.listHorizontalInset + AgentStatusDesign.Layout.listRowInset)
+            ),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            statusLeading,
+            statusDot.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
             statusLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            statusLabel.topAnchor.constraint(equalTo: agentLabel.bottomAnchor, constant: 4),
-            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
-            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    override var backgroundStyle: NSView.BackgroundStyle {
-        didSet { updateColors() }
-    }
+    override var isFlipped: Bool { true }
 
-    func configure(with session: SessionSummary) {
+    func configure(with session: SessionSummary, level: Int) {
         let presentation = SessionListRowPresentation(session: session)
+        self.level = level
         titleLabel.stringValue = presentation.title
         titleLabel.toolTip = presentation.title
-        agentLabel.stringValue = "Agent · \(presentation.agent)"
+        titleLabel.font = level == 0 ? AgentStatusDesign.Font.rowTitle : AgentStatusDesign.Font.childRowTitle
         statusLabel.stringValue = presentation.status
         statusTone = session.statusTone
-        updateColors()
+        statusDot.layer?.backgroundColor = statusTone.appKitColor.cgColor
+        statusLabel.textColor = statusTone.appKitColor
+        titleLabel.textColor = .labelColor
+
+        if level == 0 {
+            agentIcon.isHidden = false
+            agentIcon.image = AgentIcons.image(for: session.agent, pointSize: 16)
+            agentIcon.contentTintColor = .secondaryLabelColor
+            agentIcon.toolTip = presentation.agent
+            titleLeading.constant = Self.baseInset + 22
+            statusLeading.constant = Self.baseInset + 22
+        } else {
+            agentIcon.isHidden = true
+            let indent = Self.baseInset + 22 + AgentStatusDesign.Layout.listChildIndent * CGFloat(level - 1)
+            titleLeading.constant = indent
+            statusLeading.constant = indent
+        }
+        needsDisplay = true
     }
 
-    private func updateColors() {
-        let selected = backgroundStyle == .emphasized
-        let selectedText = NSColor.alternateSelectedControlTextColor
-        titleLabel.textColor = selected ? selectedText : .labelColor
-        agentLabel.textColor = selected ? selectedText.withAlphaComponent(0.8) : .secondaryLabelColor
-        statusIcon.contentTintColor = selected ? selectedText : statusTone.appKitColor
-        statusLabel.textColor = selected ? selectedText.withAlphaComponent(0.9) : statusTone.appKitColor
-        separator.isHidden = selected
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard level > 0 else { return }
+        // Elbow: 10 wide, 20 tall, starting 1pt above the row, rounded 5 at the corner.
+        let x = AgentStatusDesign.Layout.listHorizontalInset + 16
+            + AgentStatusDesign.Layout.listChildIndent * CGFloat(level - 1) + 0.5
+        let top: CGFloat = -1
+        let bottom: CGFloat = 19.5
+        let path = NSBezierPath()
+        path.lineWidth = 1
+        path.move(to: NSPoint(x: x, y: top))
+        path.appendArc(
+            from: NSPoint(x: x, y: bottom),
+            to: NSPoint(x: x + 10, y: bottom),
+            radius: 5
+        )
+        path.line(to: NSPoint(x: x + 10, y: bottom))
+        AgentStatusDesign.Color.elbow.setStroke()
+        path.stroke()
     }
 }

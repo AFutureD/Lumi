@@ -1,14 +1,14 @@
 # Mac 会话查看
 
-> 验证状态：开发预览。App 已在 macOS 上完成编译、启动、Sessions 与 Settings 三栏交互、Notch 展开、Notch 设置入口、手动刷新、单 Session 删除和本地同步验证；真实 Codex Hook、正式签名、公证与干净机器安装仍待验收。
+> 验证状态：开发预览。App 已在 macOS 26 上完成编译、启动、Sessions / iPhone / Settings 三种布局的截图核对、Notch 展开、Notch 设置入口、手动刷新、单 Session 删除和本地同步验证；真实 Codex Hook、正式签名、公证与干净机器安装仍待验收。2026-08-18 起主窗口采用 Liquid Glass 重设计（原生工具栏 + Activity 主区 + 右侧 Inspector）。
 
 Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 Mail.app 相同的“导航—列表—详情”层级，Notch 用于快速查看当前活动。
 
 ## 模块概览
 
 - **入口**：启动 Agent Status；侧边栏包含“Sessions”“iPhone”“Settings”。
-- **前置条件**：macOS 15 或更高版本；daemon 已安装并运行。
-- **主要结果**：用户可从列表查看 Session 标题、Agent 类型和状态，并在 Summary 与 Activity 中查看 Session 信息、模型配置、消耗和完整活动历史；也可手动刷新、删除单个 Session，或清空全部 Agent Status 历史。
+- **前置条件**：macOS 26 或更高版本；daemon 已安装并运行。
+- **主要结果**：用户可从列表查看 Session 标题、Agent 类型和状态，在 Activity 中查看完整活动历史，在右侧 Inspector 中查看 Token / Context / Elapsed 指标、Session 信息、模型配置和消耗；也可按标题过滤列表、手动刷新、删除单个 Session，或清空全部 Agent Status 历史。
 - **只读边界**：查看和删除 Agent Status 中的记录不会审批、终止或修改 Codex Session。
 - **相关旅程**：[在 Mac 上跟进一次 Codex Session](../journeys/observe-session-locally.md)。
 
@@ -16,12 +16,12 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 
 ### Sessions：标准三栏
 
-1. 左栏是全高侧边栏，负责在 Sessions、iPhone 和 Settings 之间导航。
-2. 中栏是可折叠的 Session Outline，顶层 Main Session 按最近活动时间排序；Subagent 根据 Parent Session ID 递归放在所属 Session 下。每行只显示 Session 标题、Agent 类型，以及由生命周期和 Turn 阶段组成的状态。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；详情页头部遵循相同规则，Overview 仍保留原始标题。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
-3. 右栏分成 Summary 和 Activity。Summary 用卡片展示 Overview、可选的 Lineage、Model Configuration 与 Usage；Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录。Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 标题下方提供 Input、Tools、Model 三行横向时间轴；滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部，点击任一方格会跳到对应记录。
-4. 刷新图标（Refresh Sessions）位于 Session 列表上方；删除图标（Delete Session）位于详情上方。
+1. 左栏是固定 224 pt 的全高侧边栏，分为 Monitor / Connections / Application 三组：Sessions 行右侧显示会话数量，iPhone 行右侧在 Relay 连接时显示绿点。工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
+2. 中栏是 Session 列表，按最后更新时间倒序，不分组；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级。每行只显示 Agent 图标（Codex 使用官方彩色图标）、标题，以及“状态色点 + 生命周期 · Turn 阶段”。Subagent 根据 Parent Session ID 递归放在所属 Session 下，不显示图标、标题略小，并用折角连接线指向父级。选中行使用中性灰底、文字颜色不变。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；工具栏标题遵循相同规则。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变，窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
+3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh Sessions、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量、All / Input / Tools / Model 分段筛选和 Input、Tools、Model 三行横向时间轴；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON。
+4. 窗口缩放只改变右栏宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
-“iPhone”页面收起中栏，让配对内容使用剩余区域。“Settings”继续保持三栏：左栏是产品导航，中栏列出 General、Notch、Daemon、Agents 和 About，右栏显示当前设置详情。
+“iPhone”页面收起中栏：工具栏显示“Pair iPhone”和 Generate new code 按钮，subheader 显示 Relay 状态药丸，内容区左侧是二维码卡片、右侧是 Paired devices 列表。“Settings”继续保持三栏：中栏列出 General、Notch、Daemon、Agents 和 About（44 pt 两行行、灰底选中），右栏是工具栏标题 + 副标题 subheader + 卡片式内容；Daemon 面板的 subheader 额外显示 Running / Not connected 药丸。
 
 ### Notch：活动摘要
 
@@ -29,7 +29,7 @@ Notch 紧凑时显示全部符合展示条件的 Session 数量和最近一个 S
 
 ### Session 状态颜色
 
-Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。颜色使用系统动态色，会随浅色、深色和辅助功能显示设置调整。Mac 列表中的选中行使用系统选中文字颜色，以保持与选中背景的对比度。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
+Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字，在 subheader 中用带描边的状态药丸（Running 蓝、Waiting 橙、Completed 灰、Connected 绿）；状态变化时颜色 0.2 秒过渡，不闪烁。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
 
 ## 首次配置
 
@@ -52,15 +52,23 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 
 ### 刷新 Session
 
-点击 Session 列表上方的刷新图标（Refresh Sessions），从 daemon 取得完整当前数据。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。
+点击工具栏右侧的刷新图标（Refresh Sessions），从 daemon 取得完整当前数据。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。
 
 ### 删除单个 Session
 
-选择 Session，点击详情上方的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 会从 daemon、Mac 和已连接 iPhone 中删除。删除不影响 Codex 自身 Session；之后到达的同一 Session 活动也不会让它重新出现在 Agent Status 中。
+选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 会从 daemon、Mac 和已连接 iPhone 中删除。删除不影响 Codex 自身 Session；之后到达的同一 Session 活动也不会让它重新出现在 Agent Status 中。
 
 ### 清空全部历史
 
-在“Settings > Daemon”点击“Clear Session history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。
+在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。
+
+### 过滤 Session 列表
+
+在工具栏中栏段的“Filter sessions”输入文字，列表只保留标题、Agent 名或工作目录包含该文字的 Session；命中的 Subagent 会连同父级一起保留。清空文字恢复完整列表。
+
+### 撤销 iPhone 配对
+
+在“iPhone”页面的 Paired devices 卡片点击某台设备的“Revoke”，确认后只关闭该设备的通道，其他 iPhone 不受影响。
 
 ## 规则
 
@@ -153,7 +161,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 - 条件：Mac、Notch 或 iPhone 显示一个 Session 的当前状态。
 - 行为：Starting 和 Running 使用蓝色；Waiting For Input 在 Idle 阶段使用绿色、在 Waiting For Approval 阶段使用橙色；Completed 使用灰色；Failed 和 Interrupted 使用橙色。
 - 结果：用户在三个界面看到相同的状态颜色语义。
-- 限制或例外：颜色是系统动态色；Mac 列表选中行优先使用系统选中文字颜色保证可读性。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
+- 限制或例外：Mac 主窗口的状态色和类别色取自设计稿的浅色值（Session 详情列固定浅色外观），其余界面使用系统动态色；Mac 列表选中行使用中性灰底、文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
 
 ### MAC-R-014 Notch 显示 Session 当前状态
 
@@ -172,16 +180,16 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-016 Session 列表与详情按信息层级展示
 
 - 条件：Sessions 页面存在一个或多个 Session，用户选择其中一条。
-- 行为：列表行显示 Session 标题、Agent 类型和“生命周期 · Turn 阶段”状态；Main Session 使用原生 disclosure 展开或折叠全部直接和嵌套 Subagent，用户的折叠状态在本次 App 运行期间保留。Subagent 额外保留父 Session ID、深度、昵称、职责、Agent path 和来源类型。详情固定分为 Summary 与 Activity；Subagent lineage 进入 Summary，Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
-- 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的摘要与活动记录。
+- 行为：列表行显示 Agent 图标、Session 标题和“状态色点 + 生命周期 · Turn 阶段”；Subagent 缩进并用折角连接线挂在父级下，不显示 disclosure 三角，仍可用键盘左右方向键折叠或展开，折叠状态在本次 App 运行期间保留。详情固定为 Activity 主区 + Inspector：Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间），其下 Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
+- 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的活动记录与指标。
 - 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示。Activity 的系统与上下文记录可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
 
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 
 - 条件：用户选择的 Session 包含一条或多条 Activity。
-- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。标题下方的横向时间轴让每条记录占一个等宽正方形，并分入 Input（System、Context、User）、Tools（Tool、Subagent、其他）或 Model（Assistant、Reasoning）三行。滚动进入 Activity 后，标题、记录数量和时间轴固定在详情顶部，活动记录继续在下方滚动；用户点击方格后，详情滚动到对应记录。
+- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、All / Input / Tools / Model 分段筛选和横向时间轴：每条记录占一个 13 pt 方格，只填在自己所属的泳道（Input：System、Context、User；Tools：Tool、Subagent、其他；Model：Assistant、Reasoning），其余泳道留空。分段筛选同时过滤时间轴与记录列表。用户点击方格后，列表滚动到对应记录并短暂高亮。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
 - 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
-- 限制或例外：时间轴只改变当前详情的查看位置，不修改或控制 Codex Session。
+- 限制或例外：时间轴与筛选只改变当前详情的查看范围和位置，不修改或控制 Codex Session。
 
 ### MAC-R-018 Subagent 使用自己的标题与活动
 

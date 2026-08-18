@@ -25,7 +25,7 @@ Xcode App target 只负责入口、资源、Info.plist、entitlements 和打包�
 
 | 项目 | 当前要求 |
 | --- | --- |
-| macOS | 15+ |
+| macOS | 26+ |
 | iOS/iPadOS | 18+ |
 | Swift | 6.2 |
 | Xcode | 稳定版 26；当前本机验证为 26.6 |

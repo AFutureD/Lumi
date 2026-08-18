@@ -15,6 +15,7 @@ public final class MacSessionStore {
     private let eventSubscriber = DaemonEventSubscriber()
     private let socketPath: String
     private let cache: SQLiteSessionRepository?
+    private let cachePath: String
     private var started = false
     private var observers: [UUID: () -> Void] = [:]
     private var pendingSelectionID: SessionID?
@@ -30,8 +31,10 @@ public final class MacSessionStore {
         cachePath: String? = nil
     ) {
         self.socketPath = socketPath
+        let resolvedCachePath = cachePath ?? Self.defaultCachePath()
+        self.cachePath = resolvedCachePath
         do {
-            cache = try SQLiteSessionRepository(path: cachePath ?? Self.defaultCachePath())
+            cache = try SQLiteSessionRepository(path: resolvedCachePath)
         } catch {
             cache = nil
             connectionError = "Unable to open the macOS sync database: \(error)"
@@ -91,6 +94,20 @@ public final class MacSessionStore {
                 notifyObservers()
             }
         }
+    }
+
+    /// Size of the local sync database on disk (Settings › Daemon › Session history).
+    public func cacheDatabaseSizeBytes() -> Int64? {
+        let manager = FileManager.default
+        var total: Int64 = 0
+        var found = false
+        for suffix in ["", "-wal", "-shm"] {
+            guard let attributes = try? manager.attributesOfItem(atPath: cachePath + suffix),
+                  let size = attributes[.size] as? NSNumber else { continue }
+            total += size.int64Value
+            found = true
+        }
+        return found ? total : nil
     }
 
     /// The toolbar and daemon-management actions are the only manual callers.

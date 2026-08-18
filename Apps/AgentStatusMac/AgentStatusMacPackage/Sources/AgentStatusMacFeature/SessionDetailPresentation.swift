@@ -18,6 +18,7 @@ struct SessionListRowPresentation: Equatable {
 struct SessionSummaryFieldPresentation: Equatable, Sendable {
     let label: String
     let value: String
+    var isMonospaced = false
 }
 
 struct SessionSummarySectionPresentation: Equatable, Sendable {
@@ -71,6 +72,75 @@ enum SessionActivityLane: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+/// Segmented filter above the Activity list; applies to the timeline and rows alike.
+enum ActivityLaneFilter: String, CaseIterable, Equatable, Sendable, Identifiable {
+    case all
+    case input
+    case tools
+    case model
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .input: "Input"
+        case .tools: "Tools"
+        case .model: "Model"
+        }
+    }
+
+    func includes(_ lane: SessionActivityLane) -> Bool {
+        switch self {
+        case .all: true
+        case .input: lane == .input
+        case .tools: lane == .tools
+        case .model: lane == .model
+        }
+    }
+}
+
+/// Header metrics derived from usage and timing; no extra data source.
+struct SessionMetricsPresentation: Equatable, Sendable {
+    let totalTokens: Int64?
+    let contextFraction: Double?
+    let startedAt: Date
+    /// `nil` while the Session is still live; the elapsed value keeps ticking.
+    let endedAt: Date?
+
+    var totalTokensText: String {
+        guard let totalTokens else { return "—" }
+        if totalTokens >= 1_000_000 {
+            return totalTokens.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
+        }
+        return totalTokens.formatted(.number.grouping(.automatic))
+    }
+
+    var contextText: String {
+        guard let contextFraction else { return "—" }
+        return "\(Int((contextFraction * 100).rounded()))%"
+    }
+
+    func elapsedText(now: Date) -> String {
+        SessionElapsedFormatter.string(from: max(0, (endedAt ?? now).timeIntervalSince(startedAt)))
+    }
+}
+
+enum SessionElapsedFormatter {
+    /// `12s` / `3m 43s` / `1h 02m` / `2d 03h`.
+    static func string(from interval: TimeInterval) -> String {
+        let total = Int(interval.rounded(.down))
+        let days = total / 86_400
+        let hours = (total % 86_400) / 3_600
+        let minutes = (total % 3_600) / 60
+        let seconds = total % 60
+        if days > 0 { return String(format: "%dd %02dh", days, hours) }
+        if hours > 0 { return String(format: "%dh %02dm", hours, minutes) }
+        if minutes > 0 { return "\(minutes)m \(seconds)s" }
+        return "\(seconds)s"
+    }
+}
+
 extension SessionActivityCategory {
     var lane: SessionActivityLane {
         switch self {
@@ -96,6 +166,7 @@ struct SessionPagePresentation: Equatable, Sendable {
     let sessionID: SessionID
     let title: String
     let summarySections: [SessionSummarySectionPresentation]
+    let metrics: SessionMetricsPresentation
     let activities: [SessionActivityPresentation]
 }
 
@@ -150,6 +221,7 @@ enum SessionPagePresentationBuilder {
                     for: detail.summary,
                     timeline: timeline
                 ),
+                metrics: SessionPagePresentationBuilder.metrics(for: detail.summary, timeline: timeline),
                 activities: activities
             )
         }
@@ -183,16 +255,12 @@ enum SessionPagePresentationBuilder {
             kind: .overview,
             title: "Overview",
             fields: [
-                field("Title", summary.title),
-                field("Session ID", summary.id.rawValue),
+                field("Session ID", summary.id.rawValue, monospaced: true),
                 field("Agent", agent),
-                field("Lifecycle", displayName(summary.lifecycle.displayName, rawValue: summary.lifecycle.rawValue)),
-                field("Turn Phase", displayName(summary.phase.displayName, rawValue: summary.phase.rawValue)),
+                field("Lifecycle", summary.lifecycle.displayName),
+                field("Turn Phase", summary.phase.displayName),
                 field("Needs Attention", summary.needsAttention ? "Yes" : "No"),
-                field("Workspace", summary.workspace),
-                field("Started", date(summary.startedAt)),
-                field("Updated", date(summary.updatedAt)),
-                field("Last Activity", date(summary.lastActivityAt)),
+                field("Started", date(summary.startedAt), monospaced: true),
             ]
         )
     }
@@ -203,12 +271,9 @@ enum SessionPagePresentationBuilder {
         guard let lineage else { return nil }
         let fields = [
             lineage.threadSource.map { field("Thread Source", $0) },
-            lineage.parentSessionID.map { field("Parent Session ID", $0.rawValue) },
-            lineage.subagentDepth.map { field("Subagent Depth", String($0)) },
+            lineage.subagentDepth.map { field("Subagent Depth", String($0), monospaced: true) },
             lineage.agentNickname.map { field("Agent Nickname", $0) },
             lineage.agentRole.map { field("Agent Role", $0) },
-            lineage.agentPath.map { field("Agent Path", $0) },
-            lineage.subagentKind.map { field("Subagent Kind", $0) },
         ].compactMap { $0 }
         guard !fields.isEmpty else { return nil }
         return SessionSummarySectionPresentation(kind: .lineage, title: "Lineage", fields: fields)
@@ -221,24 +286,23 @@ enum SessionPagePresentationBuilder {
             guard case let .modelConfiguration(payload) = item.payload else { return nil }
             return payload
         }
-        let latest = configurations.last
         let usageContextWindow = timeline.reversed().compactMap { item -> Int64? in
             guard case let .usageMetrics(payload) = item.payload else { return nil }
             return payload.modelContextWindow
         }.first
         return SessionSummarySectionPresentation(
             kind: .modelConfiguration,
-            title: "Model Configuration",
+            title: "Model",
             fields: [
-                field("Source", latest?.source),
                 field("Model", latestNonNil(configurations, \.model)),
                 field("Provider", latestNonNil(configurations, \.provider)),
                 field(
                     "Context Window",
-                    (latestNonNil(configurations, \.contextWindow) ?? usageContextWindow)?.grouped
+                    (latestNonNil(configurations, \.contextWindow) ?? usageContextWindow)?.grouped,
+                    monospaced: true
                 ),
                 field("Reasoning Effort", latestNonNil(configurations, \.reasoningEffort)),
-                field("Client Version", latestNonNil(configurations, \.clientVersion)),
+                field("Client Version", latestNonNil(configurations, \.clientVersion), monospaced: true),
             ]
         )
     }
@@ -255,13 +319,44 @@ enum SessionPagePresentationBuilder {
             kind: .usage,
             title: "Usage",
             fields: [
-                field("Input", usage?.inputTokens.grouped),
-                field("Cached Input", usage?.cachedInputTokens.grouped),
-                field("Cache-write", usage?.cacheWriteInputTokens.grouped),
-                field("Output", usage?.outputTokens.grouped),
-                field("Reasoning Output", usage?.reasoningOutputTokens.grouped),
-                field("Total Tokens", usage?.totalTokens.grouped),
+                field("Input", usage?.inputTokens.grouped, monospaced: true),
+                field("Cached Input", usage?.cachedInputTokens.grouped, monospaced: true),
+                field("Cache-write", usage?.cacheWriteInputTokens.grouped, monospaced: true),
+                field("Output", usage?.outputTokens.grouped, monospaced: true),
+                field("Reasoning Output", usage?.reasoningOutputTokens.grouped, monospaced: true),
+                field("Total Tokens", usage?.totalTokens.grouped, monospaced: true),
             ]
+        )
+    }
+
+    static func metrics(
+        for summary: SessionSummary,
+        timeline: [TimelineItem]
+    ) -> SessionMetricsPresentation {
+        let latestUsage = timeline.reversed().compactMap { item -> UsageMetricsTimelinePayload? in
+            guard case let .usageMetrics(payload) = item.payload else { return nil }
+            return payload
+        }.first
+        let configuredWindow = timeline.reversed().compactMap { item -> Int64? in
+            guard case let .modelConfiguration(payload) = item.payload else { return nil }
+            return payload.contextWindow
+        }.first
+        let contextWindow = latestUsage?.modelContextWindow ?? configuredWindow
+        let contextUsage = latestUsage?.last ?? latestUsage?.total
+        let fraction: Double? = if let contextWindow, contextWindow > 0, let used = contextUsage?.totalTokens {
+            min(1, Double(used) / Double(contextWindow))
+        } else {
+            nil
+        }
+        let endedAt: Date? = switch summary.lifecycle {
+        case .completed, .failed, .interrupted: summary.lastActivityAt
+        case .starting, .running, .waitingForInput, .unknown: nil
+        }
+        return SessionMetricsPresentation(
+            totalTokens: (latestUsage?.total ?? latestUsage?.last)?.totalTokens,
+            contextFraction: fraction,
+            startedAt: summary.startedAt,
+            endedAt: endedAt
         )
     }
 
@@ -380,14 +475,16 @@ enum SessionPagePresentationBuilder {
         configurations.reversed().compactMap { $0[keyPath: keyPath] }.first
     }
 
-    private static func field(_ label: String, _ value: String?) -> SessionSummaryFieldPresentation {
-        SessionSummaryFieldPresentation(label: label, value: value ?? "Not available")
-    }
-
-    private static func displayName(_ displayName: String, rawValue: String) -> String {
-        displayName.lowercased() == rawValue.lowercased()
-            ? displayName
-            : "\(displayName) (\(rawValue))"
+    private static func field(
+        _ label: String,
+        _ value: String?,
+        monospaced: Bool = false
+    ) -> SessionSummaryFieldPresentation {
+        SessionSummaryFieldPresentation(
+            label: label,
+            value: value ?? "Not available",
+            isMonospaced: monospaced && value != nil
+        )
     }
 
     private static func humanized(_ value: String) -> String {
@@ -396,6 +493,17 @@ enum SessionPagePresentationBuilder {
 
     private static func date(_ value: Date) -> String {
         value.formatted(date: .abbreviated, time: .standard)
+    }
+
+    /// `~/dev/agent-status` style workspace for the header.
+    static func abbreviatedWorkspace(_ workspace: String?) -> String? {
+        guard let workspace, !workspace.isEmpty else { return nil }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if workspace == home { return "~" }
+        if workspace.hasPrefix(home + "/") {
+            return "~" + workspace.dropFirst(home.count)
+        }
+        return workspace
     }
 }
 

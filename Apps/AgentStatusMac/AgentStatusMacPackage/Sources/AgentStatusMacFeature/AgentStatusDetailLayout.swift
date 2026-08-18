@@ -1,37 +1,39 @@
 import AppKit
 
+/// Content insets shared by the detail column (Pairing, Settings): `24 28 28`.
 @MainActor
 enum AgentStatusDetailLayout {
-    static let horizontalInset: CGFloat = 32
-    static let topInset: CGFloat = 26
-    static let bottomInset: CGFloat = 30
+    static let horizontalInset: CGFloat = 28
+    static let topInset: CGFloat = 24
+    static let bottomInset: CGFloat = 28
     static let headerToContentSpacing: CGFloat = 18
-    static let minimumContentWidth: CGFloat = 376
-    static let maximumContentWidth: CGFloat = 720
-    static let minimumColumnWidth = minimumContentWidth + (horizontalInset * 2)
+    static let minimumContentWidth: CGFloat = 344
+    static let maximumContentWidth: CGFloat = 900
+    static let minimumColumnWidth = AgentStatusDesign.Layout.detailMinimumWidth
 
+    /// `content.width == min(container − insets, maximumContentWidth)`.
+    ///
+    /// Only inequalities are required; the "grow to the maximum" preference sits
+    /// below every split-view holding priority (250+) and far below the window's
+    /// stay-put priority (500), so content can never resize a column or the window.
     static func adaptiveWidthConstraints(
         for content: NSView,
         in container: NSView
     ) -> [NSLayoutConstraint] {
-        let adaptiveWidth = content.widthAnchor.constraint(
-            equalTo: container.widthAnchor,
-            constant: -(horizontalInset * 2)
-        )
-        adaptiveWidth.priority = .defaultHigh
+        let preferredWidth = content.widthAnchor.constraint(equalToConstant: maximumContentWidth)
+        preferredWidth.priority = NSLayoutConstraint.Priority(rawValue: 240)
 
-        let preferredMaximumWidth = content.widthAnchor.constraint(
-            equalToConstant: maximumContentWidth
+        let minimumWidth = content.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: minimumContentWidth
         )
-        preferredMaximumWidth.priority = .defaultLow
+        minimumWidth.priority = NSLayoutConstraint.Priority(rawValue: 241)
 
         return [
             content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontalInset),
             content.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -horizontalInset),
-            content.widthAnchor.constraint(greaterThanOrEqualToConstant: minimumContentWidth),
             content.widthAnchor.constraint(lessThanOrEqualToConstant: maximumContentWidth),
-            adaptiveWidth,
-            preferredMaximumWidth,
+            minimumWidth,
+            preferredWidth,
         ]
     }
 }

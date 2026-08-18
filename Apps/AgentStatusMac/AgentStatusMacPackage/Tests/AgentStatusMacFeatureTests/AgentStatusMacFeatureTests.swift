@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AgentStatusCore
 import AgentStatusTransport
 import NookApp
 @testable import AgentStatusMacFeature
@@ -68,8 +69,9 @@ func nookAppearancePreservesCustomAdjustments() {
 
 @Test @MainActor
 func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
-    #expect(PairingViewController.usesCompactContentLayout(availableWidth: 673))
-    #expect(!PairingViewController.usesCompactContentLayout(availableWidth: 674))
+    let minimum = PairingViewController.minimumHorizontalContentWidth
+    #expect(PairingViewController.usesCompactContentLayout(availableWidth: minimum - 1))
+    #expect(!PairingViewController.usesCompactContentLayout(availableWidth: minimum))
 }
 
 @Test func nookSnapshotShowsTheCurrentTurnUserMessageAndExcludesCompletedSessions() {
@@ -528,8 +530,8 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     let model = try #require(
         presentation.summarySections.first { $0.kind == .modelConfiguration }
     )
+    #expect(model.title == "Model")
     #expect(model.fields.map(\.label) == [
-        "Source",
         "Model",
         "Provider",
         "Context Window",
@@ -538,8 +540,23 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     ])
     #expect(!model.fields.contains { $0.value.contains("raw-json") })
     #expect(model.fields.first { $0.label == "Context Window" }?.value == "200,000")
+    let overview = try #require(presentation.summarySections.first { $0.kind == .overview })
+    #expect(overview.fields.map(\.label) == [
+        "Session ID",
+        "Agent",
+        "Lifecycle",
+        "Turn Phase",
+        "Needs Attention",
+        "Started",
+    ])
+    #expect(overview.fields.first { $0.label == "Session ID" }?.isMonospaced == true)
     let usage = try #require(presentation.summarySections.first { $0.kind == .usage })
     #expect(usage.fields.first { $0.label == "Total Tokens" }?.value == "100")
+    #expect(presentation.metrics.totalTokens == 100)
+    #expect(presentation.metrics.contextFraction == 100.0 / 200_000.0)
+    #expect(presentation.metrics.endedAt == nil)
+    #expect(presentation.metrics.totalTokensText == "100")
+    #expect(presentation.metrics.contextText == "0%")
     #expect(presentation.activities.map(\.category) == [
         .system,
         .context,
@@ -573,6 +590,68 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
         SessionActivityCategory.assistantReasoning,
         .assistant,
     ].map(\.lane) == [.model, .model])
+}
+
+@Test func sessionListFilteringKeepsAncestorsOfMatches() {
+    let main = hierarchySummary(id: "main")
+    let child = hierarchySummary(id: "child", parentID: "main", depth: 1)
+    let other = hierarchySummary(id: "other")
+
+    let filtered = SessionListHierarchy.filtering([main, child, other], query: "CHILD")
+    #expect(filtered.map { $0.id.rawValue } == ["main", "child"])
+    #expect(SessionListHierarchy.filtering([main, child, other], query: "   ").count == 3)
+    #expect(SessionListHierarchy.filtering([main, child, other], query: "nope").isEmpty)
+}
+
+@Test func activityLaneFilterMatchesLanes() {
+    #expect(ActivityLaneFilter.all.includes(.input))
+    #expect(ActivityLaneFilter.all.includes(.model))
+    #expect(ActivityLaneFilter.input.includes(.input))
+    #expect(!ActivityLaneFilter.input.includes(.tools))
+    #expect(ActivityLaneFilter.tools.includes(.tools))
+    #expect(ActivityLaneFilter.model.includes(.model))
+    #expect(!ActivityLaneFilter.model.includes(.input))
+}
+
+@Test func elapsedFormatterUsesCompactUnits() {
+    #expect(SessionElapsedFormatter.string(from: 12) == "12s")
+    #expect(SessionElapsedFormatter.string(from: 223) == "3m 43s")
+    #expect(SessionElapsedFormatter.string(from: 3_720) == "1h 02m")
+    #expect(SessionElapsedFormatter.string(from: 48_180) == "13h 23m")
+    #expect(SessionElapsedFormatter.string(from: 200_000) == "2d 07h")
+}
+
+@Test func completedSessionMetricsStopTheClock() {
+    let started = Date(timeIntervalSince1970: 100)
+    let ended = Date(timeIntervalSince1970: 400)
+    let summary = SessionSummary(
+        id: SessionID("done"),
+        agent: .codex,
+        title: "Done",
+        lifecycle: .completed,
+        phase: .idle,
+        startedAt: started,
+        updatedAt: ended,
+        lastActivityAt: ended
+    )
+    let metrics = SessionPagePresentationBuilder.presentation(
+        for: SessionDetail(summary: summary, timeline: [])
+    ).metrics
+    #expect(metrics.endedAt == ended)
+    #expect(metrics.elapsedText(now: Date(timeIntervalSince1970: 10_000)) == "5m 0s")
+    #expect(metrics.totalTokensText == "—")
+    #expect(metrics.contextText == "—")
+}
+
+@Test @MainActor
+func statusTonesResolveDistinctPillColors() {
+    let tones: [SessionStatusTone] = [.blue, .orange, .gray, .green]
+    let fills = Set(tones.map { $0.pillFill.description })
+    let texts = Set(tones.map { $0.pillText.description })
+    #expect(fills.count == 4)
+    #expect(texts.count == 4)
+    #expect(SessionStatusTone.blue.dotHalo != nil)
+    #expect(SessionStatusTone.gray.dotHalo == nil)
 }
 
 @Test func sessionPageRendererBuildsOnItsOwnActor() async throws {

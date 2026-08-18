@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "AgentStatusMacFeature",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v26)],
     products: [
         .library(
             name: "AgentStatusMacFeature",
@@ -30,6 +30,9 @@ let package = Package(
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "NookApp", package: "opennook"),
                 .product(name: "NookComponents", package: "opennook"),
+            ],
+            resources: [
+                .copy("Resources/openai.svg"),
             ]
         ),
         .testTarget(

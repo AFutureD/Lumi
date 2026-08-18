@@ -38,6 +38,30 @@ struct SessionListHierarchy {
         return SessionListHierarchy(roots: roots, nodesByID: nodesByID)
     }
 
+    /// Case-insensitive title / agent match. Ancestors of a matching Session are
+    /// kept so the child stays reachable in the outline; order is preserved.
+    static func filtering(_ sessions: [SessionSummary], query: String) -> [SessionSummary] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return sessions }
+        let summariesByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        var retained: Set<SessionID> = []
+        for summary in sessions where matches(summary, query: trimmed) {
+            var current: SessionSummary? = summary
+            var visited: Set<SessionID> = []
+            while let session = current, visited.insert(session.id).inserted {
+                retained.insert(session.id)
+                current = session.lineage?.parentSessionID.flatMap { summariesByID[$0] }
+            }
+        }
+        return sessions.filter { retained.contains($0.id) }
+    }
+
+    private static func matches(_ summary: SessionSummary, query: String) -> Bool {
+        summary.title.localizedCaseInsensitiveContains(query)
+            || summary.agent.displayName.localizedCaseInsensitiveContains(query)
+            || summary.workspace?.localizedCaseInsensitiveContains(query) == true
+    }
+
     func hasSameStructure(as other: SessionListHierarchy) -> Bool {
         guard roots.map(\.summary.id) == other.roots.map(\.summary.id),
               nodesByID.keys == other.nodesByID.keys else {

@@ -3,15 +3,18 @@ import AgentStatusTransport
 import AppKit
 import SwiftUI
 
+/// Detail column: a subheader strip (agent chip · status pill · workspace) above a
+/// nested split of Activity (main) and Inspector (288, collapsible).
 @MainActor
 final class SessionDetailViewController: NSViewController {
     private let store: MacSessionStore
     private let renderer = SessionPagePresentationRenderer()
 
-    private let headerView = NSView()
-    private let titleLabel = NSTextField(labelWithString: "Select a Session")
-    private let headerSeparator = NSBox()
-    private var hostingView: NSHostingView<SessionDetailScrollableView>!
+    private let subheader = DetailSubheaderView(horizontalInset: AgentStatusDesign.Layout.activityHorizontalInset)
+    private let agentChip = CapsuleChipView()
+    private let statusPill = StatusPillView()
+    private let split = SessionDetailSplitViewController()
+    private let activityState = SessionActivityState()
     private let emptyLabel = NSTextField(labelWithString: "Select a Session")
 
     private var presentationTask: Task<Void, Never>?
@@ -32,51 +35,38 @@ final class SessionDetailViewController: NSViewController {
         view = NSView()
         view.appearance = NSAppearance(named: .aqua)
 
-        titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.maximumNumberOfLines = 1
-        titleLabel.usesSingleLineMode = true
-        headerSeparator.boxType = .separator
-
-        [titleLabel, headerSeparator].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            headerView.addSubview($0)
-        }
-
-        hostingView = NSHostingView(rootView: makeScrollableView())
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        addChild(split)
+        split.activity.rootView = makeActivityView()
+        split.inspector.rootView = makeInspectorView()
 
         emptyLabel.font = .systemFont(ofSize: 13)
         emptyLabel.textColor = .secondaryLabelColor
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        [headerView, hostingView, emptyLabel].forEach {
+        [subheader, split.view, emptyLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
 
         NSLayoutConstraint.activate([
-            headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            headerView.heightAnchor.constraint(equalToConstant: 72),
-            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 32),
-            titleLabel.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -32),
-            titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            headerSeparator.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 32),
-            headerSeparator.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -32),
-            headerSeparator.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            subheader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            subheader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            subheader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
 
-            hostingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            split.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: subheader.bottomAnchor),
+            split.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: hostingView.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: hostingView.centerYAnchor),
+            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
 
         reload()
+    }
+
+    /// Toolbar action. Persisted; nothing else ever changes the inspector state.
+    func toggleInspector() {
+        split.toggleInspector()
     }
 
     private func reload() {
@@ -89,19 +79,25 @@ final class SessionDetailViewController: NSViewController {
             presentationTask?.cancel()
             renderGeneration &+= 1
             presentation = nil
-            titleLabel.stringValue = "Select a Session"
-            hostingView.rootView = makeScrollableView()
+            activityState.reset()
+            subheader.isHidden = true
+            split.view.isHidden = true
             emptyLabel.isHidden = false
+            split.activity.rootView = makeActivityView()
+            split.inspector.rootView = makeInspectorView()
             return
         }
 
-        titleLabel.stringValue = SessionListRowPresentation(session: detail.summary).title
-        titleLabel.toolTip = detail.summary.title
+        subheader.isHidden = false
+        split.view.isHidden = false
         emptyLabel.isHidden = true
+        applySubheader(detail.summary)
 
         if sessionChanged {
             presentation = nil
-            hostingView.rootView = makeScrollableView()
+            activityState.reset()
+            split.activity.rootView = makeActivityView()
+            split.inspector.rootView = makeInspectorView()
         }
 
         presentationTask?.cancel()
@@ -123,17 +119,35 @@ final class SessionDetailViewController: NSViewController {
         guard generation == renderGeneration,
               displayedSessionID == rendered.sessionID else { return }
         presentation = rendered
-        titleLabel.stringValue = rendered.title
-        hostingView.rootView = makeScrollableView()
+        split.activity.rootView = makeActivityView()
+        split.inspector.rootView = makeInspectorView()
     }
 
-    private func makeScrollableView() -> SessionDetailScrollableView {
-        return SessionDetailScrollableView(
+    private func applySubheader(_ summary: SessionSummary) {
+        agentChip.text = summary.agent.displayName
+        statusPill.configure(
+            tone: summary.statusTone,
+            text: SessionListRowPresentation(session: summary).status
+        )
+        subheader.setLeadingViews(
+            [agentChip, statusPill],
+            trailingText: SessionPagePresentationBuilder.abbreviatedWorkspace(summary.workspace),
+            trailingMonospaced: true
+        )
+    }
+
+    private func makeActivityView() -> SessionActivityView {
+        SessionActivityView(
             presentation: presentation,
+            state: activityState,
             onPreview: { [weak self] activity in
                 self?.showRawData(for: activity)
             }
         )
+    }
+
+    private func makeInspectorView() -> SessionInspectorView {
+        SessionInspectorView(presentation: presentation)
     }
 
     private func showRawData(for activity: SessionActivityPresentation) {
@@ -167,5 +181,87 @@ final class SessionDetailViewController: NSViewController {
         alert.accessoryView = textScroll
         alert.addButton(withTitle: "Done")
         alert.beginSheetModal(for: hostWindow)
+    }
+}
+
+/// Activity | Inspector. The inspector is fixed at 288 and only the toolbar toggles it.
+@MainActor
+final class SessionDetailSplitViewController: NSSplitViewController {
+    private static let inspectorVisibleKey = "AgentStatus.Layout.InspectorVisible"
+
+    let activity = NSHostingView(rootView: SessionActivityView(
+        presentation: nil,
+        state: SessionActivityState(),
+        onPreview: { _ in }
+    ))
+    let inspector = NSHostingView(rootView: SessionInspectorView(presentation: nil))
+    private let inspectorItem: NSSplitViewItem
+    private var inspectorObservation: NSKeyValueObservation?
+    private var didRestore = false
+
+    init() {
+        let activityController = NSViewController()
+        activityController.view = activity
+        let inspectorController = NSViewController()
+        let effect = NSVisualEffectView()
+        effect.material = .underWindowBackground
+        effect.blendingMode = .behindWindow
+        effect.state = .followsWindowActiveState
+        inspector.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(inspector)
+        NSLayoutConstraint.activate([
+            inspector.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            inspector.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            inspector.topAnchor.constraint(equalTo: effect.topAnchor),
+            inspector.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+        ])
+        inspectorController.view = effect
+        // A plain item (not `inspectorWith…`): the system inspector style adds a
+        // titlebar-height inset that is wrong below our own session header.
+        inspectorItem = NSSplitViewItem(viewController: inspectorController)
+        super.init(nibName: nil, bundle: nil)
+
+        // Hosting views must not size the split from their content.
+        activity.sizingOptions = []
+        inspector.sizingOptions = []
+
+        splitView.dividerStyle = .thin
+        splitView.isVertical = true
+
+        let activityItem = NSSplitViewItem(viewController: activityController)
+        activityItem.minimumThickness = AgentStatusDesign.Layout.detailMinimumWidth - 40
+        activityItem.holdingPriority = .defaultLow
+
+        inspectorItem.minimumThickness = AgentStatusDesign.Layout.inspectorWidth
+        inspectorItem.maximumThickness = AgentStatusDesign.Layout.inspectorWidth
+        inspectorItem.canCollapse = true
+        inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        inspectorItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 260)
+
+        addSplitViewItem(activityItem)
+        addSplitViewItem(inspectorItem)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let defaults = UserDefaults.standard
+        let visible = defaults.object(forKey: Self.inspectorVisibleKey) == nil
+            ? true
+            : defaults.bool(forKey: Self.inspectorVisibleKey)
+        inspectorItem.isCollapsed = !visible
+        didRestore = true
+        inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, self.didRestore else { return }
+                UserDefaults.standard.set(!self.inspectorItem.isCollapsed, forKey: Self.inspectorVisibleKey)
+            }
+        }
+    }
+
+    func toggleInspector() {
+        inspectorItem.animator().isCollapsed.toggle()
     }
 }

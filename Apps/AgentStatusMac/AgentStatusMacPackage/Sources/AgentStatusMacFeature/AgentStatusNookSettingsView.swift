@@ -15,125 +15,96 @@ struct AgentStatusNookSettingsView: View {
     private static let specificDisplayTagPrefix = "uuid:"
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                settingsSection("Appearance") {
-                    AgentStatusSettingsCard {
-                        surfaceRow
-                        Divider()
-                        displayRow
-                    }
-                }
-
-                settingsSection("Adjust") {
-                    AgentStatusSettingsCard {
-                        AgentStatusAdjustmentSliderRow(
-                            title: "Compact Width",
-                            value: compactWidthBinding,
-                            range: AgentStatusNookAdjustmentDefaults.compactWidthRange,
-                            step: 1,
-                            defaultValue: Double(AgentStatusNookAdjustmentDefaults.compactWidth),
-                            valueText: { "\(Int($0.rounded())) pt" }
-                        )
-                        Divider()
-                        AgentStatusAdjustmentSliderRow(
-                            title: "Expanded Width",
-                            value: expandedWidthBinding,
-                            range: AgentStatusNookAdjustmentDefaults.expandedWidthRange,
-                            step: 4,
-                            defaultValue: Double(AgentStatusNookAdjustmentDefaults.expandedWidth),
-                            valueText: { "\(Int($0.rounded())) pt" }
-                        )
-                        Divider()
-                        AgentStatusAdjustmentSliderRow(
-                            title: "Expand Animation",
-                            value: expandAnimationDurationBinding,
-                            range: AgentStatusNookAdjustmentDefaults.expandAnimationDurationRange,
-                            step: 0.01,
-                            defaultValue: AgentStatusNookAdjustmentDefaults.expandAnimationDuration,
-                            valueText: { String(format: "%.2f s", $0) }
-                        )
-                    }
-                }
-
-                settingsSection("Behavior") {
-                    AgentStatusSettingsCard {
-                        Toggle("Stay expanded after the pointer leaves", isOn: keepOpenBinding)
-                        Divider()
-                        Toggle("Haptic feedback", isOn: hapticBinding)
-                        Divider()
-                        HStack {
-                            Text("Preview the current settings")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Show Notch", action: showNook)
-                                .buttonStyle(.borderedProminent)
+        SettingsPanelScroll {
+            SettingsSection(title: "Appearance") {
+                SettingsCard {
+                    SettingsRow(title: "Surface", minHeight: 52) {
+                        Picker("Surface", selection: surfaceBinding) {
+                            Text("Solid").tag(NookSurfaceStyle.solid)
+                            Text("Translucent").tag(NookSurfaceStyle.translucent)
+                            Text("Liquid Glass").tag(NookSurfaceStyle.liquidGlass)
                         }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .controlSize(.small)
+                        .fixedSize()
+                    }
+                    Divider()
+                    SettingsRow(title: "Screen", minHeight: 52) {
+                        Picker("Screen", selection: displaySelectionBinding) {
+                            Text("Built-in Display").tag(Self.builtInDisplayTag)
+                            Text("Main Display").tag(Self.mainDisplayTag)
+                            if !specificDisplayOptions.isEmpty {
+                                Divider()
+                                ForEach(specificDisplayOptions, id: \.tag) { option in
+                                    Text(option.label).tag(option.tag)
+                                }
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .accessibilityLabel("Notch screen")
                     }
                 }
             }
-            .frame(
-                minWidth: AgentStatusDetailLayout.minimumContentWidth,
-                maxWidth: AgentStatusDetailLayout.maximumContentWidth,
-                alignment: .topLeading
-            )
-            .padding(.horizontal, AgentStatusDetailLayout.horizontalInset)
-            .padding(.bottom, AgentStatusDetailLayout.bottomInset)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            SettingsSection(title: "Adjust") {
+                SettingsCard {
+                    AgentStatusAdjustmentSliderRow(
+                        title: "Compact Width",
+                        value: compactWidthBinding,
+                        range: AgentStatusNookAdjustmentDefaults.compactWidthRange,
+                        step: 1,
+                        defaultValue: Double(AgentStatusNookAdjustmentDefaults.compactWidth),
+                        valueText: { "\(Int($0.rounded())) pt" }
+                    )
+                    Divider()
+                    AgentStatusAdjustmentSliderRow(
+                        title: "Expanded Width",
+                        value: expandedWidthBinding,
+                        range: AgentStatusNookAdjustmentDefaults.expandedWidthRange,
+                        step: 4,
+                        defaultValue: Double(AgentStatusNookAdjustmentDefaults.expandedWidth),
+                        valueText: { "\(Int($0.rounded())) pt" }
+                    )
+                    Divider()
+                    AgentStatusAdjustmentSliderRow(
+                        title: "Expand Animation",
+                        value: expandAnimationDurationBinding,
+                        range: AgentStatusNookAdjustmentDefaults.expandAnimationDurationRange,
+                        step: 0.01,
+                        defaultValue: AgentStatusNookAdjustmentDefaults.expandAnimationDuration,
+                        valueText: { String(format: "%.2f s", $0) }
+                    )
+                }
+            }
+
+            SettingsSection(title: "Behavior") {
+                SettingsCard {
+                    SettingsRow(title: "Stay expanded after the pointer leaves") {
+                        Toggle("Stay expanded after the pointer leaves", isOn: keepOpenBinding)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    Divider()
+                    SettingsRow(title: "Haptic feedback") {
+                        Toggle("Haptic feedback", isOn: hapticBinding)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    Divider()
+                    SettingsRow(title: "Preview the current settings", minHeight: 52, titleStyle: .secondary) {
+                        Button("Show Notch", action: showNook)
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
         ) { _ in
             displays = NookScreenLocator.connectedDisplays()
-        }
-    }
-
-    private func settingsSection<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-            content()
-        }
-    }
-
-    private var surfaceRow: some View {
-        HStack(spacing: 16) {
-            Text("Surface")
-                .fixedSize()
-            Spacer()
-            Picker("Surface", selection: surfaceBinding) {
-                Text("Solid").tag(NookSurfaceStyle.solid)
-                Text("Translucent").tag(NookSurfaceStyle.translucent)
-                Text("Liquid Glass").tag(NookSurfaceStyle.liquidGlass)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 270)
-        }
-    }
-
-    private var displayRow: some View {
-        HStack(spacing: 16) {
-            Text("Screen")
-            Spacer()
-            Picker("Screen", selection: displaySelectionBinding) {
-                Text("Built-in Display").tag(Self.builtInDisplayTag)
-                Text("Main Display").tag(Self.mainDisplayTag)
-                if !specificDisplayOptions.isEmpty {
-                    Divider()
-                    ForEach(specificDisplayOptions, id: \.tag) { option in
-                        Text(option.label).tag(option.tag)
-                    }
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 220, alignment: .trailing)
-            .accessibilityLabel("Notch screen")
         }
     }
 
@@ -269,23 +240,6 @@ struct AgentStatusNookSettingsView: View {
     }
 }
 
-private struct AgentStatusSettingsCard<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14, content: content)
-            .padding(16)
-            .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.primary.opacity(0.045))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-            }
-    }
-}
-
 private struct AgentStatusAdjustmentSliderRow: View {
     let title: String
     @Binding var value: Double
@@ -296,32 +250,38 @@ private struct AgentStatusAdjustmentSliderRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 10) {
                 Text(title)
-                Spacer()
+                    .font(AgentStatusDesign.Font.UI.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     value = defaultValue
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
+                .buttonStyle(.plain)
+                .opacity(isDefaultValue ? 0.3 : 1)
                 .disabled(isDefaultValue)
                 .help("Reset \(title)")
                 .accessibilityLabel("Reset \(title)")
 
                 Text(valueText(value))
-                    .font(.system(.body, design: .rounded).monospacedDigit())
+                    .font(AgentStatusDesign.Font.UI.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(.quaternary, in: Capsule())
+                    .background(AgentStatusDesign.Color.UI.chipFill, in: Capsule())
             }
 
             Slider(value: steppedValue, in: range)
                 .accessibilityLabel(title)
                 .accessibilityValue(valueText(value))
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     private var steppedValue: Binding<Double> {

@@ -13,10 +13,14 @@ final class MainWindowController: NSWindowController {
 
     init(store: MacSessionStore, relayHost: RelayHostController, nook: AgentStatusNookController) {
         rootController = RootSplitViewController(store: store, relayHost: relayHost, nook: nook)
-        toolbarController = MainWindowToolbarController(store: store, splitView: rootController.splitView)
+        toolbarController = MainWindowToolbarController(
+            store: store,
+            relayHost: relayHost,
+            splitView: rootController.splitView
+        )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 780),
+            contentRect: NSRect(x: 0, y: 0, width: 1_440, height: 860),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -25,15 +29,25 @@ final class MainWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .automatic
-        window.minSize = NSSize(width: 940, height: 600)
-        window.center()
+        window.minSize = NSSize(width: 1_200, height: 640)
 
         super.init(window: window)
         window.contentViewController = rootController
+        // Setting the content view controller re-sizes the window to the view's
+        // fitting size; restore the design size (or the saved frame) afterwards.
+        window.setContentSize(NSSize(width: 1_440, height: 860))
+        if !window.setFrameUsingName("AgentStatus.MainWindow") {
+            window.center()
+        }
+        window.setFrameAutosaveName("AgentStatus.MainWindow")
         toolbarController.window = window
+        toolbarController.actions = rootController.toolbarActions()
         window.toolbar = toolbarController.toolbar
         rootController.onSelection = { [weak toolbarController] tab in
             toolbarController?.select(tab)
+        }
+        rootController.onToolbarStateChange = { [weak toolbarController] in
+            toolbarController?.updateState()
         }
     }
 
@@ -53,83 +67,171 @@ final class MainWindowController: NSWindowController {
     }
 }
 
+/// Persisted column geometry. Only user gestures (divider drags, sidebar toggle)
+/// write here; data refreshes never touch the split view.
+@MainActor
+enum MainWindowLayoutPreferences {
+    private static let defaults = UserDefaults.standard
+    private static let sessionsListWidthKey = "AgentStatus.Layout.SessionsListWidth"
+    private static let settingsListWidthKey = "AgentStatus.Layout.SettingsListWidth"
+    private static let sidebarCollapsedKey = "AgentStatus.Layout.SidebarCollapsed"
+
+    static var sessionsListWidth: CGFloat {
+        get { stored(sessionsListWidthKey) ?? AgentStatusDesign.Layout.sessionListWidth }
+        set { defaults.set(Double(newValue), forKey: sessionsListWidthKey) }
+    }
+
+    static var settingsListWidth: CGFloat {
+        get { stored(settingsListWidthKey) ?? AgentStatusDesign.Layout.settingsListWidth }
+        set { defaults.set(Double(newValue), forKey: settingsListWidthKey) }
+    }
+
+    static var isSidebarCollapsed: Bool {
+        get { defaults.bool(forKey: sidebarCollapsedKey) }
+        set { defaults.set(newValue, forKey: sidebarCollapsedKey) }
+    }
+
+    private static func stored(_ key: String) -> CGFloat? {
+        guard defaults.object(forKey: key) != nil else { return nil }
+        let value = defaults.double(forKey: key)
+        return value > 0 ? CGFloat(value) : nil
+    }
+}
+
 /// Mail-style hierarchy: one navigation sidebar, one context list, and one detail.
 /// Sessions and Settings both use all three columns; Pairing collapses the context list.
+///
+/// Width rules: the sidebar is fixed (224), the context list keeps its width across
+/// window resizes (only divider drags change it), and the detail absorbs everything.
 @MainActor
 final class RootSplitViewController: NSSplitViewController {
-    private let navigation = NavigationSidebarViewController()
+    private let navigation: NavigationSidebarViewController
     private let contentListTabs: NSTabViewController
     private let detailTabs = NSTabViewController()
+    private let navigationItem: NSSplitViewItem
     private let contentListItem: NSSplitViewItem
+    private let sessionList: SessionListViewController
+    private let sessionDetail: SessionDetailViewController
+    private let pairing: PairingViewController
     private let settingsNavigation: SettingsNavigationViewController
     private let settingsDetail: SettingsDetailViewController
+    private var selectedTab: MainWindowController.Tab = .sessions
+    private var didApplyInitialLayout = false
+    private var isApplyingLayout = false
+    private var resizeObserver: NSObjectProtocol?
+    private var sidebarObservation: NSKeyValueObservation?
     var onSelection: ((MainWindowController.Tab) -> Void)?
+    var onToolbarStateChange: (() -> Void)?
 
     init(store: MacSessionStore, relayHost: RelayHostController, nook: AgentStatusNookController) {
-        let settingsNavigation = SettingsNavigationViewController()
-        let settingsDetail = SettingsDetailViewController(store: store, nook: nook)
-        self.settingsNavigation = settingsNavigation
-        self.settingsDetail = settingsDetail
+        navigation = NavigationSidebarViewController(store: store, relayHost: relayHost)
+        sessionList = SessionListViewController(store: store)
+        sessionDetail = SessionDetailViewController(store: store)
+        pairing = PairingViewController(relayHost: relayHost)
+        settingsNavigation = SettingsNavigationViewController()
+        settingsDetail = SettingsDetailViewController(store: store, nook: nook)
+
         let contentListTabs = NSTabViewController()
         contentListTabs.tabStyle = .unspecified
         contentListTabs.tabView.tabViewType = .noTabsNoBorder
-        contentListTabs.addTabViewItem(Self.item(
-            label: "Sessions",
-            controller: SessionListViewController(store: store)
-        ))
-        contentListTabs.addTabViewItem(Self.item(
-            label: "Settings",
-            controller: settingsNavigation
-        ))
+        contentListTabs.addTabViewItem(Self.item(label: "Sessions", controller: sessionList))
+        contentListTabs.addTabViewItem(Self.item(label: "Settings", controller: settingsNavigation))
         self.contentListTabs = contentListTabs
+
+        navigationItem = NSSplitViewItem(sidebarWithViewController: navigation)
         contentListItem = NSSplitViewItem(contentListWithViewController: contentListTabs)
         super.init(nibName: nil, bundle: nil)
 
         splitView.dividerStyle = .thin
         detailTabs.tabStyle = .unspecified
         detailTabs.tabView.tabViewType = .noTabsNoBorder
-        detailTabs.addTabViewItem(Self.item(
-            label: "Session Detail",
-            controller: SessionDetailViewController(store: store)
-        ))
-        detailTabs.addTabViewItem(Self.item(
-            label: "iPhone",
-            controller: PairingViewController(relayHost: relayHost)
-        ))
-        detailTabs.addTabViewItem(Self.item(
-            label: "Settings",
-            controller: settingsDetail
-        ))
+        detailTabs.addTabViewItem(Self.item(label: "Session Detail", controller: sessionDetail))
+        detailTabs.addTabViewItem(Self.item(label: "iPhone", controller: pairing))
+        detailTabs.addTabViewItem(Self.item(label: "Settings", controller: settingsDetail))
 
-        let navigationItem = NSSplitViewItem(sidebarWithViewController: navigation)
         navigationItem.allowsFullHeightLayout = true
-        navigationItem.minimumThickness = 190
-        navigationItem.maximumThickness = 280
-        navigationItem.preferredThicknessFraction = 0.17
+        navigationItem.minimumThickness = AgentStatusDesign.Layout.sidebarWidth
+        navigationItem.maximumThickness = AgentStatusDesign.Layout.sidebarWidth
+        navigationItem.canCollapse = true
+        navigationItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        // Holding priorities must stay below the divider-drag (490) and window-resize
+        // (500) priorities; ordering alone decides who absorbs width changes.
+        navigationItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 261)
 
-        contentListItem.minimumThickness = 300
-        contentListItem.maximumThickness = 500
-        contentListItem.preferredThicknessFraction = 0.30
+        contentListItem.minimumThickness = AgentStatusDesign.Layout.contentListMinimumWidth
+        contentListItem.maximumThickness = AgentStatusDesign.Layout.contentListMaximumWidth
         contentListItem.canCollapse = true
+        contentListItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        contentListItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 260)
 
         let detailItem = NSSplitViewItem(viewController: detailTabs)
-        detailItem.minimumThickness = AgentStatusDetailLayout.minimumColumnWidth
+        detailItem.minimumThickness = AgentStatusDesign.Layout.detailMinimumWidth
+        detailItem.holdingPriority = .defaultLow
 
         addSplitViewItem(navigationItem)
         addSplitViewItem(contentListItem)
         addSplitViewItem(detailItem)
 
         navigation.onSelection = { [weak self] tab in self?.select(tab) }
-        settingsNavigation.onSelection = { [weak settingsDetail] section in
-            settingsDetail?.select(section)
+        settingsNavigation.onSelection = { [weak self] section in
+            self?.settingsDetail.select(section)
+            self?.onToolbarStateChange?()
         }
+        pairing.onStateChange = { [weak self] in self?.onToolbarStateChange?() }
         select(.sessions)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSSplitView.didResizeSubviewsNotification,
+            object: splitView,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recordListWidthIfNeeded() }
+        }
+        sidebarObservation = navigationItem.observe(\.isCollapsed, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, self.didApplyInitialLayout else { return }
+                MainWindowLayoutPreferences.isSidebarCollapsed = self.navigationItem.isCollapsed
+            }
+        }
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard !didApplyInitialLayout else { return }
+        navigationItem.isCollapsed = MainWindowLayoutPreferences.isSidebarCollapsed
+        applyListWidth(for: selectedTab)
+        applyDebugInitialTab()
+        // Only after the initial geometry is in place do user drags get recorded.
+        didApplyInitialLayout = true
+    }
+
+    func toolbarActions() -> MainWindowToolbarActions {
+        var actions = MainWindowToolbarActions()
+        actions.search = { [weak self] query in self?.sessionList.apply(filter: query) }
+        actions.toggleInspector = { [weak self] in self?.sessionDetail.toggleInspector() }
+        actions.generatePairingCode = { [weak self] in self?.pairing.generateNewCode() }
+        actions.canGeneratePairingCode = { [weak self] in self?.pairing.canGenerateCode ?? false }
+        actions.settingsTitle = { [weak self] in self?.settingsDetail.selectedSection.title ?? "" }
+        return actions
+    }
+
     func select(_ tab: MainWindowController.Tab) {
+        let previous = selectedTab
+        selectedTab = tab
         detailTabs.selectedTabViewItemIndex = tab.rawValue
         switch tab {
         case .sessions:
@@ -141,6 +243,9 @@ final class RootSplitViewController: NSSplitViewController {
             contentListTabs.selectedTabViewItemIndex = 1
             contentListItem.isCollapsed = false
         }
+        if didApplyInitialLayout, previous != tab, tab != .pairing {
+            applyListWidth(for: tab)
+        }
         navigation.select(tab)
         onSelection?(tab)
     }
@@ -149,6 +254,69 @@ final class RootSplitViewController: NSSplitViewController {
         select(.settings)
         settingsNavigation.select(section)
         settingsDetail.select(section)
+        onToolbarStateChange?()
+    }
+
+    /// `AGENT_STATUS_INITIAL_TAB=pairing|settings:<section>` (development screenshots only).
+    private func applyDebugInitialTab() {
+        guard let value = ProcessInfo.processInfo.environment["AGENT_STATUS_INITIAL_TAB"] else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self else { return }
+            if value == "pairing" {
+                self.select(.pairing)
+            } else if value.hasPrefix("settings") {
+                let name = value.split(separator: ":").last.map(String.init) ?? "general"
+                let section = AgentStatusSettingsSection.allCases.first { $0.title.lowercased() == name } ?? .general
+                self.selectSettings(section)
+            }
+        }
+    }
+
+    // MARK: Column widths
+
+    /// The only programmatic divider move: initial layout and tab switches.
+    private func applyListWidth(for tab: MainWindowController.Tab) {
+        let width: CGFloat
+        switch tab {
+        case .sessions: width = MainWindowLayoutPreferences.sessionsListWidth
+        case .settings: width = MainWindowLayoutPreferences.settingsListWidth
+        case .pairing: return
+        }
+        view.layoutSubtreeIfNeeded()
+        // NSSplitViewController wraps item views; the arranged subview is the wrapper.
+        guard splitView.arrangedSubviews.count > 1 else { return }
+        let clamped = min(
+            max(width, AgentStatusDesign.Layout.contentListMinimumWidth),
+            AgentStatusDesign.Layout.contentListMaximumWidth
+        )
+        isApplyingLayout = true
+        splitView.setPosition(splitView.arrangedSubviews[1].frame.minX + clamped, ofDividerAt: 1)
+        view.layoutSubtreeIfNeeded()
+        isApplyingLayout = false
+    }
+
+    private func recordListWidthIfNeeded() {
+        guard didApplyInitialLayout,
+              !isApplyingLayout,
+              !splitView.inLiveResize,
+              !contentListItem.isCollapsed,
+              selectedTab != .pairing else { return }
+        guard splitView.arrangedSubviews.count > 1 else { return }
+        let width = splitView.arrangedSubviews[1].frame.width
+        guard width >= AgentStatusDesign.Layout.contentListMinimumWidth else { return }
+        switch selectedTab {
+        case .sessions:
+            if abs(MainWindowLayoutPreferences.sessionsListWidth - width) >= 1 {
+                MainWindowLayoutPreferences.sessionsListWidth = width
+            }
+        case .settings:
+            if abs(MainWindowLayoutPreferences.settingsListWidth - width) >= 1 {
+                MainWindowLayoutPreferences.settingsListWidth = width
+            }
+        case .pairing:
+            break
+        }
     }
 
     private static func item(label: String, controller: NSViewController) -> NSTabViewItem {

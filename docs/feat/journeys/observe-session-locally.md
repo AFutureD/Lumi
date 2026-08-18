@@ -30,15 +30,15 @@
    - 数据变化：启用前已经存在的旧 Session 不会自动导入。
    - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 4. 在中栏选择目标 Session。
-   - 系统反馈：右栏显示 Summary 与 Activity；Activity 展示属于当前 Session 的全部记录，并在标题下方用 Input、Tools、Model 三行时间轴概览会话。Subagent 为执行任务获得的父 Session 历史不会重复出现在其 Activity。滚动进入 Activity 后，标题、数量和时间轴固定在详情顶部；点击时间轴方格可跳到对应记录。
+   - 系统反馈：工具栏显示 Session 标题，subheader 显示 Agent、状态药丸和工作目录；右栏 Activity 展示属于当前 Session 的全部记录，粘顶 header 提供 All / Input / Tools / Model 分段筛选和 Input、Tools、Model 三行时间轴，点击方格可跳到对应记录并短暂高亮；右侧 Inspector 显示 Token / Context / Elapsed 指标与 Overview、Model、Usage 字段。Subagent 为执行任务获得的父 Session 历史不会重复出现在其 Activity。
    - 数据变化：只改变查看对象。
    - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-017](../modules/mac-session-view.md#mac-r-017-activity-全量显示并支持时间轴定位)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 5. 继续使用 Codex。
-   - 系统反馈：收到 Agent 事件时，列表状态、Summary 和 Activity 自动更新；Summary 中的结构化值可以选择，详情页面可连续滚动查看。
+   - 系统反馈：收到 Agent 事件时，列表状态、Inspector 和 Activity 自动更新；Inspector 中的字段值可以选择；停在 Activity 底部时新记录会跟随显示，否则保持当前滚动位置。
    - 数据变化：新活动同步到本地保存内容。
    - 规则引用：[MAC-R-003](../modules/mac-session-view.md#mac-r-003-展示活动并保留-session-诊断数据)。
 
-完成信号：目标 Main Session 以权威标题、Agent 和状态出现在列表中；Subagent 以自己的名称或任务身份显示并可展开/折叠，右栏 Summary 与属于所选 Session 的全量 Activity 随 Agent 活动变化。
+完成信号：目标 Main Session 以权威标题、Agent 图标和状态出现在列表中；Subagent 以自己的名称或任务身份显示并可展开/折叠，右栏 Inspector 与属于所选 Session 的全量 Activity 随 Agent 活动变化。
 
 用户需要调整 Notch 时，在 Notch 点击设置按钮，或在主 App 选择“Settings > Notch”。第三栏的 Appearance section 不显示固定的 Theme 和 Layout 控件；页面提供 Surface、显示屏幕、可恢复的紧凑宽度、展开宽度、展开动画、保持展开、触觉反馈和 Show Notch。完整取值规则见 [MAC-R-015](../modules/mac-session-view.md#mac-r-015-notch-设置集中在主-app)。
 
@@ -46,11 +46,11 @@
 
 ### 手动刷新
 
-点击 Session 列表上方的刷新图标（Refresh Sessions）。系统从 daemon 取得完整当前数据；列表、数量或详情变化代表结果已显示，数据无变化时没有单独的完成提示。
+点击工具栏右侧的刷新图标（Refresh Sessions）。系统从 daemon 取得完整当前数据；列表、数量或详情变化代表结果已显示，数据无变化时没有单独的完成提示。
 
 ### 删除单个 Session
 
-选择 Session，点击详情上方的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 从 daemon、Mac 与在线 iPhone 中移除；随后选择会转到剩余列表中的 Session，删除最后一条时中栏显示 No Sessions、右栏显示 Select a Session。点击“Cancel”则不改变数据。
+选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 从 daemon、Mac 与在线 iPhone 中移除；随后选择会转到剩余列表中的 Session，删除最后一条时中栏显示 No Sessions、右栏显示 Select a Session。点击“Cancel”则不改变数据。
 
 ### 清空全部历史
 

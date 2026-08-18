@@ -8,3 +8,4 @@ Relay/.wrangler/
 Relay/coverage/
 Relay/.dev.vars
 *.xcuserstate
+*.profraw
