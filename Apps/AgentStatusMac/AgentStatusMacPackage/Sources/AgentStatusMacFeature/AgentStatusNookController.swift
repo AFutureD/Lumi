@@ -20,6 +20,8 @@ final class AgentStatusNookController {
     private let model: AgentStatusNookModel
     private let activityQueue: NookActivityQueue
     private let coordinator: AppCoordinator
+    private var activityNotificationsEnabled = false
+    private var activityNotificationArmTask: Task<Void, Never>?
 
     init(
         store: MacSessionStore,
@@ -39,10 +41,10 @@ final class AgentStatusNookController {
             }
         }
         configuration.setCompactLeading {
-            AgentStatusNookCompactStatus(model: model)
+            AgentStatusNookCompactStatus(model: model.compactModel)
         }
         configuration.setCompactTrailing {
-            AgentStatusNookCompactCount(model: model)
+            AgentStatusNookCompactCount(model: model.compactModel)
         }
         configuration.topBar = NookTopBarConfiguration(
             showsTopBar: true,
@@ -73,8 +75,8 @@ final class AgentStatusNookController {
         self.appState = appState
         coordinator = AppCoordinator(appState: appState, configuration: configuration)
 
-        model.onSnapshot = { [activityQueue] previous, current, initial in
-            guard !initial else { return }
+        model.onSnapshot = { [weak self, activityQueue] previous, current, initial in
+            guard let self, self.activityNotificationsEnabled, !initial else { return }
             Self.enqueueActivities(
                 previous: previous,
                 current: current,
@@ -101,6 +103,13 @@ final class AgentStatusNookController {
 
     func start() {
         model.start()
+        activityNotificationArmTask?.cancel()
+        activityNotificationArmTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard let self, !Task.isCancelled else { return }
+            self.activityNotificationsEnabled = true
+            self.activityNotificationArmTask = nil
+        }
         coordinator.start()
         // OpenNook is embedded in a regular AppKit app rather than running as a
         // standalone menu-bar process, so restore the host application's policy.
@@ -108,6 +117,9 @@ final class AgentStatusNookController {
     }
 
     func stop() async {
+        activityNotificationArmTask?.cancel()
+        activityNotificationArmTask = nil
+        activityNotificationsEnabled = false
         model.stop()
         await activityQueue.quiesce()
         coordinator.hideNook()
@@ -240,27 +252,27 @@ private struct AgentStatusNookSessionRow: View {
 }
 
 private struct AgentStatusNookCompactStatus: View {
-    @ObservedObject var model: AgentStatusNookModel
+    @ObservedObject var model: AgentStatusNookCompactModel
 
     var body: some View {
         Circle()
-            .fill(model.sessions.first?.statusTone.swiftUIColor ?? Color.gray)
+            .fill(model.statusTone.swiftUIColor)
             .frame(width: 8, height: 8)
             .frame(width: 28, height: 28)
-            .accessibilityLabel(model.sessions.first?.statusText ?? "No active Sessions")
+            .accessibilityLabel(model.sessionCount == 0 ? "No active Sessions" : "Active Sessions")
     }
 }
 
 private struct AgentStatusNookCompactCount: View {
-    @ObservedObject var model: AgentStatusNookModel
+    @ObservedObject var model: AgentStatusNookCompactModel
     @Environment(\.nookResolvedTheme) private var theme
 
     var body: some View {
-        Text("\(model.totalSessionCount)")
+        Text("\(model.sessionCount)")
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .foregroundStyle(theme.primaryLabel)
             .frame(width: 28, height: 28)
-            .accessibilityLabel("\(model.totalSessionCount) Sessions in Notch")
+            .accessibilityLabel("\(model.sessionCount) Sessions in Notch")
     }
 }
 

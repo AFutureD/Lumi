@@ -179,6 +179,51 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
+    /// Reads only as far back as needed to resolve each Session's current-turn
+    /// user message. This avoids decoding entire retained timelines for compact
+    /// surfaces such as the macOS Notch.
+    public func currentTurnUserMessages(
+        sessionIDs: [SessionID]
+    ) async throws -> [SessionID: String] {
+        let decoder = decoder
+        return try await database.read { db in
+            var messages: [SessionID: String] = [:]
+            var visited: Set<SessionID> = []
+            for sessionID in sessionIDs where visited.insert(sessionID).inserted {
+                let cursor = try Data.fetchCursor(
+                    db,
+                    sql: """
+                        SELECT item FROM timeline
+                        WHERE session_id = ?
+                        ORDER BY occurred_at DESC, id DESC
+                        """,
+                    arguments: [sessionID.rawValue]
+                )
+                var currentTurnID: TurnID?
+                var newestUserMessage: String?
+
+                while let data = try cursor.next() {
+                    let item = try decoder.decode(TimelineItem.self, from: data)
+                    if currentTurnID == nil, let turnID = item.turnID {
+                        currentTurnID = turnID
+                    }
+                    guard case let .message(message) = item.payload,
+                          message.role == .user else { continue }
+                    if newestUserMessage == nil { newestUserMessage = message.text }
+                    if let currentTurnID, item.turnID == currentTurnID {
+                        messages[sessionID] = message.text
+                        break
+                    }
+                }
+
+                if messages[sessionID] == nil, let newestUserMessage {
+                    messages[sessionID] = newestUserMessage
+                }
+            }
+            return messages
+        }
+    }
+
     /// Atomically makes a client cache match the daemon's authoritative snapshot.
     public func replaceSnapshot(_ details: [SessionDetail]) async throws {
         let encoder = encoder

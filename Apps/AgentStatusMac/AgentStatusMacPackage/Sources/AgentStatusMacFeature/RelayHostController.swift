@@ -166,6 +166,8 @@ final class RelayHostController {
 
     func refreshDevices() async {
         guard let credentials else { return }
+        let previousDevices = devices
+        let previousError = lastError
         do {
             let previousActiveIDs = Set(devices.filter { $0.revokedAt == nil }.map(\.id))
             let refreshed = try await RelayRESTClient(baseURL: credentials.relayURL).devices(
@@ -183,7 +185,9 @@ final class RelayHostController {
         } catch {
             lastError = String(describing: error)
         }
-        onChange?()
+        if devices != previousDevices || lastError != previousError {
+            onChange?()
+        }
     }
 
     func revoke(deviceID: DeviceID) async {
@@ -288,6 +292,7 @@ final class RelayHostController {
                 sentUnavailable = false
             }
             guard var credentials else { return }
+            let preparedPayload = try RelayCryptography.prepare(payload)
             for device in activeDevices {
                 let channelKey = device.id.rawValue
                 let previousSequence = credentials.channelSequences[channelKey] ?? credentials.lastSequence
@@ -295,7 +300,7 @@ final class RelayHostController {
                 credentials.channelSequences[channelKey] = sequence
                 credentials.lastSequence = max(credentials.lastSequence, sequence)
                 let frame = try RelayCryptography.seal(
-                    payload,
+                    preparedPayload,
                     hostID: credentials.hostID,
                     deviceID: device.id,
                     sequence: sequence,
@@ -324,7 +329,10 @@ final class RelayHostController {
             guard let self, let store else { return }
             while self.publishPending, !Task.isCancelled {
                 self.publishPending = false
-                try? await Task.sleep(for: .milliseconds(100))
+                // Full encrypted snapshots retain every Timeline item. A short
+                // cadence keeps iPhone monitoring current while coalescing the
+                // burst of hook/rollout events produced by one Agent action.
+                try? await Task.sleep(for: .seconds(5))
                 await self.publishCurrentState(from: store)
             }
             self.publishTask = nil

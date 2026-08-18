@@ -2,7 +2,7 @@ import AgentStatusTransport
 import Foundation
 
 final class SessionListNode: NSObject {
-    let summary: SessionSummary
+    var summary: SessionSummary
     var children: [SessionListNode] = []
 
     init(summary: SessionSummary) {
@@ -36,6 +36,31 @@ struct SessionListHierarchy {
             }
         }
         return SessionListHierarchy(roots: roots, nodesByID: nodesByID)
+    }
+
+    func hasSameStructure(as other: SessionListHierarchy) -> Bool {
+        guard roots.map(\.summary.id) == other.roots.map(\.summary.id),
+              nodesByID.keys == other.nodesByID.keys else {
+            return false
+        }
+        return nodesByID.allSatisfy { id, node in
+            node.children.map(\.summary.id) == other.nodesByID[id]?.children.map(\.summary.id)
+        }
+    }
+
+    /// Keeps the node identities retained by NSOutlineView while refreshing their content.
+    /// Returns only rows whose visible presentation changed; timestamp-only updates are ignored.
+    func updateSummaries(from sessions: [SessionSummary]) -> Set<SessionID> {
+        var changedIDs: Set<SessionID> = []
+        for summary in sessions {
+            guard let node = nodesByID[summary.id] else { continue }
+            if SessionListRowPresentation(session: node.summary)
+                != SessionListRowPresentation(session: summary) {
+                changedIDs.insert(summary.id)
+            }
+            node.summary = summary
+        }
+        return changedIDs
     }
 
     private static func wouldCreateCycle(

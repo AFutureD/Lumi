@@ -23,6 +23,7 @@ public final class MacSessionStore {
     private var eventApplyTask: Task<Void, Never>?
     private var pendingEvents: [EventID: AgentIngressEvent] = [:]
     private var reconnectTask: Task<Void, Never>?
+    private var cachedSnapshotDetails: [SessionID: SessionDetail]?
 
     public init(
         socketPath: String = DaemonEndpoint.defaultSocketPath(),
@@ -127,7 +128,16 @@ public final class MacSessionStore {
     public func snapshotDetails() async throws -> [SessionDetail] {
         guard let cache else { throw MacSessionStoreError.cacheUnavailable }
         let summaries = try await cache.listSessions(limit: 10_000)
-        return try await cachedSessionDetails(ids: summaries.map(\.id))
+        if let cachedSnapshotDetails,
+           cachedSnapshotDetails.count == summaries.count,
+           summaries.allSatisfy({ cachedSnapshotDetails[$0.id] != nil }) {
+            return summaries.compactMap { cachedSnapshotDetails[$0.id] }
+        }
+        let details = try await cachedSessionDetails(ids: summaries.map(\.id))
+        cachedSnapshotDetails = Dictionary(
+            uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
+        )
+        return details
     }
 
     /// Reads selected Session details from the already-synchronized Mac cache.
@@ -142,6 +152,24 @@ public final class MacSessionStore {
             }
         }
         return details
+    }
+
+    /// Resolves the compact Notch subtitle without decoding complete timelines.
+    public func cachedCurrentTurnUserMessages(
+        ids: [SessionID]
+    ) async throws -> [SessionID: String] {
+        if let cachedSnapshotDetails,
+           ids.allSatisfy({ cachedSnapshotDetails[$0] != nil }) {
+            return Dictionary(uniqueKeysWithValues: ids.compactMap { id in
+                guard let detail = cachedSnapshotDetails[id],
+                      let message = AgentStatusNookSnapshot.currentTurnUserMessage(in: detail) else {
+                    return nil
+                }
+                return (id, message)
+            })
+        }
+        guard let cache else { throw MacSessionStoreError.cacheUnavailable }
+        return try await cache.currentTurnUserMessages(sessionIDs: ids)
     }
 
     private func scheduleSnapshotRefresh() {
@@ -170,6 +198,9 @@ public final class MacSessionStore {
                         uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
                     )
                     if let cache = self.cache { try await cache.replaceSnapshot(details) }
+                    self.cachedSnapshotDetails = Dictionary(
+                        uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
+                    )
                     self.health = response.health
                     self.connectionError = nil
                     await self.reloadFromCache(
@@ -199,8 +230,8 @@ public final class MacSessionStore {
         eventApplyTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .milliseconds(50))
-            var selectedChanged = false
             var appliedAny = false
+            var appliedEvents: [AgentIngressEvent] = []
             while !self.pendingEvents.isEmpty, !Task.isCancelled {
                 let batch = Array(self.pendingEvents.values)
                 self.pendingEvents.removeAll(keepingCapacity: true)
@@ -209,7 +240,7 @@ public final class MacSessionStore {
                     do {
                         if try await cache.apply(event) {
                             appliedAny = true
-                            selectedChanged = selectedChanged || event.sessionID == self.selectedSession?.summary.id
+                            appliedEvents.append(event)
                         }
                     } catch {
                         self.connectionError = "Unable to apply the daemon event: \(error)"
@@ -219,8 +250,9 @@ public final class MacSessionStore {
             if appliedAny {
                 self.connectionError = nil
                 await self.reloadFromCache(
-                    reloadSelected: selectedChanged,
-                    persistedDataChanged: true
+                    reloadSelected: false,
+                    persistedDataChanged: true,
+                    appliedEvents: appliedEvents
                 )
             }
             self.eventApplyTask = nil
@@ -232,7 +264,8 @@ public final class MacSessionStore {
 
     private func reloadFromCache(
         reloadSelected: Bool,
-        persistedDataChanged: Bool = false
+        persistedDataChanged: Bool = false,
+        appliedEvents: [AgentIngressEvent] = []
     ) async {
         guard let cache else { return }
         do {
@@ -243,13 +276,16 @@ public final class MacSessionStore {
             let selectedID = previousID.flatMap { id in
                 updated.contains(where: { $0.id == id }) ? id : nil
             } ?? updated.first?.id
-            let mustReloadDetail = reloadSelected
-                || selectedID != previousDetail?.summary.id
-                || selectedID.flatMap { id in updated.first(where: { $0.id == id }) } != previousDetail?.summary
+            updateSnapshotCache(summaries: updated, events: appliedEvents)
             let detail: SessionDetail? = if let selectedID {
-                mustReloadDetail
-                    ? try await Self.loadSessionDetail(repository: cache, sessionID: selectedID)
-                    : previousDetail
+                if reloadSelected || selectedID != previousDetail?.summary.id || previousDetail == nil {
+                    try await Self.loadSessionDetail(repository: cache, sessionID: selectedID)
+                } else if let previousDetail,
+                          let summary = updated.first(where: { $0.id == selectedID }) {
+                    Self.merging(previousDetail, summary: summary, events: appliedEvents)
+                } else {
+                    previousDetail
+                }
             } else {
                 nil
             }
@@ -343,6 +379,73 @@ public final class MacSessionStore {
             cursor = page.nextCursor
         } while cursor != nil
         return summary.map { SessionDetail(summary: $0, timeline: timeline) }
+    }
+
+    static func merging(
+        _ detail: SessionDetail,
+        summary: SessionSummary,
+        events: [AgentIngressEvent]
+    ) -> SessionDetail {
+        var timeline = detail.timeline
+        var indices = Dictionary(
+            uniqueKeysWithValues: timeline.enumerated().map { ($0.element.id, $0.offset) }
+        )
+        var changedTimeline = false
+
+        for event in events where event.sessionID == summary.id {
+            guard let item = event.timelineItem else { continue }
+            if let index = indices[item.id] {
+                guard item.occurredAt >= timeline[index].occurredAt else { continue }
+                timeline[index] = item
+            } else {
+                indices[item.id] = timeline.count
+                timeline.append(item)
+            }
+            changedTimeline = true
+        }
+
+        if changedTimeline {
+            timeline.sort {
+                if $0.occurredAt == $1.occurredAt { return $0.id.rawValue < $1.id.rawValue }
+                return $0.occurredAt < $1.occurredAt
+            }
+        }
+        return SessionDetail(
+            summary: summary,
+            timeline: timeline,
+            nextCursor: detail.nextCursor
+        )
+    }
+
+    private func updateSnapshotCache(
+        summaries: [SessionSummary],
+        events: [AgentIngressEvent]
+    ) {
+        guard var cachedSnapshotDetails else { return }
+        let summariesByID = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
+        cachedSnapshotDetails = cachedSnapshotDetails.filter { summariesByID[$0.key] != nil }
+        let eventsBySession = Dictionary(grouping: events, by: \.sessionID)
+
+        for summary in summaries {
+            let sessionEvents = eventsBySession[summary.id] ?? []
+            if let detail = cachedSnapshotDetails[summary.id] {
+                cachedSnapshotDetails[summary.id] = Self.merging(
+                    detail,
+                    summary: summary,
+                    events: sessionEvents
+                )
+            } else if !sessionEvents.isEmpty {
+                cachedSnapshotDetails[summary.id] = Self.merging(
+                    SessionDetail(summary: summary, timeline: []),
+                    summary: summary,
+                    events: sessionEvents
+                )
+            } else {
+                self.cachedSnapshotDetails = nil
+                return
+            }
+        }
+        self.cachedSnapshotDetails = cachedSnapshotDetails
     }
 
     private func handleConnectionFailure(_ error: Error) {

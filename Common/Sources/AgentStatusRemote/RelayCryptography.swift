@@ -19,6 +19,14 @@ public struct RelayKeyPair: Codable, Hashable, Sendable {
     }
 }
 
+public struct RelayPreparedPayload: Sendable {
+    fileprivate let plaintext: Data
+
+    fileprivate init(plaintext: Data) {
+        self.plaintext = plaintext
+    }
+}
+
 public enum RelayCryptography {
     public static func makeKeyPair() -> RelayKeyPair {
         let key = Curve25519.KeyAgreement.PrivateKey()
@@ -37,14 +45,41 @@ public enum RelayCryptography {
         privateKey: Data,
         peerPublicKey: Data
     ) throws -> RelayRoutingFrame {
+        try seal(
+            prepare(payload),
+            hostID: hostID,
+            deviceID: deviceID,
+            sequence: sequence,
+            kind: kind,
+            privateKey: privateKey,
+            peerPublicKey: peerPublicKey
+        )
+    }
+
+    public static func prepare(
+        _ payload: RemoteSessionPayload
+    ) throws -> RelayPreparedPayload {
+        RelayPreparedPayload(
+            plaintext: try TransportCoding.makeEncoder().encode(payload)
+        )
+    }
+
+    public static func seal(
+        _ payload: RelayPreparedPayload,
+        hostID: HostID,
+        deviceID: DeviceID,
+        sequence: UInt64,
+        kind: RelayFrameKind = .data,
+        privateKey: Data,
+        peerPublicKey: Data
+    ) throws -> RelayRoutingFrame {
         let key = try symmetricKey(
             privateKey: privateKey,
             peerPublicKey: peerPublicKey,
             hostID: hostID,
             deviceID: deviceID
         )
-        let plaintext = try TransportCoding.makeEncoder().encode(payload)
-        let sealed = try ChaChaPoly.seal(plaintext, using: key)
+        let sealed = try ChaChaPoly.seal(payload.plaintext, using: key)
         var ciphertext = sealed.ciphertext
         ciphertext.append(sealed.tag)
         return RelayRoutingFrame(

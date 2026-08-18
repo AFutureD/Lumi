@@ -262,6 +262,57 @@ import Testing
     #expect(detail?.timeline.last?.payload == replacementUsage)
 }
 
+@Test func grdbRepositoryReadsCurrentTurnUserMessagesWithoutLoadingFullDetails() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-current-message-tests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = try SQLiteSessionRepository(
+        path: directory.appendingPathComponent("sessions.sqlite3").path
+    )
+    let sessionID = SessionID("current-message")
+    let firstTurn = TurnID("turn-1")
+    let currentTurn = TurnID("turn-2")
+    let date = Date(timeIntervalSince1970: 1_800)
+    let items = [
+        TimelineItem(
+            id: TimelineItemID("older-user"),
+            sessionID: sessionID,
+            turnID: firstTurn,
+            occurredAt: date,
+            payload: .message(MessageTimelinePayload(role: .user, text: "Older request"))
+        ),
+        TimelineItem(
+            id: TimelineItemID("current-user"),
+            sessionID: sessionID,
+            turnID: currentTurn,
+            occurredAt: date.addingTimeInterval(1),
+            payload: .message(MessageTimelinePayload(role: .user, text: "Current request"))
+        ),
+        TimelineItem(
+            id: TimelineItemID("current-assistant"),
+            sessionID: sessionID,
+            turnID: currentTurn,
+            occurredAt: date.addingTimeInterval(2),
+            payload: .message(MessageTimelinePayload(role: .assistant, text: "Working"))
+        ),
+    ]
+
+    for (index, item) in items.enumerated() {
+        #expect(try await repository.apply(AgentIngressEvent(
+            eventID: EventID("current-message-event-\(index)"),
+            sessionID: sessionID,
+            agent: .codex,
+            occurredAt: item.occurredAt,
+            timelineItem: item
+        )))
+    }
+
+    let messages = try await repository.currentTurnUserMessages(
+        sessionIDs: [sessionID, sessionID]
+    )
+    #expect(messages == [sessionID: "Current request"])
+}
+
 @Test func grdbRepositoryDeletesOneSessionAndKeepsItDeleted() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-status-delete-tests-\(UUID().uuidString)", isDirectory: true)

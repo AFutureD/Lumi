@@ -15,7 +15,7 @@ import Testing
     )
 
     let frame = try RelayCryptography.seal(
-        payload,
+        RelayCryptography.prepare(payload),
         hostID: hostID,
         deviceID: deviceID,
         sequence: 7,

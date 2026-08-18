@@ -95,7 +95,10 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     ])
 
     let visible = AgentStatusNookSnapshot.visibleSummaries(from: [active, completed])
-    let rows = AgentStatusNookSnapshot.make(summaries: visible, details: [detail])
+    let rows = AgentStatusNookSnapshot.make(
+        summaries: visible,
+        currentUserMessages: [active.id: AgentStatusNookSnapshot.currentTurnUserMessage(in: detail)!]
+    )
 
     #expect(rows.map(\.id) == [active.id])
     #expect(rows.first?.currentUserMessage == "Current request")
@@ -108,22 +111,90 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible).count == 4)
 }
 
+@Test @MainActor
+func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
+    let sessionID = SessionID("selected")
+    let initialDate = Date(timeIntervalSince1970: 10)
+    let initialSummary = SessionSummary(
+        id: sessionID,
+        agent: .codex,
+        title: "Selected",
+        lifecycle: .running,
+        phase: .thinking,
+        startedAt: initialDate,
+        updatedAt: initialDate,
+        lastActivityAt: initialDate
+    )
+    let original = TimelineItem(
+        id: TimelineItemID("original"),
+        sessionID: sessionID,
+        occurredAt: initialDate,
+        payload: .message(MessageTimelinePayload(role: .assistant, text: "Old"))
+    )
+    let detail = SessionDetail(summary: initialSummary, timeline: [original])
+    let appended = TimelineItem(
+        id: TimelineItemID("appended"),
+        sessionID: sessionID,
+        occurredAt: initialDate.addingTimeInterval(1),
+        payload: .message(MessageTimelinePayload(role: .user, text: "New"))
+    )
+    let replacement = TimelineItem(
+        id: original.id,
+        sessionID: sessionID,
+        occurredAt: initialDate.addingTimeInterval(2),
+        payload: .message(MessageTimelinePayload(role: .assistant, text: "Updated"))
+    )
+    let updatedDate = initialDate.addingTimeInterval(2)
+    let updatedSummary = SessionSummary(
+        id: sessionID,
+        agent: .codex,
+        title: "Selected",
+        lifecycle: .running,
+        phase: .responding,
+        startedAt: initialDate,
+        updatedAt: updatedDate,
+        lastActivityAt: updatedDate
+    )
+    let merged = MacSessionStore.merging(
+        detail,
+        summary: updatedSummary,
+        events: [
+            AgentIngressEvent(
+                eventID: EventID("append"),
+                sessionID: sessionID,
+                agent: .codex,
+                occurredAt: appended.occurredAt,
+                timelineItem: appended
+            ),
+            AgentIngressEvent(
+                eventID: EventID("replace"),
+                sessionID: sessionID,
+                agent: .codex,
+                occurredAt: replacement.occurredAt,
+                timelineItem: replacement
+            ),
+        ]
+    )
+
+    #expect(merged.summary == updatedSummary)
+    #expect(merged.timeline.map(\.id) == [appended.id, original.id])
+    #expect(merged.timeline.last?.payload == replacement.payload)
+}
+
 @Test func nookActivityDiffIncludesACompletedTransition() {
     let running = AgentStatusNookSession(
         id: SessionID("session"),
         title: "Session",
         lifecycle: .running,
         phase: .responding,
-        currentUserMessage: "Build it",
-        updatedAt: Date(timeIntervalSince1970: 1)
+        currentUserMessage: "Build it"
     )
     let completed = AgentStatusNookSession(
         id: running.id,
         title: running.title,
         lifecycle: .completed,
         phase: .idle,
-        currentUserMessage: running.currentUserMessage,
-        updatedAt: Date(timeIntervalSince1970: 2)
+        currentUserMessage: running.currentUserMessage
     )
 
     #expect(AgentStatusNookActivityDiff.changedSessions(
@@ -138,24 +209,21 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
         title: "Session",
         lifecycle: .waitingForInput,
         phase: .waitingForApproval,
-        currentUserMessage: "Approve it",
-        updatedAt: Date(timeIntervalSince1970: 1)
+        currentUserMessage: "Approve it"
     )
     let unchanged = AgentStatusNookSession(
         id: waiting.id,
         title: waiting.title,
         lifecycle: waiting.lifecycle,
         phase: waiting.phase,
-        currentUserMessage: waiting.currentUserMessage,
-        updatedAt: Date(timeIntervalSince1970: 2)
+        currentUserMessage: waiting.currentUserMessage
     )
     let idle = AgentStatusNookSession(
         id: waiting.id,
         title: waiting.title,
         lifecycle: waiting.lifecycle,
         phase: .idle,
-        currentUserMessage: waiting.currentUserMessage,
-        updatedAt: Date(timeIntervalSince1970: 3)
+        currentUserMessage: waiting.currentUserMessage
     )
 
     #expect(AgentStatusNookActivityDiff.changedSessions(
@@ -166,6 +234,43 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
         previous: [waiting],
         current: [idle]
     ) == [idle])
+}
+
+@Test func nookActivityDiffIgnoresRoutineRunningStateChurn() {
+    let running = AgentStatusNookSession(
+        id: SessionID("session"),
+        title: "Session",
+        lifecycle: .running,
+        phase: .executing,
+        currentUserMessage: "Build it"
+    )
+    let waiting = AgentStatusNookSession(
+        id: running.id,
+        title: running.title,
+        lifecycle: .waitingForInput,
+        phase: .idle,
+        currentUserMessage: running.currentUserMessage
+    )
+
+    #expect(AgentStatusNookActivityDiff.changedSessions(
+        previous: [running],
+        current: [waiting]
+    ).isEmpty)
+}
+
+@Test func nookActivityDiffDoesNotQueueSessionsWithoutABaseline() {
+    let running = AgentStatusNookSession(
+        id: SessionID("existing-session"),
+        title: "Existing Session",
+        lifecycle: .running,
+        phase: .executing,
+        currentUserMessage: "Build it"
+    )
+
+    #expect(AgentStatusNookActivityDiff.changedSessions(
+        previous: [],
+        current: [running]
+    ).isEmpty)
 }
 
 @Test func relayRecoveryResendsAnUnchangedSnapshot() {
@@ -261,12 +366,47 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     #expect(childNode.children.map { $0.summary.id } == [grandchild.id])
 }
 
-@Test func sessionDetailPresentationShowsEveryInformationModule() throws {
+@Test func sessionListHierarchyReusesNodesAndReloadsOnlyVisibleChanges() throws {
+    let original = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "main"),
+        hierarchySummary(id: "child", parentID: "main", depth: 1),
+    ])
+    let timestampOnly = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "main", updatedAt: 200),
+        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 200),
+    ])
+
+    #expect(original.hasSameStructure(as: timestampOnly))
+    #expect(original.updateSummaries(from: timestampOnly.roots.flatMap(flatten)) == [])
+    let originalMain = try #require(original.nodesByID[SessionID("main")])
+    #expect(originalMain.summary.updatedAt == Date(timeIntervalSince1970: 200))
+
+    let phaseChange = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "main", phase: .executing, updatedAt: 201),
+        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 201),
+    ])
+    #expect(original.hasSameStructure(as: phaseChange))
+    #expect(original.updateSummaries(from: phaseChange.roots.flatMap(flatten)) == [SessionID("main")])
+
+    let reordered = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "child", parentID: "main", depth: 1),
+        hierarchySummary(id: "main"),
+    ])
+    #expect(original.hasSameStructure(as: reordered))
+
+    let detached = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "main"),
+        hierarchySummary(id: "child"),
+    ])
+    #expect(!original.hasSameStructure(as: detached))
+}
+
+@Test func sessionPagePresentationBuildsSummaryAndCategorizesActivity() throws {
     let date = Date(timeIntervalSince1970: 100)
     let summary = SessionSummary(
-        id: SessionID("complete-detail"),
+        id: SessionID("session-page"),
         agent: .codex,
-        title: "Complete detail",
+        title: "Session page",
         workspace: "/tmp/agent-status",
         lifecycle: .running,
         phase: .responding,
@@ -276,83 +416,214 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
         needsAttention: true,
         lineage: SessionLineage(
             threadSource: "subagent",
-            parentSessionID: SessionID("parent-session"),
+            parentSessionID: SessionID("parent"),
             subagentDepth: 1,
-            agentNickname: "Hypatia",
-            agentPath: "/root/docs_review",
-            subagentKind: "thread_spawn"
+            agentNickname: "Hypatia"
         )
     )
-    let turnID = TurnID("turn-1")
-    let timeline = [
+    let timeline: [TimelineItem] = [
         TimelineItem(
             id: TimelineItemID("model"),
             sessionID: summary.id,
-            turnID: turnID,
             occurredAt: date,
             payload: .modelConfiguration(ModelConfigurationTimelinePayload(
-                source: "session_meta",
+                source: "turn_context",
                 model: "gpt-5.6",
                 provider: "openai",
                 contextWindow: 200_000,
                 reasoningEffort: "high",
                 clientVersion: "1.0",
-                settings: .object(["sandbox": .string("workspace-write")])
+                settings: .object(["must-not-render": .string("raw-json")])
             ))
         ),
         TimelineItem(
             id: TimelineItemID("usage"),
             sessionID: summary.id,
-            turnID: turnID,
             occurredAt: date.addingTimeInterval(1),
             payload: .usageMetrics(UsageMetricsTimelinePayload(
-                last: TokenUsage(inputTokens: 30, outputTokens: 20, totalTokens: 50),
-                total: TokenUsage(inputTokens: 70, outputTokens: 30, totalTokens: 100),
-                modelContextWindow: 200_000,
-                rateLimits: .object(["remaining": .string("90%")])
+                total: TokenUsage(
+                    inputTokens: 70,
+                    cachedInputTokens: 20,
+                    cacheWriteInputTokens: 10,
+                    outputTokens: 30,
+                    reasoningOutputTokens: 5,
+                    totalTokens: 100
+                ),
+                modelContextWindow: 200_000
             ))
         ),
-        TimelineItem(
-            id: TimelineItemID("context"),
+        activityItem(
+            id: "system",
             sessionID: summary.id,
-            turnID: turnID,
-            occurredAt: date.addingTimeInterval(2),
+            date: date.addingTimeInterval(2),
+            payload: .internalContext(InternalContextTimelinePayload(
+                kind: "base_instructions",
+                content: .object(["text": .string("System instruction")])
+            ))
+        ),
+        activityItem(
+            id: "context",
+            sessionID: summary.id,
+            date: date.addingTimeInterval(3),
             payload: .internalContext(InternalContextTimelinePayload(
                 kind: "turn_context",
-                content: .object(["secret": .string("retained-value")])
+                content: .object(["type": .string("context")])
             ))
         ),
-        TimelineItem(
-            id: TimelineItemID("message"),
+        activityItem(
+            id: "reasoning",
             sessionID: summary.id,
-            turnID: turnID,
-            occurredAt: date.addingTimeInterval(3),
-            payload: .message(MessageTimelinePayload(role: .user, text: "Show all information"))
+            date: date.addingTimeInterval(4),
+            payload: .internalContext(InternalContextTimelinePayload(
+                kind: "reasoning",
+                content: .string("Reasoning")
+            ))
+        ),
+        activityItem(
+            id: "user",
+            sessionID: summary.id,
+            date: date.addingTimeInterval(5),
+            payload: .message(MessageTimelinePayload(role: .user, text: "User message"))
+        ),
+        activityItem(
+            id: "assistant",
+            sessionID: summary.id,
+            date: date.addingTimeInterval(6),
+            payload: .message(MessageTimelinePayload(role: .assistant, text: "Assistant message"))
+        ),
+        activityItem(
+            id: "tool",
+            sessionID: summary.id,
+            date: date.addingTimeInterval(7),
+            payload: .tool(ToolTimelinePayload(name: "Build", status: .succeeded))
+        ),
+        activityItem(
+            id: "subagent",
+            sessionID: summary.id,
+            date: date.addingTimeInterval(8),
+            payload: .subagent(SubagentTimelinePayload(name: "Reviewer", status: .completed))
+        ),
+        activityItem(
+            id: "other",
+            sessionID: summary.id,
+            date: date.addingTimeInterval(9),
+            payload: .error(ErrorTimelinePayload(
+                title: "Failure",
+                message: "Something failed",
+                recoverable: true
+            ))
         ),
     ]
 
-    let modules = SessionDetailPresentationBuilder.modules(for: SessionDetail(
-        summary: summary,
-        timeline: timeline
-    ))
+    let presentation = SessionPagePresentationBuilder.presentation(
+        for: SessionDetail(summary: summary, timeline: timeline)
+    )
 
-    #expect(modules.map(\.kind) == [.overview, .modelConfiguration, .usage, .internalContext, .activity])
-    let overview = try #require(modules.first { $0.kind == .overview })
-    let model = try #require(modules.first { $0.kind == .modelConfiguration })
-    let usage = try #require(modules.first { $0.kind == .usage })
-    let context = try #require(modules.first { $0.kind == .internalContext })
-    let activity = try #require(modules.first { $0.kind == .activity })
+    #expect(presentation.summarySections.map(\.kind) == [
+        .overview,
+        .lineage,
+        .modelConfiguration,
+        .usage,
+    ])
+    let model = try #require(
+        presentation.summarySections.first { $0.kind == .modelConfiguration }
+    )
+    #expect(model.fields.map(\.label) == [
+        "Source",
+        "Model",
+        "Provider",
+        "Context Window",
+        "Reasoning Effort",
+        "Client Version",
+    ])
+    #expect(!model.fields.contains { $0.value.contains("raw-json") })
+    #expect(model.fields.first { $0.label == "Context Window" }?.value == "200,000")
+    let usage = try #require(presentation.summarySections.first { $0.kind == .usage })
+    #expect(usage.fields.first { $0.label == "Total Tokens" }?.value == "100")
+    #expect(presentation.activities.map(\.category) == [
+        .system,
+        .context,
+        .assistantReasoning,
+        .user,
+        .assistant,
+        .tool,
+        .subagent,
+        .other,
+    ])
+    #expect(presentation.activities.first { $0.category == .user }?.content == "User message")
+    let userActivity = try #require(presentation.activities.first { $0.category == .user })
+    #expect(
+        SessionPagePresentationBuilder.rawData(for: userActivity.rawItem)
+            .contains("User message")
+    )
+}
 
-    #expect(overview.rows.contains { $0.title == "Session ID" && $0.body == "complete-detail" })
-    #expect(overview.rows.contains { $0.title == "Parent Session ID" && $0.body == "parent-session" })
-    #expect(overview.rows.contains { $0.title == "Agent Nickname" && $0.body == "Hypatia" })
-    #expect(model.rows.first?.body.contains("Model: gpt-5.6") == true)
-    #expect(model.rows.first?.body.contains("workspace-write") == true)
-    #expect(usage.rows.first?.body.contains("Total tokens: 100") == true)
-    #expect(usage.rows.first?.body.contains("90%") == true)
-    #expect(context.rows.first?.body.contains("retained-value") == true)
-    #expect(activity.rows.first?.body.contains("Show all information") == true)
-    #expect(activity.rows.first?.body.contains("Turn ID: turn-1") == true)
+@Test func sessionActivityWindowKeepsRecentMessages() {
+    let activities = (0..<120).map { index in
+        SessionActivityPresentation(
+            id: "activity-\(index)",
+            category: .assistant,
+            content: "Activity \(index)",
+            occurredAt: "\(index)",
+            rawItem: activityItem(
+                id: "activity-\(index)",
+                sessionID: SessionID("window"),
+                date: Date(timeIntervalSince1970: TimeInterval(index)),
+                payload: .message(MessageTimelinePayload(role: .assistant, text: "Activity \(index)"))
+            )
+        )
+    }
+
+    let initial = SessionActivityWindowPolicy.window(
+        activities: activities,
+        limit: SessionActivityWindowPolicy.initialLimit
+    )
+    #expect(initial.activities.count == 10)
+    #expect(initial.activities.first?.id == "activity-110")
+    #expect(initial.hiddenCount == 110)
+
+    let expanded = SessionActivityWindowPolicy.window(activities: activities, limit: 60)
+    #expect(expanded.activities.first?.id == "activity-60")
+    #expect(expanded.hiddenCount == 60)
+}
+
+@Test func sessionPageRendererBuildsOnItsOwnActor() async throws {
+    let date = Date(timeIntervalSince1970: 100)
+    let summary = SessionSummary(
+        id: SessionID("actor-render"),
+        agent: .codex,
+        title: "Actor render",
+        lifecycle: .running,
+        phase: .thinking,
+        startedAt: date,
+        updatedAt: date,
+        lastActivityAt: date
+    )
+    let renderer = SessionPagePresentationRenderer()
+    let presentation = await renderer.presentation(
+        for: SessionDetail(summary: summary, timeline: [])
+    )
+
+    #expect(presentation?.summarySections.map(\.kind) == [
+        .overview,
+        .modelConfiguration,
+        .usage,
+    ])
+}
+
+
+private func activityItem(
+    id: String,
+    sessionID: SessionID,
+    date: Date,
+    payload: TimelinePayload
+) -> TimelineItem {
+    TimelineItem(
+        id: TimelineItemID(id),
+        sessionID: sessionID,
+        occurredAt: date,
+        payload: payload
+    )
 }
 
 private func nookSummary(
@@ -377,9 +648,11 @@ private func nookSummary(
 private func hierarchySummary(
     id: String,
     parentID: String? = nil,
-    depth: Int? = nil
+    depth: Int? = nil,
+    phase: TurnPhase = .thinking,
+    updatedAt: TimeInterval = 100
 ) -> SessionSummary {
-    let date = Date(timeIntervalSince1970: 100)
+    let date = Date(timeIntervalSince1970: updatedAt)
     let lineage = parentID.map {
         SessionLineage(
             threadSource: "subagent",
@@ -394,10 +667,14 @@ private func hierarchySummary(
         agent: lineage == nil ? .codex : .codexSubagent,
         title: id,
         lifecycle: .running,
-        phase: .thinking,
+        phase: phase,
         startedAt: date,
         updatedAt: date,
         lastActivityAt: date,
         lineage: lineage
     )
+}
+
+private func flatten(_ node: SessionListNode) -> [SessionSummary] {
+    [node.summary] + node.children.flatMap(flatten)
 }
