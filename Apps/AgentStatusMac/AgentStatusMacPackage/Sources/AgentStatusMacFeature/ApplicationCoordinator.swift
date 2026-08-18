@@ -1,12 +1,16 @@
+import AgentStatusTransport
 import AppKit
 
 @MainActor
 public final class ApplicationCoordinator: NSObject {
     private let store = MacSessionStore()
     private lazy var relayHost = RelayHostController(store: store)
-    private lazy var notch = AgentStatusNookController(store: store) { [weak self] in
-        self?.showNotchSettings()
-    }
+    private lazy var notch: AgentStatusNookController = {
+        var actions = AgentStatusNookActions()
+        actions.openMainSettings = { [weak self] in self?.showNotchSettings() }
+        actions.showSession = { [weak self] sessionID in self?.showSession(sessionID) }
+        return AgentStatusNookController(store: store, actions: actions)
+    }()
     private lazy var mainWindow = MainWindowController(store: store, relayHost: relayHost, nook: notch)
 
     public override init() {
@@ -36,6 +40,12 @@ public final class ApplicationCoordinator: NSObject {
 
     @objc private func showSettings() {
         mainWindow.selectSettings(.general)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func showSession(_ sessionID: SessionID) {
+        store.select(sessionID)
+        mainWindow.select(.sessions)
         NSApp.activate(ignoringOtherApps: true)
     }
 

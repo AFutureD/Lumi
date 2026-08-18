@@ -166,7 +166,7 @@ final class SessionDetailViewController: NSViewController {
         textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         textView.textColor = .labelColor
         textView.textContainerInset = NSSize(width: 10, height: 10)
-        textView.string = SessionPagePresentationBuilder.rawData(for: activity.rawItem)
+        textView.string = SessionPagePresentationBuilder.rawData(for: activity.rawItems)
         textView.textContainer?.widthTracksTextView = true
 
         textScroll.documentView = textView
@@ -175,7 +175,7 @@ final class SessionDetailViewController: NSViewController {
         textScroll.borderType = .bezelBorder
 
         let alert = NSAlert()
-        alert.messageText = "\(activity.category.tag) Raw Data"
+        alert.messageText = "\(activity.label) Raw Data"
         alert.informativeText = activity.occurredAt
         alert.accessoryView = textScroll
         alert.addButton(withTitle: "Done")

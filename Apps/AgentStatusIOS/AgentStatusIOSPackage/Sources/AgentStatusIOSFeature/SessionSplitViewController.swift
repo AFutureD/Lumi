@@ -176,7 +176,7 @@ private final class TimelineViewController: UITableViewController {
     private var visibleTimeline: [TimelineItem] {
         session?.timeline.filter {
             switch $0.payload {
-            case .message, .tool, .plan, .subagent, .error: true
+            case .message, .reasoning, .tool, .plan, .subagent, .error, .context, .sessionMarker, .turnEnd: true
             case .unknown, .modelConfiguration, .internalContext, .usageMetrics: false
             }
         } ?? []
@@ -187,6 +187,10 @@ private extension TimelinePayload {
     var displayTitle: String {
         switch self {
         case let .message(value): value.role == .user ? "User" : "Assistant"
+        case .reasoning: "Reasoning"
+        case let .context(value): value.scope == .session ? "Context · session" : "Context · \(value.kind)"
+        case let .sessionMarker(value): value.kind.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        case let .turnEnd(value): "Turn \(value.outcome.rawValue)"
         case let .tool(value): "\(value.name) · \(value.status.rawValue)"
         case .plan: "Plan"
         case let .subagent(value): "Sub-agent · \(value.name)"
@@ -201,6 +205,10 @@ private extension TimelinePayload {
     var displayBody: String {
         switch self {
         case let .message(value): value.text
+        case let .reasoning(value): value.text
+        case let .context(value): value.summary ?? value.kind
+        case let .sessionMarker(value): [value.detail, value.model].compactMap { $0 }.joined(separator: " · ")
+        case let .turnEnd(value): value.message ?? ""
         case let .tool(value): value.summary ?? ""
         case let .plan(value): value.steps.map { "• \($0.text) [\($0.status.rawValue)]" }.joined(separator: "\n")
         case let .subagent(value): value.status.rawValue

@@ -1,8 +1,10 @@
+import AgentStatusTransport
 import AppKit
 import SwiftUI
 
-/// UI state that must survive `rootView` replacement: the lane filter, the
-/// transient jump highlight, and whether the list is pinned to the bottom.
+/// UI state that must survive `rootView` replacement: the lane strip mode,
+/// the transient jump highlight, the hovered tool pair, and whether the list
+/// is pinned to the bottom.
 @MainActor
 final class SessionActivityState: ObservableObject {
     private static let timelineModeKey = "AgentStatus.Activity.TimelineMode"
@@ -12,6 +14,8 @@ final class SessionActivityState: ObservableObject {
         didSet { UserDefaults.standard.set(timelineMode.rawValue, forKey: Self.timelineModeKey) }
     }
     @Published var highlightedID: String?
+    /// `toolUseID` under the pointer; its TOOL and RESULT rows light up together.
+    @Published var hoveredToolUseID: String?
     var followsBottom = false
     private var highlightTask: Task<Void, Never>?
 
@@ -22,6 +26,7 @@ final class SessionActivityState: ObservableObject {
 
     func reset() {
         highlightedID = nil
+        hoveredToolUseID = nil
         followsBottom = false
         highlightTask?.cancel()
     }
@@ -37,9 +42,10 @@ final class SessionActivityState: ObservableObject {
     }
 }
 
-/// Activity: pinned header (title · count · lane filter · three-lane timeline)
-/// over a chronological list of rows. Clicking a lane cell jumps to its row;
-/// clicking a row opens the raw JSON.
+/// Activity: pinned header (title · count · lane strip toggle · User/Model/Exec
+/// lane strip) over a chronological list of `TimelineRow`s. Turn boundaries
+/// read from the rows themselves (USER … TURN END); there is no turn header.
+/// Clicking a lane cell jumps to its row; clicking a row reveals its detail.
 @MainActor
 struct SessionActivityView: View {
     let presentation: SessionPagePresentation?
@@ -62,11 +68,19 @@ struct SessionActivityView: View {
                         .padding(.vertical, 24)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(activities.enumerated()), id: \.element.id) { index, activity in
+                        ForEach(activities) { activity in
                             SessionActivityRow(
                                 activity: activity,
-                                isZebra: index.isMultiple(of: 2) == false,
                                 isHighlighted: state.highlightedID == activity.id,
+                                isPairHighlighted: activity.toolUseID != nil
+                                    && state.hoveredToolUseID == activity.toolUseID,
+                                onHover: { hovering in
+                                    if hovering {
+                                        state.hoveredToolUseID = activity.toolUseID
+                                    } else if state.hoveredToolUseID == activity.toolUseID {
+                                        state.hoveredToolUseID = nil
+                                    }
+                                },
                                 onOpen: { onPreview(activity) }
                             )
                             .id(sessionActivityRowID(for: activity))
@@ -146,7 +160,9 @@ private func sessionActivityRowID(for activity: SessionActivityPresentation) -> 
     "activity-row:\(activity.id)"
 }
 
-/// Three lanes (Input / Tools / Model); one 13pt column per item; empty lanes stay clear.
+/// Three lanes (User / Model / Exec); one 13pt column per row. A cell is
+/// filled with the tag's lane colour only in the row's own lane; rows that
+/// span all lanes (SESSION / COMPACT / CONTEXT ×N) fill all three in gray.
 private struct SessionActivityTimeline: View {
     private static let cellSize = AgentStatusDesign.Layout.laneCellSize
     private static let spacing = AgentStatusDesign.Layout.laneCellSpacing
@@ -163,7 +179,7 @@ private struct SessionActivityTimeline: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .trailing, spacing: Self.spacing) {
                 if mode == .lanes {
-                    ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
+                    ForEach(TimelineLane.allCases, id: \.rawValue) { lane in
                         laneLabel(lane.title)
                     }
                 } else {
@@ -174,11 +190,11 @@ private struct SessionActivityTimeline: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: Self.spacing) {
-                    ForEach(activities, id: \.id) { activity in
+                    ForEach(activities) { activity in
                         if mode == .lanes {
                             VStack(spacing: Self.spacing) {
-                                ForEach(SessionActivityLane.allCases, id: \.rawValue) { lane in
-                                    if activity.category.lane == lane {
+                                ForEach(TimelineLane.allCases, id: \.rawValue) { lane in
+                                    if activity.lane == lane || activity.lane == nil {
                                         cell(for: activity)
                                     } else {
                                         Color.clear
@@ -210,21 +226,23 @@ private struct SessionActivityTimeline: View {
             onSelect(activity)
         } label: {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(activity.category.laneCellColor)
+                .fill(activity.tag.laneCellColor)
                 .frame(width: Self.cellSize, height: Self.cellSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(activity.category.tag): \(activity.content)")
-        .accessibilityLabel("Jump to \(activity.category.tag), \(activity.content)")
+        .help("\(activity.label): \(activity.content)")
+        .accessibilityLabel("Jump to \(activity.label), \(activity.content)")
     }
 }
 
-/// `[time 56] [tag 82] [content] [chevron]`, 40pt tall.
+/// `[time 56] [tag 82] [content] [chevron]`, 40pt tall, 12pt column gap,
+/// hairline bottom. Same geometry for session markers (L1 chip, no fill).
 private struct SessionActivityRow: View {
     let activity: SessionActivityPresentation
-    let isZebra: Bool
     let isHighlighted: Bool
+    let isPairHighlighted: Bool
+    let onHover: (Bool) -> Void
     let onOpen: () -> Void
 
     var body: some View {
@@ -232,59 +250,73 @@ private struct SessionActivityRow: View {
             HStack(spacing: 12) {
                 Text(activity.occurredAt)
                     .font(AgentStatusDesign.Font.UI.monoSmall)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AgentStatusDesign.Color.UI.inkQuaternary)
                     .lineLimit(1)
                     .frame(width: AgentStatusDesign.Layout.activityTimestampWidth, alignment: .leading)
 
-                SessionActivityTag(category: activity.category)
+                TimelineTagChip(tag: activity.tag, label: activity.label)
                     .frame(width: AgentStatusDesign.Layout.activityTagWidth)
 
                 Text(activity.content)
-                    .font(.system(size: 13))
+                    .font(AgentStatusDesign.Font.UI.body)
+                    .foregroundStyle(AgentStatusDesign.Color.UI.inkPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.quaternary)
+                    .foregroundStyle(AgentStatusDesign.Color.UI.chevron)
+                    .frame(width: 7, height: 11)
             }
             .padding(.horizontal, AgentStatusDesign.Layout.activityHorizontalInset)
             .frame(height: AgentStatusDesign.Layout.activityRowHeight)
             .background(rowBackground)
             .overlay(alignment: .bottom) {
-                AgentStatusDesign.Color.UI.hairline.frame(height: 1)
+                AgentStatusDesign.Color.UI.activityHairline.frame(height: 1)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(activity.category.tag), \(activity.content), \(activity.occurredAt)")
+        .onHover(perform: onHover)
+        .accessibilityLabel("\(activity.label), \(activity.content), \(activity.occurredAt)")
         .animation(.easeOut(duration: 0.2), value: isHighlighted)
+        .animation(.easeOut(duration: 0.12), value: isPairHighlighted)
     }
 
     private var rowBackground: Color {
         if isHighlighted { return Color.accentColor.opacity(0.12) }
-        return isZebra ? AgentStatusDesign.Color.UI.zebra : .clear
+        if isPairHighlighted { return activity.tag.accentColor.opacity(0.08) }
+        return .clear
     }
 }
 
-private struct SessionActivityTag: View {
-    let category: SessionActivityCategory
+/// 82pt chip, `padding 3px 0`, radius 5, 9/700/.04em, coloured by attention
+/// level (see `TimelineTagStyle`).
+struct TimelineTagChip: View {
+    let tag: TimelineTag
+    let label: String
+    var dark = false
 
     var body: some View {
-        Text(category.tag)
+        let style = TimelineTagStyle.style(for: tag, dark: dark)
+        Text(label)
             .font(AgentStatusDesign.Font.UI.tag)
             .kerning(0.36)
-            .foregroundStyle(category.labelForeground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .foregroundStyle(style.text)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 3)
             .background(
-                category.labelBackground,
+                style.fill,
                 in: RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.06), lineWidth: 0.5)
+                if let ring = style.ring {
+                    RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
+                        .strokeBorder(ring, lineWidth: 0.5)
+                }
             }
     }
 }

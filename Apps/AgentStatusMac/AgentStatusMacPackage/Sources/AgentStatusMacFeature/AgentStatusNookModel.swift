@@ -3,12 +3,53 @@ import AgentStatusTransport
 import Combine
 import Foundation
 
+/// One line of the Notch's "Recent activity" block: a projected `TimelineRow`
+/// reduced to what the 22pt row needs.
+struct AgentStatusNookActivityRow: Identifiable, Equatable, Sendable {
+    let id: String
+    let tag: TimelineTag
+    let label: String
+    let text: String
+    let occurredAt: Date
+    let status: TimelineRowStatus
+    let toolUseID: String?
+
+    var level: TimelineAttentionLevel { tag.level }
+
+    init(row: TimelineRow) {
+        id = row.id
+        tag = row.tag
+        label = row.label
+        status = row.status
+        toolUseID = row.toolUseID
+        text = row.text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first(where: { !$0.isEmpty }) ?? row.text
+        occurredAt = row.occurredAt
+    }
+}
+
+/// Everything the Notch renders for one Session (list row, turn cards, detail).
 struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     let id: SessionID
     let title: String
+    let agent: AgentKind
+    let workspace: String?
     let lifecycle: SessionLifecycle
     let phase: TurnPhase
     let currentUserMessage: String?
+    let lastActivityAt: Date
+    let startedAt: Date
+    let parentID: SessionID?
+    let depth: Int
+    /// The newest turn (open or just closed).
+    let currentTurn: TurnSummary?
+    let model: String?
+    let totalTokens: Int64?
+    let contextFraction: Double?
+    /// Newest last; capped by `AgentStatusNookSnapshot.recentRowLimit`.
+    let recentRows: [AgentStatusNookActivityRow]
 
     var statusText: String {
         "\(lifecycle.displayName) · \(phase.displayName)"
@@ -17,15 +58,93 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     var statusTone: SessionStatusTone {
         SessionStatusTone.resolve(lifecycle: lifecycle, phase: phase)
     }
+
+    var isChild: Bool { parentID != nil }
+
+    /// Archive affordance and "Turn complete" state: the newest turn is closed
+    /// or the session itself is no longer running a turn.
+    var turnEnded: Bool {
+        if let currentTurn { return !currentTurn.isOpen }
+        return !lifecycle.isLive || (lifecycle == .waitingForInput && phase == .idle)
+    }
+
+    var lastAssistantMessage: String? {
+        currentTurn?.lastAssistantMessage
+    }
+
+    /// Tool calls / subagents still open among the recent rows.
+    var stillRunningCount: Int {
+        var openTools: Set<String> = []
+        var runningSubagents = 0
+        for row in recentRows {
+            switch row.tag {
+            case .tool:
+                if let id = row.toolUseID { openTools.insert(id) }
+            case .result, .failed:
+                if let id = row.toolUseID { openTools.remove(id) }
+            case .subagent:
+                if row.status == .started || row.status == .running { runningSubagents += 1 }
+            default:
+                break
+            }
+        }
+        return openTools.count + runningSubagents
+    }
+
+    /// Elapsed for the current turn (or the session when no turn is known).
+    func elapsedText(now: Date) -> String {
+        let start = currentTurn?.startedAt ?? startedAt
+        let end = currentTurn?.endedAt ?? (lifecycle.isLive ? now : lastActivityAt)
+        return SessionElapsedFormatter.string(from: max(0, end.timeIntervalSince(start)))
+    }
+
+    var totalTokensText: String {
+        guard let totalTokens else { return "—" }
+        if totalTokens >= 1_000_000 {
+            return totalTokens.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
+        }
+        if totalTokens >= 10_000 {
+            return totalTokens.formatted(.number.notation(.compactName).precision(.fractionLength(0)))
+        }
+        return totalTokens.formatted(.number.grouping(.automatic))
+    }
+
+    var contextText: String {
+        guard let contextFraction else { return "—" }
+        return "\(Int((contextFraction * 100).rounded()))%"
+    }
+}
+
+/// What the expanded Notch is showing.
+enum AgentStatusNookRoute: Equatable, Sendable {
+    case list
+    case detail(SessionID)
+    case turnStarted(SessionID)
+    case turnEnded(SessionID)
+}
+
+/// Turn boundary transitions detected between two snapshots.
+struct AgentStatusNookTurnEvent: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case started
+        case ended
+        case failed
+    }
+
+    let sessionID: SessionID
+    let kind: Kind
+    /// The L3 row that triggered it.
+    let row: AgentStatusNookActivityRow
 }
 
 enum AgentStatusNookSnapshot {
-    static let maximumVisibleSessions = 4
+    static let maximumVisibleSessions = 6
+    static let recentRowLimit = 8
 
     static func eligibleSummaries(from summaries: [SessionSummary]) -> [SessionSummary] {
         summaries.filter { summary in
             switch summary.lifecycle {
-            case .starting, .running, .waitingForInput, .failed, .interrupted:
+            case .starting, .running, .waitingForInput, .compacting, .failed, .interrupted:
                 true
             case .completed, .unknown:
                 false
@@ -33,26 +152,75 @@ enum AgentStatusNookSnapshot {
         }
     }
 
+    /// Parents first, each followed by its children (already ordered by
+    /// activity within the store); capped by `maximumVisibleSessions` parents.
     static func visibleSummaries(from summaries: [SessionSummary]) -> [SessionSummary] {
-        Array(eligibleSummaries(from: summaries).prefix(maximumVisibleSessions))
+        let eligible = eligibleSummaries(from: summaries)
+        let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
+        var ordered: [SessionSummary] = []
+        var seen: Set<SessionID> = []
+        let parents = eligible.filter { $0.lineage?.parentSessionID.flatMap { byID[$0] } == nil }
+        for parent in parents.prefix(maximumVisibleSessions) {
+            guard seen.insert(parent.id).inserted else { continue }
+            ordered.append(parent)
+            for child in eligible where child.lineage?.parentSessionID == parent.id {
+                if seen.insert(child.id).inserted { ordered.append(child) }
+            }
+        }
+        return ordered
     }
 
     static func make(
         summaries: [SessionSummary],
-        currentUserMessages: [SessionID: String]
+        details: [SessionID: SessionDetail]
     ) -> [AgentStatusNookSession] {
-        return summaries.map { summary in
-            AgentStatusNookSession(
+        summaries.map { summary in
+            let detail = details[summary.id]
+            let turns = detail?.turns ?? []
+            let currentTurn = turns.last(where: { $0.isOpen }) ?? turns.last
+            let rows = detail.map { TimelineProjection.rows(from: $0.timeline) } ?? []
+            let usage = detail?.timeline.reversed().compactMap { item -> UsageMetricsTimelinePayload? in
+                guard case let .usageMetrics(payload) = item.payload else { return nil }
+                return payload
+            }.first
+            let configuredWindow = detail?.timeline.reversed().compactMap { item -> ModelConfigurationTimelinePayload? in
+                guard case let .modelConfiguration(payload) = item.payload else { return nil }
+                return payload
+            }.first
+            let window = usage?.modelContextWindow ?? configuredWindow?.contextWindow
+            let used = usage?.last ?? usage?.total
+            let fraction: Double? = if let window, window > 0, let used {
+                min(1, Double(used.totalTokens) / Double(window))
+            } else {
+                nil
+            }
+            let prompt = currentTurn?.prompt
+                ?? detail.flatMap(currentTurnUserMessage(in:))
+            return AgentStatusNookSession(
                 id: summary.id,
                 title: summary.title,
+                agent: summary.agent,
+                workspace: summary.workspace,
                 lifecycle: summary.lifecycle,
                 phase: summary.phase,
-                currentUserMessage: currentUserMessages[summary.id].map(normalized)
+                currentUserMessage: prompt.map(normalized),
+                lastActivityAt: summary.lastActivityAt,
+                startedAt: summary.startedAt,
+                parentID: summary.lineage?.parentSessionID,
+                depth: summary.lineage?.subagentDepth ?? (summary.lineage?.parentSessionID == nil ? 0 : 1),
+                currentTurn: currentTurn,
+                model: configuredWindow?.model,
+                totalTokens: (usage?.total ?? usage?.last)?.totalTokens,
+                contextFraction: fraction,
+                recentRows: rows.suffix(recentRowLimit).map(AgentStatusNookActivityRow.init(row:))
             )
         }
     }
 
     static func currentTurnUserMessage(in detail: SessionDetail) -> String? {
+        if let turn = detail.turns.last(where: { $0.isOpen }) ?? detail.turns.last, let prompt = turn.prompt {
+            return normalized(prompt)
+        }
         let newestFirst = detail.timeline.reversed()
         if let currentTurnID = newestFirst.compactMap(\.turnID).first,
            let message = newestFirst.first(where: {
@@ -66,57 +234,33 @@ enum AgentStatusNookSnapshot {
     private static func normalized(_ message: String) -> String {
         message.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-
-    static func makeActivitySessions(
-        summaries: [SessionSummary],
-        displayed: [AgentStatusNookSession],
-        previous: [AgentStatusNookSession]
-    ) -> [AgentStatusNookSession] {
-        let displayedByID = Dictionary(uniqueKeysWithValues: displayed.map { ($0.id, $0) })
-        let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
-        return summaries.map { summary in
-            AgentStatusNookSession(
-                id: summary.id,
-                title: summary.title,
-                lifecycle: summary.lifecycle,
-                phase: summary.phase,
-                currentUserMessage: displayedByID[summary.id]?.currentUserMessage
-                    ?? previousByID[summary.id]?.currentUserMessage
-            )
-        }
-    }
 }
 
+/// Only L3 rows (USER / TURN END / FAILED / ABORTED) may reach the Notch.
 enum AgentStatusNookActivityDiff {
-    static func changedSessions(
+    static func turnEvents(
         previous: [AgentStatusNookSession],
         current: [AgentStatusNookSession]
-    ) -> [AgentStatusNookSession] {
+    ) -> [AgentStatusNookTurnEvent] {
         let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
-        return current.filter { session in
-            if case .unknown = session.lifecycle { return false }
-            guard let old = previousByID[session.id] else { return false }
-            return old.currentUserMessage != session.currentUserMessage
-                || terminalLifecycleChanged(from: old.lifecycle, to: session.lifecycle)
-                || approvalPhaseChanged(from: old.phase, to: session.phase)
+        var events: [AgentStatusNookTurnEvent] = []
+        for session in current {
+            guard let old = previousByID[session.id] else { continue }
+            let seen = Set(old.recentRows.map(\.id))
+            for row in session.recentRows where !seen.contains(row.id) && row.level == .l3 {
+                switch row.tag {
+                case .user:
+                    events.append(.init(sessionID: session.id, kind: .started, row: row))
+                case .turnEnd:
+                    events.append(.init(sessionID: session.id, kind: .ended, row: row))
+                case .failed, .aborted:
+                    events.append(.init(sessionID: session.id, kind: .failed, row: row))
+                default:
+                    break
+                }
+            }
         }
-    }
-
-    private static func terminalLifecycleChanged(
-        from old: SessionLifecycle?,
-        to new: SessionLifecycle
-    ) -> Bool {
-        guard old != new else { return false }
-        return switch new {
-        case .completed, .failed, .interrupted:
-            true
-        case .starting, .running, .waitingForInput, .unknown:
-            false
-        }
-    }
-
-    private static func approvalPhaseChanged(from old: TurnPhase?, to new: TurnPhase) -> Bool {
-        old != new && (old == .waitingForApproval || new == .waitingForApproval)
+        return events
     }
 }
 
@@ -138,7 +282,9 @@ final class AgentStatusNookCompactModel: ObservableObject {
 @MainActor
 final class AgentStatusNookModel: ObservableObject {
     @Published private(set) var sessions: [AgentStatusNookSession] = []
+    @Published private(set) var totalSessionCount = 0
     @Published private(set) var daemonAvailable = false
+    @Published var route: AgentStatusNookRoute = .list
     let compactModel = AgentStatusNookCompactModel()
 
     var onSnapshot: ((_ previous: [AgentStatusNookSession], _ current: [AgentStatusNookSession], _ initial: Bool) -> Void)?
@@ -150,8 +296,7 @@ final class AgentStatusNookModel: ObservableObject {
     private var nextRefreshAt: ContinuousClock.Instant?
     private var hasLoaded = false
     private var lastObservedRevision: UInt64 = 0
-    private var totalSessionCount = 0
-    private var activitySessions: [AgentStatusNookSession] = []
+    private var cardDismissTask: Task<Void, Never>?
 
     init(store: MacSessionStore) {
         self.store = store
@@ -177,7 +322,45 @@ final class AgentStatusNookModel: ObservableObject {
     func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        cardDismissTask?.cancel()
     }
+
+    func session(_ id: SessionID) -> AgentStatusNookSession? {
+        sessions.first { $0.id == id }
+    }
+
+    // MARK: - Navigation
+
+    func showList() {
+        cardDismissTask?.cancel()
+        route = .list
+    }
+
+    func showDetail(_ id: SessionID) {
+        cardDismissTask?.cancel()
+        route = .detail(id)
+    }
+
+    /// Turn cards replace the list briefly and fall back to it.
+    func showTurnCard(_ route: AgentStatusNookRoute, dwell: Duration = .seconds(6)) {
+        if case .detail = self.route { return }   // never interrupt an open detail
+        cardDismissTask?.cancel()
+        self.route = route
+        cardDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: dwell)
+            guard let self, !Task.isCancelled, self.route == route else { return }
+            self.route = .list
+        }
+    }
+
+    // MARK: - Actions
+
+    func archive(_ id: SessionID) {
+        store?.deleteSession(id)
+        if route == .detail(id) { route = .list }
+    }
+
+    // MARK: - Loading
 
     private func reload(from store: MacSessionStore, immediate: Bool = false) {
         let allSummaries = store.sessions
@@ -202,52 +385,25 @@ final class AgentStatusNookModel: ObservableObject {
                     return
                 }
             }
-            do {
-                let currentUserMessages = try await store.cachedCurrentTurnUserMessages(
-                    ids: summaries.map(\.id)
-                )
-                guard !Task.isCancelled, generation == self.refreshGeneration else { return }
-                let next = AgentStatusNookSnapshot.make(
-                    summaries: summaries,
-                    currentUserMessages: currentUserMessages
-                )
-                let previous = self.activitySessions
-                let initial = !self.hasLoaded
-                if self.sessions != next { self.sessions = next }
-                self.compactModel.update(statusTone: next.first?.statusTone ?? .gray)
-                let activitySessions = AgentStatusNookSnapshot.makeActivitySessions(
-                    summaries: allSummaries,
-                    displayed: next,
-                    previous: previous
-                )
-                self.activitySessions = activitySessions
-                self.hasLoaded = true
-                if initial || previous != activitySessions {
-                    self.onSnapshot?(previous, activitySessions, initial)
-                }
-            } catch {
-                guard !Task.isCancelled, generation == self.refreshGeneration else { return }
-                let previous = self.activitySessions
-                let initial = !self.hasLoaded
-                let next = AgentStatusNookSnapshot.make(
-                    summaries: summaries,
-                    currentUserMessages: [:]
-                )
-                if self.sessions != next { self.sessions = next }
-                self.compactModel.update(statusTone: next.first?.statusTone ?? .gray)
-                let activitySessions = AgentStatusNookSnapshot.makeActivitySessions(
-                    summaries: allSummaries,
-                    displayed: next,
-                    previous: previous
-                )
-                self.activitySessions = activitySessions
-                self.hasLoaded = true
-                if initial || previous != activitySessions {
-                    self.onSnapshot?(previous, activitySessions, initial)
-                }
+            var details: [SessionID: SessionDetail] = [:]
+            if let loaded = try? await store.cachedSessionDetails(ids: summaries.map(\.id)) {
+                details = Dictionary(uniqueKeysWithValues: loaded.map { ($0.summary.id, $0) })
+            }
+            guard !Task.isCancelled, generation == self.refreshGeneration else { return }
+            let next = AgentStatusNookSnapshot.make(summaries: summaries, details: details)
+            let previous = self.sessions
+            let initial = !self.hasLoaded
+            if self.sessions != next { self.sessions = next }
+            self.compactModel.update(statusTone: next.first?.statusTone ?? .gray)
+            self.hasLoaded = true
+            if case let .detail(id) = self.route, next.first(where: { $0.id == id }) == nil {
+                self.route = .list
+            }
+            if initial || previous != next {
+                self.onSnapshot?(previous, next, initial)
             }
             if generation == self.refreshGeneration {
-                self.nextRefreshAt = self.refreshClock.now.advanced(by: .seconds(5))
+                self.nextRefreshAt = self.refreshClock.now.advanced(by: .seconds(2))
                 self.refreshTask = nil
             }
         }

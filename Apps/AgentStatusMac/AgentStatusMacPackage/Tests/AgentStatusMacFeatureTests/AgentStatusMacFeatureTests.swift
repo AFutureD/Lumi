@@ -28,6 +28,31 @@ import NookApp
     #expect(!String(data: removed, encoding: .utf8)!.contains("agent-status-helper"))
 }
 
+@Test func claudeSettingsMergeKeepsOtherSettingsAndRefreshesCommand() throws {
+    let existing = Data("""
+    {"permissions":{"allow":["Bash(ls:*)"]},"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"other-tool"}]}]}}
+    """.utf8)
+    let once = try ClaudeHookInstaller.merging(existing, helperCommand: "'/old/agent-status-helper' --agent claude")
+    // Reinstalling with a new path refreshes the command instead of appending.
+    let twice = try ClaudeHookInstaller.merging(once, helperCommand: "'/new/agent-status-helper' --agent claude")
+    let root = try #require(JSONSerialization.jsonObject(with: twice) as? [String: Any])
+    #expect((root["permissions"] as? [String: Any])?["allow"] as? [String] == ["Bash(ls:*)"])
+    #expect(root["model"] as? String == "opus")
+    let hooks = try #require(root["hooks"] as? [String: Any])
+    #expect(Set(hooks.keys).isSuperset(of: ClaudeHookInstaller.supportedEvents))
+    let pre = try #require(hooks["PreToolUse"] as? [[String: Any]])
+    #expect(pre.count == 2)
+    let text = String(data: twice, encoding: .utf8)!
+    #expect(text.contains("/new/agent-status-helper") && !text.contains("/old/agent-status-helper"))
+    #expect(text.contains("other-tool"))
+
+    let removed = try AgentHookConfigInstaller.removingAgentStatus(from: twice)
+    let removedRoot = try #require(JSONSerialization.jsonObject(with: removed) as? [String: Any])
+    let removedHooks = try #require(removedRoot["hooks"] as? [String: Any])
+    #expect(removedHooks.keys.sorted() == ["PreToolUse"])
+    #expect(removedRoot["model"] as? String == "opus")
+}
+
 @Test @MainActor
 func nookAppearanceIsPinnedAndAdjustmentDefaultsAreFilled() {
     let original = NookAppearancePreferences(
@@ -97,20 +122,19 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     ])
 
     let visible = AgentStatusNookSnapshot.visibleSummaries(from: [active, completed])
-    let rows = AgentStatusNookSnapshot.make(
-        summaries: visible,
-        currentUserMessages: [active.id: AgentStatusNookSnapshot.currentTurnUserMessage(in: detail)!]
-    )
+    let rows = AgentStatusNookSnapshot.make(summaries: visible, details: [active.id: detail])
 
     #expect(rows.map(\.id) == [active.id])
     #expect(rows.first?.currentUserMessage == "Current request")
     #expect(rows.first?.statusText == "Running · Executing")
+    #expect(rows.first?.recentRows.map(\.tag) == [.user, .user])
+    #expect(rows.first?.turnEnded == false)
 
-    let eligible = [active] + (1...4).map {
+    let eligible = [active] + (1...7).map {
         nookSummary(id: "extra-\($0)", lifecycle: .running, phase: .executing, updatedAt: TimeInterval(20 - $0))
     }
-    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: eligible).count == 5)
-    #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible).count == 4)
+    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: eligible).count == 8)
+    #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible).count == AgentStatusNookSnapshot.maximumVisibleSessions)
 }
 
 @Test @MainActor
@@ -183,96 +207,63 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     #expect(merged.timeline.last?.payload == replacement.payload)
 }
 
-@Test func nookActivityDiffIncludesACompletedTransition() {
-    let running = AgentStatusNookSession(
-        id: SessionID("session"),
-        title: "Session",
-        lifecycle: .running,
-        phase: .responding,
-        currentUserMessage: "Build it"
-    )
-    let completed = AgentStatusNookSession(
-        id: running.id,
-        title: running.title,
-        lifecycle: .completed,
-        phase: .idle,
-        currentUserMessage: running.currentUserMessage
-    )
-
-    #expect(AgentStatusNookActivityDiff.changedSessions(
-        previous: [running],
-        current: [completed]
-    ) == [completed])
+private func nookRow(_ id: String, _ tag: TimelineTag, _ text: String = "x") -> AgentStatusNookActivityRow {
+    AgentStatusNookActivityRow(row: TimelineRow(
+        id: id,
+        sessionID: SessionID("session"),
+        turnID: nil,
+        occurredAt: Date(timeIntervalSince1970: 0),
+        tag: tag,
+        status: .info,
+        text: text,
+        items: [TimelineItem(
+            id: TimelineItemID(id),
+            sessionID: SessionID("session"),
+            occurredAt: Date(timeIntervalSince1970: 0),
+            payload: .message(MessageTimelinePayload(role: .user, text: text))
+        )]
+    ))
 }
 
-@Test func nookActivityDiffOnlyQueuesApprovalWhenEnteringOrLeavingThatPhase() {
-    let waiting = AgentStatusNookSession(
+private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: SessionLifecycle = .running) -> AgentStatusNookSession {
+    AgentStatusNookSession(
         id: SessionID("session"),
         title: "Session",
-        lifecycle: .waitingForInput,
-        phase: .waitingForApproval,
-        currentUserMessage: "Approve it"
+        agent: .codex,
+        workspace: nil,
+        lifecycle: lifecycle,
+        phase: .thinking,
+        currentUserMessage: "Build it",
+        lastActivityAt: Date(timeIntervalSince1970: 0),
+        startedAt: Date(timeIntervalSince1970: 0),
+        parentID: nil,
+        depth: 0,
+        currentTurn: nil,
+        model: nil,
+        totalTokens: nil,
+        contextFraction: nil,
+        recentRows: rows
     )
-    let unchanged = AgentStatusNookSession(
-        id: waiting.id,
-        title: waiting.title,
-        lifecycle: waiting.lifecycle,
-        phase: waiting.phase,
-        currentUserMessage: waiting.currentUserMessage
-    )
-    let idle = AgentStatusNookSession(
-        id: waiting.id,
-        title: waiting.title,
-        lifecycle: waiting.lifecycle,
-        phase: .idle,
-        currentUserMessage: waiting.currentUserMessage
-    )
-
-    #expect(AgentStatusNookActivityDiff.changedSessions(
-        previous: [waiting],
-        current: [unchanged]
-    ).isEmpty)
-    #expect(AgentStatusNookActivityDiff.changedSessions(
-        previous: [waiting],
-        current: [idle]
-    ) == [idle])
 }
 
-@Test func nookActivityDiffIgnoresRoutineRunningStateChurn() {
-    let running = AgentStatusNookSession(
-        id: SessionID("session"),
-        title: "Session",
-        lifecycle: .running,
-        phase: .executing,
-        currentUserMessage: "Build it"
-    )
-    let waiting = AgentStatusNookSession(
-        id: running.id,
-        title: running.title,
-        lifecycle: .waitingForInput,
-        phase: .idle,
-        currentUserMessage: running.currentUserMessage
-    )
+@Test func nookTurnEventsOnlyComeFromNewL3Rows() {
+    let before = nookSession([nookRow("u1", .user)])
+    let after = nookSession([
+        nookRow("u1", .user),
+        nookRow("t1", .tool),          // L2: never a notch event
+        nookRow("r1", .reasoning),     // L1: never a notch event
+        nookRow("e1", .turnEnd),
+        nookRow("f1", .failed),
+    ])
+    let events = AgentStatusNookActivityDiff.turnEvents(previous: [before], current: [after])
+    #expect(events.map(\.kind) == [.ended, .failed])
+    #expect(events.map(\.row.id) == ["e1", "f1"])
 
-    #expect(AgentStatusNookActivityDiff.changedSessions(
-        previous: [running],
-        current: [waiting]
-    ).isEmpty)
-}
-
-@Test func nookActivityDiffDoesNotQueueSessionsWithoutABaseline() {
-    let running = AgentStatusNookSession(
-        id: SessionID("existing-session"),
-        title: "Existing Session",
-        lifecycle: .running,
-        phase: .executing,
-        currentUserMessage: "Build it"
-    )
-
-    #expect(AgentStatusNookActivityDiff.changedSessions(
-        previous: [],
-        current: [running]
-    ).isEmpty)
+    let newTurn = nookSession(after.recentRows + [nookRow("u2", .user)])
+    #expect(AgentStatusNookActivityDiff.turnEvents(previous: [after], current: [newTurn]).map(\.kind) == [.started])
+    // Unchanged rows never re-fire, and unknown sessions are ignored.
+    #expect(AgentStatusNookActivityDiff.turnEvents(previous: [after], current: [after]).isEmpty)
+    #expect(AgentStatusNookActivityDiff.turnEvents(previous: [], current: [after]).isEmpty)
 }
 
 @Test func relayRecoveryResendsAnUnchangedSnapshot() {
@@ -557,39 +548,34 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     #expect(presentation.metrics.endedAt == nil)
     #expect(presentation.metrics.totalTokensText == "100")
     #expect(presentation.metrics.contextText == "0%")
-    #expect(presentation.activities.map(\.category) == [
-        .system,
-        .context,
-        .assistantReasoning,
+    #expect(presentation.activities.map(\.tag) == [
+        .contextGroup,   // base_instructions (session scope)
+        .context,        // turn_context
+        .reasoning,
         .user,
         .assistant,
-        .tool,
+        .result,
         .subagent,
-        .other,
+        .failed,
     ])
-    #expect(presentation.activities.first { $0.category == .user }?.content == "User message")
-    let userActivity = try #require(presentation.activities.first { $0.category == .user })
+    #expect(presentation.activities.first { $0.tag == .user }?.content == "User message")
+    #expect(presentation.activities.first { $0.tag == .result }?.lane == .exec)
+    #expect(presentation.activities.first { $0.tag == .failed }?.level == .l3)
+    let userActivity = try #require(presentation.activities.first { $0.tag == .user })
     #expect(
         SessionPagePresentationBuilder.rawData(for: userActivity.rawItem)
             .contains("User message")
     )
 }
 
-@Test func sessionActivityCategoriesMapToTimelineLanes() {
-    #expect([
-        SessionActivityCategory.system,
-        .context,
-        .user,
-    ].map(\.lane) == [.input, .input, .input])
-    #expect([
-        SessionActivityCategory.tool,
-        .subagent,
-        .other,
-    ].map(\.lane) == [.tools, .tools, .tools])
-    #expect([
-        SessionActivityCategory.assistantReasoning,
-        .assistant,
-    ].map(\.lane) == [.model, .model])
+@Test func timelineTagsMapToLanesAndLevels() {
+    #expect([TimelineTag.user, .context].map(\.lane) == [.user, .user])
+    #expect([TimelineTag.tool, .result, .failed].map(\.lane) == [.exec, .exec, .exec])
+    #expect([TimelineTag.reasoning, .assistant, .plan, .subagent, .turnEnd].map(\.lane) == [.model, .model, .model, .model, .model])
+    #expect([TimelineTag.session, .compact, .contextGroup].map(\.lane) == [nil, nil, nil])
+    #expect(TimelineTag.user.level == .l3 && TimelineTag.tool.level == .l2 && TimelineTag.reasoning.level == .l1)
+    #expect(TimelineTagStyle.style(for: .user).fill != .clear)
+    #expect(TimelineTagStyle.style(for: .session).fill == .clear)
 }
 
 @Test func sessionListFilteringKeepsAncestorsOfMatches() {

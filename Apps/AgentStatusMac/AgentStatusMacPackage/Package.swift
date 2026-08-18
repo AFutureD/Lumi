@@ -33,6 +33,7 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/codex.svg"),
+                .copy("Resources/claude.svg"),
             ]
         ),
         .testTarget(

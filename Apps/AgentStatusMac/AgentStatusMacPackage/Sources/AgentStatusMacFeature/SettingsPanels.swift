@@ -17,10 +17,12 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var storedSessionCount = 0
     @Published private(set) var historySizeText: String?
     @Published private(set) var hookInstalled = false
+    @Published private(set) var claudeHookInstalled = false
 
     let version: String
     let build: String
-    let hookLocation = "~/.codex/config.toml · agent-status-helper"
+    let hookLocation = "~/.codex/hooks.json · agent-status-helper --agent codex"
+    let claudeHookLocation = "~/.claude/settings.json · agent-status-helper --agent claude"
 
     var presentError: (Error) -> Void = { _ in }
     /// Returns `true` when the destructive action was confirmed.
@@ -43,6 +45,7 @@ final class SettingsModel: ObservableObject {
         loginEnabled = loginService.status == .enabled
         daemonRegistered = daemonService.status == .enabled
         hookInstalled = CodexHookInstaller().isInstalled()
+        claudeHookInstalled = ClaudeHookInstaller().isInstalled()
         reloadDaemonDiagnostics()
     }
 
@@ -129,6 +132,23 @@ final class SettingsModel: ObservableObject {
     func toggleCodexHook() {
         do {
             let installer = CodexHookInstaller()
+            if installer.isInstalled() {
+                try installer.uninstall()
+            } else {
+                guard let helper = Bundle.main.url(forResource: "agent-status-helper", withExtension: nil) else {
+                    throw CodexHookInstallerError.helperMissing
+                }
+                try installer.install(helperSourceURL: helper)
+            }
+        } catch {
+            presentError(error)
+        }
+        reload()
+    }
+
+    func toggleClaudeHook() {
+        do {
+            let installer = ClaudeHookInstaller()
             if installer.isInstalled() {
                 try installer.uninstall()
             } else {
@@ -283,7 +303,37 @@ struct AgentsSettingsPanel: View {
                     .padding(.vertical, 12)
                     .frame(minHeight: 52)
                     Divider()
-                    SettingsFootnote(text: "Codex is supported in v1. Installing the integration preserves existing Hook handlers.")
+                    SettingsFootnote(text: "Hooks go into ~/.codex/hooks.json. Installing the integration preserves existing Hook handlers.")
+                }
+            }
+            SettingsSection(title: "Claude Code") {
+                SettingsCard {
+                    HStack(spacing: 12) {
+                        Group {
+                            if let image = AgentIcons.image(for: .claude, pointSize: 20) {
+                                Image(nsImage: image)
+                                    .resizable()
+                                    .frame(width: 20, height: 20)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.claudeHookInstalled ? "Claude Code integration installed" : "Claude Code integration not installed")
+                                .font(AgentStatusDesign.Font.UI.rowTitle)
+                            Text(model.claudeHookLocation)
+                                .font(AgentStatusDesign.Font.UI.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button { model.toggleClaudeHook() } label: {
+                            Text(model.claudeHookInstalled ? "Remove Hook" : "Install Hook")
+                                .foregroundStyle(model.claudeHookInstalled ? AgentStatusDesign.Color.UI.destructiveText : .primary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .frame(minHeight: 52)
+                    Divider()
+                    SettingsFootnote(text: "Hooks go into the `hooks` key of ~/.claude/settings.json; other settings and other tools' hooks are preserved. The helper reads the session transcript on every hook.")
                 }
             }
         }

@@ -34,44 +34,8 @@ struct SessionSummarySectionPresentation: Equatable, Sendable {
     let fields: [SessionSummaryFieldPresentation]
 }
 
-enum SessionActivityCategory: String, Equatable, Sendable {
-    case system
-    case context
-    case user
-    case assistantReasoning
-    case assistant
-    case tool
-    case subagent
-    case other
-
-    var tag: String {
-        switch self {
-        case .system: "SYSTEM"
-        case .context: "CONTEXT"
-        case .user: "USER"
-        case .assistantReasoning: "REASONING"
-        case .assistant: "ASSISTANT"
-        case .tool: "TOOL"
-        case .subagent: "SUBAGENT"
-        case .other: "OTHER"
-        }
-    }
-}
-
-enum SessionActivityLane: String, CaseIterable, Equatable, Sendable {
-    case input
-    case tools
-    case model
-
-    var title: String {
-        switch self {
-        case .input: "Input"
-        case .tools: "Tools"
-        case .model: "Model"
-        }
-    }
-}
-
+/// Row-level presentation is `TimelineRow` (Transport) plus display strings.
+/// Tag / level / lane / status all come from the projection.
 /// Activity timeline density: three lanes or one line.
 enum ActivityTimelineMode: String, Equatable, Sendable {
     case lanes
@@ -135,25 +99,23 @@ enum SessionElapsedFormatter {
     }
 }
 
-extension SessionActivityCategory {
-    var lane: SessionActivityLane {
-        switch self {
-        case .system, .context, .user:
-            .input
-        case .tool, .subagent, .other:
-            .tools
-        case .assistantReasoning, .assistant:
-            .model
-        }
-    }
-}
-
-struct SessionActivityPresentation: Equatable, Sendable {
+struct SessionActivityPresentation: Equatable, Sendable, Identifiable {
     let id: String
-    let category: SessionActivityCategory
+    let row: TimelineRow
+    /// One-lined, capped body text for the row.
     let content: String
     let occurredAt: String
-    let rawItem: TimelineItem
+
+    var tag: TimelineTag { row.tag }
+    var label: String { row.label }
+    var level: TimelineAttentionLevel { row.level }
+    var lane: TimelineLane? { row.lane }
+    var status: TimelineRowStatus { row.status }
+    var toolUseID: String? { row.toolUseID }
+    var turnID: TurnID? { row.turnID }
+    /// Anchor item for the raw-JSON inspector; merged rows expose all items.
+    var rawItem: TimelineItem { row.anchor }
+    var rawItems: [TimelineItem] { row.items }
 }
 
 struct SessionPagePresentation: Equatable, Sendable {
@@ -177,12 +139,12 @@ actor SessionPagePresentationRenderer {
 enum SessionPagePresentationBuilder {
     struct Cache {
         private struct CachedActivity {
-            let item: TimelineItem
+            let row: TimelineRow
             let presentation: SessionActivityPresentation
         }
 
         private var sessionID: SessionID?
-        private var activitiesByID: [TimelineItemID: CachedActivity] = [:]
+        private var activitiesByID: [String: CachedActivity] = [:]
 
         mutating func presentation(for detail: SessionDetail) -> SessionPagePresentation {
             if sessionID != detail.summary.id {
@@ -194,19 +156,21 @@ enum SessionPagePresentationBuilder {
                 if $0.occurredAt == $1.occurredAt { return $0.id.rawValue < $1.id.rawValue }
                 return $0.occurredAt < $1.occurredAt
             }
-            var retainedActivityIDs: Set<TimelineItemID> = []
+            let rows = TimelineProjection.rows(from: timeline)
+            var retainedIDs: Set<String> = []
             var activities: [SessionActivityPresentation] = []
-            for item in timeline {
-                guard SessionPagePresentationBuilder.isActivity(item.payload) else { continue }
-                retainedActivityIDs.insert(item.id)
-                if let cached = activitiesByID[item.id], cached.item == item {
+            activities.reserveCapacity(rows.count)
+            for row in rows {
+                retainedIDs.insert(row.id)
+                if let cached = activitiesByID[row.id], cached.row == row {
                     activities.append(cached.presentation)
-                } else if let presentation = SessionPagePresentationBuilder.activityPresentation(for: item) {
-                    activitiesByID[item.id] = CachedActivity(item: item, presentation: presentation)
+                } else {
+                    let presentation = SessionPagePresentationBuilder.activityPresentation(for: row)
+                    activitiesByID[row.id] = CachedActivity(row: row, presentation: presentation)
                     activities.append(presentation)
                 }
             }
-            activitiesByID = activitiesByID.filter { retainedActivityIDs.contains($0.key) }
+            activitiesByID = activitiesByID.filter { retainedIDs.contains($0.key) }
 
             return SessionPagePresentation(
                 sessionID: detail.summary.id,
@@ -342,10 +306,7 @@ enum SessionPagePresentationBuilder {
         } else {
             nil
         }
-        let endedAt: Date? = switch summary.lifecycle {
-        case .completed, .failed, .interrupted: summary.lastActivityAt
-        case .starting, .running, .waitingForInput, .unknown: nil
-        }
+        let endedAt: Date? = summary.lifecycle.isLive ? nil : summary.lastActivityAt
         return SessionMetricsPresentation(
             totalTokens: (latestUsage?.total ?? latestUsage?.last)?.totalTokens,
             contextFraction: fraction,
@@ -354,53 +315,12 @@ enum SessionPagePresentationBuilder {
         )
     }
 
-    private static func isActivity(_ payload: TimelinePayload) -> Bool {
-        switch payload {
-        case .modelConfiguration, .usageMetrics: false
-        case .message, .tool, .plan, .subagent, .error, .internalContext, .unknown: true
-        }
-    }
-
-    private static func activityPresentation(
-        for item: TimelineItem
-    ) -> SessionActivityPresentation? {
-        let category: SessionActivityCategory
-        let content: String
-        switch item.payload {
-        case let .message(payload):
-            category = payload.role == .user ? .user : .assistant
-            content = payload.text
-        case let .tool(payload):
-            category = .tool
-            content = [payload.name, payload.status.rawValue, payload.summary]
-                .compactMap { $0 }
-                .joined(separator: " · ")
-        case let .subagent(payload):
-            category = .subagent
-            content = [payload.name, payload.status.rawValue, payload.agentSessionID]
-                .compactMap { $0 }
-                .joined(separator: " · ")
-        case let .internalContext(payload):
-            category = contextCategory(for: payload.kind)
-            content = "\(humanized(payload.kind)) · \(jsonSummary(payload.content))"
-        case let .plan(payload):
-            category = .other
-            content = payload.explanation ?? "\(payload.steps.count) plan steps"
-        case let .error(payload):
-            category = .other
-            content = "\(payload.title) · \(payload.message)"
-        case let .unknown(payload):
-            category = .other
-            content = payload.summary ?? payload.kind
-        case .modelConfiguration, .usageMetrics:
-            return nil
-        }
-        return SessionActivityPresentation(
-            id: "activity:\(item.sessionID.rawValue):\(item.id.rawValue)",
-            category: category,
-            content: oneLine(content, maximumCharacters: 320),
-            occurredAt: item.occurredAt.formatted(date: .omitted, time: .standard),
-            rawItem: item
+    static func activityPresentation(for row: TimelineRow) -> SessionActivityPresentation {
+        SessionActivityPresentation(
+            id: "activity:\(row.id)",
+            row: row,
+            content: oneLine(row.text, maximumCharacters: 320),
+            occurredAt: row.occurredAt.formatted(date: .omitted, time: .standard)
         )
     }
 
@@ -408,26 +328,8 @@ enum SessionPagePresentationBuilder {
         prettyJSON(item)
     }
 
-    private static func contextCategory(for kind: String) -> SessionActivityCategory {
-        let normalized = kind.lowercased()
-        if normalized.contains("reasoning") { return .assistantReasoning }
-        if normalized.contains("instruction") || normalized == "system" { return .system }
-        return .context
-    }
-
-    private static func jsonSummary(_ value: JSONValue) -> String {
-        switch value {
-        case let .string(value): return value
-        case let .object(value):
-            for key in ["text", "message", "summary", "type", "kind"] {
-                if case let .string(candidate)? = value[key] { return candidate }
-            }
-            return value.keys.sorted().prefix(6).joined(separator: ", ")
-        case let .array(value): return "\(value.count) items"
-        case let .number(value): return String(describing: value)
-        case let .boolean(value): return value ? "true" : "false"
-        case .null: return "null"
-        }
+    static func rawData(for items: [TimelineItem]) -> String {
+        items.count == 1 ? prettyJSON(items[0]) : prettyJSON(items)
     }
 
     private static func oneLine(_ value: String, maximumCharacters: Int) -> String {

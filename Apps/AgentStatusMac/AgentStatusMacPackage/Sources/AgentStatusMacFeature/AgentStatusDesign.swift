@@ -104,6 +104,10 @@ enum AgentStatusDesign {
         static let elbow = NSColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 0.24)
         static let destructiveText = NSColor(red: 0xB3 / 255, green: 0x26 / 255, blue: 0x1E / 255, alpha: 1)
         static let zebra = NSColor(red: 120 / 255, green: 120 / 255, blue: 128 / 255, alpha: 0.045)
+        static let inkPrimary = NSColor(red: 26 / 255, green: 26 / 255, blue: 26 / 255, alpha: 1)
+        static let inkQuaternary = NSColor(red: 138 / 255, green: 138 / 255, blue: 138 / 255, alpha: 1)
+        static let activityHairline = NSColor(white: 0, alpha: 0.05)
+        static let chevron = NSColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 0.3)
         static let connected = NSColor(red: 0x1D / 255, green: 0xA8 / 255, blue: 0x4C / 255, alpha: 1)
 
         enum UI {
@@ -113,45 +117,80 @@ enum AgentStatusDesign {
             static let cardStroke = SwiftUI.Color(nsColor: Color.cardStroke)
             static let hairline = SwiftUI.Color(nsColor: Color.hairline)
             static let zebra = SwiftUI.Color(nsColor: Color.zebra)
+            static let inkPrimary = SwiftUI.Color(nsColor: Color.inkPrimary)
+            static let inkQuaternary = SwiftUI.Color(nsColor: Color.inkQuaternary)
+            static let activityHairline = SwiftUI.Color(nsColor: Color.activityHairline)
+            static let chevron = SwiftUI.Color(nsColor: Color.chevron)
             static let destructiveText = SwiftUI.Color(nsColor: Color.destructiveText)
         }
     }
 }
 
-extension SessionActivityCategory {
-    /// Colours from the handoff category table (Light mode).
-    var labelBackground: Color {
-        switch self {
-        case .system: Color(red: 120 / 255, green: 120 / 255, blue: 128 / 255, opacity: 0.16)
-        case .context: Color(hex: 0x0078F0)
-        case .user: Color(hex: 0x1DA84C)
-        case .assistantReasoning: Color(hex: 0xE7DAFB)
-        case .assistant: Color(hex: 0x8E3FE8)
-        case .tool: Color(hex: 0xF0B400)
-        case .subagent: Color(hex: 0xED6A0C)
-        case .other: Color(hex: 0xE5352F)
+/// Tag chip + lane-cell colours from the design handoff category table.
+/// L1: no fill, gray text. L2: tinted fill + deep text + hairline ring.
+/// L3: solid category colour + white text.
+struct TimelineTagStyle: Equatable {
+    let fill: Color
+    let text: Color
+    let ring: Color?
+
+    static func style(for tag: TimelineTag, dark: Bool = false) -> TimelineTagStyle {
+        let l1Text = dark ? Color.white.opacity(0.38) : Color(hex: 0x8A8A8A)
+        switch tag {
+        case .session, .compact, .contextGroup, .context, .reasoning:
+            return TimelineTagStyle(fill: .clear, text: l1Text, ring: nil)
+        case .user:
+            return TimelineTagStyle(fill: Color(hex: dark ? 0x22B856 : 0x1DA84C), text: .white, ring: nil)
+        case .turnEnd:
+            return TimelineTagStyle(fill: Color(hex: dark ? 0x9D55F0 : 0x8E3FE8), text: .white, ring: nil)
+        case .failed, .aborted:
+            return TimelineTagStyle(fill: Color(hex: dark ? 0xEE4038 : 0xE5352F), text: .white, ring: nil)
+        case .assistant:
+            return dark
+                ? TimelineTagStyle(fill: Color(hex: 0x8E3FE8, opacity: 0.26), text: Color(hex: 0xC9AEFB), ring: Color(hex: 0x8E3FE8, opacity: 0.34))
+                : TimelineTagStyle(fill: Color(hex: 0x8E3FE8, opacity: 0.14), text: Color(hex: 0x6A2FD1), ring: Color(hex: 0x8E3FE8, opacity: 0.24))
+        case .plan:
+            return dark
+                ? TimelineTagStyle(fill: Color(hex: 0x0078F0, opacity: 0.26), text: Color(hex: 0x9DC7FF), ring: Color(hex: 0x0078F0, opacity: 0.34))
+                : TimelineTagStyle(fill: Color(hex: 0x0078F0, opacity: 0.14), text: Color(hex: 0x0A5FBF), ring: Color(hex: 0x0078F0, opacity: 0.26))
+        case .subagent:
+            return dark
+                ? TimelineTagStyle(fill: Color(hex: 0xF5760F, opacity: 0.24), text: Color(hex: 0xFFB27A), ring: Color(hex: 0xF5760F, opacity: 0.34))
+                : TimelineTagStyle(fill: Color(hex: 0xED6A0C, opacity: 0.16), text: Color(hex: 0x8A3E05), ring: Color(hex: 0xED6A0C, opacity: 0.32))
+        case .tool, .result:
+            return dark
+                ? TimelineTagStyle(fill: Color(hex: 0xF0B400, opacity: 0.22), text: Color(hex: 0xF5C862), ring: Color(hex: 0xF0B400, opacity: 0.30))
+                : TimelineTagStyle(fill: Color(hex: 0xF0B400, opacity: 0.16), text: Color(hex: 0x6E5417), ring: Color(hex: 0xF0B400, opacity: 0.32))
         }
     }
+}
 
-    var labelForeground: Color {
-        switch self {
-        case .system: Color(hex: 0x4B4E55)
-        case .assistantReasoning: Color(hex: 0x6A2FD1)
-        case .tool: Color(hex: 0x3A2A00)
-        case .context, .user, .assistant, .subagent, .other: .white
-        }
-    }
-
+extension TimelineTag {
+    /// Lane-strip cell colour (light mode values from the category table).
     var laneCellColor: Color {
         switch self {
-        case .system: Color(hex: 0xB4B7BE)
-        case .context: Color(hex: 0x0078F0)
+        case .session, .compact, .contextGroup, .reasoning: Color(hex: 0xC9CDD6)
         case .user: Color(hex: 0x1DA84C)
-        case .assistantReasoning: Color(hex: 0xC9AEFB)
-        case .assistant: Color(hex: 0x8E3FE8)
-        case .tool: Color(hex: 0xF0B400)
+        case .context: Color(hex: 0xA9C8EE)
+        case .assistant: Color(hex: 0xC9AEFB)
+        case .turnEnd: Color(hex: 0x8E3FE8)
+        case .plan: Color(hex: 0x7FAFEA)
         case .subagent: Color(hex: 0xED6A0C)
-        case .other: Color(hex: 0xE5352F)
+        case .tool, .result: Color(hex: 0xF0B400)
+        case .failed, .aborted: Color(hex: 0xE5352F)
+        }
+    }
+
+    /// Solid tone used for L3 notch notifications and status accents.
+    var accentColor: Color {
+        switch self {
+        case .user: Color(hex: 0x1DA84C)
+        case .turnEnd, .assistant: Color(hex: 0x8E3FE8)
+        case .failed, .aborted: Color(hex: 0xE5352F)
+        case .subagent: Color(hex: 0xED6A0C)
+        case .tool, .result: Color(hex: 0xF0B400)
+        case .plan: Color(hex: 0x0078F0)
+        case .session, .compact, .contextGroup, .context, .reasoning: Color(hex: 0xC9CDD6)
         }
     }
 }
@@ -188,6 +227,15 @@ enum AgentIcons {
         return image
     }()
 
+    /// Claude glyph (bundled `claude.svg`, the orange mark) drawn on a white
+    /// rounded tile with a hairline stroke, matching the Codex tile.
+    static let claude: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "claude", withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = false
+        return image
+    }()
+
     static func image(for agent: AgentKind, pointSize: CGFloat) -> NSImage? {
         switch agent {
         case .codex, .codexSubagent:
@@ -195,6 +243,22 @@ enum AgentIcons {
             let size = NSSize(width: pointSize, height: pointSize)
             return NSImage(size: size, flipped: false) { rect in
                 codex.draw(in: rect)
+                return true
+            }
+        case .claude, .claudeSubagent:
+            guard let claude else { return placeholder(pointSize: pointSize) }
+            let size = NSSize(width: pointSize, height: pointSize)
+            return NSImage(size: size, flipped: false) { rect in
+                let radius = pointSize * 0.28
+                let tile = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+                NSColor.white.setFill()
+                tile.fill()
+                let inset = pointSize * 0.18
+                claude.draw(in: rect.insetBy(dx: inset, dy: inset))
+                let stroke = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+                stroke.lineWidth = 1
+                AgentStatusDesign.Color.cardStroke.setStroke()
+                stroke.stroke()
                 return true
             }
         case .unknown:
