@@ -149,9 +149,15 @@ final class CapsuleChipView: NSView {
 }
 
 /// The strip directly under the toolbar title: pills on the left, an optional
-/// truncating description on the right, hairline underneath.
+/// truncating description on the right, hairline underneath. Hosted as a
+/// top-aligned split-view-item accessory (see `DetailSubheaderAccessoryController`).
 @MainActor
 final class DetailSubheaderView: NSView {
+    static let contentHeight: CGFloat = AgentStatusDesign.Layout.subheaderTopInset
+        + AgentStatusDesign.Layout.pillHeight
+        + AgentStatusDesign.Layout.subheaderBottomInset
+        + 1
+
     private let stack = NSStackView()
     private let trailingLabel = NSTextField(labelWithString: "")
     private let hairline = NSBox()
@@ -175,14 +181,11 @@ final class DetailSubheaderView: NSView {
             addSubview($0)
         }
         NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.contentHeight),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalInset),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: AgentStatusDesign.Layout.subheaderTopInset),
             stack.heightAnchor.constraint(equalToConstant: AgentStatusDesign.Layout.pillHeight),
-            hairline.topAnchor.constraint(
-                equalTo: stack.bottomAnchor,
-                constant: AgentStatusDesign.Layout.subheaderBottomInset
-            ),
             hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
             hairline.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -201,6 +204,30 @@ final class DetailSubheaderView: NSView {
             arranged.append(trailingLabel)
         }
         stack.setViews(arranged, in: .leading)
+    }
+}
+
+/// Places a `DetailSubheaderView` directly under the toolbar of a split-view item.
+/// Using the accessory API (rather than a plain subview) keeps the toolbar's soft
+/// scroll-edge look instead of a hard line under the title.
+@MainActor
+final class DetailSubheaderAccessoryController: NSSplitViewItemAccessoryViewController {
+    let subheader: DetailSubheaderView
+
+    init(horizontalInset: CGFloat) {
+        subheader = DetailSubheaderView(horizontalInset: horizontalInset)
+        super.init(nibName: nil, bundle: nil)
+        automaticallyAppliesContentInsets = false
+        if #available(macOS 26.1, *) {
+            preferredScrollEdgeEffectStyle = .soft
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func loadView() {
+        view = subheader
     }
 }
 
@@ -252,4 +279,48 @@ func makeHairline() -> NSBox {
 @MainActor
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// Shows exactly one of several child view controllers, edge-to-edge.
+/// (Unlike `NSTabViewController`, extra children — e.g. split-item accessories
+/// AppKit attaches — do not disturb the selection.)
+@MainActor
+final class SwitchingContainerViewController: NSViewController {
+    private let pages: [NSViewController]
+    private(set) var selectedIndex = 0
+
+    init(pages: [NSViewController]) {
+        self.pages = pages
+        super.init(nibName: nil, bundle: nil)
+        pages.forEach { addChild($0) }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func loadView() {
+        view = NSView()
+        install(pages[selectedIndex])
+    }
+
+    func select(_ index: Int) {
+        guard index != selectedIndex, pages.indices.contains(index) else { return }
+        let outgoing = pages[selectedIndex]
+        selectedIndex = index
+        guard isViewLoaded else { return }
+        outgoing.view.removeFromSuperview()
+        install(pages[index])
+    }
+
+    private func install(_ controller: NSViewController) {
+        let child = controller.view
+        child.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(child)
+        NSLayoutConstraint.activate([
+            child.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            child.topAnchor.constraint(equalTo: view.topAnchor),
+            child.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
 }

@@ -10,7 +10,10 @@ final class SessionDetailViewController: NSViewController {
     private let store: MacSessionStore
     private let renderer = SessionPagePresentationRenderer()
 
-    private let subheader = DetailSubheaderView(horizontalInset: AgentStatusDesign.Layout.activityHorizontalInset)
+    let subheaderAccessory = DetailSubheaderAccessoryController(
+        horizontalInset: AgentStatusDesign.Layout.activityHorizontalInset
+    )
+    private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
     private let agentChip = CapsuleChipView()
     private let statusPill = StatusPillView()
     private let split = SessionDetailSplitViewController()
@@ -42,19 +45,15 @@ final class SessionDetailViewController: NSViewController {
         emptyLabel.font = .systemFont(ofSize: 13)
         emptyLabel.textColor = .secondaryLabelColor
 
-        [subheader, split.view, emptyLabel].forEach {
+        [split.view, emptyLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
 
         NSLayoutConstraint.activate([
-            subheader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            subheader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            subheader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-
             split.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             split.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            split.view.topAnchor.constraint(equalTo: subheader.bottomAnchor),
+            split.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             split.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -80,7 +79,7 @@ final class SessionDetailViewController: NSViewController {
             renderGeneration &+= 1
             presentation = nil
             activityState.reset()
-            subheader.isHidden = true
+            subheaderAccessory.isHidden = true
             split.view.isHidden = true
             emptyLabel.isHidden = false
             split.activity.rootView = makeActivityView()
@@ -88,7 +87,7 @@ final class SessionDetailViewController: NSViewController {
             return
         }
 
-        subheader.isHidden = false
+        subheaderAccessory.isHidden = false
         split.view.isHidden = false
         emptyLabel.isHidden = true
         applySubheader(detail.summary)

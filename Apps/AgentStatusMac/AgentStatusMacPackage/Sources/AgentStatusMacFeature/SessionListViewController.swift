@@ -177,10 +177,13 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     }
 
     private func toggle(_ node: SessionListNode) {
-        if outline.isItemExpanded(node) {
-            outline.animator().collapseItem(node)
-        } else {
-            outline.animator().expandItem(node)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            if outline.isItemExpanded(node) {
+                outline.collapseItem(node)
+            } else {
+                outline.expandItem(node)
+            }
         }
     }
 
@@ -409,8 +412,7 @@ private final class SessionRowView: NSTableCellView {
         refreshRelativeTime()
 
         if isChild {
-            agentIcon.image = NSImage(systemSymbolName: "microbe", accessibilityDescription: "Subagent")?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+            agentIcon.image = Self.squareSymbol("microbe", pointSize: 12, weight: .medium, side: 16, description: "Subagent")
             agentIcon.contentTintColor = NSColor(red: 150 / 255, green: 150 / 255, blue: 155 / 255, alpha: 1)
             agentIcon.toolTip = "Subagent"
         } else {
@@ -452,12 +454,37 @@ private final class SessionRowView: NSTableCellView {
 
     private func setChevronExpanded(_ expanded: Bool, animated: Bool) {
         isChevronExpanded = expanded
-        let configuration = NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)
-        guard let image = NSImage(
-            systemSymbolName: expanded ? "chevron.down" : "chevron.right",
-            accessibilityDescription: expanded ? "Hide subagents" : "Show subagents"
-        )?.withSymbolConfiguration(configuration) else { return }
-        chevronButton.image = image
+        chevronButton.image = Self.squareSymbol(
+            expanded ? "chevron.down" : "chevron.right",
+            pointSize: 9,
+            weight: .bold,
+            side: 16,
+            description: expanded ? "Hide subagents" : "Show subagents"
+        )
+    }
+
+    /// Symbols have uneven bounding boxes; centre them on a fixed square so the
+    /// gutter glyphs never shift when they change.
+    private static func squareSymbol(
+        _ name: String,
+        pointSize: CGFloat,
+        weight: NSFont.Weight,
+        side: CGFloat,
+        description: String
+    ) -> NSImage? {
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: description)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)) else {
+            return nil
+        }
+        let canvas = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            let size = symbol.size
+            let origin = NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
+            symbol.draw(in: NSRect(origin: origin, size: size))
+            return true
+        }
+        canvas.isTemplate = true
+        canvas.accessibilityDescription = description
+        return canvas
     }
 
     override func draw(_ dirtyRect: NSRect) {

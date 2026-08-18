@@ -28,7 +28,7 @@ final class MainWindowController: NSWindowController {
         window.title = "Agent Status"
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
-        window.titlebarSeparatorStyle = .automatic
+        window.titlebarSeparatorStyle = .none
         window.minSize = NSSize(width: 1_200, height: 640)
 
         super.init(window: window)
@@ -107,9 +107,10 @@ enum MainWindowLayoutPreferences {
 final class RootSplitViewController: NSSplitViewController {
     private let navigation: NavigationSidebarViewController
     private let contentListTabs: NSTabViewController
-    private let detailTabs = NSTabViewController()
+    private let detailPages: SwitchingContainerViewController
     private let navigationItem: NSSplitViewItem
     private let contentListItem: NSSplitViewItem
+    private let detailItem: NSSplitViewItem
     private let sessionList: SessionListViewController
     private let sessionDetail: SessionDetailViewController
     private let pairing: PairingViewController
@@ -140,14 +141,12 @@ final class RootSplitViewController: NSSplitViewController {
 
         navigationItem = NSSplitViewItem(sidebarWithViewController: navigation)
         contentListItem = NSSplitViewItem(contentListWithViewController: contentListTabs)
+        // Order follows `MainWindowController.Tab.rawValue`.
+        detailPages = SwitchingContainerViewController(pages: [sessionDetail, pairing, settingsDetail])
+        detailItem = NSSplitViewItem(viewController: detailPages)
         super.init(nibName: nil, bundle: nil)
 
         splitView.dividerStyle = .thin
-        detailTabs.tabStyle = .unspecified
-        detailTabs.tabView.tabViewType = .noTabsNoBorder
-        detailTabs.addTabViewItem(Self.item(label: "Session Detail", controller: sessionDetail))
-        detailTabs.addTabViewItem(Self.item(label: "iPhone", controller: pairing))
-        detailTabs.addTabViewItem(Self.item(label: "Settings", controller: settingsDetail))
 
         navigationItem.allowsFullHeightLayout = true
         navigationItem.minimumThickness = AgentStatusDesign.Layout.sidebarWidth
@@ -162,11 +161,13 @@ final class RootSplitViewController: NSSplitViewController {
         contentListItem.maximumThickness = AgentStatusDesign.Layout.contentListMaximumWidth
         contentListItem.canCollapse = true
         contentListItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        contentListItem.titlebarSeparatorStyle = .line
         contentListItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 260)
 
-        let detailItem = NSSplitViewItem(viewController: detailTabs)
         detailItem.minimumThickness = AgentStatusDesign.Layout.detailMinimumWidth
         detailItem.holdingPriority = .defaultLow
+        // The subheader strip carries its own hairline; no separator under the title.
+        detailItem.titlebarSeparatorStyle = .none
 
         addSplitViewItem(navigationItem)
         addSplitViewItem(contentListItem)
@@ -232,7 +233,16 @@ final class RootSplitViewController: NSSplitViewController {
     func select(_ tab: MainWindowController.Tab) {
         let previous = selectedTab
         selectedTab = tab
-        detailTabs.selectedTabViewItemIndex = tab.rawValue
+        detailPages.select(tab.rawValue)
+        // The subheader strip lives under the toolbar as a split-item accessory.
+        let accessory: NSSplitViewItemAccessoryViewController = switch tab {
+        case .sessions: sessionDetail.subheaderAccessory
+        case .pairing: pairing.subheaderAccessory
+        case .settings: settingsDetail.subheaderAccessory
+        }
+        if detailItem.topAlignedAccessoryViewControllers.first !== accessory {
+            detailItem.topAlignedAccessoryViewControllers = [accessory]
+        }
         switch tab {
         case .sessions:
             contentListTabs.selectedTabViewItemIndex = 0

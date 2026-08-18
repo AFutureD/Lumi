@@ -143,7 +143,8 @@ final class SettingsDetailViewController: NSViewController {
     private let store: MacSessionStore
     private let nook: AgentStatusNookController
     private let model: SettingsModel
-    private let subheader = DetailSubheaderView(horizontalInset: AgentStatusDetailLayout.horizontalInset)
+    let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: AgentStatusDetailLayout.horizontalInset)
+    private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
     private let daemonPill = StatusPillView()
     private let hosting = NSHostingController(rootView: AnyView(EmptyView()))
     private var storeObservation: UUID?
@@ -172,17 +173,12 @@ final class SettingsDetailViewController: NSViewController {
         view = NSView()
         addChild(hosting)
         hosting.sizingOptions = []
-        [subheader, hosting.view].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview($0)
-        }
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hosting.view)
         NSLayoutConstraint.activate([
-            subheader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            subheader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            subheader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            hosting.view.topAnchor.constraint(equalTo: subheader.bottomAnchor),
+            hosting.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         rebuild()

@@ -10,7 +10,8 @@ final class PairingViewController: NSViewController {
     static let minimumHorizontalContentWidth: CGFloat = 708
 
     private let relayHost: RelayHostController
-    private let subheader = DetailSubheaderView(horizontalInset: AgentStatusDetailLayout.horizontalInset)
+    let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: AgentStatusDetailLayout.horizontalInset)
+    private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
     private let relayPill = StatusPillView()
     private let qrCard = CardView(cornerRadius: 20, shadow: true)
     private let qrImageView = NSImageView()
@@ -182,19 +183,13 @@ final class PairingViewController: NSViewController {
         document.addSubview(contentStack)
         scroll.documentView = document
 
-        [subheader, scroll].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview($0)
-        }
+        view.addSubview(scroll)
 
         compactRecordsWidthConstraint = recordsColumn.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
         NSLayoutConstraint.activate([
-            subheader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            subheader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            subheader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: subheader.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             document.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
