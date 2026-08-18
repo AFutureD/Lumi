@@ -180,46 +180,23 @@ extension NSColor {
 
 @MainActor
 enum AgentIcons {
-    /// OpenAI mark (bundled `openai.svg`), used for Codex.
-    static let openAI: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "openai", withExtension: "svg"),
+    /// Codex tile (bundled `codex.svg`, already drawn as a rounded icon).
+    static let codex: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "codex", withExtension: "svg"),
               let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = false
         return image
     }()
 
-    /// Codex: the OpenAI mark on a white rounded-rectangle tile with a hairline
-    /// stroke, so it reads as an app-style icon next to titles.
     static func image(for agent: AgentKind, pointSize: CGFloat) -> NSImage? {
         switch agent {
         case .codex, .codexSubagent:
-            guard let mark = openAI else { return placeholder(pointSize: pointSize) }
+            guard let codex else { return placeholder(pointSize: pointSize) }
             let size = NSSize(width: pointSize, height: pointSize)
-            let tile = NSImage(size: size, flipped: false) { rect in
-                let radius = pointSize * 0.28
-                let tile = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-                NSColor.white.setFill()
-                tile.fill()
-                let inset = pointSize * 0.2
-                let markRect = rect.insetBy(dx: inset, dy: inset)
-                // Tint the mark near-black by using it as a mask.
-                if let cg = mark.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                   let context = NSGraphicsContext.current?.cgContext {
-                    context.saveGState()
-                    context.clip(to: markRect, mask: cg)
-                    context.setFillColor(NSColor(white: 0.1, alpha: 1).cgColor)
-                    context.fill(markRect)
-                    context.restoreGState()
-                } else {
-                    mark.draw(in: markRect)
-                }
-                let stroke = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
-                stroke.lineWidth = 1
-                AgentStatusDesign.Color.cardStroke.setStroke()
-                stroke.stroke()
+            return NSImage(size: size, flipped: false) { rect in
+                codex.draw(in: rect)
                 return true
             }
-            return tile
         case .unknown:
             return placeholder(pointSize: pointSize)
         }

@@ -32,7 +32,7 @@ let package = Package(
                 .product(name: "NookComponents", package: "opennook"),
             ],
             resources: [
-                .copy("Resources/openai.svg"),
+                .copy("Resources/codex.svg"),
             ]
         ),
         .testTarget(
