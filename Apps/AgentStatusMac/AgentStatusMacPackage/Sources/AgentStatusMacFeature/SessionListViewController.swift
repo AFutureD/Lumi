@@ -5,7 +5,7 @@ import AppKit
 @MainActor
 final class SessionListViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private let store: MacSessionStore
-    private let outline = NSOutlineView()
+    private let outline = HiddenDisclosureOutlineView()
     private let emptyLabel = NSTextField(labelWithString: "No Sessions")
     private var hierarchy = SessionListHierarchy(roots: [], nodesByID: [:])
     private var displayedSessions: [SessionSummary] = []
@@ -108,10 +108,6 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let node = item as? SessionListNode else { return false }
         return !node.children.isEmpty
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
-        false
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
@@ -459,4 +455,12 @@ private final class SessionRowView: NSTableCellView {
         }
         path.stroke()
     }
+}
+
+/// Keeps rows expandable/collapsible (programmatically and via keyboard) while
+/// never drawing the disclosure triangle. Returning `false` from
+/// `shouldShowOutlineCellForItem` would also disable collapsing.
+@MainActor
+private final class HiddenDisclosureOutlineView: NSOutlineView {
+    override func frameOfOutlineCell(atRow row: Int) -> NSRect { .zero }
 }
