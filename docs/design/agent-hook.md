@@ -4,27 +4,36 @@ Codex 接入由两条互补路径组成：Hook 提供低延迟，rollout watcher
 
 ## 目标
 
-- Hook 命令尽快完成，不在 Codex 进程内维护状态。
+- Hook 命令尽快完成，不在 Agent 进程内维护状态；helper 永远以 0 退出，不阻塞 Agent 的工具调用。
 - 不覆盖用户已有 Hook，包括其他 Agent 状态工具。
-- 原始 Codex 格式只存在于 Adapter 边界，产品层只处理统一事件。
-- 结构化保留模型配置、内部上下文和消耗指标；已映射的内部上下文保留完整嵌套内容，未映射记录默认忽略。
-- daemon 第一次启用时不导入旧 Codex Session。
+- 原始 Codex / Claude 格式只存在于 Adapter 边界，产品层只处理统一的 **Agent 领域事件**（Session 生命周期、Turn 聚合、Timeline item）。
+- **抽象在 helper 内完成**：helper 同时读取 hook stdin 与该 Session 的 transcript / rollout 增量，产出完备的领域数据后一次性发给 daemon；daemon 只做去重、归并、持久化与分发。
+- 结构化保留模型配置、上下文和消耗指标；未映射记录默认忽略。
 
 ## 双输入结构
 
 ```mermaid
 flowchart LR
-    HookJSON["Codex Hook JSON"] --> Helper["agent-status-helper"]
-    Helper --> Adapter["CodexAdapter"]
-    Rollout["~/.codex/sessions/**/*.jsonl"] --> Watcher["CodexRolloutWatcher"]
-    Watcher --> Adapter
-    Adapter --> Event["AgentIngressEvent"]
+    HookJSON["Codex / Claude Hook JSON (stdin)"] --> Helper["agent-status-helper\nHelperIngestPipeline"]
+    Rollout["~/.codex/sessions/**/rollout-*-&lt;session&gt;.jsonl"] --> Helper
+    Transcript["~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl"] --> Helper
+    Helper --> Adapter["CodexAdapter / ClaudeAdapter"]
+    Adapter --> Event["AgentIngressEvent[] (ingest_batch)"]
     Event --> Daemon["DaemonService"]
-    Daemon --> SQLite[("daemon SQLite")]
+    Daemon --> SQLite[("daemon SQLite: sessions / turns / timeline")]
     Daemon --> Stream["Mac event stream"]
+    Daemon -. get/save_rollout_cursor .-> Helper
 ```
 
-Hook 和 watcher 不分别拥有 Session 状态。`SessionReduction` 是唯一可见状态归并器。
+每次 hook 拉起 helper 时的顺序：
+
+1. 判定 provider（`--agent codex|claude`，否则按 `CLAUDE_PROJECT_DIR`、`transcript_path`、`prompt_id`/`turn_id` 启发式）。
+2. 定位该 Session 的 rich source（Claude 用 hook 的 `transcript_path`；Codex 在 `CODEX_HOME/sessions` 按文件名后缀 `-<session>.jsonl` 由新到旧查找）。
+3. 向 daemon 取该文件的 cursor 与该 Session 已知的 Turn（当前开放 Turn 作为无 `turn_id` 记录的归属），读增量、逐行 reduce。
+4. reduce hook 本身；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 边界 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。
+5. `ingest_batch` 一次发送，成功后再 `save_rollout_cursor`。
+
+`SessionReduction` 与 `TurnReduction` 是 daemon 侧唯一的状态归并器；in-daemon 的 `CodexRolloutWatcher` 退居兜底（`AGENT_STATUS_ROLLOUT_WATCHER=1` 开启，默认关闭）。
 
 ## Hook 安装
 
@@ -42,46 +51,76 @@ Hook 和 watcher 不分别拥有 Session 状态。`SessionReduction` 是唯一�
 
 安装是幂等的：如果某事件组已经包含 `agent-status-helper`，不会重复追加。卸载只过滤包含 Agent Status helper 的 handler；同组其他 handler 和其他顶层配置保留。
 
-## Hook 事件映射
+## Hook 事件映射（Codex 与 Claude 同构）
 
-| Codex Hook | lifecycle | phase | Timeline |
-| --- | --- | --- | --- |
-| `SessionStart` | Starting | Idle | 无 |
-| `UserPromptSubmit` | Running | Thinking | User message（存在 prompt 时） |
-| `PreToolUse` | Running | Executing | Tool started |
-| `PermissionRequest` | Waiting For Input | Waiting For Approval | Tool waiting for approval |
-| `PostToolUse` | Running | Responding | Tool succeeded/failed |
-| `PreCompact` | Running | 保持当前或默认 | 无 |
-| `PostCompact` | Running | 保持当前或默认 | 无 |
-| `SubagentStart` | Running | Executing | Sub-agent started |
-| `SubagentStop` | Running | Responding | Sub-agent completed |
-| `Stop` | Waiting For Input | Idle | 最后一条 Assistant message（存在时） |
-| `SessionEnd` | Completed | Idle | 无 |
+Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId`）。`rich` = 该 Session 的 transcript/rollout 可读。
 
-未知 Hook 事件返回空事件数组，helper 正常退出，不让不认识的事件阻塞 Codex。
+| Hook | lifecycle | phase | Turn | Timeline item |
+| --- | --- | --- | --- | --- |
+| `SessionStart(source, model)` | Starting | Idle | — | `sessionMarker(sessionStarted)` |
+| `UserPromptSubmit(prompt)` | Running | Thinking | 建 Turn：prompt/startedAt | 非 rich：`message(user)` |
+| `PreToolUse(tool_name, tool_use_id, tool_input)` | Running | Executing | toolCallCount+1（由 item 推导） | 非 rich：`tool(started, toolUseID)` |
+| `PostToolUse` / `PostToolUseFailure` | Running | Thinking | — | 非 rich：`tool(succeeded/failed, toolUseID)` |
+| `PermissionRequest` | Waiting For Input | Waiting For Approval | — | **无**（权限不进 Timeline） |
+| `PermissionDenied`（Claude） | Running | Thinking | — | 无 |
+| `SubagentStart/Stop(agent_id, agent_type)` | Running | Subagent Running / Thinking | subagentCount | `subagent(started/completed)` |
+| `Stop(last_assistant_message)` | Waiting For Input | Idle | endedAt/outcome=completed/lastAssistantMessage | `turnEnd(completed, message)` |
+| `StopFailure`（Claude） | Failed | Idle | outcome=failed | `turnEnd(failed, error)` |
+| `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
+| `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)` |
+| `UserPromptExpansion`（Claude） | Running | Thinking | — | `context(turn, command_expansion)` |
+| `InstructionsLoaded` / `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `context(session, …)`；CwdChanged 同时更新 workspace |
+| `Notification(agent_needs_input / permission_prompt / idle_prompt)`（Claude） | Waiting For Input | Waiting For Approval / Idle | — | 无 |
+
+未知 Hook 事件返回空数组。
+
+## transcript / rollout 事件映射
+
+**Codex rollout**（`RolloutReadState.currentTurnID` 由 `task_started` / `turn_context` 的 `turn_id` 设定，其余记录归入当前 Turn）：
+
+| record | 结果 |
+| --- | --- |
+| `session_meta` | Starting/Idle + `sessionMarker(sessionStarted)`（与 hook 同 ID 去重）+ `modelConfiguration`（页头元数据）+ `context(session, base_instructions)` |
+| `turn_context` | `modelConfiguration` + `context(turn, turn_context)` |
+| `task_started` | Running/Thinking，建 Turn |
+| `user_message` / `agent_message` / `agent_reasoning` | `message(user)`（Turn.prompt）/ `message(assistant)` / `reasoning` |
+| `response_item reasoning` | 忽略（`agent_reasoning` 的加密副本） |
+| `response_item message` role=developer / user 内 `<tag>` 或 `# AGENTS.md` | `context(turn, developer_instructions / <tag> / agents_md)`；普通 user/assistant 忽略（event_msg 已有） |
+| `response_item custom_tool_call` / `function_call` | `tool(started, name, input 摘要, toolUseID=call_id)`；`update_plan` → `plan` |
+| `response_item *_output` | `tool(succeeded/failed by metadata.exit_code, output 摘要, toolUseID)`；名称从同次读取的 call 或投影阶段配对补齐 |
+| exec/patch/mcp/dynamic/web/image begin·end | 同上，含 `call_id` |
+| `task_complete` / `turn_aborted` | `turnEnd(completed|failed|aborted)`，Waiting For Input / Failed / Interrupted |
+| `world_state` / `compacted` / `context_compacted` | `context(turn, …)` |
+| `thread_settings_applied` / `token_count` | `modelConfiguration` / `usageMetrics` |
+| `sub_agent_activity` | `subagent(...)`，ID `subagent:<session>:<agent_thread_id>:<phase>` |
+
+**Claude transcript**（`currentTurnID` 由 user 记录的 `promptId` 设定；`isSidechain: true` 记录忽略）：
+
+| record / block | 结果 |
+| --- | --- |
+| `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(turn, system_reminder)`；`<command-name>` 等标签块为 `context(turn, <tag>)` |
+| `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)` |
+| `assistant` `thinking` / `text` / `tool_use` | `reasoning` / `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
+| `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |
+| `attachment` / `system` / `summary` | `context(turn|session, …)` |
+| `custom-title` | Session 标题 |
+| `queue-operation` / `last-prompt` 等 | 忽略 |
 
 ## helper 执行模型
 
-`agent-status-helper` 是一次性 SwiftPM executable：
+`agent-status-helper [--agent codex|claude|auto] [--verbose]` 是一次性 SwiftPM executable，核心在 `HelperIngestPipeline`（`Common/AgentStatusCodex`），通过 `HelperDaemonPort` 与 daemon 通信（可测试）：
 
-1. 一次性读完 stdin。
-2. 空输入或坏 JSON 立即失败。
-3. `CodexAdapter` 生成 0..N 个 `AgentIngressEvent`。
-4. 每个事件通过 Unix socket 发送 `ingest` 请求。
-5. 单请求超时 1 秒。
-6. daemon 返回 error、连接失败或编码失败时，写 stderr 并以非零码退出。
-
-helper 不保存游标、不重试、不创建后台任务。持久恢复由 rollout watcher 完成。
+1. 读 stdin → 判定 provider → 定位 rich source。
+2. `get_rollout_cursor` + `get_session(limit:1)` 取 cursor 与 Turn。
+3. 读增量（超过 32 MiB 只取尾部并对齐到行首）逐行 reduce；再 reduce hook。
+4. `ingest_batch`（每 200 条一帧，超时 5s）→ 成功后 `save_rollout_cursor`。
+5. 任何失败写 stderr，**仍以 0 退出**。
 
 ## 稳定 ID
 
-- Hook Event ID：`hook:` + SHA-256(raw stdin JSON)。
-- Hook Timeline ID：`<eventID>:timeline`。
-- rollout Event ID：`rollout:` + SHA-256(path + byteOffset + line bytes)。
-- rollout 用户活动 Timeline ID：`<eventID>:timeline`。
-- rollout 诊断 Timeline ID：`diagnostic:<sessionID>:<category>`；同一类别的新记录替换旧记录。
-
-相同原始输入再次到达会命中同一 Event ID。JSON 字段顺序或来源变化会产生新 Event ID。诊断记录按 session 与类别保留最新值；world state 保留最近完整状态以及每组字段的最近增量，避免 reasoning、world state 和 token_count 的每次更新无限扩大快照。
+- Hook Event ID：`hook:` / `claude-hook:` + SHA-256(raw stdin)。rollout/transcript Event ID：`rollout:` / `claude-transcript:` + SHA-256(path + byteOffset + line)。
+- **跨来源可去重的 Timeline item ID**（`TimelineItemIDs`）：`marker:<s>:<kind>`、`user_prompt:<s>:<turn>`、`tool:<s>:<toolUseID>:call|result`、`subagent:<s>:<agent>:<phase>`、`turn_end:<s>:<turn>`、`diagnostic:<s>:<key>`。同一逻辑消息经 hook 与 transcript 两路到达时落到同一存储行。
+- 其他 item：`<eventID>:timeline`。
 
 ## rollout watcher
 
@@ -191,8 +230,8 @@ Adapter 只把以下内容放进产品模型：
 `AgentAdapter` 要求新 Agent 实现两个入口：
 
 ```text
-events(fromHookData:) -> [AgentIngressEvent]
-events(fromRolloutLine:context:) -> [AgentIngressEvent]
+events(fromHookData:options:) -> [AgentIngressEvent]          // options.richSourceAvailable
+events(fromRolloutLine:context:state:) -> [AgentIngressEvent]  // state: currentTurnID / toolNames
 ```
 
 新增 Adapter 时必须继续遵守：
@@ -212,14 +251,16 @@ events(fromRolloutLine:context:) -> [AgentIngressEvent]
 | 同一输入重复 | processed event 拒绝 | processed event 拒绝 |
 | 乱序输入 | reducer 不回退可见状态 | reducer 不回退可见状态 |
 | 日志只有半行 | 不适用 | 保留旧 offset，等待换行完成 |
-| 用户删除 Session | 后续事件被 tombstone 拒绝 | 后续行被 tombstone 拒绝 |
+| 用户删除 Session | 后续被动事件被 tombstone 拒绝；**新的用户 prompt / SessionStart 会让 Session 重新出现** | 同左 |
+| daemon 未启动时 hook 到达 | helper 记 stderr、退出 0；该 hook 丢失 | 下次 hook 时按 cursor 补读增量（Turn 边界类 hook 不可补） |
 
 ## 当前限制
 
-- Hook 和 rollout 的确定性 ID 域不同；同一语义内容如果通过两条路径出现，当前没有内容级跨来源去重。
-- rollout 格式不是 Agent Status 控制的稳定 API；未知或变化字段必须默认忽略。
-- helper 没有磁盘队列；低延迟事件发送失败时依赖 rollout 补充。
-- v1 只有 `CodexAdapter`，其他 Agent 只是接口预留。
+- helper 只在 hook 到达时读增量；两次 hook 之间写入的长 assistant 输出会延后到下一个 hook 才可见（最晚 `Stop`）。
+- Codex subagent 自己的 rollout 没有 hook 触发，只能靠父 Session 的 `SubagentStart/Stop` 或开启 daemon watcher 兜底。
+- 未安装 hook 的 Agent 不再被自动发现（watcher 默认关闭）。
+- rollout / transcript 格式不是稳定 API；未知或变化字段必须默认忽略。
+- helper 没有磁盘队列。
 
 ## 相关文档
 

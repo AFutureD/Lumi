@@ -4,6 +4,9 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 
 ## 统一业务模型
 
+> 两层模型：**Agent 领域**（`SessionSummary` / `TurnSummary` / `TimelineItem`，helper 产出、daemon 存储）与 **Timeline 领域**（`TimelineRow`：tag L1/L2/L3、lane、status，由 `TimelineProjection.rows(from:)` 纯函数投影，不落库）。详见 [Session Timeline 重构方案](session-timeline-redesign.md)。
+
+
 跨进程和跨设备模型由 `AgentStatusTransport` 唯一声明：
 
 - `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力标记，以及可选 Subagent lineage。
@@ -44,7 +47,8 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration：
 | 表 | 用途 | 关键规则 |
 | --- | --- | --- |
 | `sessions` | 当前 Session Summary | `id` 主键；按 `last_activity_at` 倒序读取 |
-| `timeline` | Timeline item | `id` 主键；Session 外键级联删除；按时间与 ID 排序 |
+| `turns` | Turn 聚合（`TurnSummary`：phase、prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage） | `(session_id, turn_id)` 主键；由 `TurnReduction` 从事件归并；随 Session 级联删除（migration `agent-status-v2-turns`） |
+| `timeline` | Timeline item（Agent 领域消息） | `id` 主键；Session 外键级联删除；按时间与 ID 排序；跨来源同 ID 覆盖 |
 | `processed_events` | 幂等键 | 同一个 Event ID 只应用一次 |
 | `rollout_cursors` | JSONL 增量位置 | 保存文件路径、byte offset、文件大小和 Session ID |
 | `ignored_sessions` | 删除/基线 tombstone | 阻止后到事件重新创建 Session |
@@ -80,7 +84,9 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration：
 
 | 操作 | 用途 | 连接形态 |
 | --- | --- | --- |
-| `ingest` | helper 提交一个归一化事件 | 短连接请求 |
+| `ingest` | 提交一个归一化事件 | 短连接请求 |
+| `ingest_batch` | helper 一次提交一批事件（每帧 ≤200 条） | 短连接请求 |
+| `get_rollout_cursor` / `save_rollout_cursor` | helper 读取 / 推进 transcript 游标（游标由 daemon 持有） | 短连接请求 |
 | `snapshot_sessions` | 一次取得全部 SessionDetail 和 health | 短连接请求 |
 | `list_sessions` | 查询 Summary | 短连接请求 |
 | `get_session` | 分页查询一个 Timeline | 短连接请求 |
