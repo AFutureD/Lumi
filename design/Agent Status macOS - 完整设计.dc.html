@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  body { margin: 0; background: #dcdcdf; }
+  a { color: rgb(0,120,240); }
+  a:hover { color: rgb(0,96,200); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.22); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .nk-arch { display: none; }
+  .nk-row:hover .nk-arch { display: flex; }
+  .nk-row:hover .nk-time { display: none; }
+</style>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#0a84ff"/><rect x="22" y="30" width="56" height="40" rx="6" fill="#fff" opacity="0.94"/><rect x="22" y="30" width="18" height="40" rx="6" fill="#fff" opacity="0.6"/></svg></template>
+</helmet>
+<div style="padding:56px;display:flex;flex-direction:column;gap:64px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Helvetica,sans-serif;-webkit-font-smoothing:antialiased;color:#1B1C1E">
+
+  <section style="display:flex;flex-direction:column;gap:22px">
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div style="font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(0,0,0,.45)">macOS · 完整设计</div>
+      <div style="font-size:13px;color:rgba(0,0,0,.55);max-width:860px">应用侧全部页面的当前设计：主窗口（Session 列表 + Activity + Inspector）、Pair iPhone、Settings 的 Daemon 与其余四个面板。取值跟随「设计系统」文件：Thick / Thin 材质、侧栏 224 与 32px 行高、Scroll Edge Effect header、Activity 三泳道（Input / Tools / Model）与三档注意力标签；Agent 状态用蓝、User 用绿，标志色与标签底色同一张。</div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:28px">
+
+    <div id="m1" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">1</div>
+        <div style="font-size:15px;font-weight:600">主窗口 · Session 列表与 Activity（1440×860）</div>
+      </div>
+
+      <div style="padding:44px;border-radius:22px;background:transparent">
+        <div data-screen-label="1 Sessions" style="width:1440px;height:860px;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;background:linear-gradient(rgba(191,191,191,.1),rgba(191,191,191,.1)),linear-gradient(rgba(255,255,255,.7),rgba(255,255,255,.7));box-shadow:1.25px 0 0 -.75px rgb(219,219,219),-1.25px 0 0 -.75px rgb(219,219,219),0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.25)">
+
+          <div style="flex:1;display:flex;min-height:0">
+            <div style="width:224px;flex:none;box-sizing:border-box;background:rgba(246,246,246,.72);backdrop-filter:blur(60px) saturate(180%);display:flex;flex-direction:column">
+              <div style="height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 19px;box-sizing:border-box">
+                <div style="display:flex;gap:8px">
+                  <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div>
+                  <div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div>
+                  <div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+                </div>
+                <div style="width:28px;height:28px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                  <svg width="15" height="13" viewBox="0 0 16 14" fill="none" stroke="rgb(26,26,26)" stroke-width="1.2"><rect x="0.6" y="0.6" width="14.8" height="12.8" rx="3"></rect><line x1="5.6" y1="0.6" x2="5.6" y2="13.4"></line></svg>
+                </div>
+              </div>
+
+              <div style="flex:1;min-height:0;padding:0 14px;box-sizing:border-box;display:flex;flex-direction:column">
+                <div style="height:34px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Monitor</div>
+                <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                  <div style="position:absolute;left:-4px;right:-4px;top:0;bottom:0;border-radius:8px;background:rgb(242,242,242)"></div>
+                  <span style="position:relative;width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><rect x="1.4" y="3.6" width="15.2" height="10.8" rx="2.4"></rect><line x1="9" y1="3.6" x2="9" y2="14.4"></line></svg>
+                  </span>
+                  <span style="position:relative;flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Sessions</span>
+                  <span style="position:relative;flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">5</span>
+                </div>
+                <div style="height:43px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Connections</div>
+                <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                  <span style="width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><rect x="5.2" y="1.6" width="7.6" height="14.8" rx="2.2"></rect><path d="M2.6 6.4a4.6 4.6 0 0 0 0 5.2"></path><path d="M15.4 6.4a4.6 4.6 0 0 1 0 5.2"></path></svg>
+                  </span>
+                  <span style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">iPhone</span>
+                  <span title="Connected" style="flex:none;width:7px;height:7px;margin-right:4px;border-radius:50%;background:#1DA84C"></span>
+                </div>
+                <div style="height:43px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Application</div>
+                <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                  <span style="width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><circle cx="9" cy="9" r="2.6"></circle><circle cx="9" cy="9" r="6.6"></circle></svg>
+                  </span>
+                  <span style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Settings</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="width:324px;flex:none;background:rgba(255,255,255,.9);box-shadow:inset 1px 0 0 rgba(0,0,0,.05),inset -1px 0 0 rgba(0,0,0,.05);display:flex;flex-direction:column;overflow:hidden">
+              <div style="flex:none;height:52px;display:flex;align-items:center;gap:8px;padding:0 14px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05)">
+                <div style="flex:1;height:28px;border-radius:1000px;display:flex;align-items:center;gap:6px;padding:0 10px;box-sizing:border-box;background:rgba(120,120,128,.1);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.06)">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="rgba(60,60,67,.5)" stroke-width="1.4"><circle cx="5" cy="5" r="3.6"></circle><line x1="7.8" y1="7.8" x2="11" y2="11"></line></svg>
+                  <span style="font-size:13px;font-weight:510;line-height:16px;color:rgba(60,60,67,.5)">Filter sessions</span>
+                </div>
+              </div>
+              <div style="flex:1;min-height:0;overflow:auto;padding:10px 10px 0;box-sizing:border-box">
+                <sc-for list="{{ sessions4 }}" as="row" hint-placeholder-count="7">
+                  <div onClick="{{ row.onToggle }}" style="position:relative;display:grid;grid-template-columns:18px 1fr auto;column-gap:8px;row-gap:5px;align-items:center;padding:9px 10px 10px;margin-bottom:2px;border-radius:8px;box-sizing:border-box;cursor:{{ row.iconCursor }};background:{{ row.bg }}">
+                    <div style="position:absolute;left:19px;top:-10px;width:9px;height:28px;border-left:1px solid rgba(60,60,67,.22);border-bottom:1px solid rgba(60,60,67,.22);border-bottom-left-radius:5px;opacity:{{ row.elbow }}"></div>
+                    <div style="position:absolute;left:19px;top:{{ row.trunkTop }};bottom:-10px;width:1px;background:rgba(60,60,67,.22);opacity:{{ row.trunk }}"></div>
+                    <div style="grid-column:1;grid-row:1;height:16px;display:flex;align-items:center;justify-content:center">
+                      <sc-if value="{{ row.isCodex }}" hint-placeholder-val="{{ true }}">
+                        <span title="Codex" style="width:16px;height:16px;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z" fill="#fff"></path><path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z" fill="url(#lobe-icons-codex-grad)"></path><defs><linearGradient gradientUnits="userSpaceOnUse" id="lobe-icons-codex-grad" x1="12" x2="12" y1="3" y2="21"><stop stop-color="#B1A7FF"></stop><stop offset=".5" stop-color="#7A9DFF"></stop><stop offset="1" stop-color="#3941FF"></stop></linearGradient></defs></svg></span>
+                      </sc-if>
+                      <sc-if value="{{ row.isClaude }}" hint-placeholder-val="{{ false }}">
+                        <span title="Claude" style="width:16px;height:16px;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgb(114,114,114)" stroke-width="1.9" stroke-linecap="round"><path d="M12 2.6v18.8"></path><path d="M3.9 7.3l16.2 9.4"></path><path d="M3.9 16.7l16.2-9.4"></path></svg></span>
+                      </sc-if>
+                    </div>
+                    <span style="grid-column:2;grid-row:1;min-width:0;font-size:13px;font-weight:{{ row.weight }};line-height:16px;color:{{ row.titleColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ row.title }}</span>
+                    <span style="grid-column:3;grid-row:1;padding-left:10px;font-size:11px;font-weight:510;line-height:14px;font-variant-numeric:tabular-nums;color:rgb(114,114,114)">{{ row.time }}</span>
+                    <div style="grid-column:2;grid-row:2;min-width:0;display:flex;align-items:center;gap:6px">
+                      <span style="flex:none;width:7px;height:7px;border-radius:50%;background:{{ row.dot }}"></span>
+                      <span style="flex:1;min-width:0;font-size:11px;font-weight:510;line-height:14px;color:{{ row.statusColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ row.status }}</span>
+                    </div>
+                    <div style="grid-column:3;grid-row:2;justify-self:end;padding-left:10px;height:16px;display:flex;align-items:center">
+                      <sc-if value="{{ row.showCount }}" hint-placeholder-val="{{ false }}">
+                        <span onClick="{{ row.onToggle }}" style="cursor:pointer;display:flex;align-items:center;height:16px;padding:0 7px;border-radius:1000px;background:rgba(120,120,128,.12);font-size:10px;font-weight:590;line-height:14px;color:rgb(90,90,90)">{{ row.countLabel }}</span>
+                      </sc-if>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="flex:1;min-width:0;background:rgba(255,255,255,.94);display:flex;flex-direction:column">
+              <div style="flex:none;padding:14px 24px 14px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:9px">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="flex:1;min-width:0;font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Refactor transport DTO boundaries</div>
+                  <div style="flex:none;display:flex;gap:8px">
+                    <div style="width:28px;height:28px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                      <svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="rgb(26,26,26)" stroke-width="1.3"><path d="M13 7.5a5.5 5.5 0 1 1-1.7-3.97"></path><path d="M13.1 1.6v3.1h-3.1"></path></svg>
+                    </div>
+                    <div style="width:28px;height:28px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                      <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="rgb(26,26,26)" stroke-width="1.3"><path d="M1.2 3.6h11.6"></path><path d="M2.6 3.6l.8 9.1a1.2 1.2 0 0 0 1.2 1.1h4.8a1.2 1.2 0 0 0 1.2-1.1l.8-9.1"></path><path d="M5.2 3.6V1.9a.8.8 0 0 1 .8-.8h2a.8.8 0 0 1 .8.8v1.7"></path></svg>
+                    </div>
+                    <div title="Hide Inspector" style="width:28px;height:28px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                      <svg width="15" height="13" viewBox="0 0 16 14" fill="none" stroke="rgb(26,26,26)" stroke-width="1.2"><rect x="0.6" y="0.6" width="14.8" height="12.8" rx="3"></rect><line x1="10.4" y1="0.6" x2="10.4" y2="13.4"></line></svg>
+                    </div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                  <span style="flex:none;font-size:11px;font-weight:590;line-height:14px;padding:2px 8px;border-radius:1000px;background:rgba(120,120,128,.12);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.06);color:rgb(64,64,64)">Codex</span>
+                  <div style="flex:none;display:flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:1000px;background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),linear-gradient(rgba(0,120,240,.16),rgba(0,120,240,.16));box-shadow:inset 0 0 0 .5px rgba(0,120,240,.28)">
+                    <span style="width:7px;height:7px;border-radius:50%;background:rgb(0,120,240);box-shadow:0 0 0 2.5px rgba(0,120,240,.18)"></span>
+                    <span style="font-size:11px;font-weight:590;line-height:14px;color:rgb(0,105,215)">Running · Model turn</span>
+                  </div>
+                  <span style="flex:1;min-width:0;font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;color:rgb(114,114,114);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">~/dev/agent-status</span>
+                </div>
+              </div>
+
+              <div style="flex:1;min-height:0;display:flex">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+              <div style="flex:none;padding:12px 24px 12px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:11px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Activity</span>
+                  <span style="font-size:11px;font-weight:590;font-variant-numeric:tabular-nums;line-height:14px;color:rgb(114,114,114);padding:1px 7px;border-radius:1000px;background:rgba(120,120,128,.12)">16</span>
+                  <div onClick="{{ toggleLanes }}" title="{{ laneLabel }}" style="margin-left:auto;cursor:pointer;width:26px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:1000px;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,.85));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 2px 6px rgba(0,0,0,.06)">
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="rgb(64,64,64)" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.6v3.4"></path><path d="M4.9 3.4L7 1.4l2.1 2"></path><path d="M7 12.4V9"></path><path d="M4.9 10.6L7 12.6l2.1-2"></path><path d="M1.6 7h10.8"></path></svg>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:12px">
+                  <sc-if value="{{ lanesOpen }}" hint-placeholder-val="{{ true }}">
+                    <div style="width:44px;flex:none;display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+                      <div style="height:13px;line-height:13px;font-size:10px;font-weight:590;color:rgb(114,114,114)">Input</div>
+                      <div style="height:13px;line-height:13px;font-size:10px;font-weight:590;color:rgb(114,114,114)">Tools</div>
+                      <div style="height:13px;line-height:13px;font-size:10px;font-weight:590;color:rgb(114,114,114)">Model</div>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ lanesShut }}" hint-placeholder-val="{{ false }}">
+                    <div style="width:44px;flex:none;height:13px;line-height:13px;text-align:right;font-size:10px;font-weight:590;color:rgb(114,114,114)">Timeline</div>
+                  </sc-if>
+                  <div style="flex:1;min-width:0;overflow-x:auto;padding-bottom:4px">
+                    <sc-if value="{{ lanesOpen }}" hint-placeholder-val="{{ true }}">
+                      <div style="display:flex;gap:4px;align-items:flex-start">
+                        <sc-for list="{{ activities3 }}" as="a" hint-placeholder-count="16">
+                          <div style="display:flex;flex-direction:column;gap:4px;flex:none">
+                            <div style="width:13px;height:13px;border-radius:3px;background:{{ a.inputCell }}"></div>
+                            <div style="width:13px;height:13px;border-radius:3px;background:{{ a.toolsCell }}"></div>
+                            <div style="width:13px;height:13px;border-radius:3px;background:{{ a.modelCell }}"></div>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ lanesShut }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;gap:4px;align-items:center">
+                        <sc-for list="{{ activities3 }}" as="a" hint-placeholder-count="16">
+                          <div style="width:13px;height:13px;flex:none;border-radius:3px;background:{{ a.cell }}"></div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+              </div>
+
+              <div style="flex:1;min-height:0;overflow:auto;padding:6px 0 24px">
+                <sc-for list="{{ activities3 }}" as="a" hint-placeholder-count="16">
+                  <div style="display:flex;align-items:center;gap:12px;height:40px;padding:0 24px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05);background:{{ a.rowBackground }}">
+                    <div style="width:56px;flex:none;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgb(138,138,138)">{{ a.time }}</div>
+                    <div style="width:82px;flex:none;text-align:center;padding:3px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.04em;background:{{ a.bg }};color:{{ a.fg }};box-shadow:{{ a.ring }};box-sizing:border-box">{{ a.tag }}</div>
+                    <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.content }}</div>
+                    <svg width="7" height="11" viewBox="0 0 7 11" fill="none" stroke="rgba(60,60,67,.3)" stroke-width="1.4" style="flex:none"><path d="M1.4 1.4l4 4.1-4 4.1"></path></svg>
+                  </div>
+                </sc-for>
+              </div>
+                </div>
+
+                <div style="width:288px;flex:none;background:rgba(246,246,246,.48);box-shadow:inset 1px 0 0 rgba(0,0,0,.05);display:flex;flex-direction:column;overflow:hidden">
+              <div style="flex:1;min-height:0;overflow:auto;padding:16px 16px 20px;display:flex;flex-direction:column;gap:20px">
+                <div style="display:flex;gap:8px">
+                  <sc-for list="{{ headerMetrics }}" as="m" hint-placeholder-count="3">
+                    <div style="flex:1;min-width:0;padding:9px 10px;border-radius:12px;box-sizing:border-box;background:linear-gradient(rgba(191,191,191,.1),rgba(191,191,191,.1)),linear-gradient(rgba(255,255,255,.7),rgba(255,255,255,.7));box-shadow:1.25px 0 0 -.75px rgb(219,219,219),-1.25px 0 0 -.75px rgb(219,219,219),0 0 0 .5px rgb(219,219,219),0 4px 10px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:3px">
+                      <div style="font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;line-height:18px;color:rgb(26,26,26)">{{ m.value }}</div>
+                      <div style="font-size:10px;font-weight:590;letter-spacing:.04em;text-transform:uppercase;color:rgb(114,114,114)">{{ m.label }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-for list="{{ inspectorCards }}" as="card" hint-placeholder-count="4">
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <div style="font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">{{ card.title }}</div>
+                    <div style="display:flex;flex-direction:column;gap:7px">
+                      <sc-for list="{{ card.fields }}" as="f" hint-placeholder-count="5">
+                        <div style="display:flex;align-items:baseline;gap:10px">
+                          <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114);flex:none">{{ f.label }}</div>
+                          <div style="flex:1;min-width:0;font-size:11px;font-weight:510;line-height:14px;font-family:{{ f.font }};color:rgb(26,26,26);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.value }}</div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="m2" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">2</div>
+        <div style="font-size:15px;font-weight:600">Pair iPhone（1440×760）</div>
+      </div>
+
+      <div style="padding:44px;border-radius:22px;background:transparent">
+        <div data-screen-label="2 Pair iPhone" style="width:1440px;height:760px;border-radius:16px;overflow:hidden;display:flex;background:linear-gradient(rgba(191,191,191,.1),rgba(191,191,191,.1)),linear-gradient(rgba(255,255,255,.7),rgba(255,255,255,.7));box-shadow:1.25px 0 0 -.75px rgb(219,219,219),-1.25px 0 0 -.75px rgb(219,219,219),0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.25)">
+          <div style="width:224px;flex:none;box-sizing:border-box;background:rgba(246,246,246,.72);backdrop-filter:blur(60px) saturate(180%);display:flex;flex-direction:column">
+            <div style="height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 19px;box-sizing:border-box">
+              <div style="display:flex;gap:8px">
+                <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div>
+                <div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div>
+                <div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+              </div>
+              <div style="width:28px;height:28px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                <svg width="15" height="13" viewBox="0 0 16 14" fill="none" stroke="rgb(26,26,26)" stroke-width="1.2"><rect x="0.6" y="0.6" width="14.8" height="12.8" rx="3"></rect><line x1="5.6" y1="0.6" x2="5.6" y2="13.4"></line></svg>
+              </div>
+            </div>
+            <div style="flex:1;min-height:0;padding:0 14px;box-sizing:border-box;display:flex;flex-direction:column">
+              <div style="height:34px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Monitor</div>
+              <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                <span style="width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><rect x="1.4" y="3.6" width="15.2" height="10.8" rx="2.4"></rect><line x1="9" y1="3.6" x2="9" y2="14.4"></line></svg>
+                </span>
+                <span style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Sessions</span>
+                <span style="flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">5</span>
+              </div>
+              <div style="height:43px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Connections</div>
+              <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                <div style="position:absolute;left:-4px;right:-4px;top:0;bottom:0;border-radius:8px;background:rgb(242,242,242)"></div>
+                <span style="position:relative;width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><rect x="5.2" y="1.6" width="7.6" height="14.8" rx="2.2"></rect><path d="M2.6 6.4a4.6 4.6 0 0 0 0 5.2"></path><path d="M15.4 6.4a4.6 4.6 0 0 1 0 5.2"></path></svg>
+                </span>
+                <span style="position:relative;flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">iPhone</span>
+                <span style="position:relative;flex:none;width:7px;height:7px;margin-right:4px;border-radius:50%;background:#1DA84C"></span>
+              </div>
+              <div style="height:43px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Application</div>
+              <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                <span style="width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><circle cx="9" cy="9" r="2.6"></circle><circle cx="9" cy="9" r="6.6"></circle></svg>
+                </span>
+                <span style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Settings</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex:1;min-width:0;background:rgba(255,255,255,.94);display:flex;flex-direction:column">
+            <div style="flex:none;padding:14px 28px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:12px">
+                <div style="flex:1;min-width:0;font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26)">Pair iPhone</div>
+                <div style="flex:none;height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:590;color:#fff;background:linear-gradient(rgba(255,255,255,.28),rgba(255,255,255,.28)),linear-gradient(rgb(0,120,240),rgb(0,120,240));box-shadow:0 0 0 .5px rgba(0,90,190,.35),inset 0 22px 6px -22px rgba(255,255,255,.7),0 4px 10px rgba(0,120,240,.22)">Generate new code</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                <div style="flex:none;display:flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:1000px;background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),linear-gradient(rgba(29,168,76,.16),rgba(29,168,76,.16));box-shadow:inset 0 0 0 .5px rgba(29,168,76,.28)">
+                  <span style="width:7px;height:7px;border-radius:50%;background:#1DA84C;box-shadow:0 0 0 2.5px rgba(29,168,76,.18)"></span>
+                  <span style="font-size:11px;font-weight:590;line-height:14px;color:#157A38">Relay connected</span>
+                </div>
+                <span style="flex:1;min-width:0;font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">每台 iPhone 是一条独立的加密通道，撤销其中一台不影响其他设备。</span>
+              </div>
+            </div>
+
+            <div style="flex:1;min-height:0;overflow:auto;padding:24px 28px 28px;display:flex;gap:28px;align-items:flex-start">
+              <div style="flex:none;width:320px;padding:20px;border-radius:20px;box-sizing:border-box;background:linear-gradient(rgba(191,191,191,.1),rgba(191,191,191,.1)),linear-gradient(rgba(255,255,255,.7),rgba(255,255,255,.7));box-shadow:1.25px 0 0 -.75px rgb(219,219,219),-1.25px 0 0 -.75px rgb(219,219,219),0 0 0 .5px rgb(219,219,219),0 8px 24px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:14px;align-items:center">
+                <div style="width:280px;height:280px;border-radius:14px;background:#fff;box-shadow:inset 0 0 0 .5px rgb(226,226,226);display:flex;align-items:center;justify-content:center;font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;color:rgb(138,138,138)">QR code</div>
+                <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+                  <div style="font-size:13px;font-weight:590;line-height:16px;color:rgb(26,26,26)">Scan with Agent Status on iPhone</div>
+                  <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">Expires Aug 18, 2026 at 10:24</div>
+                </div>
+                <div style="height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:rgb(26,26,26);background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">Copy pairing payload</div>
+              </div>
+
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:baseline;gap:8px">
+                  <span style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Paired devices</span>
+                  <span style="font-size:11px;font-weight:590;line-height:14px;color:rgb(114,114,114);padding:1px 7px;border-radius:1000px;background:rgba(120,120,128,.12)">2</span>
+                </div>
+                <div style="border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+                  <sc-for list="{{ pairings }}" as="p" hint-placeholder-count="2">
+                    <div style="height:60px;display:flex;align-items:center;gap:12px;padding:0 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                      <span style="flex:none;width:24px;display:flex;align-items:center;justify-content:center">
+                        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(114,114,114)" stroke-width="1.4"><rect x="5.2" y="1.6" width="7.6" height="14.8" rx="2.2"></rect><line x1="8.2" y1="3.6" x2="9.8" y2="3.6"></line></svg>
+                      </span>
+                      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                        <div style="font-size:13px;font-weight:590;line-height:16px;color:rgb(26,26,26);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</div>
+                        <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">{{ p.meta }}</div>
+                      </div>
+                      <span style="flex:none;width:7px;height:7px;border-radius:50%;background:{{ p.tone }}"></span>
+                      <span style="flex:none;font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114);width:52px">{{ p.state }}</span>
+                      <sc-if value="{{ p.showRevoke }}" hint-placeholder-val="{{ true }}">
+                        <div style="flex:none;height:24px;display:flex;align-items:center;padding:0 12px;border-radius:1000px;font-size:11px;font-weight:590;color:#B3261E;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02)">Revoke</div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="font-size:11px;font-weight:510;line-height:16px;color:rgb(114,114,114);max-width:520px">配对码一次有效，扫描后立即失效。撤销设备会关闭该 iPhone 的通道，历史 Session 仍保留在本机。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="m3" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">3</div>
+        <div style="font-size:15px;font-weight:600">Settings · Daemon（1440×760）</div>
+      </div>
+
+      <div style="padding:44px;border-radius:22px;background:transparent">
+        <div data-screen-label="3 Settings" style="width:1440px;height:760px;border-radius:16px;overflow:hidden;display:flex;background:linear-gradient(rgba(191,191,191,.1),rgba(191,191,191,.1)),linear-gradient(rgba(255,255,255,.7),rgba(255,255,255,.7));box-shadow:1.25px 0 0 -.75px rgb(219,219,219),-1.25px 0 0 -.75px rgb(219,219,219),0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.25)">
+          <div style="width:224px;flex:none;box-sizing:border-box;background:rgba(246,246,246,.72);backdrop-filter:blur(60px) saturate(180%);display:flex;flex-direction:column">
+            <div style="height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 19px;box-sizing:border-box">
+              <div style="display:flex;gap:8px">
+                <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div>
+                <div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div>
+                <div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+              </div>
+              <div style="width:28px;height:28px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                <svg width="15" height="13" viewBox="0 0 16 14" fill="none" stroke="rgb(26,26,26)" stroke-width="1.2"><rect x="0.6" y="0.6" width="14.8" height="12.8" rx="3"></rect><line x1="5.6" y1="0.6" x2="5.6" y2="13.4"></line></svg>
+              </div>
+            </div>
+            <div style="flex:1;min-height:0;padding:0 14px;box-sizing:border-box;display:flex;flex-direction:column">
+              <div style="height:34px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Monitor</div>
+              <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                <span style="width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><rect x="1.4" y="3.6" width="15.2" height="10.8" rx="2.4"></rect><line x1="9" y1="3.6" x2="9" y2="14.4"></line></svg>
+                </span>
+                <span style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Sessions</span>
+                <span style="flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">5</span>
+              </div>
+              <div style="height:43px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Connections</div>
+              <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                <span style="width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><rect x="5.2" y="1.6" width="7.6" height="14.8" rx="2.2"></rect><path d="M2.6 6.4a4.6 4.6 0 0 0 0 5.2"></path><path d="M15.4 6.4a4.6 4.6 0 0 1 0 5.2"></path></svg>
+                </span>
+                <span style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">iPhone</span>
+                <span style="flex:none;width:7px;height:7px;margin-right:4px;border-radius:50%;background:#1DA84C"></span>
+              </div>
+              <div style="height:43px;flex:none;display:flex;align-items:flex-end;padding:0 4px 9px;box-sizing:border-box;font-size:13px;font-weight:700;line-height:16px;color:rgb(114,114,114)">Application</div>
+              <div style="position:relative;height:32px;flex:none;display:flex;align-items:center;gap:4px;padding:0 2px 0 0;border-radius:5px;box-sizing:border-box">
+                <div style="position:absolute;left:-4px;right:-4px;top:0;bottom:0;border-radius:8px;background:rgb(242,242,242)"></div>
+                <span style="position:relative;width:24px;flex:none;display:flex;align-items:center;justify-content:center">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="rgb(0,120,240)" stroke-width="1.4"><circle cx="9" cy="9" r="2.6"></circle><circle cx="9" cy="9" r="6.6"></circle></svg>
+                </span>
+                <span style="position:relative;flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Settings</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="width:260px;flex:none;background:rgba(255,255,255,.9);box-shadow:inset 1px 0 0 rgba(0,0,0,.05),inset -1px 0 0 rgba(0,0,0,.05);display:flex;flex-direction:column;overflow:hidden">
+            <div style="flex:none;height:52px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05)">
+              <span style="font-size:13px;font-weight:700;line-height:16px;color:rgb(26,26,26)">Settings</span>
+            </div>
+            <div style="flex:1;min-height:0;overflow:auto;padding:6px 14px 0;box-sizing:border-box">
+              <sc-for list="{{ settingsPanes }}" as="p" hint-placeholder-count="5">
+                <div style="position:relative;height:44px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 10px;margin-bottom:1px;border-radius:8px;box-sizing:border-box;background:{{ p.rowBackground }}">
+                  <div style="font-size:13px;font-weight:590;line-height:16px;color:{{ p.titleColor }}">{{ p.title }}</div>
+                  <div style="font-size:11px;font-weight:510;line-height:14px;color:{{ p.subColor }}">{{ p.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="flex:1;min-width:0;background:rgba(255,255,255,.94);display:flex;flex-direction:column">
+            <div style="flex:none;padding:14px 28px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px">
+              <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26)">Daemon</div>
+              <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                <div style="flex:none;display:flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:1000px;background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),linear-gradient(rgba(29,168,76,.16),rgba(29,168,76,.16));box-shadow:inset 0 0 0 .5px rgba(29,168,76,.28)">
+                  <span style="width:7px;height:7px;border-radius:50%;background:#1DA84C;box-shadow:0 0 0 2.5px rgba(29,168,76,.18)"></span>
+                  <span style="font-size:11px;font-weight:590;line-height:14px;color:#157A38">Running</span>
+                </div>
+                <span style="flex:1;min-width:0;font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">本机服务负责收集 Codex 事件并写入 SQLite。</span>
+              </div>
+            </div>
+
+            <div style="flex:1;min-height:0;overflow:auto;padding:24px 28px 28px;display:flex;flex-direction:column;gap:24px">
+              <div style="display:flex;flex-direction:column;gap:10px;max-width:640px">
+                <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Local service</div>
+                <div style="border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+                  <sc-for list="{{ daemonFacts }}" as="f" hint-placeholder-count="5">
+                    <div style="height:38px;display:flex;align-items:center;gap:16px;padding:0 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                      <div style="flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">{{ f.label }}</div>
+                      <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;font-family:{{ f.font }};color:rgb(26,26,26);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.value }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;gap:8px;padding-top:2px">
+                  <div style="height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:rgb(26,26,26);background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">Reinstall daemon</div>
+                  <div style="height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:#B3261E;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">Stop &amp; uninstall</div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:10px;max-width:640px">
+                <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Session history</div>
+                <div style="border-radius:14px;padding:16px;box-sizing:border-box;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226);display:flex;align-items:center;gap:16px">
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                    <div style="font-size:13px;font-weight:590;line-height:16px;color:rgb(26,26,26)">5 stored sessions · 18.4 MB</div>
+                    <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">历史记录保存在 SQLite 中，直到你手动删除。</div>
+                  </div>
+                  <div style="flex:none;height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:#B3261E;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">Clear history…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="m4" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">4</div>
+        <div style="font-size:15px;font-weight:600">Settings · 其余四个面板（详情区 956px）</div>
+      </div>
+
+      <div style="padding:44px;border-radius:22px;background:transparent;display:flex;flex-wrap:wrap;gap:32px">
+
+        <div data-screen-label="4 General" style="width:956px;height:400px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.94);box-shadow:0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.2);display:flex;flex-direction:column">
+          <div style="flex:none;padding:14px 28px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26)">General</div>
+            <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">Choose how Agent Status starts on this Mac.</div>
+          </div>
+          <div style="flex:1;min-height:0;overflow:auto;padding:24px 28px 28px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Startup</div>
+            <div style="max-width:640px;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+              <div style="min-height:48px;display:flex;align-items:center;gap:16px;padding:12px 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Open Agent Status at login</div>
+                <div style="flex:none;width:38px;height:22px;border-radius:1000px;padding:2px;box-sizing:border-box;display:flex;justify-content:flex-end;align-items:center;background:linear-gradient(rgba(255,255,255,.24),rgba(255,255,255,.24)),linear-gradient(rgb(0,120,240),rgb(0,120,240));box-shadow:inset 0 0 0 .5px rgba(0,90,190,.35)">
+                  <div style="width:18px;height:18px;border-radius:1000px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.22)"></div>
+                </div>
+              </div>
+              <div style="padding:12px 16px;box-sizing:border-box;font-size:11px;font-weight:510;line-height:16px;color:rgb(114,114,114)">The daemon is managed independently in Daemon settings.</div>
+            </div>
+          </div>
+        </div>
+
+        <div data-screen-label="4 Agents" style="width:956px;height:400px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.94);box-shadow:0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.2);display:flex;flex-direction:column">
+          <div style="flex:none;padding:14px 28px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26)">Agents</div>
+            <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">Manage integrations that send Session events to the daemon.</div>
+          </div>
+          <div style="flex:1;min-height:0;overflow:auto;padding:24px 28px 28px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Codex</div>
+            <div style="max-width:640px;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+              <div style="min-height:52px;display:flex;align-items:center;gap:12px;padding:12px 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                <span style="flex:none;width:20px;height:20px;display:flex;align-items:center;justify-content:center">
+                  <svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z" fill="#fff"></path><path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z" fill="url(#lobe-icons-codex-grad-2)"></path><defs><linearGradient gradientUnits="userSpaceOnUse" id="lobe-icons-codex-grad-2" x1="12" x2="12" y1="3" y2="21"><stop stop-color="#B1A7FF"></stop><stop offset=".5" stop-color="#7A9DFF"></stop><stop offset="1" stop-color="#3941FF"></stop></linearGradient></defs></svg>
+                </span>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                  <div style="font-size:13px;font-weight:590;line-height:16px;color:rgb(26,26,26)">Codex integration installed</div>
+                  <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">~/.codex/config.toml · agent-status-helper</div>
+                </div>
+                <div style="flex:none;height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:#B3261E;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">Remove Hook</div>
+              </div>
+              <div style="padding:12px 16px;box-sizing:border-box;font-size:11px;font-weight:510;line-height:16px;color:rgb(114,114,114)">Codex is supported in v1. Installing the integration preserves existing Hook handlers.</div>
+            </div>
+          </div>
+        </div>
+
+        <div data-screen-label="4 About" style="width:956px;height:400px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.94);box-shadow:0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.2);display:flex;flex-direction:column">
+          <div style="flex:none;padding:14px 28px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26)">About</div>
+            <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">Version, framework and update information.</div>
+          </div>
+          <div style="flex:1;min-height:0;overflow:auto;padding:24px 28px 28px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Agent Status</div>
+            <div style="max-width:640px;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+              <div style="height:38px;display:flex;align-items:center;gap:16px;padding:0 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                <div style="flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">Version</div>
+                <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;font-family:ui-monospace,'SF Mono',Menlo,monospace;color:rgb(26,26,26);text-align:right">1.0 (local)</div>
+              </div>
+              <div style="height:38px;display:flex;align-items:center;gap:16px;padding:0 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                <div style="flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">Frameworks</div>
+                <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26);text-align:right">AppKit main window · OpenNook notch · UIKit iPhone app</div>
+              </div>
+              <div style="height:38px;display:flex;align-items:center;gap:16px;padding:0 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                <div style="flex:none;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">Updates</div>
+                <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114);text-align:right">No automatic update channel is configured for this build.</div>
+              </div>
+              <div style="padding:12px 16px;box-sizing:border-box;display:flex">
+                <div style="height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:rgb(26,26,26);background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">About Agent Status</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div data-screen-label="4 Notch" style="width:956px;height:840px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.94);box-shadow:0 0 0 .5px rgb(219,219,219),0 18px 48px rgba(0,0,0,.2);display:flex;flex-direction:column">
+          <div style="flex:none;padding:14px 28px;box-sizing:border-box;background:rgba(255,255,255,.85);backdrop-filter:blur(6px);border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:26px;color:rgb(26,26,26)">Notch</div>
+            <div style="font-size:11px;font-weight:510;line-height:14px;color:rgb(114,114,114)">Configure the Notch surface, screen, size, and interaction.</div>
+          </div>
+          <div style="flex:1;min-height:0;overflow:auto;padding:24px 28px 28px;display:flex;flex-direction:column;gap:24px">
+
+            <div style="display:flex;flex-direction:column;gap:10px;max-width:640px">
+              <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Appearance</div>
+              <div style="border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+                <div style="height:52px;display:flex;align-items:center;gap:16px;padding:0 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                  <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Surface</div>
+                  <div style="flex:none;display:flex;gap:2px;padding:2px;border-radius:1000px;background:rgba(120,120,128,.1);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.05)">
+                    <span style="font-size:11px;font-weight:510;line-height:14px;padding:5px 14px;border-radius:1000px;color:rgb(64,64,64)">Solid</span>
+                    <span style="font-size:11px;font-weight:510;line-height:14px;padding:5px 14px;border-radius:1000px;color:rgb(64,64,64)">Translucent</span>
+                    <span style="font-size:11px;font-weight:590;line-height:14px;padding:5px 14px;border-radius:1000px;color:rgb(26,26,26);background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,.85));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 2px 6px rgba(0,0,0,.06)">Liquid Glass</span>
+                  </div>
+                </div>
+                <div style="height:52px;display:flex;align-items:center;gap:16px;padding:0 16px;box-sizing:border-box">
+                  <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Screen</div>
+                  <div style="flex:none;height:28px;display:flex;align-items:center;gap:8px;padding:0 8px 0 14px;border-radius:1000px;font-size:13px;font-weight:510;color:rgb(26,26,26);background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 8px 15px rgba(0,0,0,.02),inset 0 24px 6px -24px rgba(40,40,40,.5),inset 0 -24px 6px -24px rgba(40,40,40,.3)">
+                    <span>Built-in Display</span>
+                    <span style="width:16px;height:16px;border-radius:1000px;display:flex;align-items:center;justify-content:center;background:rgb(0,120,240)">
+                      <svg width="8" height="10" viewBox="0 0 8 10" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"><path d="M1.4 3.9L4 1.6l2.6 2.3"></path><path d="M1.4 6.1L4 8.4l2.6-2.3"></path></svg>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px;max-width:640px">
+              <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Adjust</div>
+              <div style="border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+                <sc-for list="{{ notchSliders }}" as="s" hint-placeholder-count="3">
+                  <div style="padding:14px 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05);display:flex;flex-direction:column;gap:10px">
+                    <div style="display:flex;align-items:center;gap:10px">
+                      <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">{{ s.title }}</div>
+                      <span title="Reset" style="flex:none;width:20px;height:20px;display:flex;align-items:center;justify-content:center;opacity:{{ s.resetOpacity }}">
+                        <svg width="13" height="13" viewBox="0 0 15 15" fill="none" stroke="rgb(114,114,114)" stroke-width="1.3"><path d="M2 7.5a5.5 5.5 0 1 0 1.7-3.97"></path><path d="M1.9 1.6v3.1h3.1"></path></svg>
+                      </span>
+                      <span style="flex:none;font-size:11px;font-weight:510;line-height:14px;font-variant-numeric:tabular-nums;color:rgb(114,114,114);padding:4px 10px;border-radius:1000px;background:rgba(120,120,128,.12)">{{ s.value }}</span>
+                    </div>
+                    <div style="position:relative;height:20px;display:flex;align-items:center">
+                      <div style="position:absolute;left:0;right:0;height:4px;border-radius:1000px;background:rgba(120,120,128,.16)"></div>
+                      <div style="position:absolute;left:0;width:{{ s.fill }};height:4px;border-radius:1000px;background:rgb(0,120,240)"></div>
+                      <div style="position:absolute;left:{{ s.knob }};width:20px;height:20px;margin-left:-10px;border-radius:1000px;background:linear-gradient(rgba(248,248,248,.2),rgba(248,248,248,.2)),linear-gradient(rgba(255,255,255,.9),rgba(255,255,255,.9));box-shadow:1.25px 0 0 -.75px rgb(208,208,208),-1.25px 0 0 -.75px rgb(208,208,208),0 0 0 .5px rgb(232,232,232),0 2px 6px rgba(0,0,0,.12)"></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px;max-width:640px">
+              <div style="font-size:15px;font-weight:700;line-height:18px;color:rgb(26,26,26)">Behavior</div>
+              <div style="border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgb(226,226,226)">
+                <div style="min-height:48px;display:flex;align-items:center;gap:16px;padding:12px 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                  <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Stay expanded after the pointer leaves</div>
+                  <div style="flex:none;width:38px;height:22px;border-radius:1000px;padding:2px;box-sizing:border-box;display:flex;justify-content:flex-start;align-items:center;background:rgba(120,120,128,.16);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.06)">
+                    <div style="width:18px;height:18px;border-radius:1000px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18)"></div>
+                  </div>
+                </div>
+                <div style="min-height:48px;display:flex;align-items:center;gap:16px;padding:12px 16px;box-sizing:border-box;border-bottom:1px solid rgba(0,0,0,.05)">
+                  <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(26,26,26)">Haptic feedback</div>
+                  <div style="flex:none;width:38px;height:22px;border-radius:1000px;padding:2px;box-sizing:border-box;display:flex;justify-content:flex-end;align-items:center;background:linear-gradient(rgba(255,255,255,.24),rgba(255,255,255,.24)),linear-gradient(rgb(0,120,240),rgb(0,120,240));box-shadow:inset 0 0 0 .5px rgba(0,90,190,.35)">
+                    <div style="width:18px;height:18px;border-radius:1000px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.22)"></div>
+                  </div>
+                </div>
+                <div style="min-height:52px;display:flex;align-items:center;gap:16px;padding:12px 16px;box-sizing:border-box">
+                  <div style="flex:1;min-width:0;font-size:13px;font-weight:510;line-height:16px;color:rgb(114,114,114)">Preview the current settings</div>
+                  <div style="flex:none;height:28px;display:flex;align-items:center;padding:0 14px;border-radius:1000px;font-size:13px;font-weight:590;color:#fff;background:linear-gradient(rgba(255,255,255,.28),rgba(255,255,255,.28)),linear-gradient(rgb(0,120,240),rgb(0,120,240));box-shadow:0 0 0 .5px rgba(0,90,190,.35),inset 0 22px 6px -22px rgba(255,255,255,.7),0 4px 10px rgba(0,120,240,.22)">Show Notch</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    </div>
+  </section>
+
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const MONO = "ui-monospace,'SF Mono',Menlo,monospace";
+const SANS = "-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif";
+
+const CAT = {
+  system:    { tag: "SYSTEM",    bg: "rgba(0,0,0,.045)",   fg: "rgba(0,0,0,.6)", shadow: "inset 0 0 0 1px rgba(0,0,0,.09)", cell: "#D8D8DC", lane: "input" },
+  context:   { tag: "CONTEXT",   bg: "rgba(60,90,140,.14)", fg: "#2F4C77", shadow: "none", cell: "#5C7FB5", lane: "input" },
+  user:      { tag: "USER",      bg: "#2F6B4F",             fg: "#fff",    shadow: "none", cell: "#2F6B4F", lane: "input" },
+  reasoning: { tag: "REASONING", bg: "rgba(91,74,138,.14)", fg: "#544080", shadow: "none", cell: "#9C8FC4", lane: "model" },
+  assistant: { tag: "ASSISTANT", bg: "#4B4185",             fg: "#fff",    shadow: "none", cell: "#4B4185", lane: "model" },
+  tool:      { tag: "TOOL",      bg: "rgba(138,107,31,.16)", fg: "#6E5417", shadow: "none", cell: "#B99A45", lane: "tools" },
+  subagent:  { tag: "SUBAGENT",  bg: "#8A5A28",             fg: "#fff",    shadow: "none", cell: "#8A5A28", lane: "tools" },
+  other:     { tag: "OTHER",     bg: "#8F3A33",             fg: "#fff",    shadow: "none", cell: "#8F3A33", lane: "tools" }
+};
+
+const RAW = [
+  ["system", "System Instructions · developer instructions", "10:02:11"],
+  ["context", "Environment Context · cwd ~/dev/agent-status", "10:02:11"],
+  ["user", "Refactor the transport DTO boundaries so Common no longer imports AppKit", "10:02:14"],
+  ["reasoning", "Inspecting package targets before editing", "10:02:19"],
+  ["tool", "shell · completed · rg --files Common/Sources", "10:02:21"],
+  ["assistant", "I'll start by mapping which files cross the transport boundary.", "10:02:26"],
+  ["tool", "apply_patch · completed · AgentStatusCore/SessionStatusTone.swift", "10:02:41"],
+  ["subagent", "audit-encryption · running · 01J9F2KQ7YB3", "10:03:02"],
+  ["tool", "shell · failed · swift build --package-path Common", "10:03:44"],
+  ["reasoning", "Build failed on a missing import", "10:03:47"],
+  ["tool", "apply_patch · completed · Common/Package.swift", "10:04:02"],
+  ["tool", "shell · completed · swift build --package-path Common", "10:04:55"],
+  ["plan", "Plan updated · 3 plan steps", "10:05:01"],
+  ["assistant", "Transport boundary builds cleanly; check-transport-boundaries.sh passes.", "10:05:20"],
+  ["user", "Also run the Mac package tests", "10:05:48"],
+  ["tool", "shell · running · swift test --package-path AgentStatusMacPackage", "10:05:52"]
+];
+
+const TONE = {
+  running: { color: "#0A6CFF", label: "ACTIVE" },
+  waiting: { color: "#1DA84C", label: "WAITING FOR INPUT" },
+  done:    { color: "#6E7178", label: "COMPLETED" }
+};
+
+const GROUPS = [
+  { key: "running", rows: [
+    { title: "Refactor transport DTO boundaries", phase: "Model turn", workspace: "~/dev/agent-status", relative: "now", child: false, selected: true, context: "68%" },
+    { title: "audit-encryption", phase: "Tool call", workspace: "subagent · depth 1", relative: "12s", child: true, selected: false, context: "24%" },
+    { title: "Investigate hook install failure", phase: "Tool call", workspace: "~/dev/agent-status", relative: "4m", child: false, selected: false, context: "41%" }
+  ]},
+  { key: "waiting", rows: [
+    { title: "Fix relay durable object lifecycle", phase: "Awaiting user", workspace: "~/dev/agent-status/Relay", relative: "18m", child: false, selected: false, context: "52%" }
+  ]},
+  { key: "done", rows: [
+    { title: "Add SQLite migration for timeline items", phase: "Idle", workspace: "~/dev/agent-status/CLI", relative: "2h", child: false, selected: false, context: "77%" },
+    { title: "Update macOS bundle verification", phase: "Idle", workspace: "~/dev/agent-status/scripts", relative: "yesterday", child: false, selected: false, context: "35%" }
+  ]}
+];
+
+const CARDS = [
+  { title: "Overview", fields: [
+    ["Session ID", "01J9EX7M4T2QZR8B3H0V5CKD9A", MONO],
+    ["Agent", "Codex (codex)", SANS],
+    ["Lifecycle", "Running", SANS],
+    ["Turn Phase", "Model turn", SANS],
+    ["Needs Attention", "No", SANS],
+    ["Started", "10:02:09", MONO]
+  ]},
+  { title: "Lineage", fields: [
+    ["Thread Source", "codex-cli", SANS],
+    ["Subagent Depth", "0", MONO],
+    ["Agent Nickname", "transport", SANS],
+    ["Agent Role", "primary", SANS]
+  ]},
+  { title: "Model", fields: [
+    ["Model", "gpt-5-codex", SANS],
+    ["Provider", "openai", SANS],
+    ["Context Window", "272,000", MONO],
+    ["Reasoning Effort", "medium", SANS],
+    ["Client Version", "codex-cli 0.48.2", MONO]
+  ]},
+  { title: "Usage", fields: [
+    ["Input", "184,220", MONO],
+    ["Cached Input", "151,808", MONO],
+    ["Cache-write", "12,544", MONO],
+    ["Output", "9,431", MONO],
+    ["Reasoning Output", "6,208", MONO],
+    ["Total Tokens", "193,651", MONO]
+  ]}
+];
+
+const CAT2 = {
+  system:    { tag: "SYSTEM",    bg: "#E8E8EC",  fg: "#55565B", shadow: "inset 0 0 0 1px rgba(0,0,0,.08)", cell: "#C4C5CB", lane: "input" },
+  context:   { tag: "CONTEXT",   bg: "#1E7FD8",  fg: "#fff",    shadow: "none", cell: "#1E7FD8", lane: "input" },
+  user:      { tag: "USER",      bg: "#17A34A",  fg: "#fff",    shadow: "none", cell: "#17A34A", lane: "input" },
+  reasoning: { tag: "REASONING", bg: "#EBDEFB",  fg: "#6D28D9", shadow: "none", cell: "#C4A5FA", lane: "model" },
+  assistant: { tag: "ASSISTANT", bg: "#7C3AED",  fg: "#fff",    shadow: "none", cell: "#7C3AED", lane: "model" },
+  tool:      { tag: "TOOL",      bg: "#EAB308",  fg: "#3D2E00", shadow: "none", cell: "#EAB308", lane: "tools" },
+  subagent:  { tag: "SUBAGENT",  bg: "#EA580C",  fg: "#fff",    shadow: "none", cell: "#EA580C", lane: "tools" },
+  other:     { tag: "OTHER",     bg: "#DC2626",  fg: "#fff",    shadow: "none", cell: "#DC2626", lane: "tools" }
+};
+
+const FLAT_SESSIONS = [
+  { title: "Refactor transport DTO boundaries", agent: "Codex", status: "Running · Model turn", tone: "#0A6CFF", selected: true, child: false },
+  { title: "audit-encryption", agent: "Codex", status: "Running · Tool call", tone: "#0A6CFF", selected: false, child: true },
+  { title: "Investigate hook install failure", agent: "Codex", status: "Running · Tool call", tone: "#0A6CFF", selected: false, child: false },
+  { title: "Fix relay durable object lifecycle", agent: "Claude", status: "Waiting for input · Awaiting user", tone: "#1DA84C", selected: false, child: false },
+  { title: "Add SQLite migration for timeline items", agent: "Codex", status: "Completed · Idle", tone: "#6E7178", selected: false, child: false },
+  { title: "Update macOS bundle verification", agent: "Claude", status: "Completed · Idle", tone: "#6E7178", selected: false, child: false }
+];
+
+// Category colors tuned to the Apple kit's vibrant accents (Light mode).
+const CAT3 = {
+  system:    { tag: "SYSTEM",    bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#D6D7DB", lane: "input" },
+  context:   { tag: "CONTEXT",   bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#E7E8EC", lane: "input" },
+  user:      { tag: "USER",      bg: "#1DA84C", fg: "#fff", ring: "inset 0 0 0 .5px rgba(0,78,32,.38)", cell: "#1DA84C", lane: "input" },
+  reasoning: { tag: "REASONING", bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#E7E8EC", lane: "model" },
+  assistant: { tag: "ASSISTANT", bg: "rgba(0,120,240,.14)", fg: "#0A5FBF", ring: "inset 0 0 0 .5px rgba(0,120,240,.26)", cell: "#DBECFD", lane: "model" },
+  tool:      { tag: "TOOL",      bg: "rgba(240,180,0,.16)", fg: "#6E5417", ring: "inset 0 0 0 .5px rgba(240,180,0,.32)", cell: "#FDF3D6", lane: "tools" },
+  subagent:  { tag: "SUBAGENT",  bg: "rgba(237,106,12,.16)", fg: "#8A3E05", ring: "inset 0 0 0 .5px rgba(237,106,12,.32)", cell: "#FCE7D8", lane: "tools" },
+  plan:      { tag: "PLAN",      bg: "rgba(142,63,232,.14)", fg: "#6A2FD1", ring: "inset 0 0 0 .5px rgba(142,63,232,.24)", cell: "#EFE4FC", lane: "model" },
+  other:     { tag: "OTHER",     bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#D6D7DB", lane: "tools" }
+};
+
+const SESSIONS4 = [
+  { id: "s1", title: "Refactor transport DTO boundaries", agent: "Codex", status: "Running · Model turn", tone: "#0078F0", time: "now", selected: true, kids: [
+    { title: "audit-encryption", status: "Running · Tool call", tone: "#0078F0", time: "12s" },
+    { title: "migrate-dto-tests", status: "Running · Model turn", tone: "#0078F0", time: "48s" },
+    { title: "scan-public-api", status: "Completed · 3 findings", tone: "#6E7178", time: "4m" }
+  ] },
+  { id: "s2", title: "Fix relay durable object lifecycle", agent: "Claude", status: "Waiting for input · Awaiting user", tone: "#1DA84C", time: "6m", kids: [
+    { title: "trace-websocket-drop", status: "Waiting for input", tone: "#1DA84C", time: "6m" },
+    { title: "replay-durable-log", status: "Running · Tool call", tone: "#0078F0", time: "7m" }
+  ] },
+  { id: "s3", title: "Investigate hook install failure", agent: "Codex", status: "Running · Tool call", tone: "#0078F0", time: "11m", kids: [] },
+  { id: "s4", title: "Add SQLite migration for timeline items", agent: "Codex", status: "Completed · Idle", tone: "#6E7178", time: "1h", kids: [
+    { title: "backfill-item-index", status: "Completed · Idle", tone: "#6E7178", time: "1h" }
+  ] },
+  { id: "s5", title: "Update macOS bundle verification", agent: "Claude", status: "Completed · Idle", tone: "#6E7178", time: "3h", kids: [] }
+];
+
+class Component extends DCLogic {
+  state = { collapsed4: { s2: true, s4: true } };
+
+  renderVals() {
+    const collapsed = this.state.collapsed4 || {};
+    const lanesOpen = (this.state.laneMode || "lanes") === "lanes";
+    const toggleLanes = () => this.setState({ laneMode: lanesOpen ? "single" : "lanes" });
+    const laneLabel = lanesOpen ? "Collapse lanes" : "Expand lanes";
+    const statusInk = (tone) => (tone === "#6E7178" ? "rgb(114,114,114)" : tone);
+    const sessions4 = [];
+    SESSIONS4.forEach((s) => {
+      const shut = !!collapsed[s.id];
+      sessions4.push({
+        id: s.id, title: s.title, status: s.status, time: s.time,
+        weight: "590", titleColor: "rgb(26,26,26)",
+        statusColor: statusInk(s.tone), dot: s.tone,
+        bg: s.selected ? "rgb(242,242,242)" : "transparent",
+        hasKids: s.kids.length > 0, isChild: false,
+        iconCursor: s.kids.length > 0 ? "pointer" : "default",
+        isCodex: s.agent === "Codex", isClaude: s.agent === "Claude",
+        chevron: shut ? "rotate(0deg)" : "rotate(90deg)",
+        elbow: "0", trunk: (!shut && s.kids.length > 0) ? "1" : "0", trunkTop: "27px",
+        showCount: shut && s.kids.length > 0,
+        countLabel: String(s.kids.length),
+        onToggle: () => this.setState((st) => {
+          const next = Object.assign({}, st.collapsed4);
+          next[s.id] = !next[s.id];
+          return { collapsed4: next };
+        })
+      });
+      if (shut) return;
+      s.kids.forEach((k, ki) => sessions4.push({
+        id: s.id + "k" + ki, title: k.title, status: k.status, time: k.time,
+        weight: "510", titleColor: "rgb(60,60,67)",
+        statusColor: statusInk(k.tone), dot: k.tone,
+        bg: "transparent",
+        hasKids: false, isChild: true, isCodex: false, isClaude: false, iconCursor: "default",
+        chevron: "rotate(0deg)",
+        elbow: "1", trunk: ki < s.kids.length - 1 ? "1" : "0", trunkTop: "17px",
+        showCount: false, countLabel: "", onToggle: null
+      }));
+    });
+    const activities3 = RAW.map(([key, content, time], i) => {
+      const c = CAT3[key];
+      const failed = content.indexOf(" · failed · ") !== -1;
+      const cell = (lane) => (c.lane === lane ? c.cell : "transparent");
+      return {
+        id: "c" + i, tag: failed ? "FAILED" : c.tag, content, time, cell: failed ? "#E5352F" : c.cell,
+        bg: failed ? "#E5352F" : c.bg, fg: failed ? "#fff" : c.fg, ring: failed ? "none" : c.ring,
+        rowBackground: i % 2 === 1 ? "rgba(120,120,128,.045)" : "transparent",
+        inputCell: cell("input"), toolsCell: failed ? "#E5352F" : cell("tools"), modelCell: cell("model")
+      };
+    });
+
+    const activities2 = RAW.map(([key, content, time], i) => {
+      const c = CAT2[key] || CAT2.other;
+      const cell = (lane) => (c.lane === lane ? c.cell : "transparent");
+      const sh = (lane) => (c.lane === lane && key === "system" ? "inset 0 0 0 1px rgba(0,0,0,.1)" : "none");
+      return {
+        id: "b" + i, tag: c.tag, content, time,
+        bg: c.bg, fg: c.fg, tagShadow: c.shadow,
+        rowBackground: i % 2 === 1 ? "rgba(0,0,0,.014)" : "transparent",
+        inputCell: cell("input"), toolsCell: cell("tools"), modelCell: cell("model"),
+        inputShadow: sh("input"), toolsShadow: sh("tools"), modelShadow: sh("model")
+      };
+    });
+
+    const flatSessions = FLAT_SESSIONS.map((s, i) => ({
+      id: "fs" + i,
+      title: s.title,
+      agent: s.agent,
+      status: s.status,
+      tone: s.tone,
+      titleColor: s.selected ? "#0A4FBF" : "#1B1C1E",
+      titleSize: s.child ? "12px" : "13px",
+      showAgent: !s.child,
+      isCodex: !s.child && s.agent === "Codex",
+      isClaude: !s.child && s.agent === "Claude",
+      rowBackground: s.selected ? "rgba(10,108,255,.09)" : "transparent",
+      paddingLeft: s.child ? "36px" : "14px",
+      elbowOpacity: s.child ? "1" : "0",
+      separator: "rgba(0,0,0,.055)",
+      glassPadLeft: s.child ? "32px" : "10px",
+      metaIndent: s.child ? "0px" : "22px",
+      glassBackground: s.selected ? "rgb(242,242,242)" : "transparent",
+      glassShadow: "none",
+      glassTitleColor: "rgb(26,26,26)",
+      glassStatusColor: s.tone,
+      glassTone: s.tone,
+      toneHalo: "transparent",
+      agentChipBg: "rgba(120,120,128,.12)",
+      agentChipFg: "rgb(64,64,64)"
+    }));
+
+    const activities = RAW.map(([key, content, time], i) => {
+      const c = CAT[key] || CAT.other;
+      const cell = (lane) => (c.lane === lane ? c.cell : "transparent");
+      const sh = (lane) => (c.lane === lane && key === "system" ? "inset 0 0 0 1px rgba(0,0,0,.1)" : "none");
+      return {
+        id: "a" + i, tag: c.tag, content, time,
+        bg: c.bg, fg: c.fg, tagShadow: c.shadow,
+        rowBackground: i % 2 === 1 ? "rgba(0,0,0,.014)" : "transparent",
+        inputCell: cell("input"), toolsCell: cell("tools"), modelCell: cell("model"),
+        inputShadow: sh("input"), toolsShadow: sh("tools"), modelShadow: sh("model")
+      };
+    });
+
+    const groups = GROUPS.map((g, gi) => {
+      const tone = TONE[g.key];
+      return {
+        id: "g" + gi,
+        label: tone.label,
+        tone: tone.color,
+        count: String(g.rows.length),
+        rows: g.rows.map((r, i) => ({
+          id: "g" + gi + "r" + i,
+          title: r.title,
+          phase: r.phase,
+          workspace: r.workspace,
+          relative: r.relative,
+          contextWidth: r.context,
+          paddingLeft: r.child ? "28px" : "14px",
+          stripe: r.selected ? "#0A6CFF" : tone.color,
+          rowBackground: r.selected ? "rgba(10,108,255,.09)" : "transparent",
+          titleColor: r.selected ? "#0A4FBF" : "#1B1C1E",
+          phaseColor: tone.color,
+          metaColor: "rgba(0,0,0,.42)",
+          separator: "rgba(0,0,0,.055)"
+        }))
+      };
+    });
+
+    const headerMetrics = [
+      { id: "m1", value: "193,651", label: "tokens" },
+      { id: "m2", value: "68%", label: "context" },
+      { id: "m3", value: "3m 43s", label: "elapsed" }
+    ];
+
+    const inspectorCards = CARDS.map((c, i) => ({
+      id: "ic" + i,
+      title: c.title,
+      fields: c.fields.map(([label, value, font], j) => ({ id: "if" + i + "-" + j, label, value, font }))
+    }));
+
+    const factGroups = CARDS.map((c, i) => ({
+      id: "fg" + i,
+      title: c.title,
+      fields: c.fields.map(([label, value, font], j) => ({ id: "fa" + i + "-" + j, label, value, font }))
+    }));
+
+    const pairings = [
+      { id: "p0", name: "huanan 的 iPhone", meta: "Paired · Aug 14, 2026 at 21:08", tone: "#1DA84C", state: "Active", showRevoke: true },
+      { id: "p1", name: "iPhone 17 Pro", meta: "Revoked · Aug 2, 2026 at 09:41", tone: "rgb(138,138,138)", state: "Revoked", showRevoke: false }
+    ];
+
+    const settingsPanes = [
+      { id: "sp0", title: "General", sub: "Launch behavior", selected: false },
+      { id: "sp1", title: "Notch", sub: "Appearance and interaction", selected: false },
+      { id: "sp2", title: "Daemon", sub: "Local service and history", selected: true },
+      { id: "sp3", title: "Agents", sub: "Codex integration", selected: false },
+      { id: "sp4", title: "About", sub: "Version and updates", selected: false }
+    ].map((p) => ({
+      ...p,
+      rowBackground: p.selected ? "rgb(242,242,242)" : "transparent",
+      titleColor: "rgb(26,26,26)",
+      subColor: "rgb(114,114,114)"
+    }));
+
+    const daemonFacts = [
+      { id: "d0", label: "Status", value: "Running", font: SANS },
+      { id: "d1", label: "Uptime", value: "13h 23m", font: MONO },
+      { id: "d2", label: "Active sessions", value: "2", font: MONO },
+      { id: "d3", label: "Stored sessions", value: "5", font: MONO },
+      { id: "d4", label: "Socket", value: "~/Library/Application Support/AgentStatus/daemon.sock", font: MONO }
+    ];
+
+    const notchSliders = [
+      { id: "n0", title: "Compact Width", value: "220 pt", pct: 0.42, isDefault: false },
+      { id: "n1", title: "Expanded Width", value: "640 pt", pct: 0.66, isDefault: false },
+      { id: "n2", title: "Expand Animation", value: "0.32 s", pct: 0.5, isDefault: true }
+    ].map((s) => ({
+      id: s.id,
+      title: s.title,
+      value: s.value,
+      fill: Math.round(s.pct * 100) + "%",
+      knob: Math.round(s.pct * 100) + "%",
+      resetOpacity: s.isDefault ? "0.3" : "1"
+    }));
+
+    return { lanesOpen, lanesShut: !lanesOpen, toggleLanes, laneLabel, activities, activities2, activities3, groups, flatSessions, sessions4, headerMetrics, inspectorCards, factGroups, pairings, settingsPanes, daemonFacts, notchSliders };
+  }
+}
+
+</script>
+</body>
+</html>

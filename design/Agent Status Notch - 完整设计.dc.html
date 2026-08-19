@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  body { margin: 0; background: #dcdcdf; }
+  a { color: rgb(0,120,240); }
+  a:hover { color: rgb(0,96,200); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.22); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .nk-arch { display: none; }
+  .nk-row:hover .nk-arch { display: flex; }
+  .nk-row:hover .nk-time { display: none; }
+</style>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#111"/><rect x="26" y="18" width="48" height="16" rx="6" fill="#0a84ff"/><rect x="26" y="40" width="48" height="30" rx="6" fill="#fff" opacity="0.16"/></svg></template>
+</helmet>
+<div style="padding:56px;display:flex;flex-direction:column;gap:64px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Helvetica,sans-serif;-webkit-font-smoothing:antialiased;color:#1B1C1E">
+
+  <section style="display:flex;flex-direction:column;gap:22px">
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div style="font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(0,0,0,.45)">Notch · 完整设计</div>
+      <div style="font-size:13px;color:rgba(0,0,0,.55);max-width:860px">Notch 侧全部页面的当前设计。面板 520pt 宽、深色玻璃，顶部黑色横带把摄像头区留空（左侧应用标识，右侧设置）。展开态共用同一套栅格：8px 状态点、13px 标题、右侧 10px agent 类型加等宽相对时间，状态只靠左侧圆点区分；Turn 事件不另开视觉语言，只把列表换成单条卡片加动作行。带 subagent 的 session 在下方缩进列出，引导线从父行状态点连下来；archive 图标只在 turn 已结束的行上出现。</div>
+    </div>
+
+    <div id="n1" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">1</div>
+        <div style="font-size:15px;font-weight:600">收起态 · 状态点 + 会话数（宽 64pt）</div>
+      </div>
+      <div style="display:flex;gap:16px;padding:16px 18px;border-radius:16px;background:#20242e">
+        <div style="width:236px;height:32px;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;padding:0 9px;border-radius:0 0 12px 12px;background:#000">
+          <span style="width:28px;display:flex;align-items:center;justify-content:center"><span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.34)"></span></span>
+          <span style="width:150px"></span>
+          <span style="width:28px;text-align:center;font-size:11px;font-weight:590;color:rgba(255,255,255,.5)">0</span>
+        </div>
+        <div style="width:236px;height:32px;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;padding:0 9px;border-radius:0 0 12px 12px;background:#000">
+          <span style="width:28px;display:flex;align-items:center;justify-content:center"><span style="width:8px;height:8px;border-radius:50%;background:#4C9BFF;box-shadow:0 0 0 3px rgba(76,155,255,.22)"></span></span>
+          <span style="width:150px"></span>
+          <span style="width:28px;text-align:center;font-size:11px;font-weight:590;color:#fff">3</span>
+        </div>
+        <div style="width:236px;height:32px;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;padding:0 9px;border-radius:0 0 12px 12px;background:#000">
+          <span style="width:28px;display:flex;align-items:center;justify-content:center"><span style="width:8px;height:8px;border-radius:50%;background:#34C759;box-shadow:0 0 0 3px rgba(52,199,89,.26)"></span></span>
+          <span style="width:150px"></span>
+          <span style="width:28px;text-align:center;font-size:11px;font-weight:590;color:#fff">1</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:28px">
+
+      <div id="n2" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">2</div>
+          <div style="font-size:15px;font-weight:600">Session 列表 · 含 subagent</div>
+        </div>
+        <div data-screen-label="2 Notch List" style="width:660px;height:404px;box-sizing:border-box;border-radius:18px;overflow:hidden;position:relative;background:transparent">
+          <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:rgba(0,0,0,.32);font-size:11px;font-weight:590;color:rgba(255,255,255,.62)">
+            <span>Finder</span><span style="font-variant-numeric:tabular-nums">14:13</span>
+          </div>
+          <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:520px;box-sizing:border-box;border-radius:0 0 26px 26px;overflow:hidden;background:rgba(18,18,20,.9);backdrop-filter:blur(40px) saturate(160%);box-shadow:0 0 0 .5px rgba(255,255,255,.1),0 26px 60px rgba(0,0,0,.55);color:#fff">
+            <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:#000">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="0.8" y="1.8" width="14.4" height="12.4" rx="2.8"></rect><path d="M4.4 6.2l2.2 2-2.2 2"></path><path d="M8.4 10.4h3.2"></path></svg>
+                <span style="font-size:13px;font-weight:590;color:rgba(255,255,255,.62)">Agent Status</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:15px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-linecap="round"><circle cx="8" cy="8" r="4.5" stroke-width="1.25"></circle><circle cx="8" cy="8" r="1.7" stroke-width="1.25"></circle><path d="M8 1.5v1.4M8 13.1v1.4M1.5 8h1.4M13.1 8h1.4M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1" stroke-width="1.7"></path></svg>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1.25" stroke-linecap="round"><rect x="3.4" y="7.2" width="9.2" height="7.2" rx="1.8"></rect><path d="M5.6 7.2V5a2.4 2.4 0 0 1 4.8-.2"></path></svg>
+              </div>
+            </div>
+
+            <div style="padding:4px 0 0">
+              <div class="nk-row" style="display:grid;grid-template-columns:8px 1fr auto;column-gap:10px;row-gap:4px;align-items:center;padding:10px 16px 4px;box-sizing:border-box">
+                <span style="grid-column:1;grid-row:1;width:8px;height:8px;border-radius:50%;background:#4C9BFF;box-shadow:0 0 0 3px rgba(76,155,255,.2)"></span>
+                <span style="grid-column:2;grid-row:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Refactor transport DTO boundaries</span>
+                <span style="grid-column:3;grid-row:1;display:grid;grid-template-columns:auto 20px;align-items:center;column-gap:10px;padding-left:10px">
+                  <span style="display:flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.09);font-size:10px;font-weight:590;line-height:14px;color:rgba(255,255,255,.6)">Codex</span>
+                  <span style="height:20px;display:flex;align-items:center;justify-content:flex-end">
+                    <span class="nk-time" style="white-space:nowrap;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.38)">now</span>
+                    <span class="nk-arch" title="Archive" style="width:20px;height:20px;align-items:center;justify-content:center;border-radius:6px;background:rgba(255,255,255,.12)">
+                      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="1.25" stroke-linecap="round"><rect x="1" y="2" width="12" height="3" rx="1"></rect><path d="M2.2 5.4v5.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.4"></path><path d="M5.6 8.2h2.8"></path></svg>
+                    </span>
+                  </span>
+                </span>
+              </div>
+
+              <div style="position:relative;display:grid;grid-template-columns:6px 1fr auto;column-gap:10px;align-items:center;padding:3px 16px 3px 34px;box-sizing:border-box">
+                <div style="position:absolute;left:20px;top:-12px;width:11px;height:23px;border-left:1px solid rgba(255,255,255,.16);border-bottom:1px solid rgba(255,255,255,.16);border-bottom-left-radius:5px"></div>
+                <div style="position:absolute;left:20px;top:11px;bottom:-3px;width:1px;background:rgba(255,255,255,.16)"></div>
+                <span style="width:6px;height:6px;border-radius:50%;background:#4C9BFF"></span>
+                <span style="min-width:0;font-size:11px;font-weight:510;line-height:14px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">audit-encryption</span>
+                <span style="width:34px;text-align:right;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.32)">12s</span>
+              </div>
+
+              <div style="position:relative;display:grid;grid-template-columns:6px 1fr auto;column-gap:10px;align-items:center;padding:3px 16px 9px 34px;box-sizing:border-box">
+                <div style="position:absolute;left:20px;top:-8px;width:11px;height:19px;border-left:1px solid rgba(255,255,255,.16);border-bottom:1px solid rgba(255,255,255,.16);border-bottom-left-radius:5px"></div>
+                <span style="width:6px;height:6px;border-radius:50%;background:#4C9BFF"></span>
+                <span style="min-width:0;font-size:11px;font-weight:510;line-height:14px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">migrate-dto-tests</span>
+                <span style="width:34px;text-align:right;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.32)">48s</span>
+              </div>
+              <div style="height:1px;margin:0 16px;background:rgba(255,255,255,.08)"></div>
+
+              <div class="nk-row" style="display:grid;grid-template-columns:8px 1fr auto;column-gap:10px;row-gap:4px;align-items:center;padding:10px 16px 11px;box-sizing:border-box">
+                <span style="grid-column:1;grid-row:1;width:8px;height:8px;border-radius:50%;background:#34C759;box-shadow:0 0 0 3px rgba(52,199,89,.22)"></span>
+                <span style="grid-column:2;grid-row:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Fix relay durable object lifecycle</span>
+                <span style="grid-column:3;grid-row:1;display:grid;grid-template-columns:auto 20px;align-items:center;column-gap:10px;padding-left:10px">
+                  <span style="display:flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.09);font-size:10px;font-weight:590;line-height:14px;color:rgba(255,255,255,.6)">Claude</span>
+                  <span style="height:20px;display:flex;align-items:center;justify-content:flex-end">
+                    <span class="nk-time" style="white-space:nowrap;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.38)">6m</span>
+                    <span class="nk-arch" title="Archive" style="width:20px;height:20px;align-items:center;justify-content:center;border-radius:6px;background:rgba(255,255,255,.12)">
+                      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="1.25" stroke-linecap="round"><rect x="1" y="2" width="12" height="3" rx="1"></rect><path d="M2.2 5.4v5.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.4"></path><path d="M5.6 8.2h2.8"></path></svg>
+                    </span>
+                  </span>
+                </span>
+              </div>
+
+              <div style="height:1px;margin:0 16px;background:rgba(255,255,255,.08)"></div>
+
+              <div class="nk-row" style="display:grid;grid-template-columns:8px 1fr auto;column-gap:10px;row-gap:4px;align-items:center;padding:10px 16px 11px;box-sizing:border-box">
+                <span style="grid-column:1;grid-row:1;width:8px;height:8px;border-radius:50%;background:#4C9BFF;box-shadow:0 0 0 3px rgba(76,155,255,.2)"></span>
+                <span style="grid-column:2;grid-row:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Investigate hook install failure</span>
+                <span style="grid-column:3;grid-row:1;display:grid;grid-template-columns:auto 20px;align-items:center;column-gap:10px;padding-left:10px">
+                  <span style="display:flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.09);font-size:10px;font-weight:590;line-height:14px;color:rgba(255,255,255,.6)">Codex</span>
+                  <span style="height:20px;display:flex;align-items:center;justify-content:flex-end">
+                    <span class="nk-time" style="white-space:nowrap;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.38)">11m</span>
+                    <span class="nk-arch" title="Archive" style="width:20px;height:20px;align-items:center;justify-content:center;border-radius:6px;background:rgba(255,255,255,.12)">
+                      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="1.25" stroke-linecap="round"><rect x="1" y="2" width="12" height="3" rx="1"></rect><path d="M2.2 5.4v5.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.4"></path><path d="M5.6 8.2h2.8"></path></svg>
+                    </span>
+                  </span>
+                </span>
+              </div>
+              <div style="height:1px;margin:0 16px;background:rgba(255,255,255,.08)"></div>
+
+              <div class="nk-row" style="display:grid;grid-template-columns:8px 1fr auto;column-gap:10px;row-gap:4px;align-items:center;padding:10px 16px 11px;box-sizing:border-box">
+                <span style="grid-column:1;grid-row:1;width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.34)"></span>
+                <span style="grid-column:2;grid-row:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Add SQLite migration for timeline items</span>
+                <span style="grid-column:3;grid-row:1;display:grid;grid-template-columns:auto 20px;align-items:center;column-gap:10px;padding-left:10px">
+                  <span style="display:flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.07);font-size:10px;font-weight:590;line-height:14px;color:rgba(255,255,255,.45)">Codex</span>
+                  <span style="height:20px;display:flex;align-items:center;justify-content:flex-end">
+                    <span class="nk-time" style="white-space:nowrap;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.38)">1h</span>
+                    <span class="nk-arch" title="Archive" style="width:20px;height:20px;align-items:center;justify-content:center;border-radius:6px;background:rgba(255,255,255,.12)">
+                      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="1.25" stroke-linecap="round"><rect x="1" y="2" width="12" height="3" rx="1"></rect><path d="M2.2 5.4v5.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.4"></path><path d="M5.6 8.2h2.8"></path></svg>
+                    </span>
+                  </span>
+                </span>
+              </div>
+
+              <div style="height:1px;margin:0 16px;background:rgba(255,255,255,.08)"></div>
+
+              <div class="nk-row" style="display:grid;grid-template-columns:8px 1fr auto;column-gap:10px;row-gap:4px;align-items:center;padding:10px 16px 11px;box-sizing:border-box">
+                <span style="grid-column:1;grid-row:1;width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.34)"></span>
+                <span style="grid-column:2;grid-row:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Bump relay dependency pins</span>
+                <span style="grid-column:3;grid-row:1;display:grid;grid-template-columns:auto 20px;align-items:center;column-gap:10px;padding-left:10px">
+                  <span style="display:flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.07);font-size:10px;font-weight:590;line-height:14px;color:rgba(255,255,255,.45)">Claude</span>
+                  <span style="height:20px;display:flex;align-items:center;justify-content:flex-end">
+                    <span class="nk-time" style="white-space:nowrap;font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.38)">11d</span>
+                    <span class="nk-arch" title="Archive" style="width:20px;height:20px;align-items:center;justify-content:center;border-radius:6px;background:rgba(255,255,255,.12)">
+                      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="1.25" stroke-linecap="round"><rect x="1" y="2" width="12" height="3" rx="1"></rect><path d="M2.2 5.4v5.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.4"></path><path d="M5.6 8.2h2.8"></path></svg>
+                    </span>
+                  </span>
+                </span>
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 16px 12px;box-sizing:border-box;border-top:1px solid rgba(255,255,255,.08);margin-top:4px">
+                <span style="font-size:10px;font-weight:590;color:rgba(255,255,255,.4)">5 of 6 sessions</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="n3" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">3</div>
+          <div style="font-size:15px;font-weight:600">Turn 刚启动 · 用户输入回显</div>
+        </div>
+        <div data-screen-label="3 Notch Turn Start" style="width:660px;height:404px;box-sizing:border-box;border-radius:18px;overflow:hidden;position:relative;background:transparent">
+          <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:rgba(0,0,0,.32);font-size:11px;font-weight:590;color:rgba(255,255,255,.62)">
+            <span>Finder</span><span style="font-variant-numeric:tabular-nums">14:13</span>
+          </div>
+          <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:520px;box-sizing:border-box;border-radius:0 0 26px 26px;overflow:hidden;background:rgba(18,18,20,.9);backdrop-filter:blur(40px) saturate(160%);box-shadow:0 0 0 .5px rgba(255,255,255,.1),0 26px 60px rgba(0,0,0,.55);color:#fff">
+            <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:#000">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="0.8" y="1.8" width="14.4" height="12.4" rx="2.8"></rect><path d="M4.4 6.2l2.2 2-2.2 2"></path><path d="M8.4 10.4h3.2"></path></svg>
+                <span style="font-size:13px;font-weight:590;color:rgba(255,255,255,.62)">Agent Status</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:15px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-linecap="round"><circle cx="8" cy="8" r="4.5" stroke-width="1.25"></circle><circle cx="8" cy="8" r="1.7" stroke-width="1.25"></circle><path d="M8 1.5v1.4M8 13.1v1.4M1.5 8h1.4M13.1 8h1.4M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1" stroke-width="1.7"></path></svg>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1.25" stroke-linecap="round"><rect x="3.4" y="7.2" width="9.2" height="7.2" rx="1.8"></rect><path d="M5.6 7.2V5a2.4 2.4 0 0 1 4.8-.2"></path></svg>
+              </div>
+            </div>
+
+            <div style="padding:14px 16px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:11px">
+              <div style="display:flex;align-items:flex-start;gap:11px">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                  <div style="display:flex;align-items:baseline;gap:10px">
+                    <div style="flex:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Refactor transport DTO boundaries</div>
+                    <div style="flex:none;display:flex;align-items:baseline;gap:7px">
+                      <span style="font-size:10px;font-weight:590;color:#9DC7FF">Turn started</span>
+                      <span style="font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.4)">0:04</span>
+                    </div>
+                  </div>
+                  <div style="font-size:11px;line-height:14px;color:rgba(255,255,255,.52)">Codex · gpt-5-codex · ~/dev/agent-status</div>
+                </div>
+              </div>
+
+              <div style="padding:9px 11px;border-radius:10px;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.09);display:flex;flex-direction:column;gap:4px;margin-bottom:15px">
+                <div style="font-size:9px;font-weight:700;letter-spacing:.06em;color:rgba(255,255,255,.4)">USER</div>
+                <div style="font-size:11px;font-weight:510;line-height:16px;color:rgba(255,255,255,.86);display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden">Also run the Mac package tests and report which targets fail. Focus on AgentStatusMacFeatureTests first, then the transport tests in Common.
+
+If a target fails because of the AppKit import we just removed, fix the import rather than adding the dependency back. Keep SessionStatusTone platform-neutral and put any color mapping in the Mac feature package.
+
+When everything passes, summarize which targets ran and how long the whole suite took.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="n4" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">4</div>
+          <div style="font-size:15px;font-weight:600">Turn 结束 · 总结与动作</div>
+        </div>
+        <div data-screen-label="4 Notch Turn End" style="width:660px;height:404px;box-sizing:border-box;border-radius:18px;overflow:hidden;position:relative;background:transparent">
+          <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:rgba(0,0,0,.32);font-size:11px;font-weight:590;color:rgba(255,255,255,.62)">
+            <span>Finder</span><span style="font-variant-numeric:tabular-nums">14:13</span>
+          </div>
+          <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:520px;box-sizing:border-box;border-radius:0 0 26px 26px;overflow:hidden;background:rgba(18,18,20,.9);backdrop-filter:blur(40px) saturate(160%);box-shadow:0 0 0 .5px rgba(255,255,255,.1),0 26px 60px rgba(0,0,0,.55);color:#fff">
+            <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:#000">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="0.8" y="1.8" width="14.4" height="12.4" rx="2.8"></rect><path d="M4.4 6.2l2.2 2-2.2 2"></path><path d="M8.4 10.4h3.2"></path></svg>
+                <span style="font-size:13px;font-weight:590;color:rgba(255,255,255,.62)">Agent Status</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:15px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-linecap="round"><circle cx="8" cy="8" r="4.5" stroke-width="1.25"></circle><circle cx="8" cy="8" r="1.7" stroke-width="1.25"></circle><path d="M8 1.5v1.4M8 13.1v1.4M1.5 8h1.4M13.1 8h1.4M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1" stroke-width="1.7"></path></svg>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1.25" stroke-linecap="round"><rect x="3.4" y="7.2" width="9.2" height="7.2" rx="1.8"></rect><path d="M5.6 7.2V5a2.4 2.4 0 0 1 4.8-.2"></path></svg>
+              </div>
+            </div>
+
+            <div style="padding:14px 16px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:11px">
+              <div style="display:flex;align-items:flex-start;gap:11px">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                  <div style="display:flex;align-items:baseline;gap:10px">
+                    <div style="flex:1;min-width:0;font-size:13px;font-weight:590;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Refactor transport DTO boundaries</div>
+                    <div style="flex:none;display:flex;align-items:baseline;gap:7px">
+                      <span style="font-size:10px;font-weight:590;color:#9DC7FF">Turn complete</span>
+                      <span style="font-size:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.4)">3m 43s</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;gap:6px">
+                <span style="display:flex;align-items:baseline;gap:5px;padding:4px 9px;border-radius:8px;background:rgba(255,255,255,.07)"><span style="font-size:11px;font-weight:590;font-variant-numeric:tabular-nums">193,651</span><span style="font-size:10px;color:rgba(255,255,255,.45)">tokens</span></span>
+                <span style="display:flex;align-items:baseline;gap:5px;padding:4px 9px;border-radius:8px;background:rgba(255,255,255,.07)"><span style="font-size:11px;font-weight:590;font-variant-numeric:tabular-nums">68%</span><span style="font-size:10px;color:rgba(255,255,255,.45)">context</span></span>
+                <span style="display:flex;align-items:baseline;gap:5px;padding:4px 9px;border-radius:8px;background:rgba(255,255,255,.07)"><span style="font-size:11px;font-weight:590;font-variant-numeric:tabular-nums">2</span><span style="font-size:10px;color:rgba(255,255,255,.45)">still running</span></span>
+              </div>
+
+              <div style="font-size:11px;font-weight:510;line-height:16px;color:rgba(255,255,255,.78);display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden">Transport boundary builds cleanly and check-transport-boundaries.sh passes. Common no longer links AppKit, so the transport DTOs stay platform-neutral.
+
+What changed: SessionStatusTone moved into AgentStatusCore, the AppKit color mapping now lives in the Mac feature package, and Common/Package.swift dropped the AppKit dependency. The Mac package still builds against the same public API, and no call sites needed edits beyond the two imports.
+
+Remaining risk: the CLI target imports SessionStatusTone for its text output, so a future rename has to update both surfaces.</div>
+
+              <div style="display:flex;gap:8px;padding:2px 0 12px">
+                <span style="flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:#fff;color:#111;font-size:13px;font-weight:590">Jump to Agent</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="n5" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:#0078F0;color:#fff">5</div>
+          <div style="font-size:15px;font-weight:600">Session 详情 · 指标与最近活动</div>
+        </div>
+        <div data-screen-label="5 Notch Detail" style="width:660px;height:580px;box-sizing:border-box;border-radius:18px;overflow:hidden;position:relative;background:transparent">
+          <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:rgba(0,0,0,.32);font-size:11px;font-weight:590;color:rgba(255,255,255,.62)">
+            <span>Finder</span><span style="font-variant-numeric:tabular-nums">14:13</span>
+          </div>
+          <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:520px;box-sizing:border-box;border-radius:0 0 26px 26px;overflow:hidden;background:rgba(18,18,20,.9);backdrop-filter:blur(40px) saturate(160%);box-shadow:0 0 0 .5px rgba(255,255,255,.1),0 26px 60px rgba(0,0,0,.55);color:#fff">
+            <div style="height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-sizing:border-box;background:#000">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="0.8" y="1.8" width="14.4" height="12.4" rx="2.8"></rect><path d="M4.4 6.2l2.2 2-2.2 2"></path><path d="M8.4 10.4h3.2"></path></svg>
+                <span style="font-size:13px;font-weight:590;color:rgba(255,255,255,.62)">Agent Status</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:15px">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-linecap="round"><circle cx="8" cy="8" r="4.5" stroke-width="1.25"></circle><circle cx="8" cy="8" r="1.7" stroke-width="1.25"></circle><path d="M8 1.5v1.4M8 13.1v1.4M1.5 8h1.4M13.1 8h1.4M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1" stroke-width="1.7"></path></svg>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1.25" stroke-linecap="round"><rect x="3.4" y="7.2" width="9.2" height="7.2" rx="1.8"></rect><path d="M5.6 7.2V5a2.4 2.4 0 0 1 4.8-.2"></path></svg>
+              </div>
+            </div>
+
+            <div style="padding:13px 16px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:11px">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="flex:none;display:flex;align-items:center;justify-content:center;width:22px;height:20px;border-radius:1000px;background:rgba(255,255,255,.08)">
+                    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="rgba(255,255,255,.7)" stroke-width="1.4" stroke-linecap="round"><path d="M7.4 2.2l-4 3.8 4 3.8"></path></svg>
+                  </span>
+                  <div style="flex:1;min-width:0;font-size:15px;font-weight:700;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Refactor transport DTO boundaries</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                  <span style="display:flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:1000px;background:rgba(76,155,255,.18);box-shadow:inset 0 0 0 .5px rgba(76,155,255,.32)">
+                    <span style="width:6px;height:6px;border-radius:50%;background:#4C9BFF"></span>
+                    <span style="font-size:10px;font-weight:590;color:#9DC7FF">Running · Model turn</span>
+                  </span>
+                  <span style="height:20px;display:flex;align-items:center;padding:0 8px;border-radius:1000px;background:rgba(255,255,255,.08);font-size:10px;font-weight:590;color:rgba(255,255,255,.66)">Codex</span>
+                </div>
+              </div>
+
+              <div style="display:flex;gap:6px">
+                <div style="flex:1;padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.06);display:flex;flex-direction:column;gap:2px">
+                  <div style="font-size:13px;font-weight:590;font-variant-numeric:tabular-nums">193,651</div>
+                  <div style="font-size:9px;font-weight:590;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.42)">tokens</div>
+                </div>
+                <div style="flex:1;padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.06);display:flex;flex-direction:column;gap:2px">
+                  <div style="font-size:13px;font-weight:590;font-variant-numeric:tabular-nums">68%</div>
+                  <div style="font-size:9px;font-weight:590;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.42)">context</div>
+                </div>
+                <div style="flex:1;padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.06);display:flex;flex-direction:column;gap:2px">
+                  <div style="font-size:13px;font-weight:590;font-variant-numeric:tabular-nums">3m 43s</div>
+                  <div style="font-size:9px;font-weight:590;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.42)">elapsed</div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+                  <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:rgba(255,255,255,.4)">RECENT ACTIVITY</span>
+                  <span style="font-size:10px;font-weight:590;color:rgba(255,255,255,.3)">16 items</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;color:rgba(255,255,255,.38);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.2)">SESSION</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Session started · Codex · AgentStatusMacPackage</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;color:rgba(255,255,255,.38);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.2)">CTX ×3</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">AGENTS.md · config.toml · working directory</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:#22B856;color:#fff;box-shadow:inset 0 0 0 .5px rgba(0,78,32,.38)">USER</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Also run the Mac package tests</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;color:rgba(255,255,255,.38);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.2)">CONTEXT</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">system-reminder · 2 attachments</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;color:rgba(255,255,255,.38);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.2)">REASON</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Checking package targets before editing</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:rgba(142,63,232,.26);color:#C9AEFB;box-shadow:inset 0 0 0 .5px rgba(142,63,232,.34)">PLAN</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Plan updated · 3 steps</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:rgba(240,180,0,.22);color:#F5C862;box-shadow:inset 0 0 0 .5px rgba(240,180,0,.3)">TOOL</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">shell · running · swift test --package-path AgentStatusMacPackage</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:rgba(240,180,0,.22);color:#F5C862;box-shadow:inset 0 0 0 .5px rgba(240,180,0,.3)">RESULT</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">exit 0 · 214 files · 1.2s</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:rgba(245,118,15,.24);color:#FFB27A;box-shadow:inset 0 0 0 .5px rgba(245,118,15,.34)">SUBAG</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">audit-encryption · running · 01J9F2KQ7YB3</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:rgba(0,120,240,.26);color:#B8D8FF;box-shadow:inset 0 0 0 .5px rgba(0,120,240,.34)">ASSIST</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Transport boundary builds cleanly; the check script passes.</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:#2A8CFF;color:#fff;box-shadow:inset 0 0 0 .5px rgba(0,72,160,.38)">TURN END</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Turn #1 · 2m58s · 2 tools</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;background:#EE4038;color:#fff;box-shadow:inset 0 0 0 .5px rgba(140,18,14,.38)">FAILED</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">exit 1 · duplicate symbol _DTOCodec</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;height:22px">
+                  <span style="width:60px;flex:none;text-align:center;padding:2px 0;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.03em;color:rgba(255,255,255,.38);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.2)">COMPACT</span>
+                  <span style="flex:1;min-width:0;font-size:11px;line-height:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Context compacted · 128k → 41k tokens</span>
+                </div>
+              </div>
+
+              <div style="display:flex;gap:8px;padding:2px 0 14px">
+                <span style="flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:#fff;color:#111;font-size:13px;font-weight:590">Show in App</span>
+                <span style="flex:1;height:30px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:rgba(255,255,255,.1);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.14);font-size:12px;font-weight:590">Jump to Agent</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const MONO = "ui-monospace,'SF Mono',Menlo,monospace";
+const SANS = "-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif";
+
+const CAT = {
+  system:    { tag: "SYSTEM",    bg: "rgba(0,0,0,.045)",   fg: "rgba(0,0,0,.6)", shadow: "inset 0 0 0 1px rgba(0,0,0,.09)", cell: "#D8D8DC", lane: "input" },
+  context:   { tag: "CONTEXT",   bg: "rgba(60,90,140,.14)", fg: "#2F4C77", shadow: "none", cell: "#5C7FB5", lane: "input" },
+  user:      { tag: "USER",      bg: "#2F6B4F",             fg: "#fff",    shadow: "none", cell: "#2F6B4F", lane: "input" },
+  reasoning: { tag: "REASONING", bg: "rgba(91,74,138,.14)", fg: "#544080", shadow: "none", cell: "#9C8FC4", lane: "model" },
+  assistant: { tag: "ASSISTANT", bg: "#4B4185",             fg: "#fff",    shadow: "none", cell: "#4B4185", lane: "model" },
+  tool:      { tag: "TOOL",      bg: "rgba(138,107,31,.16)", fg: "#6E5417", shadow: "none", cell: "#B99A45", lane: "tools" },
+  subagent:  { tag: "SUBAGENT",  bg: "#8A5A28",             fg: "#fff",    shadow: "none", cell: "#8A5A28", lane: "tools" },
+  other:     { tag: "OTHER",     bg: "#8F3A33",             fg: "#fff",    shadow: "none", cell: "#8F3A33", lane: "tools" }
+};
+
+const RAW = [
+  ["system", "System Instructions · developer instructions", "10:02:11"],
+  ["context", "Environment Context · cwd ~/dev/agent-status", "10:02:11"],
+  ["user", "Refactor the transport DTO boundaries so Common no longer imports AppKit", "10:02:14"],
+  ["reasoning", "Inspecting package targets before editing", "10:02:19"],
+  ["tool", "shell · completed · rg --files Common/Sources", "10:02:21"],
+  ["assistant", "I'll start by mapping which files cross the transport boundary.", "10:02:26"],
+  ["tool", "apply_patch · completed · AgentStatusCore/SessionStatusTone.swift", "10:02:41"],
+  ["subagent", "audit-encryption · running · 01J9F2KQ7YB3", "10:03:02"],
+  ["tool", "shell · failed · swift build --package-path Common", "10:03:44"],
+  ["reasoning", "Build failed on a missing import", "10:03:47"],
+  ["tool", "apply_patch · completed · Common/Package.swift", "10:04:02"],
+  ["tool", "shell · completed · swift build --package-path Common", "10:04:55"],
+  ["plan", "Plan updated · 3 plan steps", "10:05:01"],
+  ["assistant", "Transport boundary builds cleanly; check-transport-boundaries.sh passes.", "10:05:20"],
+  ["user", "Also run the Mac package tests", "10:05:48"],
+  ["tool", "shell · running · swift test --package-path AgentStatusMacPackage", "10:05:52"]
+];
+
+const TONE = {
+  running: { color: "rgb(0,120,240)", label: "ACTIVE" },
+  waiting: { color: "#1DA84C", label: "WAITING FOR INPUT" },
+  done:    { color: "#6E7178", label: "COMPLETED" }
+};
+
+const GROUPS = [
+  { key: "running", rows: [
+    { title: "Refactor transport DTO boundaries", phase: "Model turn", workspace: "~/dev/agent-status", relative: "now", child: false, selected: true, context: "68%" },
+    { title: "audit-encryption", phase: "Tool call", workspace: "subagent · depth 1", relative: "12s", child: true, selected: false, context: "24%" },
+    { title: "Investigate hook install failure", phase: "Tool call", workspace: "~/dev/agent-status", relative: "4m", child: false, selected: false, context: "41%" }
+  ]},
+  { key: "waiting", rows: [
+    { title: "Fix relay durable object lifecycle", phase: "Awaiting user", workspace: "~/dev/agent-status/Relay", relative: "18m", child: false, selected: false, context: "52%" }
+  ]},
+  { key: "done", rows: [
+    { title: "Add SQLite migration for timeline items", phase: "Idle", workspace: "~/dev/agent-status/CLI", relative: "2h", child: false, selected: false, context: "77%" },
+    { title: "Update macOS bundle verification", phase: "Idle", workspace: "~/dev/agent-status/scripts", relative: "yesterday", child: false, selected: false, context: "35%" }
+  ]}
+];
+
+const CARDS = [
+  { title: "Overview", fields: [
+    ["Session ID", "01J9EX7M4T2QZR8B3H0V5CKD9A", MONO],
+    ["Agent", "Codex (codex)", SANS],
+    ["Lifecycle", "Running", SANS],
+    ["Turn Phase", "Model turn", SANS],
+    ["Needs Attention", "No", SANS],
+    ["Started", "10:02:09", MONO]
+  ]},
+  { title: "Lineage", fields: [
+    ["Thread Source", "codex-cli", SANS],
+    ["Subagent Depth", "0", MONO],
+    ["Agent Nickname", "transport", SANS],
+    ["Agent Role", "primary", SANS]
+  ]},
+  { title: "Model", fields: [
+    ["Model", "gpt-5-codex", SANS],
+    ["Provider", "openai", SANS],
+    ["Context Window", "272,000", MONO],
+    ["Reasoning Effort", "medium", SANS],
+    ["Client Version", "codex-cli 0.48.2", MONO]
+  ]},
+  { title: "Usage", fields: [
+    ["Input", "184,220", MONO],
+    ["Cached Input", "151,808", MONO],
+    ["Cache-write", "12,544", MONO],
+    ["Output", "9,431", MONO],
+    ["Reasoning Output", "6,208", MONO],
+    ["Total Tokens", "193,651", MONO]
+  ]}
+];
+
+const CAT2 = {
+  system:    { tag: "SYSTEM",    bg: "#E8E8EC",  fg: "#55565B", shadow: "inset 0 0 0 1px rgba(0,0,0,.08)", cell: "#C4C5CB", lane: "input" },
+  context:   { tag: "CONTEXT",   bg: "#1E7FD8",  fg: "#fff",    shadow: "none", cell: "#1E7FD8", lane: "input" },
+  user:      { tag: "USER",      bg: "#17A34A",  fg: "#fff",    shadow: "none", cell: "#17A34A", lane: "input" },
+  reasoning: { tag: "REASONING", bg: "#EBDEFB",  fg: "#6D28D9", shadow: "none", cell: "#C4A5FA", lane: "model" },
+  assistant: { tag: "ASSISTANT", bg: "#7C3AED",  fg: "#fff",    shadow: "none", cell: "#7C3AED", lane: "model" },
+  tool:      { tag: "TOOL",      bg: "#EAB308",  fg: "#3D2E00", shadow: "none", cell: "#EAB308", lane: "tools" },
+  subagent:  { tag: "SUBAGENT",  bg: "#EA580C",  fg: "#fff",    shadow: "none", cell: "#EA580C", lane: "tools" },
+  other:     { tag: "OTHER",     bg: "#DC2626",  fg: "#fff",    shadow: "none", cell: "#DC2626", lane: "tools" }
+};
+
+const FLAT_SESSIONS = [
+  { title: "Refactor transport DTO boundaries", agent: "Codex", status: "Running · Model turn", tone: "rgb(0,120,240)", selected: true, child: false },
+  { title: "audit-encryption", agent: "Codex", status: "Running · Tool call", tone: "rgb(0,120,240)", selected: false, child: true },
+  { title: "Investigate hook install failure", agent: "Codex", status: "Running · Tool call", tone: "rgb(0,120,240)", selected: false, child: false },
+  { title: "Fix relay durable object lifecycle", agent: "Claude", status: "Waiting for input · Awaiting user", tone: "#1DA84C", selected: false, child: false },
+  { title: "Add SQLite migration for timeline items", agent: "Codex", status: "Completed · Idle", tone: "#6E7178", selected: false, child: false },
+  { title: "Update macOS bundle verification", agent: "Claude", status: "Completed · Idle", tone: "#6E7178", selected: false, child: false }
+];
+
+// Category colors tuned to the Apple kit's vibrant accents (Light mode).
+const CAT3 = {
+  system:    { tag: "SYSTEM",    bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#D6D7DB", lane: "input" },
+  context:   { tag: "CONTEXT",   bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#E7E8EC", lane: "input" },
+  user:      { tag: "USER",      bg: "#1DA84C", fg: "#fff", ring: "inset 0 0 0 .5px rgba(0,78,32,.38)", cell: "#1DA84C", lane: "input" },
+  reasoning: { tag: "REASONING", bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#E7E8EC", lane: "model" },
+  assistant: { tag: "ASSISTANT", bg: "rgba(0,120,240,.14)", fg: "#0A5FBF", ring: "inset 0 0 0 .5px rgba(0,120,240,.26)", cell: "#DBECFD", lane: "model" },
+  tool:      { tag: "TOOL",      bg: "rgba(240,180,0,.16)", fg: "#6E5417", ring: "inset 0 0 0 .5px rgba(240,180,0,.32)", cell: "#FDF3D6", lane: "tools" },
+  subagent:  { tag: "SUBAGENT",  bg: "rgba(237,106,12,.16)", fg: "#8A3E05", ring: "inset 0 0 0 .5px rgba(237,106,12,.32)", cell: "#FCE7D8", lane: "tools" },
+  plan:      { tag: "PLAN",      bg: "rgba(142,63,232,.14)", fg: "#6A2FD1", ring: "inset 0 0 0 .5px rgba(142,63,232,.24)", cell: "#EFE4FC", lane: "model" },
+  other:     { tag: "OTHER",     bg: "transparent", fg: "rgb(138,138,138)", ring: "inset 0 0 0 .5px rgba(0,0,0,.16)", cell: "#D6D7DB", lane: "tools" }
+};
+
+const SESSIONS4 = [
+  { id: "s1", title: "Refactor transport DTO boundaries", agent: "Codex", status: "Running · Model turn", tone: "#0078F0", time: "now", selected: true, kids: [
+    { title: "audit-encryption", status: "Running · Tool call", tone: "#0078F0", time: "12s" },
+    { title: "migrate-dto-tests", status: "Running · Model turn", tone: "#0078F0", time: "48s" },
+    { title: "scan-public-api", status: "Completed · 3 findings", tone: "#6E7178", time: "4m" }
+  ] },
+  { id: "s2", title: "Fix relay durable object lifecycle", agent: "Claude", status: "Waiting for input · Awaiting user", tone: "#1DA84C", time: "6m", kids: [
+    { title: "trace-websocket-drop", status: "Waiting for input", tone: "#1DA84C", time: "6m" },
+    { title: "replay-durable-log", status: "Running · Tool call", tone: "#0078F0", time: "7m" }
+  ] },
+  { id: "s3", title: "Investigate hook install failure", agent: "Codex", status: "Running · Tool call", tone: "#0078F0", time: "11m", kids: [] },
+  { id: "s4", title: "Add SQLite migration for timeline items", agent: "Codex", status: "Completed · Idle", tone: "#6E7178", time: "1h", kids: [
+    { title: "backfill-item-index", status: "Completed · Idle", tone: "#6E7178", time: "1h" }
+  ] },
+  { id: "s5", title: "Update macOS bundle verification", agent: "Claude", status: "Completed · Idle", tone: "#6E7178", time: "3h", kids: [] }
+];
+
+class Component extends DCLogic {
+  state = { collapsed4: { s2: true, s4: true } };
+
+  renderVals() {
+    const collapsed = this.state.collapsed4 || {};
+    const lanesOpen = (this.state.laneMode || "lanes") === "lanes";
+    const toggleLanes = () => this.setState({ laneMode: lanesOpen ? "single" : "lanes" });
+    const laneLabel = lanesOpen ? "Collapse lanes" : "Expand lanes";
+    const statusInk = (tone) => (tone === "#6E7178" ? "rgb(114,114,114)" : tone);
+    const sessions4 = [];
+    SESSIONS4.forEach((s) => {
+      const shut = !!collapsed[s.id];
+      sessions4.push({
+        id: s.id, title: s.title, status: s.status, time: s.time,
+        weight: "590", titleColor: "rgb(26,26,26)",
+        statusColor: statusInk(s.tone), dot: s.tone,
+        bg: s.selected ? "rgb(242,242,242)" : "transparent",
+        hasKids: s.kids.length > 0, isChild: false,
+        iconCursor: s.kids.length > 0 ? "pointer" : "default",
+        isCodex: s.agent === "Codex", isClaude: s.agent === "Claude",
+        chevron: shut ? "rotate(0deg)" : "rotate(90deg)",
+        elbow: "0", trunk: (!shut && s.kids.length > 0) ? "1" : "0", trunkTop: "27px",
+        showCount: shut && s.kids.length > 0,
+        countLabel: String(s.kids.length),
+        onToggle: () => this.setState((st) => {
+          const next = Object.assign({}, st.collapsed4);
+          next[s.id] = !next[s.id];
+          return { collapsed4: next };
+        })
+      });
+      if (shut) return;
+      s.kids.forEach((k, ki) => sessions4.push({
+        id: s.id + "k" + ki, title: k.title, status: k.status, time: k.time,
+        weight: "510", titleColor: "rgb(60,60,67)",
+        statusColor: statusInk(k.tone), dot: k.tone,
+        bg: "transparent",
+        hasKids: false, isChild: true, isCodex: false, isClaude: false, iconCursor: "default",
+        chevron: "rotate(0deg)",
+        elbow: "1", trunk: ki < s.kids.length - 1 ? "1" : "0", trunkTop: "17px",
+        showCount: false, countLabel: "", onToggle: null
+      }));
+    });
+    const activities3 = RAW.map(([key, content, time], i) => {
+      const c = CAT3[key];
+      const failed = content.indexOf(" · failed · ") !== -1;
+      const cell = (lane) => (c.lane === lane ? c.cell : "transparent");
+      return {
+        id: "c" + i, tag: failed ? "FAILED" : c.tag, content, time, cell: failed ? "#E5352F" : c.cell,
+        bg: failed ? "#E5352F" : c.bg, fg: failed ? "#fff" : c.fg, ring: failed ? "none" : c.ring,
+        rowBackground: i % 2 === 1 ? "rgba(120,120,128,.045)" : "transparent",
+        inputCell: cell("input"), toolsCell: failed ? "#E5352F" : cell("tools"), modelCell: cell("model")
+      };
+    });
+
+    const activities2 = RAW.map(([key, content, time], i) => {
+      const c = CAT2[key] || CAT2.other;
+      const cell = (lane) => (c.lane === lane ? c.cell : "transparent");
+      const sh = (lane) => (c.lane === lane && key === "system" ? "inset 0 0 0 1px rgba(0,0,0,.1)" : "none");
+      return {
+        id: "b" + i, tag: c.tag, content, time,
+        bg: c.bg, fg: c.fg, tagShadow: c.shadow,
+        rowBackground: i % 2 === 1 ? "rgba(0,0,0,.014)" : "transparent",
+        inputCell: cell("input"), toolsCell: cell("tools"), modelCell: cell("model"),
+        inputShadow: sh("input"), toolsShadow: sh("tools"), modelShadow: sh("model")
+      };
+    });
+
+    const flatSessions = FLAT_SESSIONS.map((s, i) => ({
+      id: "fs" + i,
+      title: s.title,
+      agent: s.agent,
+      status: s.status,
+      tone: s.tone,
+      titleColor: s.selected ? "#0A5FBF" : "#1B1C1E",
+      titleSize: s.child ? "11px" : "13px",
+      showAgent: !s.child,
+      isCodex: !s.child && s.agent === "Codex",
+      isClaude: !s.child && s.agent === "Claude",
+      rowBackground: s.selected ? "rgba(0,120,240,.09)" : "transparent",
+      paddingLeft: s.child ? "36px" : "14px",
+      elbowOpacity: s.child ? "1" : "0",
+      separator: "rgba(0,0,0,.055)",
+      glassPadLeft: s.child ? "32px" : "10px",
+      metaIndent: s.child ? "0px" : "22px",
+      glassBackground: s.selected ? "rgb(242,242,242)" : "transparent",
+      glassShadow: "none",
+      glassTitleColor: "rgb(26,26,26)",
+      glassStatusColor: s.tone,
+      glassTone: s.tone,
+      toneHalo: "transparent",
+      agentChipBg: "rgba(120,120,128,.12)",
+      agentChipFg: "rgb(64,64,64)"
+    }));
+
+    const activities = RAW.map(([key, content, time], i) => {
+      const c = CAT[key] || CAT.other;
+      const cell = (lane) => (c.lane === lane ? c.cell : "transparent");
+      const sh = (lane) => (c.lane === lane && key === "system" ? "inset 0 0 0 1px rgba(0,0,0,.1)" : "none");
+      return {
+        id: "a" + i, tag: c.tag, content, time,
+        bg: c.bg, fg: c.fg, tagShadow: c.shadow,
+        rowBackground: i % 2 === 1 ? "rgba(0,0,0,.014)" : "transparent",
+        inputCell: cell("input"), toolsCell: cell("tools"), modelCell: cell("model"),
+        inputShadow: sh("input"), toolsShadow: sh("tools"), modelShadow: sh("model")
+      };
+    });
+
+    const groups = GROUPS.map((g, gi) => {
+      const tone = TONE[g.key];
+      return {
+        id: "g" + gi,
+        label: tone.label,
+        tone: tone.color,
+        count: String(g.rows.length),
+        rows: g.rows.map((r, i) => ({
+          id: "g" + gi + "r" + i,
+          title: r.title,
+          phase: r.phase,
+          workspace: r.workspace,
+          relative: r.relative,
+          contextWidth: r.context,
+          paddingLeft: r.child ? "28px" : "14px",
+          stripe: r.selected ? "rgb(0,120,240)" : tone.color,
+          rowBackground: r.selected ? "rgba(0,120,240,.09)" : "transparent",
+          titleColor: r.selected ? "#0A5FBF" : "#1B1C1E",
+          phaseColor: tone.color,
+          metaColor: "rgba(0,0,0,.42)",
+          separator: "rgba(0,0,0,.055)"
+        }))
+      };
+    });
+
+    const headerMetrics = [
+      { id: "m1", value: "193,651", label: "tokens" },
+      { id: "m2", value: "68%", label: "context" },
+      { id: "m3", value: "3m 43s", label: "elapsed" }
+    ];
+
+    const inspectorCards = CARDS.map((c, i) => ({
+      id: "ic" + i,
+      title: c.title,
+      fields: c.fields.map(([label, value, font], j) => ({ id: "if" + i + "-" + j, label, value, font }))
+    }));
+
+    const factGroups = CARDS.map((c, i) => ({
+      id: "fg" + i,
+      title: c.title,
+      fields: c.fields.map(([label, value, font], j) => ({ id: "fa" + i + "-" + j, label, value, font }))
+    }));
+
+    const pairings = [
+      { id: "p0", name: "huanan 的 iPhone", meta: "Paired · Aug 14, 2026 at 21:08", tone: "#1DA84C", state: "Active", showRevoke: true },
+      { id: "p1", name: "iPhone 17 Pro", meta: "Revoked · Aug 2, 2026 at 09:41", tone: "rgb(138,138,138)", state: "Revoked", showRevoke: false }
+    ];
+
+    const settingsPanes = [
+      { id: "sp0", title: "General", sub: "Launch behavior", selected: false },
+      { id: "sp1", title: "Notch", sub: "Appearance and interaction", selected: false },
+      { id: "sp2", title: "Daemon", sub: "Local service and history", selected: true },
+      { id: "sp3", title: "Agents", sub: "Codex integration", selected: false },
+      { id: "sp4", title: "About", sub: "Version and updates", selected: false }
+    ].map((p) => ({
+      ...p,
+      rowBackground: p.selected ? "rgb(242,242,242)" : "transparent",
+      titleColor: "rgb(26,26,26)",
+      subColor: "rgb(114,114,114)"
+    }));
+
+    const daemonFacts = [
+      { id: "d0", label: "Status", value: "Running", font: SANS },
+      { id: "d1", label: "Uptime", value: "13h 23m", font: MONO },
+      { id: "d2", label: "Active sessions", value: "2", font: MONO },
+      { id: "d3", label: "Stored sessions", value: "5", font: MONO },
+      { id: "d4", label: "Socket", value: "~/Library/Application Support/AgentStatus/daemon.sock", font: MONO }
+    ];
+
+    const notchSliders = [
+      { id: "n0", title: "Compact Width", value: "220 pt", pct: 0.42, isDefault: false },
+      { id: "n1", title: "Expanded Width", value: "640 pt", pct: 0.66, isDefault: false },
+      { id: "n2", title: "Expand Animation", value: "0.32 s", pct: 0.5, isDefault: true }
+    ].map((s) => ({
+      id: s.id,
+      title: s.title,
+      value: s.value,
+      fill: Math.round(s.pct * 100) + "%",
+      knob: Math.round(s.pct * 100) + "%",
+      resetOpacity: s.isDefault ? "0.3" : "1"
+    }));
+
+    return { lanesOpen, lanesShut: !lanesOpen, toggleLanes, laneLabel, activities, activities2, activities3, groups, flatSessions, sessions4, headerMetrics, inspectorCards, factGroups, pairings, settingsPanes, daemonFacts, notchSliders };
+  }
+}
+
+</script>
+</body>
+</html>

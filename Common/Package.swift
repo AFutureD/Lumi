@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "AgentStatusCodex", targets: ["AgentStatusCodex"]),
         .library(name: "AgentStatusIPCClient", targets: ["AgentStatusIPCClient"]),
         .library(name: "AgentStatusRemote", targets: ["AgentStatusRemote"]),
+        .library(name: "AgentStatusDesignSystem", targets: ["AgentStatusDesignSystem"]),
     ],
     dependencies: [
         .package(path: "AgentStatusTransport"),
@@ -49,6 +50,13 @@ let package = Package(
             ]
         ),
         .target(
+            name: "AgentStatusDesignSystem",
+            dependencies: [
+                "AgentStatusCore",
+                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+            ]
+        ),
+        .target(
             name: "AgentStatusRemote",
             dependencies: [
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
@@ -71,6 +79,15 @@ let package = Package(
             dependencies: [
                 "AgentStatusCodex",
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Testing", package: "swift-testing"),
+            ]
+        ),
+        .testTarget(
+            name: "AgentStatusDesignSystemTests",
+            dependencies: [
+                "AgentStatusDesignSystem",
+                "AgentStatusCore",
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]

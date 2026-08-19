@@ -42,7 +42,7 @@ final class SessionDetailViewController: NSViewController {
         split.activity.rootView = makeActivityView()
         split.inspector.rootView = makeInspectorView()
 
-        emptyLabel.font = .systemFont(ofSize: 13)
+        emptyLabel.font = AgentStatusDesign.Font.body
         emptyLabel.textColor = .secondaryLabelColor
 
         [split.view, emptyLabel].forEach {
@@ -163,7 +163,7 @@ final class SessionDetailViewController: NSViewController {
         textView.isGrammarCheckingEnabled = false
         textView.isAutomaticLinkDetectionEnabled = false
         textView.drawsBackground = false
-        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.font = AgentStatusDesign.Font.mono
         textView.textColor = .labelColor
         textView.textContainerInset = NSSize(width: 10, height: 10)
         textView.string = SessionPagePresentationBuilder.rawData(for: activity.rawItems)

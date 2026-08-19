@@ -111,7 +111,7 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道。每�
 - 条件：iPhone 在线显示来自任意已配对 Mac 的 Session。
 - 行为：状态标记遵循 [MAC-R-013 Session 状态颜色跨端一致](./mac-session-view.md#mac-r-013-session-状态颜色跨端一致)。
 - 结果：切换 Mac 通道或查看同一 Session 的不同客户端时，颜色含义不变。
-- 限制或例外：iPhone 的状态文字使用系统标签色，颜色由列表左侧状态标记表达。
+- 限制或例外：iPhone 的状态文字与状态标记同色（Completed 转为三级灰），取值来自共享设计系统并随系统浅色 / 深色外观切换。
 
 ## 空状态与故障
 

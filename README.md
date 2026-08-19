@@ -100,4 +100,5 @@ The Codex integration installer preserves existing Hooks. Users may need to revi
 - [Data, communication, and storage](docs/design/data-communication-storage.md)
 - [Agent Hook design](docs/design/agent-hook.md)
 - [Product overview](docs/feat/index.md)
+- [Design system handoff](design/README.md) — `design/DESIGN SYSTEM.html` is the source of every colour, type and spacing value; Swift tokens live in `Common/Sources/AgentStatusDesignSystem`
 - [Current implementation task](docs/developer/tasks/260816T1953-agent-status-v1/TASK.md)

@@ -22,6 +22,7 @@ let package = Package(
             dependencies: [
                 .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusDesignSystem", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
             ]
         ),

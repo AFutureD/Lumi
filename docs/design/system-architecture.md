@@ -109,6 +109,7 @@ flowchart TD
     Codex["AgentStatusCodex<br/>Adapter"]
     IPC["AgentStatusIPCClient<br/>SwiftNIO"]
     Remote["AgentStatusRemote<br/>CryptoKit + URLSession + Keychain"]
+    Design["AgentStatusDesignSystem<br/>颜色 / 字号 / 间距 token"]
     CLI["CLI daemon/helper"]
     Mac["macOS Feature"]
     IOS["iOS Feature"]
@@ -121,11 +122,15 @@ flowchart TD
     Core --> CLI
     Codex --> CLI
     IPC --> CLI
+    Transport --> Design
+    Core --> Design
     Core --> Mac
     IPC --> Mac
     Remote --> Mac
+    Design --> Mac
     Core --> IOS
     Remote --> IOS
+    Design --> IOS
 ```
 
 边界规则：
@@ -133,6 +138,7 @@ flowchart TD
 - `AgentStatusTransport` 只依赖 Foundation。
 - Session、Timeline、IPC 和 Relay routing DTO 不在 Package 外重复声明。
 - `AgentStatusCore` 拥有 reducer 与 GRDB repository，不依赖 AppKit/UIKit。
+- `AgentStatusDesignSystem` 承载设计系统 L1 基础规范（颜色、字号、间距、圆角、关键尺寸、消息类别标签与状态色梯度），只依赖 Foundation（SwiftUI 适配放在 `#if canImport(SwiftUI)`）；macOS、Notch、iOS 视图不写颜色 / 字号 literal，只引用这里的 token。设计交接原件归档在仓库根目录 `design/`（`DESIGN SYSTEM.html` 为唯一取值来源）。
 - App 创建 ViewModel 或控制器状态，但不重新声明传输层业务对象。
 - Relay 通过共享 golden JSON 校验 routing frame，不解析 `RemoteSessionPayload`。
 

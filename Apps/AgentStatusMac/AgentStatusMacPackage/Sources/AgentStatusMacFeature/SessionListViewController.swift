@@ -52,7 +52,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        emptyLabel.font = .systemFont(ofSize: 13)
+        emptyLabel.font = AgentStatusDesign.Font.body
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -391,7 +391,7 @@ private final class SessionRowView: NSTableCellView {
         titleLabel.stringValue = presentation.title
         titleLabel.toolTip = presentation.title
         titleLabel.font = isChild ? AgentStatusDesign.Font.body : AgentStatusDesign.Font.rowTitle
-        titleLabel.textColor = isChild ? NSColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 1) : .labelColor
+        titleLabel.textColor = isChild ? AgentStatusDesign.Color.childTitle : .labelColor
 
         // Tier colour on dot and text; the Completed tier's text reads as
         // tertiary ink while its dot keeps the Completed gray.
@@ -414,8 +414,8 @@ private final class SessionRowView: NSTableCellView {
         countPill.attributedTitle = NSAttributedString(
             string: "\(layout.childCount)",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: NSColor(white: 90 / 255, alpha: 1),
+                .font: AgentStatusDesign.Font.countBadge,
+                .foregroundColor: AgentStatusDesign.Color.countBadge,
                 .paragraphStyle: {
                     let style = NSMutableParagraphStyle()
                     style.alignment = .center

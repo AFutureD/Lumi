@@ -258,7 +258,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         button.bezelStyle = .rounded
         button.bezelColor = .controlAccentColor
         button.controlSize = .regular
-        button.font = .systemFont(ofSize: 13, weight: .semibold)
+        button.font = AgentStatusDesign.Font.rowTitle
         button.isEnabled = actions.canGeneratePairingCode()
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Generate New Code"

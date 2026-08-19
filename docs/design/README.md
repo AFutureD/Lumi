@@ -55,6 +55,7 @@
 - daemon/helper：`CLI/`
 - 公共状态与存储：`Common/`
 - 唯一传输模型：`Common/AgentStatusTransport/`
+- 共享设计系统 token：`Common/Sources/AgentStatusDesignSystem/`；设计交接原件：`design/`
 - macOS/iOS：`Apps/`
 - Cloudflare Relay：`Relay/`
 - 产品行为文档：`docs/feat/`

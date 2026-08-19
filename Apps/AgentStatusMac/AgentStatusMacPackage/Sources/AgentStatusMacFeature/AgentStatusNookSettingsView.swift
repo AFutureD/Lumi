@@ -1,3 +1,4 @@
+import AgentStatusDesignSystem
 import AppKit
 import NookApp
 import SwiftUI
@@ -258,12 +259,12 @@ private struct AgentStatusAdjustmentSliderRow: View {
                     value = defaultValue
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(AgentStatusDesign.Font.UI.caption)
                         .foregroundStyle(.secondary)
                         .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
-                .opacity(isDefaultValue ? 0.3 : 1)
+                .opacity(isDefaultValue ? DesignSystem.Opacity.disabledReset : 1)
                 .disabled(isDefaultValue)
                 .help("Reset \(title)")
                 .accessibilityLabel("Reset \(title)")

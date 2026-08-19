@@ -1,4 +1,5 @@
 import AgentStatusCore
+import AgentStatusDesignSystem
 import AgentStatusTransport
 import UIKit
 
@@ -76,11 +77,17 @@ final class SessionSplitViewController: UISplitViewController, UITableViewDataSo
         let session = channel.sessions[indexPath.row]
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         cell.textLabel?.text = session.summary.title
+        cell.textLabel?.font = .design(DesignSystem.Typography.listTitle)
         cell.detailTextLabel?.text = "\(session.summary.lifecycle.rawValue) · \(session.summary.phase.rawValue)"
+        cell.detailTextLabel?.font = .design(DesignSystem.Typography.caption)
         cell.accessoryType = .disclosureIndicator
         let tone = session.summary.statusTone
         cell.imageView?.image = UIImage(systemName: tone == .red ? "exclamationmark.circle.fill" : "circle.fill")
         cell.imageView?.tintColor = tone.uiKitColor
+        // Completed reads as tertiary ink; every other tier keeps its colour.
+        cell.detailTextLabel?.textColor = tone == .gray
+            ? UIColor(AdaptiveDesignColor(light: DesignSystem.Ink.tertiary, dark: DesignSystem.InkDark.tertiary))
+            : tone.uiKitColor
         return cell
     }
 

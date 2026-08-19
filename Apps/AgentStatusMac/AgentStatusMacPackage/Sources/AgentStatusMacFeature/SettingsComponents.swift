@@ -36,11 +36,11 @@ struct SettingsCard<Content: View>: View {
     }
 }
 
-/// `Title` on the left, a control on the right. 48pt minimum, `12 16` padding.
+/// `Title` on the left, a control on the right. 52pt minimum, `12 16` padding.
 struct SettingsRow<Accessory: View>: View {
     let title: String
     var subtitle: String?
-    var minHeight: CGFloat = AgentStatusDesign.Layout.controlRowMinimumHeight
+    var minHeight: CGFloat = AgentStatusDesign.Layout.settingsRowMinimumHeight
     var titleStyle: HierarchicalShapeStyle = .primary
     var titleFont: Font = AgentStatusDesign.Font.UI.body
     @ViewBuilder let accessory: () -> Accessory

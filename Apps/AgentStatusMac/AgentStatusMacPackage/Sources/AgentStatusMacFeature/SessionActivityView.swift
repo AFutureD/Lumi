@@ -1,3 +1,4 @@
+import AgentStatusDesignSystem
 import AgentStatusTransport
 import AppKit
 import SwiftUI
@@ -19,7 +20,7 @@ final class SessionActivityState: ObservableObject {
     var followsBottom = false
     /// Keeps the lane strip and the row list scrolled in step (not published:
     /// it is driven from scroll callbacks and must not re-render the list).
-    let scrollSync = ActivityScrollSync()
+    let scrollLink = ActivityScrollLink()
     private var highlightTask: Task<Void, Never>?
 
     init() {
@@ -67,10 +68,10 @@ struct SessionActivityView: View {
             ScrollView {
                 if activities.isEmpty {
                     Text(presentation == nil ? "" : "No Activity")
-                        .font(.system(size: 12))
+                        .font(AgentStatusDesign.Font.UI.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
+                        .padding(.vertical, AgentStatusDesign.Layout.activityHorizontalInset)
                 } else {
                     LazyVStack(spacing: 0) {
                         ForEach(activities) { activity in
@@ -91,29 +92,36 @@ struct SessionActivityView: View {
                             .id(sessionActivityRowID(for: activity))
                         }
                     }
-                    .padding(.top, 6)
-                    .padding(.bottom, 24)
+                    .padding(.top, DesignSystem.Spacing.s)
+                    .padding(.bottom, AgentStatusDesign.Layout.activityHorizontalInset)
                 }
             }
             .scrollPosition($listPosition)
-            .onScrollGeometryChange(for: ActivityScrollSync.Geometry.self) { geometry in
-                ActivityScrollSync.Geometry(
+            .onScrollGeometryChange(for: ActivityScrollLink.Geometry.self) { geometry in
+                ActivityScrollLink.Geometry(
                     offset: geometry.contentOffset.y + geometry.contentInsets.top,
                     content: geometry.contentSize.height,
                     viewport: geometry.containerSize.height - geometry.contentInsets.top - geometry.contentInsets.bottom
                 )
             } action: { _, geometry in
                 state.followsBottom = geometry.offset + geometry.viewport >= geometry.content - 48
-                state.scrollSync.listDidScroll(geometry)
+                state.scrollLink.listDidScroll(geometry)
+            }
+            .onScrollPhaseChange { _, phase in
+                state.scrollLink.listPhaseChanged(isUserScrolling: phase.isUserDriven)
             }
             .onAppear {
-                state.scrollSync.scrollList = { offset in
-                    listPosition.scrollTo(y: offset)
+                state.scrollLink.scrollList = { offset in
+                    scrollInstantly { listPosition.scrollTo(y: offset) }
                 }
+            }
+            .onChange(of: scrollMapKey, initial: true) { _, _ in
+                state.scrollLink.map = scrollMap(for: activities)
             }
             .onChange(of: activities.count) { previous, current in
                 guard current > previous, state.followsBottom, let last = activities.last else { return }
                 proxy.scrollTo(sessionActivityRowID(for: last), anchor: .bottom)
+                state.scrollLink.scrollStripToEnd()
             }
             .safeAreaBar(edge: .top, spacing: 0) {
                 header(activities: activities, proxy: proxy)
@@ -123,19 +131,39 @@ struct SessionActivityView: View {
         .environment(\.colorScheme, .light)
     }
 
+    /// The map only depends on row kinds, so rebuild it when the row set changes.
+    private var scrollMapKey: ActivityScrollMapKey {
+        ActivityScrollMapKey(count: visibleActivities.count, first: visibleActivities.first?.id, last: visibleActivities.last?.id)
+    }
+
+    private func scrollMap(for activities: [SessionActivityPresentation]) -> ActivityScrollMap {
+        ActivityScrollMap(
+            rows: activities.map { activity in
+                (
+                    height: activity.lane == nil
+                        ? AgentStatusDesign.Layout.activityMarkerRowHeight
+                        : AgentStatusDesign.Layout.activityRowHeight,
+                    drawsCell: activity.appearsInLaneStrip
+                )
+            },
+            topInset: DesignSystem.Spacing.s,
+            pitch: AgentStatusDesign.Layout.laneCellSize + AgentStatusDesign.Layout.laneCellSpacing
+        )
+    }
+
     private func header(activities: [SessionActivityPresentation], proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.mPlus) {
+            HStack(spacing: DesignSystem.Spacing.mPlus) {
                 Text("Activity")
                     .font(AgentStatusDesign.Font.UI.section)
                     .fixedSize()
                 Text("\(activities.count)")
                     .font(AgentStatusDesign.Font.UI.pill.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 1)
+                    .padding(.horizontal, DesignSystem.Metrics.countPillHorizontalPadding)
+                    .padding(.vertical, DesignSystem.Metrics.countPillVerticalPadding)
                     .background(AgentStatusDesign.Color.UI.chipFill, in: Capsule())
-                Spacer(minLength: 8)
+                Spacer(minLength: DesignSystem.Spacing.m)
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
                         state.timelineMode = state.timelineMode.toggled
@@ -144,8 +172,8 @@ struct SessionActivityView: View {
                     Image(systemName: state.timelineMode == .lanes
                         ? "arrow.down.and.line.horizontal.and.arrow.up"
                         : "arrow.up.and.line.horizontal.and.arrow.down")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 14, height: 12)
+                        .font(AgentStatusDesign.Font.UI.caption)
+                        .frame(width: DesignSystem.Icon.toolbar, height: DesignSystem.Spacing.l)
                 }
                 .buttonStyle(.glass)
                 .controlSize(.small)
@@ -157,8 +185,9 @@ struct SessionActivityView: View {
                 SessionActivityTimeline(
                     activities: activities.filter(\.appearsInLaneStrip),
                     mode: state.timelineMode,
-                    sync: state.scrollSync
+                    link: state.scrollLink
                 ) { activity in
+                    // Programmatic: the list goes to the row, the strip stays put.
                     withAnimation(.easeInOut(duration: 0.22)) {
                         proxy.scrollTo(sessionActivityRowID(for: activity), anchor: .center)
                     }
@@ -167,7 +196,7 @@ struct SessionActivityView: View {
             }
         }
         .padding(.horizontal, AgentStatusDesign.Layout.activityHorizontalInset)
-        .padding(.vertical, 12)
+        .padding(.vertical, DesignSystem.Spacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .overlay(alignment: .bottom) {
@@ -195,49 +224,248 @@ private extension SessionActivityPresentation {
     }
 }
 
+/// Follower / pan scrolls are instantaneous: an implicit animation here would
+/// lag the driver and leave the two sides out of step mid-gesture.
+private func scrollInstantly(_ body: () -> Void) {
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction, body)
+}
+
+private struct ActivityScrollMapKey: Equatable {
+    var count: Int
+    var first: String?
+    var last: String?
+}
+
+private extension ScrollPhase {
+    /// The user's finger / wheel is moving this scroll view (or it is coasting
+    /// from that); programmatic `scrollTo` reports `.animating` / `.idle`.
+    var isUserDriven: Bool {
+        switch self {
+        case .tracking, .interacting, .decelerating: true
+        case .idle, .animating: false
+        @unknown default: false
+        }
+    }
+}
+
 private func sessionActivityRowID(for activity: SessionActivityPresentation) -> String {
     "activity-row:\(activity.id)"
 }
 
-/// Keeps the lane strip and the row list at the same relative scroll offset.
-/// Both sides report their geometry from `onScrollGeometryChange`; whichever
-/// moved asks the other to follow, and a side that is already within a point
-/// of the mapped position does nothing — so the two callbacks settle instead
-/// of ping-ponging. Plain class on purpose: nothing here may trigger a SwiftUI
-/// re-render of the list.
+/// Row ↔ column mapping between the Activity list and the lane strip.
+///
+/// Every list row has a fixed height (item 40 / marker 32) below a fixed top
+/// inset, and every strip column sits on a fixed pitch, so the two scroll
+/// offsets relate through indices, not proportions: the row at the list's top
+/// edge is the column at the strip's left edge. Rows that have no strip cell
+/// (TOOL, bookkeeping context) map onto the column of the next row that has
+/// one, so the mapping stays monotonic. Within a row / column the offset is
+/// interpolated, which keeps the follower moving smoothly. Pure value type —
+/// unit-tested, no SwiftUI.
+struct ActivityScrollMap: Equatable {
+    /// Top edge of each list row, in list content coordinates; one trailing
+    /// entry holds the content bottom.
+    private(set) var rowTops: [CGFloat] = [0]
+    /// Strip column that stands for each list row (the row's own cell, or the
+    /// next row's when this row draws no cell); one trailing entry holds the
+    /// column count.
+    private(set) var columnOfRow: [Int] = [0]
+    /// List row shown by each strip column.
+    private(set) var rowOfColumn: [Int] = []
+    var pitch: CGFloat = 1
+
+    init() {}
+
+    /// - Parameters:
+    ///   - rows: per list row, `(height, drawsCell)`.
+    ///   - topInset: list content padding above the first row.
+    ///   - pitch: strip column pitch (cell + gap).
+    init(rows: [(height: CGFloat, drawsCell: Bool)], topInset: CGFloat, pitch: CGFloat) {
+        self.pitch = pitch
+        rowTops.reserveCapacity(rows.count + 1)
+        columnOfRow.reserveCapacity(rows.count + 1)
+        rowTops = [topInset]
+        columnOfRow = []
+        var column = 0
+        for (index, row) in rows.enumerated() {
+            columnOfRow.append(column)
+            if row.drawsCell {
+                rowOfColumn.append(index)
+                column += 1
+            }
+            rowTops.append(rowTops[index] + row.height)
+        }
+        columnOfRow.append(column)
+    }
+
+    var rowCount: Int { rowTops.count - 1 }
+    var columnCount: Int { rowOfColumn.count }
+
+    /// Strip offset whose left edge shows the column of the row at `listOffset`.
+    func stripOffset(forListOffset listOffset: CGFloat) -> CGFloat {
+        guard rowCount > 0 else { return 0 }
+        let row = rowIndex(at: listOffset)
+        let top = rowTops[row], height = rowTops[row + 1] - top
+        let progress = height > 0 ? min(max((listOffset - top) / height, 0), 1) : 0
+        let column: CGFloat
+        if columnOfRow[row + 1] > columnOfRow[row] {
+            column = CGFloat(columnOfRow[row]) + progress // this row draws a cell
+        } else {
+            column = CGFloat(columnOfRow[row]) // parked on the next cell
+        }
+        return column * pitch
+    }
+
+    /// List offset whose top edge shows the row of the column at `stripOffset`.
+    func listOffset(forStripOffset stripOffset: CGFloat) -> CGFloat {
+        guard columnCount > 0 else { return 0 }
+        let exact = max(stripOffset, 0) / pitch
+        let column = min(Int(exact), columnCount - 1)
+        let progress = min(exact - CGFloat(column), 1)
+        let row = rowOfColumn[column]
+        let top = rowTops[row], height = rowTops[row + 1] - top
+        return top + progress * height
+    }
+
+    /// Index of the row containing `listOffset` (clamped to the first / last row).
+    func rowIndex(at listOffset: CGFloat) -> Int {
+        // Binary search over rowTops: largest row with rowTops[row] <= offset.
+        var low = 0, high = rowCount - 1
+        if listOffset < rowTops[0] { return 0 }
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if rowTops[mid] <= listOffset { low = mid } else { high = mid - 1 }
+        }
+        return low
+    }
+}
+
+/// Links the lane strip and the row list so they scroll in step, with an
+/// explicit notion of **who is driving**.
+///
+/// - The side the user is actually scrolling (`ScrollPhase` tracking /
+///   interacting / decelerating, or the strip's pan gesture) is the driver;
+///   the other side follows through `ActivityScrollMap`. A follower never
+///   steers, so there is no echo, no rounding loop, no jitter by construction.
+/// - Programmatic scrolls (click-to-row, follow-bottom) do not propagate: the
+///   caller decides explicitly whether the other side moves too.
+///
+/// Plain class on purpose: nothing here may trigger a SwiftUI re-render.
 @MainActor
-final class ActivityScrollSync {
+final class ActivityScrollLink {
     struct Geometry: Equatable {
         var offset: CGFloat = 0
         var content: CGFloat = 0
         var viewport: CGFloat = 0
 
         var range: CGFloat { max(0, content - viewport) }
-        var fraction: Double { range > 0 ? Double(min(max(offset, 0), range) / range) : 0 }
     }
+
+    enum Driver { case none, list, strip }
 
     var scrollList: ((CGFloat) -> Void)?
     var scrollStrip: ((CGFloat) -> Void)?
 
+    var map = ActivityScrollMap()
+    private(set) var driver = Driver.none
     private(set) var list = Geometry()
     private(set) var strip = Geometry()
 
+    // MARK: Who is driving
+
+    func listPhaseChanged(isUserScrolling: Bool) {
+        setDriver(.list, active: isUserScrolling)
+    }
+
+    func stripPhaseChanged(isUserScrolling: Bool) {
+        setDriver(.strip, active: isUserScrolling)
+    }
+
+    /// The strip's pan gesture scrolls programmatically, so it declares itself.
+    func beginStripPan() { setDriver(.strip, active: true) }
+    func endStripPan() { setDriver(.strip, active: false) }
+
+    private func setDriver(_ side: Driver, active: Bool) {
+        if active {
+            driver = side
+        } else if driver == side {
+            driver = .none
+        }
+    }
+
+    // MARK: Geometry reports
+
     func listDidScroll(_ geometry: Geometry) {
         list = geometry
-        guard strip.range > 0 else { return }
-        let target = CGFloat(geometry.fraction) * strip.range
-        if abs(target - strip.offset) > 1 {
+        guard driver == .list else { return }
+        let target = min(max(map.stripOffset(forListOffset: geometry.offset), 0), strip.range)
+        if abs(target - strip.offset) > 0.5 {
             scrollStrip?(target)
         }
     }
 
     func stripDidScroll(_ geometry: Geometry) {
         strip = geometry
-        guard list.range > 0 else { return }
-        let target = CGFloat(geometry.fraction) * list.range
-        if abs(target - list.offset) > 1 {
+        guard driver == .strip else { return }
+        let target = min(max(map.listOffset(forStripOffset: geometry.offset), 0), list.range)
+        if abs(target - list.offset) > 0.5 {
             scrollList?(target)
         }
+    }
+
+    // MARK: Explicit programmatic moves
+
+    /// Follow-bottom: new rows arrived while pinned to the end; both sides show the end.
+    func scrollStripToEnd() {
+        scrollStrip?(strip.range)
+    }
+}
+
+/// Pure geometry of the lane strip: column `index` along x, `lane` along y,
+/// `cellSize` squares on a `cellSize + spacing` pitch. Hit-testing lands only
+/// inside a square (never in the gaps) and only on a *filled* cell, so the
+/// caller supplies the fill rule. Kept free of SwiftUI so it can be unit-tested.
+struct LaneStripGeometry: Equatable {
+    struct Cell: Equatable {
+        var index: Int
+        var lane: Int
+    }
+
+    var cellSize: CGFloat
+    var spacing: CGFloat
+    var laneCount: Int
+
+    var pitch: CGFloat { cellSize + spacing }
+    var height: CGFloat { cellSize * CGFloat(laneCount) + spacing * CGFloat(laneCount - 1) }
+
+    func contentWidth(columns: Int) -> CGFloat {
+        max(0, CGFloat(columns) * pitch - spacing)
+    }
+
+    func rect(index: Int, lane: Int) -> CGRect {
+        CGRect(x: CGFloat(index) * pitch, y: CGFloat(lane) * pitch, width: cellSize, height: cellSize)
+    }
+
+    /// Columns intersecting `clip` (clamped to `columns`), for partial redraws.
+    func visibleColumns(in clip: CGRect, columns: Int) -> ClosedRange<Int>? {
+        guard columns > 0 else { return nil }
+        let first = max(0, Int(clip.minX / pitch))
+        let last = min(columns - 1, Int(clip.maxX / pitch) + 1)
+        return first <= last ? first ... last : nil
+    }
+
+    /// The cell under `location`, or `nil` over a gap, outside the strip, or
+    /// on a cell `isFilled` rejects.
+    func cell(at location: CGPoint, columns: Int, isFilled: (Cell) -> Bool) -> Cell? {
+        guard location.x >= 0, location.y >= 0 else { return nil }
+        let cell = Cell(index: Int(location.x / pitch), lane: Int(location.y / pitch))
+        guard cell.index < columns, cell.lane < laneCount,
+              rect(index: cell.index, lane: cell.lane).contains(location),
+              isFilled(cell)
+        else { return nil }
+        return cell
     }
 }
 
@@ -248,30 +476,41 @@ final class ActivityScrollSync {
 /// (the caller filters them out): the Exec lane shows results, so a call and
 /// its result do not take two columns. The strip scrolls in step with the
 /// list (and the list with the strip).
+///
+/// Interaction: only filled cells are targets — the pointer becomes a hand
+/// and the cell gets a hover ring; clicking one scrolls the list to its row.
+/// Empty cells and the gaps between columns are inert. Pressing and dragging
+/// anywhere on the strip pans it (AppKit scroll views only pan with the
+/// trackpad / wheel, so the drag is mapped onto the scroll position by hand).
 private struct SessionActivityTimeline: View {
-    private static let cellSize = AgentStatusDesign.Layout.laneCellSize
-    private static let spacing = AgentStatusDesign.Layout.laneCellSpacing
-    private static var pitch: CGFloat { cellSize + spacing }
+    /// A press that travels further than this is a pan, not a click.
+    private static let dragThreshold: CGFloat = 3
 
     let activities: [SessionActivityPresentation]
     let mode: ActivityTimelineMode
-    let sync: ActivityScrollSync
+    let link: ActivityScrollLink
     let onSelect: (SessionActivityPresentation) -> Void
 
     @State private var stripPosition = ScrollPosition(edge: .leading)
-    @State private var hoveredIndex: Int?
+    /// Filled cell under the pointer (column + lane); `nil` over empty space.
+    @State private var hoveredCell: LaneStripGeometry.Cell?
+    /// Strip offset when the current pan began.
+    @State private var panOrigin: CGFloat?
 
-    private var stripHeight: CGFloat {
-        mode == .lanes ? Self.cellSize * 3 + Self.spacing * 2 : Self.cellSize
+    private var geometry: LaneStripGeometry {
+        LaneStripGeometry(
+            cellSize: AgentStatusDesign.Layout.laneCellSize,
+            spacing: AgentStatusDesign.Layout.laneCellSpacing,
+            laneCount: mode == .lanes ? TimelineLane.allCases.count : 1
+        )
     }
 
-    private var contentWidth: CGFloat {
-        max(0, CGFloat(activities.count) * Self.pitch - Self.spacing)
-    }
+    private var stripHeight: CGFloat { geometry.height }
+    private var contentWidth: CGFloat { geometry.contentWidth(columns: activities.count) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .trailing, spacing: Self.spacing) {
+        HStack(alignment: .top, spacing: AgentStatusDesign.Layout.activityColumnGap) {
+            VStack(alignment: .trailing, spacing: geometry.spacing) {
                 if mode == .lanes {
                     ForEach(TimelineLane.allCases, id: \.rawValue) { lane in
                         laneLabel(lane.title)
@@ -287,18 +526,21 @@ private struct SessionActivityTimeline: View {
                     .frame(width: contentWidth, height: stripHeight)
             }
             .scrollPosition($stripPosition)
-            .onScrollGeometryChange(for: ActivityScrollSync.Geometry.self) { geometry in
-                ActivityScrollSync.Geometry(
+            .onScrollGeometryChange(for: ActivityScrollLink.Geometry.self) { geometry in
+                ActivityScrollLink.Geometry(
                     offset: geometry.contentOffset.x,
                     content: geometry.contentSize.width,
                     viewport: geometry.containerSize.width
                 )
             } action: { _, geometry in
-                sync.stripDidScroll(geometry)
+                link.stripDidScroll(geometry)
+            }
+            .onScrollPhaseChange { _, phase in
+                link.stripPhaseChanged(isUserScrolling: phase.isUserDriven)
             }
             .onAppear {
-                sync.scrollStrip = { offset in
-                    stripPosition.scrollTo(x: offset)
+                link.scrollStrip = { offset in
+                    scrollInstantly { stripPosition.scrollTo(x: offset) }
                 }
             }
             .frame(height: stripHeight)
@@ -308,64 +550,99 @@ private struct SessionActivityTimeline: View {
 
     private var canvas: some View {
         // `TimelineView` is not needed: the canvas redraws when the strip
-        // scrolls (clip rect changes) and when activities change.
-        Canvas(rendersAsynchronously: false) { context, size in
-            let clip = context.clipBoundingRect
-            let first = max(0, Int(clip.minX / Self.pitch))
-            let last = min(activities.count - 1, Int(clip.maxX / Self.pitch) + 1)
-            guard first <= last else { return }
-            for index in first ... last {
+        // scrolls (clip rect changes), when activities change and on hover.
+        Canvas(rendersAsynchronously: false) { context, _ in
+            let geometry = geometry
+            guard let columns = geometry.visibleColumns(in: context.clipBoundingRect, columns: activities.count) else { return }
+            for index in columns {
                 let activity = activities[index]
-                let x = CGFloat(index) * Self.pitch
-                let color = activity.tag.laneCellColor
-                if mode == .lanes {
-                    for (laneIndex, lane) in TimelineLane.allCases.enumerated()
-                    where activity.lane == nil || activity.lane == lane {
-                        let y = CGFloat(laneIndex) * Self.pitch
-                        context.fill(cellPath(x: x, y: y), with: .color(color))
-                    }
-                } else {
-                    context.fill(cellPath(x: x, y: 0), with: .color(color))
+                let color = Color(activity.tag.laneCellColor)
+                for lane in 0 ..< geometry.laneCount where isFilled(activity, lane: lane) {
+                    context.fill(cellPath(index: index, lane: lane), with: .color(color))
                 }
+            }
+            if let hoveredCell {
+                context.stroke(
+                    cellPath(index: hoveredCell.index, lane: hoveredCell.lane),
+                    with: .color(Color(DesignSystem.Ink.hoverRing)),
+                    lineWidth: DesignSystem.Stroke.separator
+                )
             }
         }
         .contentShape(Rectangle())
+        // Click on a filled cell → jump the list. Registered before the pan
+        // gesture so a press that stays put is a click, not a zero-length pan.
         .onTapGesture { location in
-            guard let activity = activity(at: location) else { return }
-            onSelect(activity)
+            guard let cell = cell(at: location) else { return }
+            onSelect(activities[cell.index])
         }
+        .gesture(panGesture)
         .onContinuousHover { phase in
             switch phase {
             case let .active(location):
-                let index = Int(location.x / Self.pitch)
-                hoveredIndex = activities.indices.contains(index) ? index : nil
+                let cell = panOrigin == nil ? cell(at: location) : nil
+                if cell != hoveredCell {
+                    hoveredCell = cell
+                    (cell == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+                }
             case .ended:
-                hoveredIndex = nil
+                hoveredCell = nil
+                NSCursor.arrow.set()
             }
         }
-        .help(hoveredIndex.map { "\(activities[$0].label): \(activities[$0].content)" } ?? "")
+        .help(hoveredCell.map { "\(activities[$0.index].label): \(activities[$0.index].content)" } ?? "")
         .accessibilityLabel("Activity timeline, \(activities.count) items")
     }
 
-    private func cellPath(x: CGFloat, y: CGFloat) -> Path {
+    /// Press-and-drag pans the strip: the pointer stays glued to the content
+    /// (drag right → content follows right), clamped to the scrollable range.
+    /// The pan declares the strip as driver, so the list follows.
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: Self.dragThreshold, coordinateSpace: .local)
+            .onChanged { value in
+                if panOrigin == nil {
+                    panOrigin = link.strip.offset
+                    hoveredCell = nil
+                    link.beginStripPan()
+                    NSCursor.closedHand.set()
+                }
+                let origin = panOrigin ?? 0
+                let target = min(max(origin - value.translation.width, 0), link.strip.range)
+                scrollInstantly { stripPosition.scrollTo(x: target) }
+            }
+            .onEnded { _ in
+                panOrigin = nil
+                link.endStripPan()
+                NSCursor.arrow.set()
+            }
+    }
+
+    // MARK: Geometry
+
+    private func isFilled(_ activity: SessionActivityPresentation, lane: Int) -> Bool {
+        mode == .single || activity.lane == nil || activity.lane == TimelineLane.allCases[lane]
+    }
+
+    private func cellPath(index: Int, lane: Int) -> Path {
         Path(
-            roundedRect: CGRect(x: x, y: y, width: Self.cellSize, height: Self.cellSize),
-            cornerRadius: 3,
+            roundedRect: geometry.rect(index: index, lane: lane),
+            cornerRadius: AgentStatusDesign.Layout.laneCellCornerRadius,
             style: .continuous
         )
     }
 
-    private func activity(at location: CGPoint) -> SessionActivityPresentation? {
-        let index = Int(location.x / Self.pitch)
-        guard activities.indices.contains(index) else { return nil }
-        return activities[index]
+    /// The filled cell under `location`, or `nil` over an empty cell or a gap.
+    private func cell(at location: CGPoint) -> LaneStripGeometry.Cell? {
+        geometry.cell(at: location, columns: activities.count) { cell in
+            isFilled(activities[cell.index], lane: cell.lane)
+        }
     }
 
     private func laneLabel(_ title: String) -> some View {
         Text(title)
             .font(AgentStatusDesign.Font.UI.laneName)
             .foregroundStyle(AgentStatusDesign.Color.UI.inkTertiary)
-            .frame(height: Self.cellSize)
+            .frame(height: geometry.cellSize)
     }
 }
 
@@ -380,7 +657,7 @@ private struct SessionActivityRow: View {
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: 12) {
+            HStack(spacing: AgentStatusDesign.Layout.activityColumnGap) {
                 Text(activity.occurredAt)
                     .font(AgentStatusDesign.Font.UI.monoSmall)
                     .foregroundStyle(AgentStatusDesign.Color.UI.inkQuaternary)
@@ -398,9 +675,9 @@ private struct SessionActivityRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(AgentStatusDesign.Font.UI.tag)
                     .foregroundStyle(AgentStatusDesign.Color.UI.chevron)
-                    .frame(width: 7, height: 11)
+                    .frame(width: AgentStatusDesign.Layout.rowChevronSize.width, height: AgentStatusDesign.Layout.rowChevronSize.height)
             }
             .padding(.horizontal, AgentStatusDesign.Layout.activityHorizontalInset)
             .frame(height: activity.lane == nil
@@ -420,40 +697,37 @@ private struct SessionActivityRow: View {
     }
 
     private var rowBackground: Color {
-        if isHighlighted { return Color.accentColor.opacity(0.12) }
-        if isPairHighlighted { return activity.tag.accentColor.opacity(0.08) }
+        if isHighlighted { return Color(DesignSystem.Ink.accent.opacity(DesignSystem.Opacity.jumpHighlight)) }
+        if isPairHighlighted { return Color(activity.tag.categoryColor.opacity(DesignSystem.Opacity.pairHighlight)) }
         return .clear
     }
 }
 
 /// 82pt chip, `padding 3px 0` (height 17), radius 5, 9/700/.04em, coloured by
-/// attention level (see `TimelineTagStyle`). `compact` is the Notch's 60pt
-/// variant: `padding 2px 0`, `.03em`.
+/// attention level (see `TimelineTagStyle`). Every tier carries a `.5px`
+/// inset ring. `compact` is the Notch's 60pt variant: `padding 2px 0`, `.03em`.
 struct TimelineTagChip: View {
     let tag: TimelineTag
     let label: String
-    var dark = false
+    var appearance: DesignAppearance = .light
     var compact = false
 
     var body: some View {
-        let style = TimelineTagStyle.style(for: tag, dark: dark)
+        let style = TimelineTagStyle.style(for: tag, appearance: appearance)
+        let text = compact ? DesignSystem.Typography.notchTag : DesignSystem.Typography.tag
+        let shape = RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
         Text(label)
-            .font(AgentStatusDesign.Font.UI.tag)
-            .kerning(compact ? 0.27 : 0.36)
+            .designText(text)
             .lineLimit(1)
             .minimumScaleFactor(0.85)
-            .foregroundStyle(style.text)
+            .foregroundStyle(style.textColor)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, compact ? 2 : 3)
-            .background(
-                style.fill,
-                in: RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
-            )
+            .padding(.vertical, compact
+                ? DesignSystem.Notch.activityTagVerticalPadding
+                : AgentStatusDesign.Layout.activityTagVerticalPadding)
+            .background(style.fillColor, in: shape)
             .overlay {
-                if let ring = style.ring {
-                    RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
-                        .strokeBorder(ring, lineWidth: 0.5)
-                }
+                shape.strokeBorder(style.ringColor, lineWidth: DesignSystem.Stroke.hairline)
             }
     }
 }
