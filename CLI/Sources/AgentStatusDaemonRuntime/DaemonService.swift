@@ -140,8 +140,11 @@ public actor DaemonService {
 
     private func health(now: Date) async throws -> IPCResponse {
         let sessions = try await repository.listSessions(limit: 10_000)
+        // Provisional sessions (no Turn yet) are invisible to the UI; keep the
+        // health counters on the same footing.
         let activeCount = sessions.filter {
-            switch $0.lifecycle {
+            guard !$0.isProvisional else { return false }
+            return switch $0.lifecycle {
             case .starting, .running, .waitingForInput, .compacting: true
             default: false
             }

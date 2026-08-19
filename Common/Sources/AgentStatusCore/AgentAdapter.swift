@@ -35,9 +35,14 @@ public struct HookIngestOptions: Hashable, Sendable {
     /// hooks only drive lifecycle, phase, turn boundaries and session markers;
     /// message and tool items come from the richer channel to avoid duplicates.
     public var richSourceAvailable: Bool
+    /// Set by the pipeline on a session-ending hook when the daemon still
+    /// holds the session as provisional (no Turn ever) and no transcript was
+    /// written: the adapter then emits a discard instead of a session end.
+    public var sessionNeverUsed: Bool
 
-    public init(richSourceAvailable: Bool = false) {
+    public init(richSourceAvailable: Bool = false, sessionNeverUsed: Bool = false) {
         self.richSourceAvailable = richSourceAvailable
+        self.sessionNeverUsed = sessionNeverUsed
     }
 
     public static let hookOnly = HookIngestOptions(richSourceAvailable: false)

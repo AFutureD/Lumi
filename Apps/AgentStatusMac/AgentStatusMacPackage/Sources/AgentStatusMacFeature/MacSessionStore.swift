@@ -22,7 +22,10 @@ public final class MacSessionStore {
     private var snapshotTask: Task<Void, Never>?
     private var snapshotPending = false
     private var eventApplyTask: Task<Void, Never>?
-    private var pendingEvents: [EventID: AgentIngressEvent] = [:]
+    /// Kept in arrival order: the daemon's order is the only correct one once
+    /// a batch can contain a session discard next to a resurrecting prompt.
+    private var pendingEvents: [AgentIngressEvent] = []
+    private var pendingEventIDs: Set<EventID> = []
     private var reconnectTask: Task<Void, Never>?
     private var cachedSnapshotDetails: [SessionID: SessionDetail]?
 
@@ -144,7 +147,7 @@ public final class MacSessionStore {
     /// This never performs an additional daemon refresh.
     public func snapshotDetails() async throws -> [SessionDetail] {
         guard let cache else { throw MacSessionStoreError.cacheUnavailable }
-        let summaries = try await cache.listSessions(limit: 10_000)
+        let summaries = try await cache.listSessions(limit: 10_000).filter { !$0.isProvisional }
         if let cachedSnapshotDetails,
            cachedSnapshotDetails.count == summaries.count,
            summaries.allSatisfy({ cachedSnapshotDetails[$0.id] != nil }) {
@@ -208,15 +211,19 @@ public final class MacSessionStore {
                     if let failure = response.failure { throw failure }
                     let details = (response.sessionDetails ?? [])
                         .sorted { $0.summary.updatedAt > $1.summary.updatedAt }
+                    // The cache keeps everything (a provisional session must
+                    // still be there when its first Turn arrives); the visible
+                    // snapshot excludes provisional sessions.
+                    let visibleDetails = details.filter { !$0.summary.isProvisional }
                     let previousDetails = try await self.snapshotDetails()
                     let snapshotDataChanged = Dictionary(
                         uniqueKeysWithValues: previousDetails.map { ($0.summary.id, $0) }
                     ) != Dictionary(
-                        uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
+                        uniqueKeysWithValues: visibleDetails.map { ($0.summary.id, $0) }
                     )
                     if let cache = self.cache { try await cache.replaceSnapshot(details) }
                     self.cachedSnapshotDetails = Dictionary(
-                        uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
+                        uniqueKeysWithValues: visibleDetails.map { ($0.summary.id, $0) }
                     )
                     self.health = response.health
                     self.connectionError = nil
@@ -237,9 +244,18 @@ public final class MacSessionStore {
         }
     }
 
-    private func enqueueAgentEvent(_ event: AgentIngressEvent) {
-        pendingEvents[event.eventID] = event
+    func enqueueAgentEvent(_ event: AgentIngressEvent) {
+        guard pendingEventIDs.insert(event.eventID).inserted else { return }
+        pendingEvents.append(event)
         scheduleEventApply()
+    }
+
+    /// Test hook: waits until every queued daemon event has been applied and
+    /// the visible session list reloaded.
+    func flushPendingEventsForTesting() async {
+        while let task = eventApplyTask {
+            await task.value
+        }
     }
 
     private func scheduleEventApply() {
@@ -250,8 +266,9 @@ public final class MacSessionStore {
             var appliedAny = false
             var appliedEvents: [AgentIngressEvent] = []
             while !self.pendingEvents.isEmpty, !Task.isCancelled {
-                let batch = Array(self.pendingEvents.values)
+                let batch = self.pendingEvents
                 self.pendingEvents.removeAll(keepingCapacity: true)
+                self.pendingEventIDs.removeAll(keepingCapacity: true)
                 guard let cache = self.cache else { break }
                 for event in batch {
                     do {
@@ -286,7 +303,9 @@ public final class MacSessionStore {
     ) async {
         guard let cache else { return }
         do {
-            let updated = try await cache.listSessions(limit: 10_000)
+            // Provisional sessions (no Turn yet) stay in the cache but never
+            // reach the list, the Notch or the Relay.
+            let updated = try await cache.listSessions(limit: 10_000).filter { !$0.isProvisional }
             let previousSessions = sessions
             let previousDetail = selectedSession
             let previousID = pendingSelectionID ?? selectedSession?.summary.id

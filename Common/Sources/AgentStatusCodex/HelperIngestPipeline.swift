@@ -8,8 +8,8 @@ public protocol HelperDaemonPort: Sendable {
     func ingest(_ events: [AgentIngressEvent]) throws
     func rolloutCursor(path: String) throws -> RolloutCursor?
     func saveRolloutCursor(_ cursor: RolloutCursor) throws
-    /// Turns only; the timeline page is not needed.
-    func turns(sessionID: SessionID) throws -> [TurnSummary]
+    /// Summary + turns as the daemon holds them; the timeline page is not needed.
+    func session(sessionID: SessionID) throws -> SessionDetail?
 }
 
 public enum HelperAgentSelection: String, Sendable {
@@ -26,6 +26,8 @@ public struct HelperIngestReport: Hashable, Sendable {
     public var richSourceLinesRead: Int
     public var eventsSent: Int
     public var warnings: [String]
+    /// Decisions worth surfacing under `--verbose` that are not problems.
+    public var notes: [String]
 
     public init(
         provider: AgentProvider,
@@ -34,7 +36,8 @@ public struct HelperIngestReport: Hashable, Sendable {
         richSourcePath: String? = nil,
         richSourceLinesRead: Int = 0,
         eventsSent: Int = 0,
-        warnings: [String] = []
+        warnings: [String] = [],
+        notes: [String] = []
     ) {
         self.provider = provider
         self.sessionID = sessionID
@@ -43,6 +46,7 @@ public struct HelperIngestReport: Hashable, Sendable {
         self.richSourceLinesRead = richSourceLinesRead
         self.eventsSent = eventsSent
         self.warnings = warnings
+        self.notes = notes
     }
 }
 
@@ -122,11 +126,18 @@ public struct HelperIngestPipeline: Sendable {
             report.warnings.append("rich_source_unreadable path=\(richPath)")
         }
 
-        // 3. The hook itself.
-        let hookEvents = try adapter.events(
-            fromHookData: hookData,
-            options: richAvailable ? .withRichSource : .hookOnly
-        )
+        // 3. The hook itself. A Claude session that ends while the daemon
+        // still holds it as provisional (no Turn ever) and never wrote a
+        // transcript was never used — a desktop config-loading probe or a
+        // launch quit before any prompt — and is discarded instead of ended.
+        var options = HookIngestOptions(richSourceAvailable: richAvailable)
+        if provider == .claude, report.hookEventName == "SessionEnd", !richAvailable {
+            options.sessionNeverUsed = sessionNeverUsed(sessionID)
+            if options.sessionNeverUsed {
+                report.notes.append("session_discarded_never_used")
+            }
+        }
+        let hookEvents = try adapter.events(fromHookData: hookData, options: options)
         batch.append(contentsOf: hookEvents)
 
         // 4. Ship, then advance the cursor (only after the daemon accepted).
@@ -138,6 +149,18 @@ public struct HelperIngestPipeline: Sendable {
             try port.saveRolloutCursor(cursorToSave)
         }
         return report
+    }
+
+    /// True only when the daemon confirms the session never had a Turn (or
+    /// never saw it at all). Any lookup failure keeps the session: a missed
+    /// query must never delete real work.
+    func sessionNeverUsed(_ sessionID: SessionID) -> Bool {
+        do {
+            guard let detail = try port.session(sessionID: sessionID) else { return true }
+            return detail.summary.isProvisional
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Provider detection
@@ -236,7 +259,7 @@ public struct HelperIngestPipeline: Sendable {
         guard fileSize > offset else { return ([], nil, 0) }
 
         var state = RolloutReadState()
-        let turns = try port.turns(sessionID: sessionID)
+        let turns = try port.session(sessionID: sessionID)?.turns ?? []
         state.currentTurnID = (turns.last(where: { $0.isOpen }) ?? turns.last)?.id
 
         let handle = try FileHandle(forReadingFrom: url)

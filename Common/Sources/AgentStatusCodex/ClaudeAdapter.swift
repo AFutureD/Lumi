@@ -40,7 +40,8 @@ public struct ClaudeAdapter: AgentAdapter {
             timeline: TimelinePayload? = nil,
             itemID: TimelineItemID? = nil,
             title: String? = nil,
-            lineage: SessionLineage? = nil
+            lineage: SessionLineage? = nil,
+            disposition: SessionDisposition? = nil
         ) -> AgentIngressEvent {
             let item = timeline.map {
                 TimelineItem(
@@ -63,7 +64,8 @@ public struct ClaudeAdapter: AgentAdapter {
                 phase: phase,
                 turn: turn,
                 timelineItem: item,
-                lineage: lineage
+                lineage: lineage,
+                disposition: disposition
             )
         }
 
@@ -225,6 +227,11 @@ public struct ClaudeAdapter: AgentAdapter {
             )]
 
         case "SessionEnd":
+            // Ended before its first Turn: not a session. The pipeline sets
+            // this from daemon state + transcript absence; see HookIngestOptions.
+            if options.sessionNeverUsed {
+                return [event(disposition: .discard)]
+            }
             return [event(
                 lifecycle: .completed,
                 phase: .idle,

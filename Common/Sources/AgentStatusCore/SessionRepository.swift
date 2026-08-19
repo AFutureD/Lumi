@@ -62,6 +62,10 @@ public enum SessionReduction {
         } else {
             current?.title ?? "\(agentName) Session"
         }
+        // The first turn-scoped event marks the session as used for good;
+        // backfill may only move the mark earlier, never clear it.
+        let turnAt: Date? = (event.turnID ?? event.turn?.id) != nil ? event.occurredAt : nil
+        let firstTurnAt = [current?.firstTurnAt, turnAt].compactMap { $0 }.min()
 
         return SessionSummary(
             id: event.sessionID,
@@ -80,7 +84,8 @@ public enum SessionReduction {
                 ? max(current?.lastActivityAt ?? event.occurredAt, event.occurredAt)
                 : (current?.lastActivityAt ?? event.occurredAt),
             needsAttention: needsAttention,
-            lineage: event.lineage ?? current?.lineage
+            lineage: event.lineage ?? current?.lineage,
+            firstTurnAt: firstTurnAt
         )
     }
 }
@@ -194,11 +199,23 @@ public actor InMemorySessionRepository: SessionRepository {
 
     @discardableResult
     public func apply(_ event: AgentIngressEvent) async throws -> Bool {
+        // Dedupe first: a replayed event must never un-ignore a session.
+        guard !eventIDs.contains(event.eventID) else { return false }
+        if event.disposition == .discard {
+            // Delete + tombstone, then report success so the event is
+            // published and every mirror runs the same deletion.
+            ignoredSessionIDs.insert(event.sessionID)
+            sessions.removeValue(forKey: event.sessionID)
+            timeline.removeValue(forKey: event.sessionID)
+            turns.removeValue(forKey: event.sessionID)
+            eventIDs.insert(event.eventID)
+            return true
+        }
         if ignoredSessionIDs.contains(event.sessionID) {
             guard event.resurrectsHiddenSession else { return false }
             ignoredSessionIDs.remove(event.sessionID)
         }
-        guard eventIDs.insert(event.eventID).inserted else { return false }
+        eventIDs.insert(event.eventID)
 
         sessions[event.sessionID] = SessionReduction.summary(
             applying: event,
@@ -266,6 +283,9 @@ public actor InMemorySessionRepository: SessionRepository {
     }
 
     public func replaceSnapshot(_ details: [SessionDetail]) async throws {
+        // The snapshot source is authoritative; local tombstones must not
+        // swallow events for a session it brought back.
+        ignoredSessionIDs.removeAll()
         sessions = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0.summary) })
         timeline = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0.timeline) })
         turns = Dictionary(uniqueKeysWithValues: details.map { detail in

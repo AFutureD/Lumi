@@ -9,11 +9,11 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 
 跨进程和跨设备模型由 `AgentStatusTransport` 唯一声明：
 
-- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力标记，以及可选 Subagent lineage。
+- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力标记、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
 - `SessionDetail`：一个 Summary、完整或分页 Timeline、下一页游标。
 - `TimelineItem`：稳定 ID、Session ID、可选 Turn ID、时间和 payload。
 - `TimelinePayload`：消息、工具、计划、子 Agent、错误、模型配置、内部上下文、消耗指标和 unknown。
-- `AgentIngressEvent`：Adapter 输出的归一化事件，是 reducer 的唯一输入。
+- `AgentIngressEvent`：Adapter 输出的归一化事件，是 reducer 的唯一输入。可选 `disposition: .discard` 表示 helper 判定该 Session 不应保留（Claude 在第一个 Turn 前结束）：仓库删除 + 写墓碑，事件照常发布让所有镜像收敛。
 
 生命周期和 Turn 阶段分开：
 
@@ -51,12 +51,14 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration：
 | `timeline` | Timeline item（Agent 领域消息） | `id` 主键；Session 外键级联删除；按时间与 ID 排序；跨来源同 ID 覆盖 |
 | `processed_events` | 幂等键 | 同一个 Event ID 只应用一次 |
 | `rollout_cursors` | JSONL 增量位置 | 保存文件路径、byte offset、文件大小和 Session ID |
-| `ignored_sessions` | 删除/基线 tombstone | 阻止后到事件重新创建 Session |
+| `ignored_sessions` | 删除/基线/helper discard tombstone | 阻止后到事件重新创建 Session；仅新的 prompt / SessionStart（未处理过的事件）能复活，重放的事件先被 `processed_events` 拒绝；客户端 `replaceSnapshot` 会清空本地墓碑（快照以 daemon 为准） |
 | `metadata` | repository 状态 | 当前保存首次 rollout baseline 标记 |
+
+migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下的空 Claude 会话（`completed`、无 Turn、timeline 只有 session marker）并写墓碑——它们按现在的规则本来不会存在。
 
 `summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。Summary 中的 Subagent lineage 包含 Thread source、父 Session ID、深度、昵称、职责、Agent path 和 Subagent kind。日期使用 ISO 8601，键稳定排序。
 
-客户端快照替换在一个 GRDB write transaction 内执行：先删除现有 `sessions`，由外键级联删除 Timeline，再插入新快照。
+客户端快照替换在一个 GRDB write transaction 内执行：先清空 `ignored_sessions`，删除现有 `sessions`，由外键级联删除 Timeline，再插入新快照。
 
 ## 保存与保留策略
 
@@ -189,10 +191,12 @@ sequenceDiagram
 ### 删除
 
 1. daemon 将 Session ID 写入 `ignored_sessions`。
-2. 删除 `sessions`，Timeline 通过外键级联删除。
+2. 删除 `sessions`，Timeline / Turn 通过外键级联删除。
 3. 之后到达的 Hook 或 rollout 事件被拒绝。
 4. Mac 通过权威快照删除本地副本。
 5. Mac 发布新远程快照，iOS 原子替换对应通道副本。
+
+helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一段删除，但不经过 `delete_session`：daemon 在 `apply` 内删除 + 写墓碑并返回"已应用"，事件经订阅流发布，Mac cache 应用同一事件时执行同样的删除。Mac 端按到达顺序应用事件（有序队列），保证与 daemon 结果一致。
 
 清空历史会为当时全部 Session 写入 tombstone，并清空 `processed_events`；不会修改 Codex 文件。
 

@@ -21,6 +21,7 @@ Session {
   endReason?:  clear|resume|logout|prompt_input_exit|other
   parent?: { sessionId, agentId, agentType }
   lifecycle: starting | idle | running | compacting | ended
+  firstTurnAt?                  // 第一个 Turn 的时间；nil 且 lifecycle == starting ⇒ 临时会话（不显示）
   context: [SessionContext]     // 指令文件 / 配置 / 模型配置 / 工作目录
   turns: [Turn]
 }
@@ -29,7 +30,7 @@ Session {
 |---|---|---|
 | SessionStarted(source, model) | SessionStart | → idle |
 | CompactionBegan / Ended(trigger) | PreCompact / PostCompact | → compacting / 恢复 |
-| SessionEnded(reason) | SessionEnd | → ended |
+| SessionEnded(reason) | SessionEnd | → ended；Claude 且会话仍临时（无 Turn、无 transcript）→ **SessionDiscarded**：不保留该 Session |
 | SubagentSpawned / Finished(agentId, agentType, lastMessage) | SubagentStart/Stop | 建/结子 Session |
 | SessionContext(kind, source, content/path) | InstructionsLoaded / ConfigChange / model_configuration / CwdChanged / DirectoryAdded / rollout `session_meta` | 追加 `Session.context[]` |
 
@@ -189,5 +190,6 @@ Notch 模型补充：`AgentStatusNookSession` 增 `turnEnded`、`agentKind`；�
 | Notch 5B–5E | `AgentStatusNookModel`：`AgentStatusNookSession`（agent、turn 聚合、tokens/context、recentRows）+ `route`（list / detail / turnStarted / turnEnded）；`AgentStatusNookController`：5B 列表（halo 状态点、agent chip、hover 时间↔归档、子代理肘线、页脚 N of M）、5C/5D 卡片（自动 6s 回列表）、5E 详情（返回、状态 pill、三 tile、Recent activity 用 dark tag chip、Show in App / Jump to Agent）；折叠条不变 | 通知只来自新增 L3 行：USER→5D、TURN END→5C、FAILED/ABORTED→高优先 toast；Notch 与主窗口共用 `TimelineProjection` |
 | Claude hook 安装器 | `AgentHookConfigInstaller`（通用 merge/uninstall/命令刷新）+ `CodexHookInstaller`（`~/.codex/hooks.json`, `--agent codex`）+ `ClaudeHookInstaller`（`~/.claude/settings.json` 的 `hooks` 键，`--agent claude`，19 个事件，timeout 5s）；Settings > Agents 增加 Claude Code 卡片 | 只移除含 `agent-status-helper` 的 handler；其他 settings 键与他人 hook 保留 |
 | daemon watcher | 保留代码，`AGENT_STATUS_ROLLOUT_WATCHER=1` 开启，默认关 | 未安装 hook 的 Agent 不再被自动发现 |
+| 临时会话（2026-08-19 追加） | `SessionSummary.firstTurnAt` / `isProvisional`；Mac 列表、Relay 快照、daemon health 过滤临时会话；Claude `SessionEnd` 时 helper 判定 `never used` → `AgentIngressEvent.disposition = .discard`，仓库删除 + 墓碑并照常发布 | 有效性边界 = 第一个 Turn。桌面 App 的 `withTemporaryQuery` 探测进程（SessionStart→SessionEnd 2 s、无 turn/transcript）从不可见、结束即丢弃；env 签名不作判据（探测进程同样带 `CLAUDE_CODE_ENTRYPOINT=claude-desktop`，见 research）。同时：`apply` 先去重再判墓碑复活（重放的 SessionStart 不再解除墓碑）；客户端 `replaceSnapshot` 清空本地墓碑；Mac 事件队列有序；migration v3 清掉历史空会话 |
 
 验证：Transport 16 / Common 25 / CLI 10 / Mac 21 项测试通过；`xcodebuild` AgentStatusMac 与 AgentStatusIOSFeature 构建成功；用真实 Claude transcript 走 daemon+helper 端到端得到 2 个 Turn、11 对 TOOL/RESULT、标题来自 `custom-title`。

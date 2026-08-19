@@ -71,6 +71,29 @@ public actor SQLiteSessionRepository: SessionRepository {
                     ON turns(session_id, started_at, turn_id);
                 """)
         }
+        // One-off sweep of Claude sessions recorded before the helper learned
+        // to discard sessions that end before their first Turn (desktop
+        // config-loading probes): completed, no turns, nothing but the two
+        // session markers. `summary` is JSON text stored as a BLOB, hence CAST.
+        // Foreign keys are off inside migrations, so children go explicitly.
+        migrator.registerMigration("agent-status-v3-sweep-empty-claude-sessions") { db in
+            try db.execute(sql: """
+                CREATE TEMP TABLE sweep AS
+                    SELECT id FROM sessions
+                    WHERE json_extract(CAST(summary AS TEXT), '$.agent') = 'claude'
+                      AND json_extract(CAST(summary AS TEXT), '$.lifecycle') = 'completed'
+                      AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.session_id = sessions.id)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM timeline tl
+                          WHERE tl.session_id = sessions.id AND tl.id NOT LIKE 'marker:%'
+                      );
+                INSERT OR IGNORE INTO ignored_sessions(id) SELECT id FROM sweep;
+                DELETE FROM timeline WHERE session_id IN (SELECT id FROM sweep);
+                DELETE FROM turns WHERE session_id IN (SELECT id FROM sweep);
+                DELETE FROM sessions WHERE id IN (SELECT id FROM sweep);
+                DROP TABLE sweep;
+                """)
+        }
         try migrator.migrate(database)
     }
 
@@ -106,6 +129,26 @@ public actor SQLiteSessionRepository: SessionRepository {
         let encoder = encoder
         let decoder = decoder
         return try await database.write { db in
+            // Dedupe first: a replayed event must never un-ignore a session.
+            let duplicate = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM processed_events WHERE id = ?)",
+                arguments: [event.eventID.rawValue]
+            ) ?? false
+            guard !duplicate else { return false }
+
+            if event.disposition == .discard {
+                // Delete + tombstone (timeline / turns cascade), then report
+                // success so the event is published and every mirror runs the
+                // same deletion. Nothing below may run: the row is gone.
+                try Self.tombstone(db, event.sessionID)
+                try db.execute(
+                    sql: "INSERT INTO processed_events(id, occurred_at) VALUES(?, ?)",
+                    arguments: [event.eventID.rawValue, event.occurredAt.timeIntervalSince1970]
+                )
+                return true
+            }
+
             let ignored = try Bool.fetchOne(
                 db,
                 sql: "SELECT EXISTS(SELECT 1 FROM ignored_sessions WHERE id = ?)",
@@ -117,13 +160,6 @@ public actor SQLiteSessionRepository: SessionRepository {
                 guard event.resurrectsHiddenSession else { return false }
                 try db.execute(sql: "DELETE FROM ignored_sessions WHERE id = ?", arguments: [event.sessionID.rawValue])
             }
-
-            let duplicate = try Bool.fetchOne(
-                db,
-                sql: "SELECT EXISTS(SELECT 1 FROM processed_events WHERE id = ?)",
-                arguments: [event.eventID.rawValue]
-            ) ?? false
-            guard !duplicate else { return false }
 
             let currentData = try Data.fetchOne(
                 db,
@@ -286,6 +322,9 @@ public actor SQLiteSessionRepository: SessionRepository {
     public func replaceSnapshot(_ details: [SessionDetail]) async throws {
         let encoder = encoder
         try await database.write { db in
+            // The snapshot source is authoritative; local tombstones must not
+            // swallow events for a session it brought back.
+            try db.execute(sql: "DELETE FROM ignored_sessions")
             try db.execute(sql: "DELETE FROM sessions")
             for detail in details {
                 let summary = detail.summary
@@ -341,13 +380,19 @@ public actor SQLiteSessionRepository: SessionRepository {
                 sql: "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)",
                 arguments: [id.rawValue]
             ) ?? false
-            try db.execute(
-                sql: "INSERT OR IGNORE INTO ignored_sessions(id) VALUES(?)",
-                arguments: [id.rawValue]
-            )
-            try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [id.rawValue])
+            try Self.tombstone(db, id)
             return existed
         }
+    }
+
+    /// Hides a session for good: tombstone the id and drop the row (timeline
+    /// and turns cascade). Shared by manual deletion and helper discards.
+    private static func tombstone(_ db: Database, _ id: SessionID) throws {
+        try db.execute(
+            sql: "INSERT OR IGNORE INTO ignored_sessions(id) VALUES(?)",
+            arguments: [id.rawValue]
+        )
+        try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [id.rawValue])
     }
 
     public func rolloutCursor(path: String) async throws -> RolloutCursor? {

@@ -287,6 +287,9 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     public let lastActivityAt: Date
     public let needsAttention: Bool
     public let lineage: SessionLineage?
+    /// When the session's first Turn began (earliest turn-scoped event). Never
+    /// cleared — a later `resume` / `compact` restart keeps it.
+    public let firstTurnAt: Date?
 
     public init(
         id: SessionID,
@@ -299,7 +302,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         updatedAt: Date,
         lastActivityAt: Date,
         needsAttention: Bool = false,
-        lineage: SessionLineage? = nil
+        lineage: SessionLineage? = nil,
+        firstTurnAt: Date? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -312,6 +316,16 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.lastActivityAt = lastActivityAt
         self.needsAttention = needsAttention
         self.lineage = lineage
+        self.firstTurnAt = firstTurnAt
+    }
+
+    /// A provisional session: the agent process is up but no Turn has started
+    /// yet. The UI never shows one; if it ends while still provisional the
+    /// helper discards it (see `SessionDisposition`). Sessions that already
+    /// had a Turn stay visible through a `resume` / `compact` restart, which
+    /// resets `lifecycle` to `.starting` but not `firstTurnAt`.
+    public var isProvisional: Bool {
+        lifecycle == .starting && firstTurnAt == nil
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -326,6 +340,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case lastActivityAt
         case needsAttention
         case lineage
+        case firstTurnAt
     }
 }
 

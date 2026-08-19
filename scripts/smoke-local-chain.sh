@@ -22,16 +22,20 @@ database_path="${smoke_root}/sessions.sqlite3"
 codex_home="${smoke_root}/codex"
 mkdir -p "${codex_home}/sessions"
 
-if printf '%s' '{"hook_event_name":"SessionStart","session_id":"missing-daemon"}' | \
-  AGENT_STATUS_SOCKET="${smoke_root}/missing.sock" "${binary_path}/agent-status-helper" >/dev/null 2>&1; then
-  echo "helper unexpectedly succeeded without a daemon" >&2
+# The helper always exits 0 (a hook exit code of 2 would block the agent's
+# tool call); failures are reported on stderr only.
+missing_daemon_stderr="$(printf '%s' '{"hook_event_name":"SessionStart","session_id":"missing-daemon"}' | \
+  AGENT_STATUS_SOCKET="${smoke_root}/missing.sock" "${binary_path}/agent-status-helper" 2>&1 >/dev/null)" || {
+  echo "helper must exit 0 without a daemon" >&2
   exit 1
-fi
-if printf '%s' 'not-json' | \
-  AGENT_STATUS_SOCKET="${smoke_root}/missing.sock" "${binary_path}/agent-status-helper" >/dev/null 2>&1; then
-  echo "helper unexpectedly accepted malformed input" >&2
+}
+[[ "${missing_daemon_stderr}" == agent-status-helper:* ]]
+malformed_stderr="$(printf '%s' 'not-json' | \
+  AGENT_STATUS_SOCKET="${smoke_root}/missing.sock" "${binary_path}/agent-status-helper" 2>&1 >/dev/null)" || {
+  echo "helper must exit 0 on malformed input" >&2
   exit 1
-fi
+}
+[[ "${malformed_stderr}" == agent-status-helper:* ]]
 
 AGENT_STATUS_SUPPORT_DIRECTORY="${smoke_root}" \
 AGENT_STATUS_SOCKET="${socket_path}" \
@@ -51,9 +55,23 @@ printf '%s' '{"hook_event_name":"SessionStart","session_id":"smoke-session-0001"
 printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke-session-0001","turn_id":"turn-1","cwd":"/tmp/project","prompt":"smoke test message"}' | \
   AGENT_STATUS_SOCKET="${socket_path}" "${binary_path}/agent-status-helper"
 
+# A Claude session that ends before its first turn (desktop config-loading
+# probe): SessionStart is retained as provisional, SessionEnd discards it.
+ghost_transcript="${smoke_root}/claude/projects/-tmp-project/smoke-ghost-0001.jsonl"
+printf '%s' "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"smoke-ghost-0001\",\"cwd\":\"/tmp/project\",\"source\":\"startup\",\"transcript_path\":\"${ghost_transcript}\"}" | \
+  AGENT_STATUS_SOCKET="${socket_path}" "${binary_path}/agent-status-helper" --agent claude
+ghost_provisional="$(/usr/bin/sqlite3 "${database_path}" 'SELECT COUNT(*) FROM sessions WHERE id = "smoke-ghost-0001";')"
+[[ "${ghost_provisional}" == "1" ]]
+printf '%s' "{\"hook_event_name\":\"SessionEnd\",\"session_id\":\"smoke-ghost-0001\",\"cwd\":\"/tmp/project\",\"reason\":\"other\",\"transcript_path\":\"${ghost_transcript}\"}" | \
+  AGENT_STATUS_SOCKET="${socket_path}" "${binary_path}/agent-status-helper" --agent claude
+
 session_count="$(/usr/bin/sqlite3 "${database_path}" 'SELECT COUNT(*) FROM sessions WHERE id = "smoke-session-0001";')"
 timeline_count="$(/usr/bin/sqlite3 "${database_path}" 'SELECT COUNT(*) FROM timeline WHERE session_id = "smoke-session-0001";')"
+ghost_count="$(/usr/bin/sqlite3 "${database_path}" 'SELECT COUNT(*) FROM sessions WHERE id = "smoke-ghost-0001";')"
+ghost_ignored="$(/usr/bin/sqlite3 "${database_path}" 'SELECT COUNT(*) FROM ignored_sessions WHERE id = "smoke-ghost-0001";')"
 [[ "${session_count}" == "1" ]]
-[[ "${timeline_count}" == "1" ]]
+[[ "${timeline_count}" == "2" ]]   # session_started marker + user prompt
+[[ "${ghost_count}" == "0" ]]
+[[ "${ghost_ignored}" == "1" ]]
 
-echo "local-chain-smoke: session=${session_count} timeline=${timeline_count} socket_permissions=$(stat -f %Lp "${socket_path}") helper_failures=verified"
+echo "local-chain-smoke: session=${session_count} timeline=${timeline_count} ghost_discarded=${ghost_ignored} socket_permissions=$(stat -f %Lp "${socket_path}") helper_failures=verified"

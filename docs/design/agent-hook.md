@@ -29,9 +29,18 @@ flowchart LR
 
 1. 判定 provider（`--agent codex|claude`，否则按 `CLAUDE_PROJECT_DIR`、`transcript_path`、`prompt_id`/`turn_id` 启发式）。
 2. 定位该 Session 的 rich source（Claude 用 hook 的 `transcript_path`；Codex 在 `CODEX_HOME/sessions` 按文件名后缀 `-<session>.jsonl` 由新到旧查找）。
-3. 向 daemon 取该文件的 cursor 与该 Session 已知的 Turn（当前开放 Turn 作为无 `turn_id` 记录的归属），读增量、逐行 reduce。
-4. reduce hook 本身；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 边界 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。
+3. 向 daemon 取该文件的 cursor 与该 Session 的 summary + 已知 Turn（`get_session limit:1`；当前开放 Turn 作为无 `turn_id` 记录的归属），读增量、逐行 reduce。
+4. reduce hook 本身；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 边界 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。Claude `SessionEnd` 且 rich source 不存在时，先判定「临时会话」（见下节）。
 5. `ingest_batch` 一次发送，成功后再 `save_rollout_cursor`。
+
+## 临时会话（第一个 Turn 之前）
+
+**有效性边界 = 第一个 Turn**（首次 `UserPromptSubmit` / transcript 首条 user 记录 / Codex `task_started`）。`SessionStart` 之后、第一个 Turn 之前的 Session 是 **临时会话**：`SessionSummary.isProvisional = lifecycle == .starting && firstTurnAt == nil`（`firstTurnAt` 由 reducer 在首个带 turnID 的事件时写入，之后不变；`resume` / `compact` 重发 `SessionStart` 会把 lifecycle 重置为 `starting`，但 `firstTurnAt` 已有值，所以不算临时）。
+
+- **可见性**：临时会话在主窗口列表、Notch、Relay/iOS 快照里一律不出现（Mac `MacSessionStore` 过滤，daemon `health.activeSessionCount` 同口径）；它仍留在 daemon 与 Mac cache 里，等第一个 Turn 到来时连同 `session_started` marker 一起显示。
+- **存在性**：Claude `SessionEnd` 到达时，helper 若发现 transcript 从未落盘且 daemon 仍把该 Session 记为临时（或根本没有）→ 这不是会话，`ClaudeAdapter` 产出 `AgentIngressEvent(disposition: .discard)` 代替 `session_ended`；仓库删除该 Session 并写入 `ignored_sessions` 墓碑，事件照常发布，Mac cache 跑同一段代码收敛。daemon 查询失败时不判定（宁可留下空会话也不误删）。判定只能在 SessionEnd 做：真会话的 SessionStart 同样早于 transcript 创建。Codex 不适用（rollout 从 Session 开始就存在）。
+
+典型来源：Claude 桌面 App 为加载斜杠命令 / agent 列表拉起的一次性 CLI（`withTemporaryQuery`，SessionStart→SessionEnd ≈2 s，无 turn、无 transcript，见 [research](../research/claude-desktop-temporary-query.md)），以及启动后未输入即退出的会话。
 
 `SessionReduction` 与 `TurnReduction` 是 daemon 侧唯一的状态归并器；in-daemon 的 `CodexRolloutWatcher` 退居兜底（`AGENT_STATUS_ROLLOUT_WATCHER=1` 开启，默认关闭）。
 
@@ -67,7 +76,7 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | `Stop(last_assistant_message)` | Waiting For Input | Idle | endedAt/outcome=completed/lastAssistantMessage | `turnEnd(completed, message)` |
 | `StopFailure`（Claude） | Failed | Idle | outcome=failed | `turnEnd(failed, error)` |
 | `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
-| `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)` |
+| `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)`；Claude 且会话仍临时（无 Turn、无 transcript）→ 改为 `disposition: .discard`（删除 + 墓碑，无 item） |
 | `UserPromptExpansion`（Claude） | Running | Thinking | — | `context(turn, command_expansion)` |
 | `InstructionsLoaded` / `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `context(session, …)`；CwdChanged 同时更新 workspace |
 | `Notification(agent_needs_input / permission_prompt / idle_prompt)`（Claude） | Waiting For Input | Waiting For Approval / Idle | — | 无 |

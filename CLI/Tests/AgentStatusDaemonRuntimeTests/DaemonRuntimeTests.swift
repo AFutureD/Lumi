@@ -62,6 +62,42 @@ import Testing
     #expect(listed.payload.sessions?.isEmpty == true)
 }
 
+@Test func serviceBroadcastsHelperDiscardsAndHidesProvisionalSessionsFromHealth() async throws {
+    let repository = InMemorySessionRepository()
+    let hub = DaemonSubscriptionHub()
+    let capture = EventCapture()
+    let subscriptionID = hub.subscribe { event in capture.append(event) }
+    defer { hub.unsubscribe(subscriptionID) }
+    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", subscriptions: hub)
+    let ghost = SessionID("ghost")
+    let start = AgentIngressEvent(
+        eventID: EventID("ghost-start"), sessionID: ghost, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 100), lifecycle: .starting, phase: .idle
+    )
+    _ = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingestBatch, events: [start])))
+
+    // Provisional: retained and served to the helper, but not "active".
+    let detail = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSession, sessionID: ghost, limit: 1)))
+    #expect(detail.payload.session?.summary.isProvisional == true)
+    let health = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .health)))
+    #expect(health.payload.health?.activeSessionCount == 0)
+    #expect(health.payload.health?.retainedSessionCount == 1)
+
+    let discard = AgentIngressEvent(
+        eventID: EventID("ghost-discard"), sessionID: ghost, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 102), disposition: .discard
+    )
+    let response = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingestBatch, events: [discard])))
+    #expect(response.payload.status == .accepted)
+    #expect(response.payload.acceptedCount == 1)
+    #expect(capture.events.map(\.eventID) == [EventID("ghost-start"), EventID("ghost-discard")])
+
+    let listed = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .listSessions)))
+    #expect(listed.payload.sessions?.isEmpty == true)
+    let gone = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSession, sessionID: ghost, limit: 1)))
+    #expect(gone.payload.failure?.code == "session_not_found")
+}
+
 @Test func subscriptionHubMultiplexesEventsWithoutSessionChannels() {
     let hub = DaemonSubscriptionHub()
     let capture = EventCapture()

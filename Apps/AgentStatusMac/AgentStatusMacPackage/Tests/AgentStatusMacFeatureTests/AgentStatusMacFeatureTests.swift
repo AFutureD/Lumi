@@ -739,3 +739,79 @@ private func hierarchySummary(
 private func flatten(_ node: SessionListNode) -> [SessionSummary] {
     [node.summary] + node.children.flatMap(flatten)
 }
+
+// MARK: - Provisional sessions in the Mac store
+
+@MainActor
+private func macStoreFixture() throws -> (MacSessionStore, URL) {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-mac-store-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let store = MacSessionStore(
+        socketPath: directory.appendingPathComponent("missing.sock").path,
+        cachePath: directory.appendingPathComponent("cache.sqlite3").path
+    )
+    return (store, directory)
+}
+
+private func macStartEvent(_ id: String, event: String, at: TimeInterval) -> AgentIngressEvent {
+    let sessionID = SessionID(id)
+    return AgentIngressEvent(
+        eventID: EventID(event), sessionID: sessionID, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: at), lifecycle: .starting, phase: .idle,
+        timelineItem: TimelineItem(
+            id: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted), sessionID: sessionID,
+            occurredAt: Date(timeIntervalSince1970: at),
+            payload: .sessionMarker(SessionMarkerTimelinePayload(kind: .sessionStarted, detail: "startup"))
+        )
+    )
+}
+
+private func macPromptEvent(_ id: String, event: String, at: TimeInterval) -> AgentIngressEvent {
+    let sessionID = SessionID(id)
+    return AgentIngressEvent(
+        eventID: EventID(event), sessionID: sessionID, turnID: TurnID("turn-\(event)"), agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: at), lifecycle: .running, phase: .thinking,
+        turn: TurnSummary(id: TurnID("turn-\(event)"), sessionID: sessionID, phase: .thinking, prompt: "hi", startedAt: Date(timeIntervalSince1970: at))
+    )
+}
+
+@Test @MainActor
+func macStoreHidesProvisionalSessionsUntilTheirFirstTurn() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    store.enqueueAgentEvent(macStartEvent("fresh", event: "fresh-start", at: 100))
+    await store.flushPendingEventsForTesting()
+    #expect(store.sessions.isEmpty)
+
+    store.enqueueAgentEvent(macPromptEvent("fresh", event: "fresh-p1", at: 101))
+    await store.flushPendingEventsForTesting()
+    #expect(store.sessions.map(\.id) == [SessionID("fresh")])
+    // The start marker was kept in the cache while the session was hidden.
+    let detail = try await store.cachedSessionDetails(ids: [SessionID("fresh")]).first
+    #expect(detail?.timeline.contains { $0.id == TimelineItemIDs.sessionMarker(SessionID("fresh"), .sessionStarted) } == true)
+    #expect(try await store.snapshotDetails().map(\.summary.id) == [SessionID("fresh")])
+}
+
+@Test @MainActor
+func macStoreAppliesDaemonEventsInArrivalOrderSoDiscardsWin() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    // start, prompt, discard → gone.
+    store.enqueueAgentEvent(macStartEvent("ghost", event: "g-start", at: 100))
+    store.enqueueAgentEvent(macPromptEvent("ghost", event: "g-p1", at: 101))
+    store.enqueueAgentEvent(AgentIngressEvent(
+        eventID: EventID("g-discard"), sessionID: SessionID("ghost"), agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 102), disposition: .discard
+    ))
+    await store.flushPendingEventsForTesting()
+    #expect(store.sessions.isEmpty)
+    #expect(try await store.cachedSessionDetails(ids: [SessionID("ghost")]).isEmpty)
+
+    // A later prompt (new event) is live activity and brings it back.
+    store.enqueueAgentEvent(macPromptEvent("ghost", event: "g-p2", at: 200))
+    await store.flushPendingEventsForTesting()
+    #expect(store.sessions.map(\.id) == [SessionID("ghost")])
+}

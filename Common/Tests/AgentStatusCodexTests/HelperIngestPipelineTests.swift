@@ -12,10 +12,20 @@ final class MemoryDaemonPort: HelperDaemonPort, @unchecked Sendable {
     private var turnsBySession: [SessionID: [TurnID: TurnSummary]] = [:]
     private var items: [SessionID: [TimelineItemID: TimelineItem]] = [:]
     private var seen: Set<EventID> = []
+    private(set) var ignored: Set<SessionID> = []
+    /// Simulates a daemon that cannot answer `get_session`.
+    var sessionLookupError: Error?
 
     func ingest(_ events: [AgentIngressEvent]) throws {
         ingested.append(contentsOf: events)
         for event in events where seen.insert(event.eventID).inserted {
+            if event.disposition == .discard {
+                ignored.insert(event.sessionID)
+                summaries.removeValue(forKey: event.sessionID)
+                turnsBySession.removeValue(forKey: event.sessionID)
+                items.removeValue(forKey: event.sessionID)
+                continue
+            }
             summaries[event.sessionID] = SessionReduction.summary(applying: event, to: summaries[event.sessionID])
             if let turnID = event.turnID ?? event.turn?.id,
                let turn = TurnReduction.summary(applying: event, to: turnsBySession[event.sessionID]?[turnID]) {
@@ -33,7 +43,12 @@ final class MemoryDaemonPort: HelperDaemonPort, @unchecked Sendable {
     func rolloutCursor(path: String) throws -> RolloutCursor? { cursors[path] }
     func saveRolloutCursor(_ cursor: RolloutCursor) throws { cursors[cursor.path] = cursor }
 
-    func turns(sessionID: SessionID) throws -> [TurnSummary] {
+    func session(sessionID: SessionID) throws -> SessionDetail? {
+        if let sessionLookupError { throw sessionLookupError }
+        return detail(sessionID)
+    }
+
+    func turns(sessionID: SessionID) -> [TurnSummary] {
         (turnsBySession[sessionID]?.values).map(Array.init)?.sorted { $0.startedAt < $1.startedAt } ?? []
     }
 
@@ -41,11 +56,13 @@ final class MemoryDaemonPort: HelperDaemonPort, @unchecked Sendable {
         guard let summary = summaries[sessionID] else { return nil }
         return SessionDetail(
             summary: summary,
-            turns: (try? turns(sessionID: sessionID)) ?? [],
+            turns: turns(sessionID: sessionID),
             timeline: (items[sessionID]?.values).map(Array.init) ?? []
         )
     }
 }
+
+private struct StubLookupFailure: Error {}
 
 private func temporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
@@ -196,6 +213,100 @@ private func hook(_ fields: [String: Any]) -> Data {
     let cursor = try #require(try port.rolloutCursor(path: rollout.path))
     #expect(cursor.byteOffset == cursor.fileSize)
     #expect(try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop"]) { $1 })).richSourceLinesRead == 0)
+}
+
+/// The Claude desktop app spawns one-shot CLI probes to load slash-command /
+/// agent lists: SessionStart + SessionEnd ~2 s apart, no turn, no transcript.
+@Test func claudeSessionEndingBeforeFirstTurnIsDiscarded() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "63759c38-d24f-492e-96bd-358b126f85cc"
+    let transcript = home.appendingPathComponent(".claude/projects/-Users-x/\(session).jsonl").path
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+    let base: [String: Any] = ["session_id": session, "transcript_path": transcript, "cwd": "/Users/x"]
+
+    let start = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionStart", "source": "startup"]) { $1 }))
+    #expect(start.eventsSent == 1)
+    let provisional = try #require(port.detail(SessionID(session)))
+    #expect(provisional.summary.isProvisional)
+    #expect(provisional.summary.firstTurnAt == nil)
+
+    let end = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 }))
+    #expect(end.notes == ["session_discarded_never_used"])
+    #expect(end.eventsSent == 1)
+    let last = try #require(port.ingested.last)
+    #expect(last.disposition == .discard)
+    #expect(last.lifecycle == nil && last.timelineItem == nil)
+    #expect(port.detail(SessionID(session)) == nil)
+    #expect(port.ignored.contains(SessionID(session)))
+}
+
+@Test func claudeSessionWithATurnEndsNormallyWithoutTranscript() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "0696204b-47db-42b6-9a4a-b00792e596c7"
+    let transcript = home.appendingPathComponent(".claude/projects/-Users-x/\(session).jsonl").path
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+    let base: [String: Any] = ["session_id": session, "transcript_path": transcript, "cwd": "/Users/x"]
+
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionStart", "source": "startup"]) { $1 }))
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "UserPromptSubmit", "prompt_id": "p1", "prompt": "hi"]) { $1 }))
+    let used = try #require(port.detail(SessionID(session)))
+    #expect(!used.summary.isProvisional)
+    #expect(used.summary.firstTurnAt != nil)
+
+    let end = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 }))
+    #expect(end.notes.isEmpty)
+    let detail = try #require(port.detail(SessionID(session)))
+    #expect(detail.summary.lifecycle == .completed)
+    #expect(port.ingested.last?.disposition == nil)
+    #expect(port.ignored.isEmpty)
+}
+
+@Test func claudeSessionEndKeepsSessionWhenTranscriptExistsOrLookupFails() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+
+    // Transcript on disk (even empty): resumed / real session, keep it.
+    let withTranscript = "11111111-0000-0000-0000-000000000001"
+    let projectDir = home.appendingPathComponent(".claude/projects/-Users-x", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    let transcript = projectDir.appendingPathComponent("\(withTranscript).jsonl")
+    try "".write(to: transcript, atomically: true, encoding: .utf8)
+    var base: [String: Any] = ["session_id": withTranscript, "transcript_path": transcript.path, "cwd": "/Users/x"]
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionStart", "source": "resume"]) { $1 }))
+    let kept = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 }))
+    #expect(kept.notes.isEmpty)
+    #expect(port.detail(SessionID(withTranscript))?.summary.lifecycle == .completed)
+
+    // Daemon cannot answer: never delete on a failed lookup.
+    let unknown = "11111111-0000-0000-0000-000000000002"
+    base = ["session_id": unknown, "transcript_path": projectDir.appendingPathComponent("\(unknown).jsonl").path, "cwd": "/Users/x"]
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionStart", "source": "startup"]) { $1 }))
+    port.sessionLookupError = StubLookupFailure()
+    let failed = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 }))
+    port.sessionLookupError = nil
+    #expect(failed.notes.isEmpty)
+    #expect(port.detail(SessionID(unknown))?.summary.lifecycle == .completed)
+    #expect(port.ignored.isEmpty)
+}
+
+@Test func codexSessionEndIsNeverDiscarded() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "01a01326-0000-7b30-8555-2b71d86d5ab4"
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+    let base: [String: Any] = ["session_id": session, "cwd": "/tmp/proj"]
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionStart", "source": "startup"]) { $1 }), agent: .codex)
+    let end = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 }), agent: .codex)
+    #expect(end.notes.isEmpty)
+    #expect(port.detail(SessionID(session))?.summary.lifecycle == .completed)
+    #expect(port.ignored.isEmpty)
 }
 
 @Test func providerDetectionPrefersExplicitThenHeuristics() {

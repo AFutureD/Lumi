@@ -2,6 +2,14 @@ import Foundation
 
 /// One Agent-domain event from the helper to the daemon. Carries any subset of:
 /// session identity, session lifecycle, turn aggregate, and one timeline item.
+/// The helper's verdict on whether a session is kept at all. `.discard`: the
+/// session ended before its first Turn (a desktop config-loading probe, or a
+/// launch that was quit before any prompt) — repositories delete it and
+/// tombstone the id. The event is still published so every mirror converges.
+public enum SessionDisposition: String, Codable, Hashable, Sendable {
+    case discard
+}
+
 public struct AgentIngressEvent: Codable, Hashable, Sendable {
     public let eventID: EventID
     public let sessionID: SessionID
@@ -15,6 +23,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
     public let turn: TurnSummary?
     public let timelineItem: TimelineItem?
     public let lineage: SessionLineage?
+    public let disposition: SessionDisposition?
 
     public init(
         eventID: EventID,
@@ -28,7 +37,8 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         phase: TurnPhase? = nil,
         turn: TurnSummary? = nil,
         timelineItem: TimelineItem? = nil,
-        lineage: SessionLineage? = nil
+        lineage: SessionLineage? = nil,
+        disposition: SessionDisposition? = nil
     ) {
         self.eventID = eventID
         self.sessionID = sessionID
@@ -42,6 +52,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         self.turn = turn
         self.timelineItem = timelineItem
         self.lineage = lineage
+        self.disposition = disposition
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -57,6 +68,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         case turn
         case timelineItem
         case lineage
+        case disposition
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,6 +85,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         turn = try c.decodeIfPresent(TurnSummary.self, forKey: .turn)
         timelineItem = try c.decodeIfPresent(TimelineItem.self, forKey: .timelineItem)
         lineage = try c.decodeIfPresent(SessionLineage.self, forKey: .lineage)
+        disposition = try c.decodeIfPresent(SessionDisposition.self, forKey: .disposition)
     }
 }
 

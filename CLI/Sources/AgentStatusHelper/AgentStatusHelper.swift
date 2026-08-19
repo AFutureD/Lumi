@@ -49,6 +49,9 @@ enum AgentStatusHelperMain {
                 log("warning: \(warning)")
             }
             if verbose {
+                for note in report.notes {
+                    log("note: \(note)")
+                }
                 log("provider=\(report.provider.rawValue) session=\(report.sessionID?.rawValue ?? "-") hook=\(report.hookEventName ?? "-") rich=\(report.richSourcePath ?? "-") lines=\(report.richSourceLinesRead) events=\(report.eventsSent)")
             }
         } catch {
@@ -111,12 +114,16 @@ struct IPCDaemonPort: HelperDaemonPort {
         )
     }
 
-    func turns(sessionID: SessionID) throws -> [TurnSummary] {
+    func session(sessionID: SessionID) throws -> SessionDetail? {
         let response = try client.request(
             IPCRequest(operation: .getSession, sessionID: sessionID, limit: 1),
             socketPath: socketPath,
             timeout: .seconds(1)
         )
-        return response.session?.turns ?? []
+        // "Not retained" is a real answer (nil); any other failure is not.
+        if let failure = response.failure, failure.code != "session_not_found" {
+            throw failure
+        }
+        return response.session
     }
 }
