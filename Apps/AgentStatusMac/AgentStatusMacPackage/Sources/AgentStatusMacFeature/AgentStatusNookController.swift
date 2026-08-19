@@ -58,8 +58,20 @@ final class AgentStatusNookController {
             showsStatusBanner: false,
             leadingTitle: { _ in "Agent Status" },
             leadingIcon: "terminal",
-            width: .contentColumn
+            width: .intrinsic
         )
+        // Rows pad themselves by `sideInset`, so every chrome-side horizontal
+        // clearance is switched off and that 16 becomes the real distance to
+        // the panel edge: `.intrinsic` drops the content-column gutter (which
+        // is the corner clearance, `bottomCornerRadius`), and the two paddings
+        // below are the chrome's own 8 + 8. The radii restate the framework
+        // defaults — `style` is all-or-nothing, there is no partial override.
+        configuration.style = NookStyle(
+            topCornerRadius: 19,
+            bottomCornerRadius: 24,
+            expandedContentInsets: .zero
+        )
+        configuration.metrics.edgePadding = 0
         configuration.setTopBarTrailingItems {
             AgentStatusNookSettingsButton(action: actions.openMainSettings)
         }
