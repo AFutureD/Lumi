@@ -1,9 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Workspace version="1.0">
-   <FileRef location="group:Common"/>
-   <FileRef location="group:CLI"/>
-   <FileRef location="group:Apps/AgentStatusMac/AgentStatusMac.xcodeproj"/>
-   <FileRef location="group:Apps/AgentStatusMac/AgentStatusMacPackage"/>
-   <FileRef location="group:Apps/AgentStatusIOS/AgentStatusIOS.xcodeproj"/>
-   <FileRef location="group:Apps/AgentStatusIOS/AgentStatusIOSPackage"/>
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "group:README.md">
+   </FileRef>
+   <FileRef
+      location = "group:AGENTS.md">
+   </FileRef>
+   <FileRef
+      location = "group:Common">
+   </FileRef>
+   <FileRef
+      location = "group:CLI">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/AgentStatusMac/AgentStatusMac.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/AgentStatusMac/AgentStatusMacPackage">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/AgentStatusIOS/AgentStatusIOS.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/AgentStatusIOS/AgentStatusIOSPackage">
+   </FileRef>
 </Workspace>
