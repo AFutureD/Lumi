@@ -485,6 +485,10 @@ struct LaneStripGeometry: Equatable {
 private struct SessionActivityTimeline: View {
     /// A press that travels further than this is a pan, not a click.
     private static let dragThreshold: CGFloat = 3
+    /// Coordinate space of the strip's scroll *container*. The pan gesture
+    /// must measure its translation here: content-local coordinates move with
+    /// the pan's own scrolling and would feed back into the translation.
+    private static let panSpace = "activityLaneStripPan"
 
     let activities: [SessionActivityPresentation]
     let mode: ActivityTimelineMode
@@ -496,6 +500,12 @@ private struct SessionActivityTimeline: View {
     @State private var hoveredCell: LaneStripGeometry.Cell?
     /// Strip offset when the current pan began.
     @State private var panOrigin: CGFloat?
+    /// Gesture translation when the pan began: the pointer has already moved
+    /// `dragThreshold` by the first `onChanged`, and gluing to the raw
+    /// translation would make the content hop that far on grab.
+    @State private var panBaseline: CGFloat = 0
+    /// Post-release momentum glide; cancelled by any new user input.
+    @State private var decelerationTask: Task<Void, Never>?
 
     private var geometry: LaneStripGeometry {
         LaneStripGeometry(
@@ -536,6 +546,7 @@ private struct SessionActivityTimeline: View {
                 link.stripDidScroll(geometry)
             }
             .onScrollPhaseChange { _, phase in
+                if phase.isUserDriven { stopDeceleration() }
                 link.stripPhaseChanged(isUserScrolling: phase.isUserDriven)
             }
             .onAppear {
@@ -543,6 +554,7 @@ private struct SessionActivityTimeline: View {
                     scrollInstantly { stripPosition.scrollTo(x: offset) }
                 }
             }
+            .coordinateSpace(name: Self.panSpace)
             .frame(height: stripHeight)
         }
         .frame(height: stripHeight)
@@ -554,12 +566,22 @@ private struct SessionActivityTimeline: View {
         Canvas(rendersAsynchronously: false) { context, _ in
             let geometry = geometry
             guard let columns = geometry.visibleColumns(in: context.clipBoundingRect, columns: activities.count) else { return }
+            // Batch the rounded rects into one path per tag: one fill per tag
+            // (a handful) instead of one per cell (hundreds while panning).
+            let radius = AgentStatusDesign.Layout.laneCellCornerRadius
+            var fills: [TimelineTag: Path] = [:]
             for index in columns {
                 let activity = activities[index]
-                let color = Color(activity.tag.laneCellColor)
                 for lane in 0 ..< geometry.laneCount where isFilled(activity, lane: lane) {
-                    context.fill(cellPath(index: index, lane: lane), with: .color(color))
+                    fills[activity.tag, default: Path()].addRoundedRect(
+                        in: geometry.rect(index: index, lane: lane),
+                        cornerSize: CGSize(width: radius, height: radius),
+                        style: .continuous
+                    )
                 }
+            }
+            for (tag, path) in fills {
+                context.fill(path, with: .color(Color(tag.laneCellColor)))
             }
             if let hoveredCell {
                 context.stroke(
@@ -573,6 +595,12 @@ private struct SessionActivityTimeline: View {
         // Click on a filled cell → jump the list. Registered before the pan
         // gesture so a press that stays put is a click, not a zero-length pan.
         .onTapGesture { location in
+            // A click anywhere stops a momentum glide, like grabbing a
+            // coasting scroll view.
+            if decelerationTask != nil {
+                stopDeceleration()
+                link.endStripPan()
+            }
             guard let cell = cell(at: location) else { return }
             onSelect(activities[cell.index])
         }
@@ -596,25 +624,71 @@ private struct SessionActivityTimeline: View {
 
     /// Press-and-drag pans the strip: the pointer stays glued to the content
     /// (drag right → content follows right), clamped to the scrollable range.
-    /// The pan declares the strip as driver, so the list follows.
+    /// The pan declares the strip as driver, so the list follows. Measured in
+    /// the scroll container's coordinate space — never the content's, whose
+    /// movement under the pointer would contaminate the translation and make
+    /// consecutive events fight each other (visible as jitter).
     private var panGesture: some Gesture {
-        DragGesture(minimumDistance: Self.dragThreshold, coordinateSpace: .local)
+        DragGesture(minimumDistance: Self.dragThreshold, coordinateSpace: .named(Self.panSpace))
             .onChanged { value in
                 if panOrigin == nil {
+                    stopDeceleration()
                     panOrigin = link.strip.offset
+                    panBaseline = value.translation.width
                     hoveredCell = nil
                     link.beginStripPan()
                     NSCursor.closedHand.set()
                 }
-                let origin = panOrigin ?? 0
-                let target = min(max(origin - value.translation.width, 0), link.strip.range)
-                scrollInstantly { stripPosition.scrollTo(x: target) }
+                scrollInstantly { stripPosition.scrollTo(x: panTarget(for: value.translation.width)) }
             }
-            .onEnded { _ in
+            .onEnded { value in
+                let released = panTarget(for: value.translation.width)
+                let projected = panTarget(for: value.predictedEndTranslation.width)
                 panOrigin = nil
-                link.endStripPan()
                 NSCursor.arrow.set()
+                decelerate(from: released, to: projected)
             }
+    }
+
+    /// Strip offset that keeps the grab point under the pointer, clamped to
+    /// the scrollable range.
+    private func panTarget(for translation: CGFloat) -> CGFloat {
+        let origin = panOrigin ?? link.strip.offset
+        return min(max(origin - (translation - panBaseline), 0), link.strip.range)
+    }
+
+    /// Trackpad-style momentum: glide from `offset` towards `target` with an
+    /// ease-out curve. The strip stays registered as driver for the whole
+    /// glide, so the list keeps following; the glide runs as instant scrolls
+    /// (like the pan itself) and any new user input cancels it.
+    private func decelerate(from offset: CGFloat, to target: CGFloat) {
+        let distance = target - offset
+        guard abs(distance) > 1 else {
+            link.endStripPan()
+            return
+        }
+        let duration = min(0.45, max(0.2, abs(distance) / 1_500))
+        decelerationTask = Task { @MainActor in
+            defer { decelerationTask = nil }
+            let clock = ContinuousClock()
+            let start = clock.now
+            let total = Duration.seconds(duration)
+            while !Task.isCancelled, link.driver == .strip {
+                let t = min(1, start.duration(to: clock.now) / total)
+                let eased = 1 - pow(1 - t, 3) // ease-out cubic
+                scrollInstantly { stripPosition.scrollTo(x: offset + distance * eased) }
+                if t >= 1 { break }
+                try? await Task.sleep(for: .milliseconds(8))
+            }
+            if !Task.isCancelled { link.endStripPan() }
+        }
+    }
+
+    /// Cancellation sites own the driver hand-off: a new pan re-declares it,
+    /// a wheel scroll keeps it through the phase change, a click ends it.
+    private func stopDeceleration() {
+        decelerationTask?.cancel()
+        decelerationTask = nil
     }
 
     // MARK: Geometry
