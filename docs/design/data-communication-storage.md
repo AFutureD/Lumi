@@ -93,6 +93,7 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 | `list_sessions` | 查询 Summary | 短连接请求 |
 | `get_session` | 分页查询一个 Timeline | 短连接请求 |
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
+| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / turns / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；返回重建后的 SessionDetail。不走事件流，调用方随后 `snapshot_sessions` 同步 | 短连接请求（15s） |
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
 | `health` | daemon 状态 | 短连接请求 |
 | `subscribe` | 全部 Session 共用的事件流 | Mac App 持久连接 |

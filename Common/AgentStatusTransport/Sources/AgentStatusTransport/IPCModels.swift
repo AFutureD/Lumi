@@ -125,6 +125,7 @@ public enum IPCOperation: Hashable, Sendable {
     case clearHistory
     case getRolloutCursor
     case saveRolloutCursor
+    case reingestSession
     case unknown(String)
 
     public var rawValue: String {
@@ -140,6 +141,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .clearHistory: "clear_history"
         case .getRolloutCursor: "get_rollout_cursor"
         case .saveRolloutCursor: "save_rollout_cursor"
+        case .reingestSession: "reingest_session"
         case let .unknown(value): value
         }
     }
@@ -160,6 +162,7 @@ extension IPCOperation: Codable {
         case "clear_history": .clearHistory
         case "get_rollout_cursor": .getRolloutCursor
         case "save_rollout_cursor": .saveRolloutCursor
+        case "reingest_session": .reingestSession
         default: .unknown(value)
         }
     }

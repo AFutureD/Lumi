@@ -181,6 +181,7 @@ public struct ClaudeAdapter: AgentAdapter {
             return [event(lifecycle: .running, phase: .thinking)]
 
         case "SubagentStart":
+            guard Self.isRealSubagent(root) else { return [] }
             let agentID = root.string("agent_id") ?? eventID.rawValue
             return [event(
                 lifecycle: .running,
@@ -194,6 +195,7 @@ public struct ClaudeAdapter: AgentAdapter {
             )]
 
         case "SubagentStop":
+            guard Self.isRealSubagent(root) else { return [] }
             let agentID = root.string("agent_id") ?? eventID.rawValue
             return [event(
                 lifecycle: .running,
@@ -473,6 +475,13 @@ public struct ClaudeAdapter: AgentAdapter {
             var index = 0
             func next() -> String { defer { index += 1 }; return ":\(index)" }
             let model = message.string("model")
+            // The transcript's own turn boundary: the final assistant message
+            // of a turn carries a non-tool stop reason. Emitting the turn end
+            // here keeps the state correct even when the Stop hook is missed
+            // or overridden, and lets a rebuild from the transcript alone
+            // land on waiting_for_input instead of an open turn.
+            let endsTurn = Self.turnEndingStopReasons.contains(message.string("stop_reason") ?? "")
+            var lastText: String?
 
             for block in Self.blocks(message["content"]) {
                 switch block.type {
@@ -486,6 +495,7 @@ public struct ClaudeAdapter: AgentAdapter {
                     ))
                 case "text":
                     guard let text = block.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    lastText = text
                     events.append(makeEvent(
                         lifecycle: .running,
                         phase: .responding,
@@ -514,6 +524,27 @@ public struct ClaudeAdapter: AgentAdapter {
                 default:
                     continue
                 }
+            }
+
+            if endsTurn {
+                events.append(makeEvent(
+                    lifecycle: .waitingForInput,
+                    phase: .idle,
+                    turn: turnID.map {
+                        TurnSummary(
+                            id: $0,
+                            sessionID: sessionID,
+                            phase: .idle,
+                            startedAt: occurredAt,
+                            endedAt: occurredAt,
+                            outcome: .completed,
+                            lastAssistantMessage: lastText
+                        )
+                    },
+                    timeline: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: lastText)),
+                    suffix: ":end",
+                    itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
+                ))
             }
 
             if let usage = message.dictionary("usage") {
@@ -598,6 +629,18 @@ public struct ClaudeAdapter: AgentAdapter {
     }
 
     // MARK: - Helpers
+
+    /// Claude Code forks an internal query after every Stop (a few seconds
+    /// later) that fires `SubagentStop` with an empty `agent_type`, no paired
+    /// `SubagentStart` and no subagent transcript. It is not a subagent of the
+    /// session; folding it in would flip a finished turn back to running.
+    /// `tool_use` continues the turn; anything else the API returns ends it.
+    static let turnEndingStopReasons: Set<String> = ["end_turn", "stop_sequence", "max_tokens", "refusal"]
+
+    static func isRealSubagent(_ root: [String: Any]) -> Bool {
+        guard let type = root.string("agent_type") else { return false }
+        return !type.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     private static func digest(data: Data, prefix: String) -> String {
         prefix + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

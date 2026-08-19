@@ -1,3 +1,4 @@
+import AgentStatusCodex
 import AgentStatusCore
 import AgentStatusDaemonRuntime
 import Foundation
@@ -12,7 +13,11 @@ enum AgentStatusDaemonMain {
         let service = DaemonService(
             repository: repository,
             socketPath: configuration.socketPath,
-            subscriptions: subscriptions
+            subscriptions: subscriptions,
+            reingester: SessionReingester(
+                repository: repository,
+                codexSessionsDirectory: configuration.codexSessionsDirectory
+            )
         )
         let watcher: CodexRolloutWatcher? = configuration.rolloutWatcherEnabled
             ? CodexRolloutWatcher(

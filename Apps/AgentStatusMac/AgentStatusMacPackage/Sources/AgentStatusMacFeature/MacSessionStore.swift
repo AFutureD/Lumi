@@ -113,10 +113,33 @@ public final class MacSessionStore {
         return found ? total : nil
     }
 
-    /// The toolbar and daemon-management actions are the only manual callers.
+    /// Daemon-management actions: resync from the daemon as it is.
     public func refresh() {
         scheduleSnapshotRefresh()
         connectEventStream()
+    }
+
+    /// The toolbar refresh: the selected session is first rebuilt by the
+    /// daemon from its transcript / rollout (`reingest_session`), then the
+    /// whole snapshot is resynced so the wiped-and-rebuilt session replaces
+    /// the cached one. Without a selection this is a plain `refresh()`.
+    public func refreshSelectedSession() {
+        guard let sessionID = pendingSelectionID ?? selectedSession?.summary.id else {
+            refresh()
+            return
+        }
+        Task {
+            do {
+                let response = try await request(
+                    IPCRequest(operation: .reingestSession, sessionID: sessionID),
+                    extendedTimeout: true
+                )
+                if let failure = response.failure { throw failure }
+            } catch {
+                handleConnectionFailure(error)
+            }
+            refresh()
+        }
     }
 
     public func deleteSession(_ sessionID: SessionID) {

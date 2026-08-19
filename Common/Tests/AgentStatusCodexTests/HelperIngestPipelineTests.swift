@@ -341,3 +341,30 @@ private func hook(_ fields: [String: Any]) -> Data {
     #expect(permission[0].timelineItem == nil)
     #expect(permission[0].lifecycle == .waitingForInput && permission[0].phase == .waitingForApproval)
 }
+
+@Test func phantomSubagentStopAfterStopDoesNotReopenTheSession() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "aaaaaaaa-1111-2222-3333-444444444444"
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+    let base: [String: Any] = ["session_id": session, "cwd": "/tmp/proj", "prompt_id": "p1"]
+
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "hi"]) { $1 }))
+    // A real subagent: agent_type present, start/stop paired.
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SubagentStart", "agent_id": "a1", "agent_type": "Explore"]) { $1 }))
+    #expect(port.detail(SessionID(session))?.summary.phase == .subagentRunning)
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SubagentStop", "agent_id": "a1", "agent_type": "Explore"]) { $1 }))
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop", "last_assistant_message": "done"]) { $1 }))
+
+    // Claude Code's post-Stop internal fork: SubagentStop with empty agent_type, no start.
+    let phantom = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SubagentStop", "agent_id": "a2", "agent_type": ""]) { $1 }))
+    #expect(phantom.eventsSent == 0)
+
+    let detail = try #require(port.detail(SessionID(session)))
+    #expect(detail.summary.lifecycle == .waitingForInput)
+    #expect(detail.summary.phase == .idle)
+    #expect(detail.turns.first?.phase == .idle)
+    #expect(detail.turns.first?.subagentCount == 1)
+    #expect(detail.timeline.filter { if case .subagent = $0.payload { return true }; return false }.count == 2)
+}

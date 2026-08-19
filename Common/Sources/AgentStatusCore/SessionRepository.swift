@@ -12,7 +12,14 @@ public protocol SessionRepository: Sendable {
     func deleteSession(id: SessionID) async throws -> Bool
     func deleteAllSessions() async throws -> Int
     func rolloutCursor(path: String) async throws -> RolloutCursor?
+    /// Newest cursor recorded for the session, i.e. where its transcript /
+    /// rollout lives.
+    func rolloutCursor(sessionID: SessionID) async throws -> RolloutCursor?
     func saveRolloutCursor(_ cursor: RolloutCursor) async throws
+    /// Drops the session's summary, turns, timeline and cursors so it can be
+    /// rebuilt from its rich source. Unlike `deleteSession` this leaves no
+    /// tombstone. Returns whether the session existed.
+    func resetSession(id: SessionID) async throws -> Bool
     func markSessionIgnored(_ sessionID: SessionID) async throws
     func isRolloutBaselineInitialized() async throws -> Bool
     func markRolloutBaselineInitialized() async throws
@@ -307,6 +314,19 @@ public actor InMemorySessionRepository: SessionRepository {
         ignoredSessionIDs.insert(id)
         timeline.removeValue(forKey: id)
         turns.removeValue(forKey: id)
+        return sessions.removeValue(forKey: id) != nil
+    }
+
+    public func rolloutCursor(sessionID: SessionID) async throws -> RolloutCursor? {
+        cursors.values
+            .filter { $0.sessionID == sessionID }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
+
+    public func resetSession(id: SessionID) async throws -> Bool {
+        timeline.removeValue(forKey: id)
+        turns.removeValue(forKey: id)
+        cursors = cursors.filter { $0.value.sessionID != id }
         return sessions.removeValue(forKey: id) != nil
     }
 

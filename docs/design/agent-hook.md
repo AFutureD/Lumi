@@ -42,6 +42,18 @@ flowchart LR
 
 典型来源：Claude 桌面 App 为加载斜杠命令 / agent 列表拉起的一次性 CLI（`withTemporaryQuery`，SessionStart→SessionEnd ≈2 s，无 turn、无 transcript，见 [research](../research/claude-desktop-temporary-query.md)），以及启动后未输入即退出的会话。
 
+## 重算（`reingest_session`）
+
+Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_session`，再做全量 `snapshot_sessions`。daemon 侧 `SessionReingester`（`Common/AgentStatusCodex`）：
+
+1. 取该 Session 现有 summary + 全部 timeline；按 `rollout_cursors.session_id` 找到 rich source（找不到时按 agent 用 `RichSourceLocator` 搜 `~/.claude/projects` / `~/.codex/sessions`；仍找不到 → `rich_source_unavailable`，不动数据）。
+2. `RichSourceReader` 从 offset 0 全量读（不截尾），逐行经 ClaudeAdapter / CodexAdapter 归约。
+3. `resetSession`：删 sessions/turns/timeline/cursor 行，不写 tombstone。
+4. 回放：全部 rich 事件（eventID 加 `reingest:<generation>:` 前缀绕过幂等表；timeline item ID 不变）→ 之前 hook-only 的 item：`sessionMarker`（`session_ended` 带 completed/idle，仅当 transcript 里没有更晚活动时才生效）与 Claude `subagent` 起止（transcript 不读 sidechain）→ 标题 / lineage（重建结果为默认值时沿用旧值）。
+5. 游标存到 EOF，helper 之后继续增量。
+
+丢失的只有 hook-only 且不可回放的瞬时状态（PermissionRequest 的 waiting_for_approval）。
+
 `SessionReduction` 与 `TurnReduction` 是 daemon 侧唯一的状态归并器；in-daemon 的 `CodexRolloutWatcher` 退居兜底（`AGENT_STATUS_ROLLOUT_WATCHER=1` 开启，默认关闭）。
 
 ## Hook 安装
@@ -72,7 +84,7 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | `PostToolUse` / `PostToolUseFailure` | Running | Thinking | — | 非 rich：`tool(succeeded/failed, toolUseID)` |
 | `PermissionRequest` | Waiting For Input | Waiting For Approval | — | **无**（权限不进 Timeline） |
 | `PermissionDenied`（Claude） | Running | Thinking | — | 无 |
-| `SubagentStart/Stop(agent_id, agent_type)` | Running | Subagent Running / Thinking | subagentCount | `subagent(started/completed)` |
+| `SubagentStart/Stop(agent_id, agent_type)` | Running | Subagent Running / Thinking | subagentCount | `subagent(started/completed)`；Claude `agent_type` 为空的 SubagentStart/Stop 整体忽略（Claude Code 在每个 Stop 后 ≈3 s 内部 fork 一次查询，只发 SubagentStop、无 SubagentStart、无 subagent transcript；不是会话的子代理，若纳入会把已完成的 Turn / Session 改回 running） |
 | `Stop(last_assistant_message)` | Waiting For Input | Idle | endedAt/outcome=completed/lastAssistantMessage | `turnEnd(completed, message)` |
 | `StopFailure`（Claude） | Failed | Idle | outcome=failed | `turnEnd(failed, error)` |
 | `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
@@ -110,6 +122,7 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(turn, system_reminder)`；`<command-name>` 等标签块为 `context(turn, <tag>)` |
 | `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)` |
 | `assistant` `thinking` / `text` / `tool_use` | `reasoning` / `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
+| `assistant` `stop_reason` ∈ {`end_turn`, `stop_sequence`, `max_tokens`, `refusal`} | Turn 结束：Waiting For Input / Idle + Turn `endedAt/outcome=completed/lastAssistantMessage` + `turnEnd`（ID `turn_end:<s>:<turn>`，与 Stop hook 同一行）。transcript 自己就能收口，Stop hook 丢失或被后到事件覆盖时下一次读增量即自愈；`tool_use` 不结束 Turn |
 | `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |
 | `attachment` / `system` / `summary` | `context(turn|session, …)` |
 | `custom-title` | Session 标题 |

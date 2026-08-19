@@ -431,3 +431,48 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
         lock.unlock()
     }
 }
+
+@Test func serviceReingestsASessionFromItsTranscript() async throws {
+    let session = "ffffffff-1111-2222-3333-444444444444"
+    let sid = SessionID(session)
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let path = projectDir.appendingPathComponent("\(session).jsonl").path
+    let records: [[String: Any]] = [
+        ["type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1", "timestamp": "2026-08-19T06:42:07.000Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "hi"]],
+        ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-08-19T06:42:10.000Z",
+         "message": ["role": "assistant", "model": "claude-opus-4-7", "stop_reason": "end_turn", "content": [["type": "text", "text": "Hello."]]]],
+    ]
+    try (records.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n") + "\n")
+        .write(toFile: path, atomically: true, encoding: .utf8)
+
+    let repository = InMemorySessionRepository()
+    let service = DaemonService(
+        repository: repository,
+        socketPath: "/tmp/agent-status.sock",
+        reingester: SessionReingester(repository: repository, homeDirectory: home)
+    )
+    // The daemon only knows a stuck summary; the transcript is found by cwd.
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("stuck"), sessionID: sid, turnID: TurnID("p1"), agent: .claude,
+        occurredAt: Date(), workspace: "/tmp/proj", lifecycle: .running, phase: .thinking
+    ))
+
+    let rebuilt = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .reingestSession, sessionID: sid)))
+    #expect(rebuilt.payload.status == .ok)
+    #expect(rebuilt.payload.session?.summary.lifecycle == .waitingForInput)
+    #expect(rebuilt.payload.session?.turns.first?.prompt == "hi")
+    #expect(rebuilt.payload.session?.turns.first?.outcome == .completed)
+
+    let missing = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .reingestSession, sessionID: SessionID("nope"))))
+    #expect(missing.payload.failure?.code == "session_not_found")
+
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("orphan"), sessionID: SessionID("orphan"), agent: .claude, occurredAt: Date(), lifecycle: .running
+    ))
+    let orphan = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .reingestSession, sessionID: SessionID("orphan"))))
+    #expect(orphan.payload.failure?.code == "rich_source_unavailable")
+}

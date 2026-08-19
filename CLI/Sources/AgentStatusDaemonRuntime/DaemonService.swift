@@ -1,3 +1,4 @@
+import AgentStatusCodex
 import AgentStatusCore
 import AgentStatusTransport
 import Foundation
@@ -6,6 +7,7 @@ public actor DaemonService {
     public static let version = "0.1.0"
 
     private let repository: any SessionRepository
+    private let reingester: SessionReingester
     private let socketPath: String
     private let startedAt: Date
     private var relayConnected = false
@@ -15,9 +17,11 @@ public actor DaemonService {
         repository: any SessionRepository,
         socketPath: String,
         startedAt: Date = Date(),
-        subscriptions: DaemonSubscriptionHub = DaemonSubscriptionHub()
+        subscriptions: DaemonSubscriptionHub = DaemonSubscriptionHub(),
+        reingester: SessionReingester? = nil
     ) {
         self.repository = repository
+        self.reingester = reingester ?? SessionReingester(repository: repository)
         self.socketPath = socketPath
         self.startedAt = startedAt
         self.subscriptions = subscriptions
@@ -121,6 +125,28 @@ public actor DaemonService {
                     payload = IPCResponse(status: .ok, rolloutCursor: cursor)
                 } else {
                     payload = failure(code: "missing_cursor", message: "The cursor request has no cursor.")
+                }
+            case .reingestSession:
+                if let id = envelope.payload.sessionID {
+                    do {
+                        // The rebuild is not streamed: subscribers cannot
+                        // express "this session was wiped", so they take the
+                        // returned detail (or a fresh snapshot) instead.
+                        let report = try await reingester.reingest(
+                            sessionID: id,
+                            generation: String(Int64(now.timeIntervalSince1970 * 1000))
+                        )
+                        payload = IPCResponse(status: .ok, session: report.detail)
+                    } catch SessionReingestError.sessionNotFound {
+                        payload = failure(code: "session_not_found", message: "The session is no longer retained.")
+                    } catch SessionReingestError.richSourceUnavailable {
+                        payload = failure(
+                            code: "rich_source_unavailable",
+                            message: "No readable transcript or rollout is known for the session."
+                        )
+                    }
+                } else {
+                    payload = failure(code: "missing_session_id", message: "The reingest request has no id.")
                 }
             case let .unknown(operation):
                 payload = failure(code: "unknown_operation", message: "Unknown operation: \(operation)")

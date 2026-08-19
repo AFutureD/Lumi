@@ -419,6 +419,44 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
+    public func rolloutCursor(sessionID: SessionID) async throws -> RolloutCursor? {
+        try await database.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT path, byte_offset, file_size, updated_at
+                    FROM rollout_cursors WHERE session_id = ?
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                arguments: [sessionID.rawValue]
+            ) else { return nil }
+            let byteOffset: Int64 = row["byte_offset"]
+            let fileSize: Int64 = row["file_size"]
+            let updatedAt: Double = row["updated_at"]
+            return RolloutCursor(
+                path: row["path"],
+                byteOffset: UInt64(max(0, byteOffset)),
+                fileSize: UInt64(max(0, fileSize)),
+                sessionID: sessionID,
+                updatedAt: Date(timeIntervalSince1970: updatedAt)
+            )
+        }
+    }
+
+    public func resetSession(id: SessionID) async throws -> Bool {
+        try await database.write { db in
+            let existed = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)",
+                arguments: [id.rawValue]
+            ) ?? false
+            // turns / timeline cascade from the session row.
+            try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [id.rawValue])
+            try db.execute(sql: "DELETE FROM rollout_cursors WHERE session_id = ?", arguments: [id.rawValue])
+            return existed
+        }
+    }
+
     public func saveRolloutCursor(_ cursor: RolloutCursor) async throws {
         try await database.write { db in
             try db.execute(

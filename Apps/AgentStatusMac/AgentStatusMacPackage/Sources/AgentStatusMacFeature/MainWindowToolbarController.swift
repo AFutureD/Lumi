@@ -99,9 +99,10 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         case Self.refreshSessions:
             makeActionItem(
                 identifier: itemIdentifier,
-                label: "Refresh Sessions",
+                label: "Refresh",
                 symbol: "arrow.clockwise",
-                action: #selector(refresh)
+                action: #selector(refresh),
+                toolTip: "Rebuild the selected session from its transcript and resync all sessions"
             )
         case Self.detailSeparator:
             NSTrackingSeparatorToolbarItem(
@@ -226,12 +227,13 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         identifier: NSToolbarItem.Identifier,
         label: String,
         symbol: String,
-        action: Selector
+        action: Selector,
+        toolTip: String? = nil
     ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = label
         item.paletteLabel = label
-        item.toolTip = label
+        item.toolTip = toolTip ?? label
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         item.target = self
         item.action = action
@@ -271,7 +273,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     // MARK: Actions
 
     @objc private func refresh() {
-        store.refresh()
+        store.refreshSelectedSession()
     }
 
     @objc private func toggleInspector() {

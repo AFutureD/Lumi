@@ -23,7 +23,7 @@ Mac 主窗口参考系统 Mail.app：左侧是固定宽度的功能导航，中�
 
 Notch 紧凑状态统计全部符合展示条件的 Session，展开后显示最近更新的最多四个 Session 的标题、状态和当前 Turn 用户消息；Session 完成时可以短暂显示完成卡片。Notch 设置按钮打开主 App 的“Settings > Notch”，用户可以在第三栏的 Appearance section 选择显示屏幕，调整并恢复紧凑宽度、展开宽度和展开动画；Theme 固定为 Dark，Layout 固定为 Notch，但不显示这两个控件。
 
-外部产生的 Session 新增或内容变化只有三类同步入口：App 启动、用户点击刷新图标（Refresh Sessions）、收到 Agent 事件。删除和清空操作会立即同步结果。历史不会自动过期。
+外部产生的 Session 新增或内容变化只有三类同步入口：App 启动、用户点击刷新图标（Refresh）、收到 Agent 事件。删除和清空操作会立即同步结果。历史不会自动过期。
 
 [查看模块详情](modules/mac-session-view.md)
 

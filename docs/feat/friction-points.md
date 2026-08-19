@@ -13,7 +13,7 @@
 1. 打开侧边栏“Settings”，在中栏选择“Daemon”。
 2. 点击“Install & Start daemon”。
 3. 如系统要求允许后台项目，完成授权后返回 App。
-4. 回到“Sessions”，点击刷新图标（Refresh Sessions）。
+4. 回到“Sessions”，点击刷新图标（Refresh）。
 
 **完成信号**：Settings 显示 daemon 已连接。断线期间 Mac 上已同步的 Session 不会自动删除。
 
@@ -40,19 +40,19 @@
 
 1. 确认 daemon 已连接。
 2. 新建一个 Codex Session。
-3. 提交一次任务；必要时点击刷新图标（Refresh Sessions）。
+3. 提交一次任务；必要时点击刷新图标（Refresh）。
 
 **完成信号**：新 Session 出现在中栏。
 
-## Refresh Sessions 后没有变化
+## Refresh 后没有变化
 
-**用户会看到**：点击刷新图标后数据没有变化；当前版本没有单独的刷新完成提示。
+**用户会看到**：点击刷新图标后数据没有变化；当前版本没有单独的刷新完成提示。选中某个 Session 时刷新会先让 daemon 用它的 transcript 重算这个 Session；transcript 不存在或不可读时该步跳过，只做同步。
 
 **恢复步骤**：
 
 1. 回到“Settings > Daemon”检查 daemon 状态。
 2. 重新执行“Install & Start daemon”。
-3. 返回 Sessions 再点击刷新图标（Refresh Sessions）。
+3. 返回 Sessions 再点击刷新图标（Refresh）。
 
 **完成信号**：连接错误消失，列表与 daemon 当前数据一致。
 
@@ -67,7 +67,7 @@
 1. 打开“Settings > Daemon”。
 2. 点击“Stop & Uninstall daemon”。
 3. 点击“Install & Start daemon”。
-4. 返回 Sessions，点击刷新图标（Refresh Sessions）取得完整快照。
+4. 返回 Sessions，点击刷新图标（Refresh）取得完整快照。
 
 **完成信号**：Main Session 显示与 Codex 一致的标题；有 parent 的 Subagent 显示为可折叠子项，并标记为 `Codex Subagent`。
 
@@ -161,6 +161,6 @@
 - Mac Settings 中 daemon 状态；
 - Mac“iPhone”页 Relay 状态；
 - 发生问题的是哪台 Mac 通道；
-- 问题发生在启动、手动 Refresh Sessions 还是 Agent 事件之后。
+- 问题发生在启动、手动 Refresh 还是 Agent 事件之后。
 
 不要复制 Session 正文、工具参数、配对内容或设备凭据到公开问题中。
