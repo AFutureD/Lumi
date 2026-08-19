@@ -170,7 +170,7 @@ public final class MacSessionStore {
     /// This never performs an additional daemon refresh.
     public func snapshotDetails() async throws -> [SessionDetail] {
         guard let cache else { throw MacSessionStoreError.cacheUnavailable }
-        let summaries = try await cache.listSessions(limit: 10_000).filter { !$0.isProvisional }
+        let summaries = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
         if let cachedSnapshotDetails,
            cachedSnapshotDetails.count == summaries.count,
            summaries.allSatisfy({ cachedSnapshotDetails[$0.id] != nil }) {
@@ -236,8 +236,10 @@ public final class MacSessionStore {
                         .sorted { $0.summary.updatedAt > $1.summary.updatedAt }
                     // The cache keeps everything (a provisional session must
                     // still be there when its first Turn arrives); the visible
-                    // snapshot excludes provisional sessions.
-                    let visibleDetails = details.filter { !$0.summary.isProvisional }
+                    // snapshot excludes provisional sessions (unless one is the
+                    // parent of a visible subagent).
+                    let visibleIDs = Set(SessionSummary.visible(details.map(\.summary)).map(\.id))
+                    let visibleDetails = details.filter { visibleIDs.contains($0.summary.id) }
                     let previousDetails = try await self.snapshotDetails()
                     let snapshotDataChanged = Dictionary(
                         uniqueKeysWithValues: previousDetails.map { ($0.summary.id, $0) }
@@ -327,8 +329,10 @@ public final class MacSessionStore {
         guard let cache else { return }
         do {
             // Provisional sessions (no Turn yet) stay in the cache but never
-            // reach the list, the Notch or the Relay.
-            let updated = try await cache.listSessions(limit: 10_000).filter { !$0.isProvisional }
+            // reach the list, the Notch or the Relay — except a provisional
+            // parent of a visible subagent, which stays so the tree holds and
+            // the user can refresh (reingest) it.
+            let updated = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
             let previousSessions = sessions
             let previousDetail = selectedSession
             let previousID = pendingSelectionID ?? selectedSession?.summary.id

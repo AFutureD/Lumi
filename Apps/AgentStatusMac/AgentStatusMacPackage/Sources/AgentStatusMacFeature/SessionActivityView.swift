@@ -17,6 +17,9 @@ final class SessionActivityState: ObservableObject {
     /// `toolUseID` under the pointer; its TOOL and RESULT rows light up together.
     @Published var hoveredToolUseID: String?
     var followsBottom = false
+    /// Keeps the lane strip and the row list scrolled in step (not published:
+    /// it is driven from scroll callbacks and must not re-render the list).
+    let scrollSync = ActivityScrollSync()
     private var highlightTask: Task<Void, Never>?
 
     init() {
@@ -56,6 +59,8 @@ struct SessionActivityView: View {
         presentation?.activities ?? []
     }
 
+    @State private var listPosition = ScrollPosition(edge: .top)
+
     var body: some View {
         let activities = visibleActivities
         ScrollViewReader { proxy in
@@ -90,10 +95,21 @@ struct SessionActivityView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
-            } action: { _, nearBottom in
-                state.followsBottom = nearBottom
+            .scrollPosition($listPosition)
+            .onScrollGeometryChange(for: ActivityScrollSync.Geometry.self) { geometry in
+                ActivityScrollSync.Geometry(
+                    offset: geometry.contentOffset.y + geometry.contentInsets.top,
+                    content: geometry.contentSize.height,
+                    viewport: geometry.containerSize.height - geometry.contentInsets.top - geometry.contentInsets.bottom
+                )
+            } action: { _, geometry in
+                state.followsBottom = geometry.offset + geometry.viewport >= geometry.content - 48
+                state.scrollSync.listDidScroll(geometry)
+            }
+            .onAppear {
+                state.scrollSync.scrollList = { offset in
+                    listPosition.scrollTo(y: offset)
+                }
             }
             .onChange(of: activities.count) { previous, current in
                 guard current > previous, state.followsBottom, let last = activities.last else { return }
@@ -138,7 +154,11 @@ struct SessionActivityView: View {
             }
 
             if !activities.isEmpty {
-                SessionActivityTimeline(activities: activities, mode: state.timelineMode) { activity in
+                SessionActivityTimeline(
+                    activities: activities.filter(\.appearsInLaneStrip),
+                    mode: state.timelineMode,
+                    sync: state.scrollSync
+                ) { activity in
                     withAnimation(.easeInOut(duration: 0.22)) {
                         proxy.scrollTo(sessionActivityRowID(for: activity), anchor: .center)
                     }
@@ -151,7 +171,26 @@ struct SessionActivityView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .overlay(alignment: .bottom) {
-            AgentStatusDesign.Color.UI.hairline.frame(height: 1)
+            AgentStatusDesign.Color.UI.activityHairline.frame(height: 1)
+        }
+    }
+}
+
+private extension SessionActivityPresentation {
+    /// Rows that earn a lane-strip cell. TOOL calls are list-only (their
+    /// RESULT stands for the call in the Exec lane), and Claude's periodic
+    /// `total_tokens_reminder` context is bookkeeping noise in the strip.
+    var appearsInLaneStrip: Bool {
+        switch tag {
+        case .tool:
+            return false
+        case .context:
+            if case let .context(payload) = rawItem.payload, payload.kind == "total_tokens_reminder" {
+                return false
+            }
+            return true
+        default:
+            return true
         }
     }
 }
@@ -160,19 +199,74 @@ private func sessionActivityRowID(for activity: SessionActivityPresentation) -> 
     "activity-row:\(activity.id)"
 }
 
-/// Three lanes (User / Model / Exec); one 13pt column per row. A cell is
-/// filled with the tag's lane colour only in the row's own lane; rows that
-/// span all lanes (SESSION / COMPACT / CONTEXT ×N) fill all three in gray.
+/// Keeps the lane strip and the row list at the same relative scroll offset.
+/// Both sides report their geometry from `onScrollGeometryChange`; whichever
+/// moved asks the other to follow, and a side that is already within a point
+/// of the mapped position does nothing — so the two callbacks settle instead
+/// of ping-ponging. Plain class on purpose: nothing here may trigger a SwiftUI
+/// re-render of the list.
+@MainActor
+final class ActivityScrollSync {
+    struct Geometry: Equatable {
+        var offset: CGFloat = 0
+        var content: CGFloat = 0
+        var viewport: CGFloat = 0
+
+        var range: CGFloat { max(0, content - viewport) }
+        var fraction: Double { range > 0 ? Double(min(max(offset, 0), range) / range) : 0 }
+    }
+
+    var scrollList: ((CGFloat) -> Void)?
+    var scrollStrip: ((CGFloat) -> Void)?
+
+    private(set) var list = Geometry()
+    private(set) var strip = Geometry()
+
+    func listDidScroll(_ geometry: Geometry) {
+        list = geometry
+        guard strip.range > 0 else { return }
+        let target = CGFloat(geometry.fraction) * strip.range
+        if abs(target - strip.offset) > 1 {
+            scrollStrip?(target)
+        }
+    }
+
+    func stripDidScroll(_ geometry: Geometry) {
+        strip = geometry
+        guard list.range > 0 else { return }
+        let target = CGFloat(geometry.fraction) * list.range
+        if abs(target - list.offset) > 1 {
+            scrollList?(target)
+        }
+    }
+}
+
+/// Three lanes (User / Model / Exec); one 13pt column per strip row, drawn in
+/// a single `Canvas` (one view for the whole strip instead of thousands of
+/// cell views). A cell is filled with the tag's lane colour only in the row's
+/// own lane; rows that span all lanes fill all three. TOOL calls are list-only
+/// (the caller filters them out): the Exec lane shows results, so a call and
+/// its result do not take two columns. The strip scrolls in step with the
+/// list (and the list with the strip).
 private struct SessionActivityTimeline: View {
     private static let cellSize = AgentStatusDesign.Layout.laneCellSize
     private static let spacing = AgentStatusDesign.Layout.laneCellSpacing
+    private static var pitch: CGFloat { cellSize + spacing }
 
     let activities: [SessionActivityPresentation]
     let mode: ActivityTimelineMode
+    let sync: ActivityScrollSync
     let onSelect: (SessionActivityPresentation) -> Void
+
+    @State private var stripPosition = ScrollPosition(edge: .leading)
+    @State private var hoveredIndex: Int?
 
     private var stripHeight: CGFloat {
         mode == .lanes ? Self.cellSize * 3 + Self.spacing * 2 : Self.cellSize
+    }
+
+    private var contentWidth: CGFloat {
+        max(0, CGFloat(activities.count) * Self.pitch - Self.spacing)
     }
 
     var body: some View {
@@ -189,24 +283,22 @@ private struct SessionActivityTimeline: View {
             .frame(width: AgentStatusDesign.Layout.laneNameWidth, alignment: .trailing)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: Self.spacing) {
-                    ForEach(activities) { activity in
-                        if mode == .lanes {
-                            VStack(spacing: Self.spacing) {
-                                ForEach(TimelineLane.allCases, id: \.rawValue) { lane in
-                                    if activity.lane == lane || activity.lane == nil {
-                                        cell(for: activity)
-                                    } else {
-                                        Color.clear
-                                            .frame(width: Self.cellSize, height: Self.cellSize)
-                                            .accessibilityHidden(true)
-                                    }
-                                }
-                            }
-                        } else {
-                            cell(for: activity)
-                        }
-                    }
+                canvas
+                    .frame(width: contentWidth, height: stripHeight)
+            }
+            .scrollPosition($stripPosition)
+            .onScrollGeometryChange(for: ActivityScrollSync.Geometry.self) { geometry in
+                ActivityScrollSync.Geometry(
+                    offset: geometry.contentOffset.x,
+                    content: geometry.contentSize.width,
+                    viewport: geometry.containerSize.width
+                )
+            } action: { _, geometry in
+                sync.stripDidScroll(geometry)
+            }
+            .onAppear {
+                sync.scrollStrip = { offset in
+                    stripPosition.scrollTo(x: offset)
                 }
             }
             .frame(height: stripHeight)
@@ -214,30 +306,71 @@ private struct SessionActivityTimeline: View {
         .frame(height: stripHeight)
     }
 
+    private var canvas: some View {
+        // `TimelineView` is not needed: the canvas redraws when the strip
+        // scrolls (clip rect changes) and when activities change.
+        Canvas(rendersAsynchronously: false) { context, size in
+            let clip = context.clipBoundingRect
+            let first = max(0, Int(clip.minX / Self.pitch))
+            let last = min(activities.count - 1, Int(clip.maxX / Self.pitch) + 1)
+            guard first <= last else { return }
+            for index in first ... last {
+                let activity = activities[index]
+                let x = CGFloat(index) * Self.pitch
+                let color = activity.tag.laneCellColor
+                if mode == .lanes {
+                    for (laneIndex, lane) in TimelineLane.allCases.enumerated()
+                    where activity.lane == nil || activity.lane == lane {
+                        let y = CGFloat(laneIndex) * Self.pitch
+                        context.fill(cellPath(x: x, y: y), with: .color(color))
+                    }
+                } else {
+                    context.fill(cellPath(x: x, y: 0), with: .color(color))
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { location in
+            guard let activity = activity(at: location) else { return }
+            onSelect(activity)
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case let .active(location):
+                let index = Int(location.x / Self.pitch)
+                hoveredIndex = activities.indices.contains(index) ? index : nil
+            case .ended:
+                hoveredIndex = nil
+            }
+        }
+        .help(hoveredIndex.map { "\(activities[$0].label): \(activities[$0].content)" } ?? "")
+        .accessibilityLabel("Activity timeline, \(activities.count) items")
+    }
+
+    private func cellPath(x: CGFloat, y: CGFloat) -> Path {
+        Path(
+            roundedRect: CGRect(x: x, y: y, width: Self.cellSize, height: Self.cellSize),
+            cornerRadius: 3,
+            style: .continuous
+        )
+    }
+
+    private func activity(at location: CGPoint) -> SessionActivityPresentation? {
+        let index = Int(location.x / Self.pitch)
+        guard activities.indices.contains(index) else { return nil }
+        return activities[index]
+    }
+
     private func laneLabel(_ title: String) -> some View {
         Text(title)
             .font(AgentStatusDesign.Font.UI.laneName)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(AgentStatusDesign.Color.UI.inkTertiary)
             .frame(height: Self.cellSize)
-    }
-
-    private func cell(for activity: SessionActivityPresentation) -> some View {
-        Button {
-            onSelect(activity)
-        } label: {
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(activity.tag.laneCellColor)
-                .frame(width: Self.cellSize, height: Self.cellSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("\(activity.label): \(activity.content)")
-        .accessibilityLabel("Jump to \(activity.label), \(activity.content)")
     }
 }
 
-/// `[time 56] [tag 82] [content] [chevron]`, 40pt tall, 12pt column gap,
-/// hairline bottom. Same geometry for session markers (L1 chip, no fill).
+/// `[time 56] [tag 82] [content] [chevron]`, 40pt tall (32 for markers that
+/// span all lanes), 12pt column gap, hairline bottom.
 private struct SessionActivityRow: View {
     let activity: SessionActivityPresentation
     let isHighlighted: Bool
@@ -270,7 +403,9 @@ private struct SessionActivityRow: View {
                     .frame(width: 7, height: 11)
             }
             .padding(.horizontal, AgentStatusDesign.Layout.activityHorizontalInset)
-            .frame(height: AgentStatusDesign.Layout.activityRowHeight)
+            .frame(height: activity.lane == nil
+                ? AgentStatusDesign.Layout.activityMarkerRowHeight
+                : AgentStatusDesign.Layout.activityRowHeight)
             .background(rowBackground)
             .overlay(alignment: .bottom) {
                 AgentStatusDesign.Color.UI.activityHairline.frame(height: 1)
@@ -291,23 +426,25 @@ private struct SessionActivityRow: View {
     }
 }
 
-/// 82pt chip, `padding 3px 0`, radius 5, 9/700/.04em, coloured by attention
-/// level (see `TimelineTagStyle`).
+/// 82pt chip, `padding 3px 0` (height 17), radius 5, 9/700/.04em, coloured by
+/// attention level (see `TimelineTagStyle`). `compact` is the Notch's 60pt
+/// variant: `padding 2px 0`, `.03em`.
 struct TimelineTagChip: View {
     let tag: TimelineTag
     let label: String
     var dark = false
+    var compact = false
 
     var body: some View {
         let style = TimelineTagStyle.style(for: tag, dark: dark)
         Text(label)
             .font(AgentStatusDesign.Font.UI.tag)
-            .kerning(0.36)
+            .kerning(compact ? 0.27 : 0.36)
             .lineLimit(1)
             .minimumScaleFactor(0.85)
             .foregroundStyle(style.text)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 3)
+            .padding(.vertical, compact ? 2 : 3)
             .background(
                 style.fill,
                 in: RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)

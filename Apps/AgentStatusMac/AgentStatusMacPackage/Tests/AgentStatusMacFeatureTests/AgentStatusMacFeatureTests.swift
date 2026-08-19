@@ -137,6 +137,21 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible).count == AgentStatusNookSnapshot.maximumVisibleSessions)
 }
 
+@Test func nookListKeepsStoreOrderAndListsSubagentsOnlyWhileTheTurnRuns() {
+    let running = nookSummary(id: "running", lifecycle: .running, phase: .executing, updatedAt: 30)
+    let waiting = nookSummary(id: "waiting", lifecycle: .waitingForInput, phase: .idle, updatedAt: 20)
+    let failed = nookSummary(id: "failed", lifecycle: .failed, phase: .idle, updatedAt: 25)
+    let runningChild = hierarchySummary(id: "running-child", parentID: "running", updatedAt: 29)
+    let waitingChild = hierarchySummary(id: "waiting-child", parentID: "waiting", updatedAt: 19)
+
+    // Store order (newest first) is kept; running keeps its children, a
+    // session whose turn is no longer running drops them.
+    let visible = AgentStatusNookSnapshot.visibleSummaries(
+        from: [running, runningChild, failed, waiting, waitingChild]
+    )
+    #expect(visible.map(\.id.rawValue) == ["running", "running-child", "failed", "waiting"])
+}
+
 @Test @MainActor
 func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     let sessionID = SessionID("selected")
@@ -569,10 +584,10 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
 }
 
 @Test func timelineTagsMapToLanesAndLevels() {
-    #expect([TimelineTag.user, .context].map(\.lane) == [.user, .user])
+    #expect([TimelineTag.user, .context, .contextGroup].map(\.lane) == [.user, .user, .user])
     #expect([TimelineTag.tool, .result, .failed].map(\.lane) == [.exec, .exec, .exec])
     #expect([TimelineTag.reasoning, .assistant, .plan, .subagent, .turnEnd].map(\.lane) == [.model, .model, .model, .model, .model])
-    #expect([TimelineTag.session, .compact, .contextGroup].map(\.lane) == [nil, nil, nil])
+    #expect([TimelineTag.session, .compact].map(\.lane) == [nil, nil])
     #expect(TimelineTag.user.level == .l3 && TimelineTag.tool.level == .l2 && TimelineTag.reasoning.level == .l1)
     #expect(TimelineTagStyle.style(for: .user).fill != .clear)
     #expect(TimelineTagStyle.style(for: .session).fill == .clear)
@@ -603,7 +618,7 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     #expect(text(12) == "12s")
     #expect(text(4 * 60 + 5) == "4m")
     #expect(text(3_600 + 30) == "1h")
-    #expect(text(30 * 3_600) == "yesterday")
+    #expect(text(30 * 3_600) == "1d")
     #expect(text(3 * 86_400) == "3d")
 }
 
@@ -639,7 +654,7 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
 
 @Test @MainActor
 func statusTonesResolveDistinctPillColors() {
-    let tones: [SessionStatusTone] = [.blue, .orange, .gray, .green]
+    let tones: [SessionStatusTone] = [.blue, .green, .gray, .red]
     let fills = Set(tones.map { $0.pillFill.description })
     let texts = Set(tones.map { $0.pillText.description })
     #expect(fills.count == 4)

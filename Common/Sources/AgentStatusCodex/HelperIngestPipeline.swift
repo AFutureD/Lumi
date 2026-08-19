@@ -107,6 +107,7 @@ public struct HelperIngestPipeline: Sendable {
         let richPath = richSourcePath(provider: provider, sessionID: sessionID, hook: root)
         var richAvailable = false
         var cursorToSave: RolloutCursor?
+        var childCursorsToSave: [RolloutCursor] = []
         if let richPath, FileManager.default.isReadableFile(atPath: richPath) {
             richAvailable = true
             report.richSourcePath = richPath
@@ -126,11 +127,56 @@ public struct HelperIngestPipeline: Sendable {
             report.warnings.append("rich_source_unreadable path=\(richPath)")
         }
 
+        // 2b. Claude subagent: a hook carrying `agent_id` (SubagentStart /
+        // Stop, or a hook fired inside the agent) also advances the derived
+        // child session — its sidechain transcript increment plus the title
+        // and lineage from `.meta.json`.
+        var childRichAvailable = false
+        var childIdentity: AgentIngressEvent?
+        if provider == .claude,
+           let agentID = root.string("agent_id"),
+           ClaudeAdapter.isRealSubagent(root) {
+            let childID = ClaudeSubagentIdentity.sessionID(parent: sessionID, agentID: agentID)
+            let childPath = root.string("agent_transcript_path").flatMap { $0.isEmpty ? nil : $0 }
+                ?? richPath.map {
+                    ClaudeSubagentIdentity.transcriptPath(parentTranscriptPath: $0, parent: sessionID, agentID: agentID)
+                }
+            if let childPath, FileManager.default.isReadableFile(atPath: childPath) {
+                childRichAvailable = true
+                do {
+                    let (events, cursor, _) = try readIncrement(path: childPath, sessionID: childID, adapter: adapter)
+                    batch.append(contentsOf: events)
+                    if let cursor { childCursorsToSave.append(cursor) }
+                } catch {
+                    report.warnings.append("subagent_transcript_read_failed path=\(childPath) error=\(error)")
+                }
+                if let meta = ClaudeSubagentIdentity.readMeta(atTranscriptPath: childPath) {
+                    let agentType = root.string("agent_type")
+                    // Appended after the hook's own child event so the spawn
+                    // description wins over the agent-type fallback title.
+                    childIdentity = AgentIngressEvent(
+                        eventID: EventID("claude-subagent-meta:\(childID.rawValue):\(meta.hashValue)"),
+                        sessionID: childID,
+                        agent: .claudeSubagent,
+                        occurredAt: root.date("timestamp") ?? Date(),
+                        title: ClaudeSubagentIdentity.title(agentType: agentType, meta: meta),
+                        lineage: ClaudeSubagentIdentity.lineage(parent: sessionID, agentType: agentType, meta: meta)
+                    )
+                }
+            } else {
+                report.notes.append("subagent_transcript_unavailable agent=\(agentID)")
+            }
+        }
+
         // 3. The hook itself. A Claude session that ends while the daemon
         // still holds it as provisional (no Turn ever) and never wrote a
         // transcript was never used — a desktop config-loading probe or a
         // launch quit before any prompt — and is discarded instead of ended.
-        var options = HookIngestOptions(richSourceAvailable: richAvailable)
+        var options = HookIngestOptions(
+            richSourceAvailable: root.string("agent_id") != nil && ClaudeAdapter.isRealSubagent(root)
+                ? childRichAvailable
+                : richAvailable
+        )
         if provider == .claude, report.hookEventName == "SessionEnd", !richAvailable {
             options.sessionNeverUsed = sessionNeverUsed(sessionID)
             if options.sessionNeverUsed {
@@ -139,6 +185,7 @@ public struct HelperIngestPipeline: Sendable {
         }
         let hookEvents = try adapter.events(fromHookData: hookData, options: options)
         batch.append(contentsOf: hookEvents)
+        if let childIdentity { batch.append(childIdentity) }
 
         // 4. Ship, then advance the cursor (only after the daemon accepted).
         if !batch.isEmpty {
@@ -147,6 +194,9 @@ public struct HelperIngestPipeline: Sendable {
         }
         if let cursorToSave {
             try port.saveRolloutCursor(cursorToSave)
+        }
+        for cursor in childCursorsToSave {
+            try port.saveRolloutCursor(cursor)
         }
         return report
     }

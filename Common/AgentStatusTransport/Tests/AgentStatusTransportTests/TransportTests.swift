@@ -149,3 +149,21 @@ import Testing
 
     #expect(decoded == request)
 }
+
+@Test func visibleSessionsKeepAProvisionalParentOfAVisibleSubagent() {
+    let date = Date(timeIntervalSince1970: 100)
+    func summary(_ id: String, lifecycle: SessionLifecycle, firstTurnAt: Date?, parent: String? = nil) -> SessionSummary {
+        SessionSummary(
+            id: SessionID(id), agent: parent == nil ? .codex : .codexSubagent, title: id,
+            lifecycle: lifecycle, phase: .idle, startedAt: date, updatedAt: date, lastActivityAt: date,
+            lineage: parent.map { SessionLineage(threadSource: "subagent", parentSessionID: SessionID($0)) },
+            firstTurnAt: firstTurnAt
+        )
+    }
+    let stubParent = summary("parent", lifecycle: .starting, firstTurnAt: nil)
+    let child = summary("child", lifecycle: .waitingForInput, firstTurnAt: date, parent: "parent")
+    let probe = summary("probe", lifecycle: .starting, firstTurnAt: nil)
+    let real = summary("real", lifecycle: .running, firstTurnAt: date)
+    let visible = SessionSummary.visible([stubParent, child, probe, real]).map(\.id.rawValue)
+    #expect(visible == ["parent", "child", "real"])
+}

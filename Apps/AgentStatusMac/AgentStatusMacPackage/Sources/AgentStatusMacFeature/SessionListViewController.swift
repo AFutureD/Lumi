@@ -224,6 +224,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         isReloading = true
         defer { isReloading = false }
 
+        // Newest activity first; the hierarchy keeps subagents under their
+        // parent in this same order.
         let sorted = store.sessions.sorted { $0.updatedAt > $1.updatedAt }
         let updated = SessionListHierarchy.filtering(sorted, query: filterText)
         let changed = updated != displayedSessions
@@ -321,7 +323,7 @@ private final class SessionRowView: NSTableCellView {
         titleLabel.usesSingleLineMode = true
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timeLabel.font = AgentStatusDesign.Font.caption
-        timeLabel.textColor = .secondaryLabelColor
+        timeLabel.textColor = AgentStatusDesign.Color.inkTertiary
         timeLabel.alignment = .right
         statusDot.wantsLayer = true
         statusDot.layer?.cornerRadius = 3.5
@@ -391,9 +393,11 @@ private final class SessionRowView: NSTableCellView {
         titleLabel.font = isChild ? AgentStatusDesign.Font.body : AgentStatusDesign.Font.rowTitle
         titleLabel.textColor = isChild ? NSColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 1) : .labelColor
 
+        // Tier colour on dot and text; the Completed tier's text reads as
+        // tertiary ink while its dot keeps the Completed gray.
         let tone = session.statusTone
         statusLabel.stringValue = presentation.status
-        statusLabel.textColor = tone.appKitColor
+        statusLabel.textColor = tone == .gray ? AgentStatusDesign.Color.inkTertiary : tone.appKitColor
         statusDot.layer?.backgroundColor = tone.appKitColor.cgColor
         refreshRelativeTime()
 

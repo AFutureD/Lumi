@@ -152,8 +152,10 @@ enum AgentStatusNookSnapshot {
         }
     }
 
-    /// Parents first, each followed by its children (already ordered by
-    /// activity within the store); capped by `maximumVisibleSessions` parents.
+    /// Parents in the store's order (newest activity first), each followed
+    /// by its children. Subagent rows are listed only while the parent's turn
+    /// is running; once the turn ends they disappear. Capped by
+    /// `maximumVisibleSessions` parents.
     static func visibleSummaries(from summaries: [SessionSummary]) -> [SessionSummary] {
         let eligible = eligibleSummaries(from: summaries)
         let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
@@ -163,6 +165,7 @@ enum AgentStatusNookSnapshot {
         for parent in parents.prefix(maximumVisibleSessions) {
             guard seen.insert(parent.id).inserted else { continue }
             ordered.append(parent)
+            guard parent.statusTone == .blue else { continue }
             for child in eligible where child.lineage?.parentSessionID == parent.id {
                 if seen.insert(child.id).inserted { ordered.append(child) }
             }

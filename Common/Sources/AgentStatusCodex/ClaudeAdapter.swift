@@ -24,13 +24,27 @@ public struct ClaudeAdapter: AgentAdapter {
         }
 
         let eventName = root.string("hook_event_name") ?? "Unknown"
-        let sessionID = SessionID(session)
-        let turnID = root.string("prompt_id").map(TurnID.init)
+        let parentSessionID = SessionID(session)
         let occurredAt = root.date("timestamp") ?? Date()
         let eventID = EventID(Self.digest(data: data, prefix: "claude-hook:"))
         let workspace = root.string("cwd")
-        let isSubagent = root.string("agent_id") != nil && root.string("agent_type") != nil && eventName != "SubagentStart" && eventName != "SubagentStop"
+        // Hooks fired *inside* a subagent (tool calls etc.) carry the parent's
+        // `session_id` plus `agent_id` / `agent_type`; they drive the derived
+        // child session, not the parent. SubagentStart / Stop are the parent's
+        // own events and are handled below (they also open / close the child).
+        let agentID = root.string("agent_id")
+        let isSubagent = agentID != nil && Self.isRealSubagent(root)
+            && eventName != "SubagentStart" && eventName != "SubagentStop"
+        let sessionID = isSubagent
+            ? ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: agentID!)
+            : parentSessionID
         let agent: AgentKind = isSubagent ? .claudeSubagent : .claude
+        // The hook's `prompt_id` is the parent's turn; a subagent's own turn id
+        // only comes from its transcript.
+        let turnID = isSubagent ? nil : root.string("prompt_id").map(TurnID.init)
+        let subagentLineage = isSubagent
+            ? ClaudeSubagentIdentity.lineage(parent: parentSessionID, agentType: root.string("agent_type"), meta: nil)
+            : nil
         let rich = options.richSourceAvailable
 
         func event(
@@ -64,8 +78,30 @@ public struct ClaudeAdapter: AgentAdapter {
                 phase: phase,
                 turn: turn,
                 timelineItem: item,
-                lineage: lineage,
+                lineage: lineage ?? subagentLineage,
                 disposition: disposition
+            )
+        }
+
+        /// Lifecycle event for the derived child session of `agent_id`
+        /// (SubagentStart opens it running, SubagentStop completes it).
+        func childEvent(
+            agentID: String,
+            lifecycle: SessionLifecycle,
+            phase: TurnPhase,
+            suffix: String
+        ) -> AgentIngressEvent {
+            let agentType = root.string("agent_type")
+            return AgentIngressEvent(
+                eventID: EventID(eventID.rawValue + suffix),
+                sessionID: ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: agentID),
+                agent: .claudeSubagent,
+                occurredAt: occurredAt,
+                title: ClaudeSubagentIdentity.title(agentType: agentType, meta: nil),
+                workspace: workspace,
+                lifecycle: lifecycle,
+                phase: phase,
+                lineage: ClaudeSubagentIdentity.lineage(parent: parentSessionID, agentType: agentType, meta: nil)
             )
         }
 
@@ -95,9 +131,6 @@ public struct ClaudeAdapter: AgentAdapter {
 
         switch eventName {
         case "SessionStart":
-            let lineage: SessionLineage? = isSubagent
-                ? SessionLineage(threadSource: "subagent", agentRole: root.string("agent_type"))
-                : nil
             return [event(
                 lifecycle: .starting,
                 phase: .idle,
@@ -106,8 +139,7 @@ public struct ClaudeAdapter: AgentAdapter {
                     detail: root.string("source"),
                     model: root.string("model")
                 )),
-                itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted),
-                lineage: lineage
+                itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted)
             )]
 
         case "UserPromptSubmit":
@@ -183,30 +215,44 @@ public struct ClaudeAdapter: AgentAdapter {
         case "SubagentStart":
             guard Self.isRealSubagent(root) else { return [] }
             let agentID = root.string("agent_id") ?? eventID.rawValue
-            return [event(
+            let childSessionID = root.string("agent_id").map {
+                ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: $0)
+            }
+            var events = [event(
                 lifecycle: .running,
                 phase: .subagentRunning,
                 timeline: .subagent(SubagentTimelinePayload(
                     name: root.string("agent_type") ?? "Subagent",
-                    agentSessionID: root.string("agent_id"),
+                    agentSessionID: childSessionID?.rawValue,
                     status: .started
                 )),
                 itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "started")
             )]
+            if let agentID = root.string("agent_id") {
+                events.append(childEvent(agentID: agentID, lifecycle: .running, phase: .thinking, suffix: ":child"))
+            }
+            return events
 
         case "SubagentStop":
             guard Self.isRealSubagent(root) else { return [] }
             let agentID = root.string("agent_id") ?? eventID.rawValue
-            return [event(
+            let childSessionID = root.string("agent_id").map {
+                ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: $0)
+            }
+            var events = [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: .subagent(SubagentTimelinePayload(
                     name: root.string("agent_type") ?? "Subagent",
-                    agentSessionID: root.string("agent_id"),
+                    agentSessionID: childSessionID?.rawValue,
                     status: .completed
                 )),
                 itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "stopped")
             )]
+            if let agentID = root.string("agent_id") {
+                events.append(childEvent(agentID: agentID, lifecycle: .completed, phase: .idle, suffix: ":child"))
+            }
+            return events
 
         case "Stop":
             let last = root.string("last_assistant_message")
@@ -329,13 +375,24 @@ public struct ClaudeAdapter: AgentAdapter {
               let recordType = root.string("type") else {
             throw AgentAdapterError.malformedJSON
         }
-        guard let rawSession = root.string("sessionId") ?? context.sessionID?.rawValue else {
-            throw AgentAdapterError.missingSessionID
+        // A read of `subagents/agent-<id>.jsonl` is keyed by the derived child
+        // session; its sidechain records belong to that child. Sidechain
+        // records met anywhere else (the parent's own transcript) are skipped:
+        // the parent shows the subagent through SubagentStart / Stop.
+        let subagentSessionID = context.sessionID.flatMap {
+            ClaudeSubagentIdentity.isSubagentSession($0) ? $0 : nil
         }
-        let sessionID = SessionID(rawSession)
-        // Sidechain records belong to a subagent's own transcript view; the
-        // parent session shows them through SubagentStart/Stop instead.
-        if root.bool("isSidechain") == true { return [] }
+        let sessionID: SessionID
+        if let subagentSessionID {
+            sessionID = subagentSessionID
+        } else {
+            guard let rawSession = root.string("sessionId") ?? context.sessionID?.rawValue else {
+                throw AgentAdapterError.missingSessionID
+            }
+            if root.bool("isSidechain") == true { return [] }
+            sessionID = SessionID(rawSession)
+        }
+        let agent: AgentKind = subagentSessionID == nil ? .claude : .claudeSubagent
 
         let occurredAt = root.date("timestamp") ?? Date()
         let stableID = Self.digest(
@@ -372,7 +429,7 @@ public struct ClaudeAdapter: AgentAdapter {
                 eventID: eventID,
                 sessionID: sessionID,
                 turnID: turnID,
-                agent: .claude,
+                agent: agent,
                 occurredAt: occurredAt,
                 title: title,
                 workspace: includeWorkspace ? workspace : nil,
@@ -527,8 +584,9 @@ public struct ClaudeAdapter: AgentAdapter {
             }
 
             if endsTurn {
+                // A subagent never waits for input: its final message completes it.
                 events.append(makeEvent(
-                    lifecycle: .waitingForInput,
+                    lifecycle: subagentSessionID == nil ? .waitingForInput : .completed,
                     phase: .idle,
                     turn: turnID.map {
                         TurnSummary(
@@ -637,7 +695,7 @@ public struct ClaudeAdapter: AgentAdapter {
     /// `tool_use` continues the turn; anything else the API returns ends it.
     static let turnEndingStopReasons: Set<String> = ["end_turn", "stop_sequence", "max_tokens", "refusal"]
 
-    static func isRealSubagent(_ root: [String: Any]) -> Bool {
+    public static func isRealSubagent(_ root: [String: Any]) -> Bool {
         guard let type = root.string("agent_type") else { return false }
         return !type.trimmingCharacters(in: .whitespaces).isEmpty
     }

@@ -17,7 +17,7 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 ### Sessions：标准三栏
 
 1. 左栏是固定 224 pt 的全高侧边栏，分为 Monitor / Connections / Application 三组：Sessions 行右侧显示会话数量，iPhone 行右侧在 Relay 连接时显示绿点。工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
-2. 中栏是 Session 列表，按最后更新时间倒序，不分组；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级。每行是固定网格：`[Agent 图标][标题][相对时间]` 加第二行 `[状态色点 + 生命周期 · Turn 阶段][折叠数量]`，状态色点与标题左对齐。Codex 使用 OpenAI 标记的圆角图标；Subagent 不缩进、不显示图标，标题与父级共用同一左边线，层级只画成沿图标轴的引导线（折角 + 竖线）。Subagent 默认收起；点击有 Subagent 的 Main Session 行任意位置即可展开/收起，收起时第二行右侧显示子项数量的圆角标记，点击它也可展开。右侧相对时间（now / 12s / 4m / 1h / yesterday / 3d）每 30 秒刷新。选中行使用中性灰底、文字颜色不变。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；工具栏标题遵循相同规则。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变，窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
+2. 中栏是 Session 列表，按最后更新时间倒序，不分组、不按状态分档；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级。每行是固定网格：`[Agent 图标][标题][相对时间]` 加第二行 `[状态色点 + 生命周期 · Turn 阶段][折叠数量]`，状态色点与标题左对齐。Codex 使用 OpenAI 标记的圆角图标；Subagent 不缩进、不显示图标，标题与父级共用同一左边线，层级只画成沿图标轴的引导线（折角 + 竖线）。Subagent 默认收起；点击有 Subagent 的 Main Session 行任意位置即可展开/收起，收起时第二行右侧显示子项数量的圆角标记，点击它也可展开。右侧相对时间只用单一单位（now / 12s / 4m / 1h / 3d，不出现 yesterday 之类文字）每 30 秒刷新。选中行使用中性灰底、文字颜色不变。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；工具栏标题遵循相同规则。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变，窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
 3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh Sessions、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量和一个密度切换按钮：默认 Input、Tools、Model 三行横向时间轴，切换后压成一行“Timeline”，每条记录一个按类别着色的方格；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON。密度偏好在重启后保留。
 4. 窗口缩放只改变右栏宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
@@ -29,7 +29,7 @@ Notch 紧凑时显示全部符合展示条件的 Session 数量和最近一个 S
 
 ### Session 状态颜色
 
-Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字，在 subheader 中用带描边的状态药丸（Running 蓝、Waiting 橙、Completed 灰、Connected 绿）；状态变化时颜色 0.2 秒过渡，不闪烁。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
+Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 的文字转为三级灰），在 subheader 中用带描边的状态药丸（Running 蓝、Waiting for input 绿、Completed 灰、Failed / Aborted 红）；状态变化时颜色 0.2 秒过渡；只有 Running 的光晕缓慢呼吸（约 1.6 秒一次），其他状态静止。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
 
 ## 首次配置
 
@@ -159,14 +159,14 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-013 Session 状态颜色跨端一致
 
 - 条件：Mac、Notch 或 iPhone 显示一个 Session 的当前状态。
-- 行为：Starting 和 Running 使用蓝色；Waiting For Input 在 Idle 阶段使用绿色、在 Waiting For Approval 阶段使用橙色；Completed 使用灰色；Failed 和 Interrupted 使用橙色。
+- 行为：Starting、Running 和 Compacting 使用蓝色（agent 在工作）；Waiting For Input 使用绿色（需要人处理，包括等待输入和等待审批）；Completed 使用灰色；Failed 和 Interrupted 使用红色。颜色不影响列表排序。
 - 结果：用户在三个界面看到相同的状态颜色语义。
 - 限制或例外：Mac 主窗口的状态色和类别色取自设计稿的浅色值（Session 详情列固定浅色外观），其余界面使用系统动态色；Mac 列表选中行使用中性灰底、文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
 
 ### MAC-R-014 Notch 显示 Session 当前状态
 
 - 条件：Mac 本地同步数据中存在 Starting、Running、Waiting For Input、Failed 或 Interrupted 的 Session。
-- 行为：紧凑状态统计全部符合条件的 Session；展开后按最近更新时间列出最多四个，每行显示标题、状态和当前 Turn 最近一条用户消息。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
+- 行为：紧凑状态统计全部符合条件的 Session；展开后按最近更新时间列出最多六个主 Session；Subagent 只在父 Session 的 Turn 仍在运行时挂在父行下方，Turn 结束后子行消失。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
 - 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么。
 - 限制或例外：Completed 和未知状态不持续留在展开列表；Session 刚进入 Completed 时仍可短暂显示完成卡片。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
 
@@ -182,19 +182,20 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 - 条件：Sessions 页面存在一个或多个 Session，用户选择其中一条。
 - 行为：列表行显示 Agent 图标、Session 标题、相对时间和“状态色点 + 生命周期 · Turn 阶段”；Subagent 不缩进，用左侧引导线挂在父级下。Subagent 默认收起；点击父级行任意位置或子项数量标记切换展开/收起（也支持键盘左右方向键），展开状态在本次 App 运行期间保留。详情固定为 Activity 主区 + Inspector：Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间），其下 Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
 - 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的活动记录与指标。
-- 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示。Activity 的系统与上下文记录可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
+- 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示；父 Session 还没有 Turn（通常不显示）但已有可见 Subagent 时，父级照常显示，选中它点 Refresh 即可从对话记录补全。Activity 的系统与上下文记录可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
 
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 
 - 条件：用户选择的 Session 包含一条或多条 Activity。
-- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格，只填在自己所属的泳道（Input：System、Context、User；Tools：Tool、Subagent、其他；Model：Assistant、Reasoning），其余泳道留空；单行模式下所有记录排成一行，方格填类别色。用户点击方格后，列表滚动到对应记录并短暂高亮。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
+- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格，只填在自己所属的泳道（User：用户输入和所有上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End；Exec：Tool、Result、Failed），其余泳道留空，只有 Session 开始/结束与上下文压缩横跨三条泳道；TOOL（工具调用）和 Claude 周期性的 total tokens reminder 上下文只出现在列表里、不占时间轴方格，Exec 泳道只放工具结果和失败；单行模式下所有记录排成一行，方格填类别色。横向时间轴与下方列表同步滚动：滚动列表时时间轴跟着移动，横向拖动时间轴时列表也随之滚动；用户点击方格后，列表滚动到对应记录并短暂高亮。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
 - 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
 - 限制或例外：时间轴与密度切换只改变当前详情的查看方式和位置，不修改或控制 Codex Session。
 
 ### MAC-R-018 Subagent 使用自己的标题与活动
 
-- 条件：Codex 为 Main Session 启动一个 Subagent，Agent Status 收到该 Subagent 的身份和任务活动。
-- 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
+- 条件：Codex 或 Claude Code 为 Main Session 启动一个 Subagent，Agent Status 收到该 Subagent 的身份和任务活动。
+- 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随 SubagentStart / SubagentStop（结束后为 Completed，不会显示为等待输入）。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
+- 补录：升级前记录的 Claude Session 没有子行；选中该 Session 点工具栏 Refresh 会从本机对话记录补出它的 Subagent。
 - 结果：用户在父子层级中能按任务辨认 Subagent，打开详情时只看到该 Subagent 实际开始工作后的活动。
 - 限制或例外：缺少父子关系的旧格式或孤立 Subagent 仍保留在顶层；其可用身份信息不足时显示通用 Subagent 名称。
 

@@ -2,15 +2,16 @@ import AgentStatusCore
 import AppKit
 import SwiftUI
 
-/// Status colours from the handoff (Running / Waiting / Completed / Connected).
+/// Session lifecycle colours (design system §4.1): Running blue, Waiting for
+/// input green, Completed gray, Failed / Aborted red.
 extension SessionStatusTone {
     /// Dot and status-text colour.
     var appKitColor: NSColor {
         switch self {
         case .blue: NSColor(hex: 0x0078F0)
-        case .orange: NSColor(hex: 0xB4741F)
-        case .gray: NSColor(hex: 0x6E7178)
         case .green: NSColor(hex: 0x1DA84C)
+        case .gray: NSColor(hex: 0x6E7178)
+        case .red: NSColor(hex: 0xE5352F)
         }
     }
 
@@ -22,35 +23,35 @@ extension SessionStatusTone {
     var pillFill: NSColor {
         switch self {
         case .blue: NSColor(hex: 0x0078F0, alpha: 0.16).blendedOverWhiteVeil()
-        case .orange: NSColor(hex: 0xB4741F, alpha: 0.16).blendedOverWhiteVeil()
-        case .gray: NSColor(red: 120 / 255, green: 120 / 255, blue: 128 / 255, alpha: 0.12)
         case .green: NSColor(hex: 0x1DA84C, alpha: 0.16).blendedOverWhiteVeil()
+        case .gray: NSColor(red: 120 / 255, green: 120 / 255, blue: 128 / 255, alpha: 0.12)
+        case .red: NSColor(hex: 0xE5352F, alpha: 0.14).blendedOverWhiteVeil()
         }
     }
 
     var pillStroke: NSColor {
         switch self {
         case .blue: NSColor(hex: 0x0078F0, alpha: 0.28)
-        case .orange: NSColor(hex: 0xB4741F, alpha: 0.28)
-        case .gray: NSColor(white: 0, alpha: 0.06)
         case .green: NSColor(hex: 0x1DA84C, alpha: 0.28)
+        case .gray: NSColor(white: 0, alpha: 0.06)
+        case .red: NSColor(hex: 0xE5352F, alpha: 0.26)
         }
     }
 
     var pillText: NSColor {
         switch self {
         case .blue: NSColor(hex: 0x0069D7)
-        case .orange: NSColor(hex: 0x8C5813)
-        case .gray: NSColor(hex: 0x404040)
         case .green: NSColor(hex: 0x157A38)
+        case .gray: NSColor(hex: 0x404040)
+        case .red: NSColor(hex: 0xB3261E)
         }
     }
 
-    /// Only the Running tone carries a halo around its dot.
+    /// Only the Running tone carries a halo around its dot (it "breathes").
     var dotHalo: NSColor? {
         switch self {
         case .blue: NSColor(hex: 0x0078F0, alpha: 0.18)
-        case .orange, .gray, .green: nil
+        case .green, .gray, .red: nil
         }
     }
 }

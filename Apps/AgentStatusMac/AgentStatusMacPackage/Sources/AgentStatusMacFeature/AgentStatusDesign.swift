@@ -32,6 +32,8 @@ enum AgentStatusDesign {
         static let pillHeight: CGFloat = 22
 
         static let activityRowHeight: CGFloat = 40
+        /// SESSION / COMPACT / CONTEXT ×N rows that span all lanes.
+        static let activityMarkerRowHeight: CGFloat = 32
         static let activityHorizontalInset: CGFloat = 24
         static let activityTimestampWidth: CGFloat = 56
         static let activityTagWidth: CGFloat = 82
@@ -105,6 +107,7 @@ enum AgentStatusDesign {
         static let destructiveText = NSColor(red: 0xB3 / 255, green: 0x26 / 255, blue: 0x1E / 255, alpha: 1)
         static let zebra = NSColor(red: 120 / 255, green: 120 / 255, blue: 128 / 255, alpha: 0.045)
         static let inkPrimary = NSColor(red: 26 / 255, green: 26 / 255, blue: 26 / 255, alpha: 1)
+        static let inkTertiary = NSColor(red: 114 / 255, green: 114 / 255, blue: 114 / 255, alpha: 1)
         static let inkQuaternary = NSColor(red: 138 / 255, green: 138 / 255, blue: 138 / 255, alpha: 1)
         static let activityHairline = NSColor(white: 0, alpha: 0.05)
         static let chevron = NSColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 0.3)
@@ -118,6 +121,7 @@ enum AgentStatusDesign {
             static let hairline = SwiftUI.Color(nsColor: Color.hairline)
             static let zebra = SwiftUI.Color(nsColor: Color.zebra)
             static let inkPrimary = SwiftUI.Color(nsColor: Color.inkPrimary)
+            static let inkTertiary = SwiftUI.Color(nsColor: Color.inkTertiary)
             static let inkQuaternary = SwiftUI.Color(nsColor: Color.inkQuaternary)
             static let activityHairline = SwiftUI.Color(nsColor: Color.activityHairline)
             static let chevron = SwiftUI.Color(nsColor: Color.chevron)
@@ -126,9 +130,11 @@ enum AgentStatusDesign {
     }
 }
 
-/// Tag chip + lane-cell colours from the design handoff category table.
-/// L1: no fill, gray text. L2: tinted fill + deep text + hairline ring.
-/// L3: solid category colour + white text.
+/// Tag chip + lane-cell colours from the design system (L1 基础规范 → L4 类别总表).
+/// L1: no fill, gray text. L2: category at 14–16% + deep text + .5px ring at
+/// 24–32%. L3: solid category colour + white text, no ring (+6% lightness dark).
+/// Hues: Agent blue (ASSISTANT L2 / TURN END L3), User green, PLAN purple,
+/// SUBAGENT orange, TOOL·RESULT yellow, failure red.
 struct TimelineTagStyle: Equatable {
     let fill: Color
     let text: Color
@@ -142,17 +148,17 @@ struct TimelineTagStyle: Equatable {
         case .user:
             return TimelineTagStyle(fill: Color(hex: dark ? 0x22B856 : 0x1DA84C), text: .white, ring: nil)
         case .turnEnd:
-            return TimelineTagStyle(fill: Color(hex: dark ? 0x9D55F0 : 0x8E3FE8), text: .white, ring: nil)
+            return TimelineTagStyle(fill: Color(hex: dark ? 0x2A8CFF : 0x0078F0), text: .white, ring: nil)
         case .failed, .aborted:
             return TimelineTagStyle(fill: Color(hex: dark ? 0xEE4038 : 0xE5352F), text: .white, ring: nil)
         case .assistant:
             return dark
-                ? TimelineTagStyle(fill: Color(hex: 0x8E3FE8, opacity: 0.26), text: Color(hex: 0xC9AEFB), ring: Color(hex: 0x8E3FE8, opacity: 0.34))
-                : TimelineTagStyle(fill: Color(hex: 0x8E3FE8, opacity: 0.14), text: Color(hex: 0x6A2FD1), ring: Color(hex: 0x8E3FE8, opacity: 0.24))
-        case .plan:
-            return dark
                 ? TimelineTagStyle(fill: Color(hex: 0x0078F0, opacity: 0.26), text: Color(hex: 0x9DC7FF), ring: Color(hex: 0x0078F0, opacity: 0.34))
                 : TimelineTagStyle(fill: Color(hex: 0x0078F0, opacity: 0.14), text: Color(hex: 0x0A5FBF), ring: Color(hex: 0x0078F0, opacity: 0.26))
+        case .plan:
+            return dark
+                ? TimelineTagStyle(fill: Color(hex: 0x8E3FE8, opacity: 0.26), text: Color(hex: 0xC9AEFB), ring: Color(hex: 0x8E3FE8, opacity: 0.34))
+                : TimelineTagStyle(fill: Color(hex: 0x8E3FE8, opacity: 0.14), text: Color(hex: 0x6A2FD1), ring: Color(hex: 0x8E3FE8, opacity: 0.24))
         case .subagent:
             return dark
                 ? TimelineTagStyle(fill: Color(hex: 0xF5760F, opacity: 0.24), text: Color(hex: 0xFFB27A), ring: Color(hex: 0xF5760F, opacity: 0.34))
@@ -166,31 +172,41 @@ struct TimelineTagStyle: Equatable {
 }
 
 extension TimelineTag {
-    /// Lane-strip cell colour (light mode values from the category table).
+    /// Lane-strip cell colour: the three-tier ramp of the tag's hue.
+    /// L1 = neutral `#E7E8EC`, L2 = the pale tint, L3 = the solid category colour.
     var laneCellColor: Color {
         switch self {
-        case .session, .compact, .contextGroup, .reasoning: Color(hex: 0xC9CDD6)
+        case .session, .compact, .contextGroup, .context, .reasoning: Color(hex: 0xE7E8EC)
+        case .assistant: Color(hex: 0xDBECFD)
+        case .plan: Color(hex: 0xEFE4FC)
+        case .subagent: Color(hex: 0xFCE7D8)
+        case .tool, .result: Color(hex: 0xFDF3D6)
         case .user: Color(hex: 0x1DA84C)
-        case .context: Color(hex: 0xA9C8EE)
-        case .assistant: Color(hex: 0xC9AEFB)
-        case .turnEnd: Color(hex: 0x8E3FE8)
-        case .plan: Color(hex: 0x7FAFEA)
-        case .subagent: Color(hex: 0xED6A0C)
-        case .tool, .result: Color(hex: 0xF0B400)
+        case .turnEnd: Color(hex: 0x0078F0)
         case .failed, .aborted: Color(hex: 0xE5352F)
         }
     }
 
-    /// Solid tone used for L3 notch notifications and status accents.
+    /// Full-saturation category colour (L3 base) for notch toasts and pair highlights.
     var accentColor: Color {
         switch self {
         case .user: Color(hex: 0x1DA84C)
-        case .turnEnd, .assistant: Color(hex: 0x8E3FE8)
+        case .assistant, .turnEnd: Color(hex: 0x0078F0)
+        case .plan: Color(hex: 0x8E3FE8)
         case .failed, .aborted: Color(hex: 0xE5352F)
         case .subagent: Color(hex: 0xED6A0C)
         case .tool, .result: Color(hex: 0xF0B400)
-        case .plan: Color(hex: 0x0078F0)
-        case .session, .compact, .contextGroup, .context, .reasoning: Color(hex: 0xC9CDD6)
+        case .session, .compact, .contextGroup, .context, .reasoning: Color(hex: 0xE7E8EC)
+        }
+    }
+
+    /// Narrow-chip label for the Notch's 60pt tags (`ASSIST`, `SUBAG`, `REASON`).
+    var shortLabel: String {
+        switch self {
+        case .assistant: "ASSIST"
+        case .subagent: "SUBAG"
+        case .reasoning: "REASON"
+        default: label
         }
     }
 }

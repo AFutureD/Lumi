@@ -154,3 +154,53 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
         _ = try await reingester.reingest(sessionID: SessionID("missing"), generation: "g1")
     }
 }
+
+@Test func reingestBackfillsClaudeSubagentChildSessions() async throws {
+    let session = "ffffffff-1111-2222-3333-444444444444"
+    let sid = SessionID(session)
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    let agentDir = projectDir.appendingPathComponent("\(session)/subagents", isDirectory: true)
+    try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let path = projectDir.appendingPathComponent("\(session).jsonl").path
+    try jsonl(claudeTranscript(session: session, prompt: "p1")).write(toFile: path, atomically: true, encoding: .utf8)
+    try jsonl([
+        ["type": "user", "uuid": "s1", "isSidechain": true, "agentId": "a9", "sessionId": session, "promptId": "ap", "timestamp": "2026-08-19T06:42:30.000Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "Find the tests"]],
+        ["type": "assistant", "uuid": "s2", "isSidechain": true, "agentId": "a9", "sessionId": session, "timestamp": "2026-08-19T06:42:50.000Z",
+         "message": ["role": "assistant", "model": "claude-haiku-4-5", "stop_reason": "end_turn", "content": [["type": "text", "text": "Tests live in Tests/."]]]],
+    ]).write(toFile: agentDir.appendingPathComponent("agent-a9.jsonl").path, atomically: true, encoding: .utf8)
+    try #"{"agentType":"Explore","description":"Locate the tests","spawnDepth":1,"model":"haiku"}"#
+        .write(toFile: agentDir.appendingPathComponent("agent-a9.meta.json").path, atomically: true, encoding: .utf8)
+
+    let repository = InMemorySessionRepository()
+    let adapter = ClaudeAdapter()
+    // Recorded by an older helper: the parent exists, the child never did.
+    let base: [String: Any] = ["session_id": session, "cwd": "/tmp/proj", "transcript_path": path, "timestamp": "2026-08-19T06:42:07Z"]
+    for event in try adapter.events(fromHookData: hookData(base.merging(["hook_event_name": "UserPromptSubmit", "prompt_id": "p1", "prompt": "commit"]) { $1 }), options: .withRichSource) {
+        _ = try await repository.apply(event)
+    }
+    let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
+    for event in live.events { _ = try await repository.apply(event) }
+    try await repository.saveRolloutCursor(live.cursor)
+
+    let reingester = SessionReingester(repository: repository, claudeAdapter: adapter, homeDirectory: home)
+    _ = try await reingester.reingest(sessionID: sid, generation: "g1")
+
+    let childID = ClaudeSubagentIdentity.sessionID(parent: sid, agentID: "a9")
+    let child = try #require(try await repository.sessionDetail(id: childID, cursor: nil, limit: 500))
+    #expect(child.summary.agent == .claudeSubagent)
+    #expect(child.summary.title == "Locate the tests")
+    #expect(child.summary.lineage?.parentSessionID == sid)
+    #expect(child.summary.lineage?.agentRole == "Explore")
+    #expect(child.summary.workspace == "/tmp/proj")
+    #expect(child.summary.lifecycle == .completed)
+    #expect(child.turns.first?.prompt == "Find the tests")
+    #expect(child.turns.first?.outcome == .completed)
+    // The child's own reingest works off its cursor.
+    let rebuilt = try await reingester.reingest(sessionID: childID, generation: "g2")
+    #expect(rebuilt.detail.summary.lifecycle == .completed)
+    #expect(rebuilt.detail.summary.title == "Locate the tests")
+    #expect(rebuilt.detail.summary.lineage?.parentSessionID == sid)
+}

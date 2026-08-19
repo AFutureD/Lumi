@@ -79,10 +79,61 @@ public struct SessionReingester: Sendable {
         }
         try await repository.saveRolloutCursor(read.cursor)
 
+        // A Claude parent also rebuilds its subagents' child sessions from the
+        // sidechain transcripts next to it — the way to backfill children for
+        // sessions recorded before subagents became sessions of their own.
+        if !isCodex, !ClaudeSubagentIdentity.isSubagentSession(sessionID) {
+            applied += try await reingestClaudeSubagents(
+                parent: sessionID,
+                parentTranscriptPath: path,
+                workspace: previous.summary.workspace,
+                generation: generation
+            )
+        }
+
         guard let detail = try await fullDetail(sessionID) else {
             throw SessionReingestError.sessionNotFound
         }
         return SessionReingestReport(path: path, linesRead: read.lines, eventsApplied: applied, detail: detail)
+    }
+
+    /// `<project>/<session>/subagents/agent-*.jsonl` → one child session each
+    /// (`ClaudeSubagentIdentity`), reduced from byte 0 and titled from `.meta.json`.
+    private func reingestClaudeSubagents(
+        parent: SessionID,
+        parentTranscriptPath: String,
+        workspace: String?,
+        generation: String
+    ) async throws -> Int {
+        let directory = (parentTranscriptPath as NSString).deletingLastPathComponent
+            + "/\(parent.rawValue)/subagents"
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return 0 }
+        var applied = 0
+        for file in files.sorted() where file.hasPrefix("agent-") && file.hasSuffix(".jsonl") {
+            let agentID = String(file.dropFirst("agent-".count).dropLast(".jsonl".count))
+            guard !agentID.isEmpty else { continue }
+            let path = directory + "/" + file
+            let childID = ClaudeSubagentIdentity.sessionID(parent: parent, agentID: agentID)
+            let read = try RichSourceReader.read(path: path, sessionID: childID, adapter: claudeAdapter, fromOffset: 0)
+            guard !read.events.isEmpty else { continue }
+            _ = try await repository.resetSession(id: childID)
+            for event in read.events {
+                if try await repository.apply(event.salted(generation)) { applied += 1 }
+            }
+            let meta = ClaudeSubagentIdentity.readMeta(atTranscriptPath: path)
+            let identity = AgentIngressEvent(
+                eventID: EventID("reingest:\(generation):\(childID.rawValue):identity"),
+                sessionID: childID,
+                agent: .claudeSubagent,
+                occurredAt: read.events.map(\.occurredAt).max() ?? Date(),
+                title: ClaudeSubagentIdentity.title(agentType: meta?.agentType, meta: meta) ?? "Claude Agent",
+                workspace: workspace,
+                lineage: ClaudeSubagentIdentity.lineage(parent: parent, agentType: meta?.agentType, meta: meta)
+            )
+            if try await repository.apply(identity) { applied += 1 }
+            try await repository.saveRolloutCursor(read.cursor)
+        }
+        return applied
     }
 
     // MARK: - Pieces

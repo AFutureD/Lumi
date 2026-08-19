@@ -79,7 +79,7 @@ final class SessionSplitViewController: UISplitViewController, UITableViewDataSo
         cell.detailTextLabel?.text = "\(session.summary.lifecycle.rawValue) · \(session.summary.phase.rawValue)"
         cell.accessoryType = .disclosureIndicator
         let tone = session.summary.statusTone
-        cell.imageView?.image = UIImage(systemName: tone == .orange ? "exclamationmark.circle.fill" : "circle.fill")
+        cell.imageView?.image = UIImage(systemName: tone == .red ? "exclamationmark.circle.fill" : "circle.fill")
         cell.imageView?.tintColor = tone.uiKitColor
         return cell
     }

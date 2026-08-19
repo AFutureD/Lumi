@@ -81,14 +81,14 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 |---|---|---|---|
 | `SESSION` | L1 | 横跨 | 会话开始 / 会话结束 |
 | `COMPACT` | L1 | 横跨 | 上下文压缩 |
-| `CONTEXT ×N` | L1 | 横跨 | 会话上下文（相邻多条合并，可展开） |
+| `CONTEXT ×N` | L1 | User | 会话上下文（相邻多条合并，可展开）。设计稿原定横跨三泳道，实现改为只占 User 泳道：任何作用域的上下文都是喂给模型的输入，横跨只留给 SESSION / COMPACT |
 | `USER` | **L3** | User | 用户输入 —— **Turn 起点** |
 | `CONTEXT` | L1 | User | 本轮注入上下文 |
-| `REASONING` | L1 | Model | 思考（灰色，不再紫色） |
-| `ASSISTANT` | L2 | Model | 助手回复 |
-| `PLAN` | L2 | Model | 计划 |
+| `REASONING` | L1 | Model | 思考（灰色，不再紫色）。Codex 每个新的 reasoning item 会把本 turn 已有的 summary 标题再发一遍（`event_msg.agent_reasoning` A、B，然后 A、B、C…），投影按 turn 去重：同一 turn 内同文本只保留首行，后续记录并入该行的 items |
+| `ASSISTANT` | L2 | Model | 助手回复（Agent 蓝的 L2 淡色） |
+| `PLAN` | L2 | Model | 计划（PLAN 紫的 L2 淡色） |
 | `SUBAGENT` | L2 | Model | 子代理（同 agentId 原地更新，不加行） |
-| `TURN END` | **L3** | Model | Turn 结束 —— **Turn 终点**（新增） |
+| `TURN END` | **L3** | Model | Turn 结束 —— **Turn 终点**（Agent 蓝实底） |
 | `TOOL` | L2 | Exec | 工具调用（≡ PreToolUse / assistant `tool_use`） |
 | `RESULT` | L2 | Exec | 工具结果（≡ PostToolUse / user `tool_result`），与 TOOL 用 toolUseId 配对高亮，**不合并** |
 | `FAILED` / `ABORTED` | **L3** | Exec / Model | 失败 / 中断 |
@@ -97,10 +97,11 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 
 ### B.2 视觉（设计稿 5A + 设计系统）
 - 行高 40，hairline `rgba(0,0,0,.05)`；列 time 56 + tag 82 + content，gap 12；无 status-dot 列；行尾 chevron 7×11。
-- L1：无底无环，灰字 `rgb(138,138,138)`（dark `.38`）。L2：类目色 14–16% 底 + 深色字 + `.5px` 环。L3：实底 + 白字。色值见 README 类目表。
-- Session 标记行：同几何，无灰底，L1 样式；详情在展开态。
-- **Lane strip**（列表上方）：三行 User/Model/Exec，每个 item 一个 13×13 r3 单元，gap 4，只在所属泳道填色（横跨类不填/灰 `#C9CDD6`）。
-- 升级规则：`RESULT.isError` → `FAILED`（L2→L3，推 Notch）；`turnStopped` → 追加 `TURN END`，末条 ASSISTANT 标绿；同屏最多 3 条 L3（先降级已 seen）；L1 不升级；仅 L3 触发 Notch。
+- L1：无底无环，灰字 `rgb(138,138,138)`（dark `.38`）。L2：类目色 14–16% 底 + 深色字 + `.5px` 环。L3：实底 + 白字。色相：Agent 蓝 `#0078F0`（ASSISTANT L2 / TURN END L3）、User 绿 `#1DA84C`、PLAN 紫 `#8E3FE8`、SUBAGENT 橙 `#ED6A0C`、TOOL·RESULT 黄 `#F0B400`、失败红 `#E5352F`。
+- Session 标记行（SESSION / COMPACT）：横跨三泳道、行高 32、L1 样式；CONTEXT（含 ×N）不横跨，落在 User 泳道。
+- **Lane strip**（列表上方）：三行 User/Model/Exec，每个 item 一个 13×13 r3 单元，gap 4，只在所属泳道填色；格子颜色走同色相三档：L1 中性 `#E7E8EC`、L2 淡色（`#DBECFD` / `#EFE4FC` / `#FCE7D8` / `#FDF3D6`）、L3 满饱和实色。空格留白。TOOL 行不进 lane strip（只在列表里），Exec 泳道由 RESULT / FAILED 代表一次工具调用。
+- 升级规则：`RESULT.isError` → `FAILED`（L2→L3，推 Notch）；`turnStopped` → 追加 `TURN END`，末条 ASSISTANT 状态点标深蓝 `#0A5FBF`；同屏最多 3 条 L3（先降级已 seen）；L1 不升级；仅 L3 触发 Notch。
+- **Session 生命周期三档**（`SessionStatusTone`，设计系统 §4.1）：Running 蓝 `rgb(0,120,240)`（starting / running / compacting；唯一带 halo 并呼吸的点）、Waiting for input 绿 `#1DA84C`（waitingForInput，不分等输入或等审批；推 Notch 的一档。设计稿写“排到列表最前”，实现保持纯 `updatedAt` 倒序，不按档位分层）、Completed 灰 `rgb(110,113,120)`、Failed / Aborted 红 `#E5352F`（failed / interrupted，排序跟 Completed）。phase 只换状态点与副标题，不换这一档颜色。深色（Notch）对应 `#4C9BFF` / `#34C759` / `.34` / `#EE4038`。
 
 ---
 
@@ -110,7 +111,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 |---|---|
 | SessionStarted / SessionEnded | `SESSION`(横跨, info) |
 | CompactionBegan+Ended | `COMPACT`(横跨, running→succeeded) |
-| SessionContext ×N | `CONTEXT ×N`(横跨, 合并) |
+| SessionContext ×N | `CONTEXT ×N`(User, 合并) |
 | userPrompt | `USER`(User, L3) |
 | turnContext | `CONTEXT`(User, L1) |
 | assistantThinking | `REASONING`(Model, L1) |
@@ -129,11 +130,11 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 
 ## D. Notch（设计稿 5B–5E，OpenNook）
 
-- **5B 列表**：520pt；行 grid `8px 1fr auto`；状态点 8px + 3px halo（running `#4C9BFF` / waiting `#F0A030` / idle `.34`）；右侧 agent chip（Codex / Claude）+ 28px 时间/归档共用槽，hover 时间原地换成归档按钮（仅 `turnEnded` 行）；子代理行 6px 点 + 肘形导线；页脚 "N of M sessions"。
-- **5C Turn 结束卡**：标题 + "Turn complete" `#4ED96C` + 耗时；指标 pill（tokens / context / still running）；摘要 6 行；"Jump to Agent" 白底按钮。
+- **5B 列表**：520pt；行 grid `8px 1fr auto`，padding `10 16 11`（下挂子代理时底 4）；状态点 8px + 3px halo（running `#4C9BFF` / waiting `#34C759` / failed `#EE4038` / idle `.34` 无 halo）；标题 `#fff`，turn 结束后 `.72`；右侧 agent chip（h20 r6 `.09`/`.6`，结束后 `.07`/`.45`）+ 20px 时间/归档共用槽（chip→槽 gap 10），hover 时间原地换成归档按钮（仅 `turnEnded` 行）；子代理行 6px 点 + 11/510 `.72` + 肘形导线，**只在父 Turn 运行时列出**；排序与主窗口一致（`updatedAt` 倒序）；页脚 `9 16 12` 顶部 hairline "N of M sessions"。
+- **5C Turn 结束卡**：标题 + "Turn complete" `#9DC7FF`（失败 `#EE4038`）+ 耗时；指标 pill（tokens / context / still running）；摘要 11/510 6 行；"Jump to Agent" 白底 13/590 按钮。
 - **5D Turn 开始卡**：`Turn started` `#9DC7FF` + 计时；副标题 `Codex · model · cwd`；USER 消息块。
-- **5E 会话详情**：返回 pill、状态 pill、三指标 tile、**Recent activity**（22 高行，60px tag chip 用 dark 色值）、"Show in App"/"Jump to Agent"。
-- Notch 通知：仅 L3 入 `NookActivityQueue`，dwell ≈2.8s，orange 高优先。
+- **5E 会话详情**：返回 pill + 15/700 标题、生命周期 pill（档位色 `.18` 底 + `.32` 环，文字 `#9DC7FF` 等）、胶囊 agent chip、三指标 tile、**Recent activity**（22 高行，60px compact tag chip 用 dark 色值与短标签 ASSIST / SUBAG）、"Show in App"/"Jump to Agent"。
+- Notch 通知：仅 L3 入 `NookActivityQueue`，dwell ≈2.8s，失败红高优先。
 - 折叠条 64pt：状态点 + 会话数。
 
 Notch 模型补充：`AgentStatusNookSession` 增 `turnEnded`、`agentKind`；面板内 list ⇄ detail 导航栈；per-session timeline items `{id, time, tag, lane, content, toolUseId?, agentId?, seen}`；Turn 聚合（elapsed / tokens / context% / still-running / summary / lastUserMessage）。
@@ -179,7 +180,7 @@ Notch 模型补充：`AgentStatusNookSession` 增 `turnEnded`、`agentKind`；�
 | A 层 Session / Turn 模型 | `AgentStatusTransport`：`SessionLifecycle` +`compacting`；`TurnPhase` +`subagentRunning`/`compacting`；新增 `TurnSummary`/`TurnOutcome`；`SessionDetail.turns`；`AgentKind` +`claude`/`claudeSubagent` | 增量式扩展，旧数据可解码 |
 | A 层消息 | `TimelinePayload` 新增 `.reasoning` `.context(scope: session|turn)` `.sessionMarker` `.turnEnd`；`ToolTimelinePayload.toolUseID` | 保留 `.modelConfiguration`/`.usageMetrics`/`.internalContext` 作为元数据或历史数据 |
 | daemon 表 `turns / turn_messages / session_messages` | 只新增 `turns` 表；消息仍存 `timeline`（Session 级消息 `turnID == nil`） | 语义相同、迁移更小 |
-| A→B `TimelineProjection` | `Transport/TimelineProjection.swift`（`TimelineTag`/`TimelineLane`/`TimelineAttentionLevel`/`TimelineRow`） | 含 CONTEXT ×N 合并、SUBAGENT 原地更新、TURN END 追加并标绿末条 ASSISTANT、RESULT 从配对 TOOL 补名、同时间戳排序 marker→context→user→其他 |
+| A→B `TimelineProjection` | `Transport/TimelineProjection.swift`（`TimelineTag`/`TimelineLane`/`TimelineAttentionLevel`/`TimelineRow`） | 含 CONTEXT ×N 合并、SUBAGENT 原地更新、TURN END 追加并把末条 ASSISTANT 标为 succeeded、RESULT 从配对 TOOL 补名、同时间戳排序 marker→context→user→其他 |
 | `.modelConfiguration` → CONTEXT ×N | **不显示为行**（页头 Model 区仍读取） | Claude transcript 每条 assistant 都会重发模型配置，作为行会落在 Turn 中间 |
 | Helper `AgentDomainReducer` | `HelperIngestPipeline` + `CodexAdapter`/`ClaudeAdapter`（`Common/AgentStatusCodex`），`HelperDaemonPort` 抽象 | 状态机体现在两个 Adapter 的映射表 + daemon `SessionReduction`/`TurnReduction` |
 | rollout 迁入 Helper、cursor 走 IPC | 已实现；`ingest_batch`、`get/save_rollout_cursor` | daemon `CodexRolloutWatcher` 保留，`AGENT_STATUS_ROLLOUT_WATCHER=1` 开启，默认关 |

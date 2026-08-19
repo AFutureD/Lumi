@@ -30,9 +30,11 @@ final class RoundedSelectionRowView: NSTableRowView {
     }
 }
 
-/// `● Running · Thinking` capsule. Colour changes animate over 0.2s (no pulsing).
+/// `● Running · Thinking` capsule. Colour changes animate over 0.2s; only the
+/// Running tone's halo breathes (~1.6s ease-in-out opacity pulse).
 @MainActor
 final class StatusPillView: NSView {
+    private static let breathingKey = "AgentStatus.StatusPill.Breathing"
     private let dot = NSView()
     private let halo = NSView()
     private let label = NSTextField(labelWithString: "")
@@ -102,6 +104,30 @@ final class StatusPillView: NSView {
         halo.layer?.backgroundColor = (tone.dotHalo ?? .clear).cgColor
         CATransaction.commit()
         label.textColor = tone.pillText
+        updateBreathing()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateBreathing()
+    }
+
+    private func updateBreathing() {
+        guard let haloLayer = halo.layer else { return }
+        let shouldBreathe = tone.dotHalo != nil && window != nil
+        if shouldBreathe {
+            guard haloLayer.animation(forKey: Self.breathingKey) == nil else { return }
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1
+            pulse.toValue = 0.35
+            pulse.duration = 0.8
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            haloLayer.add(pulse, forKey: Self.breathingKey)
+        } else {
+            haloLayer.removeAnimation(forKey: Self.breathingKey)
+        }
     }
 }
 

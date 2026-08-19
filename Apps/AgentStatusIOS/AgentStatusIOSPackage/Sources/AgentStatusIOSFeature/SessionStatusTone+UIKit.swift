@@ -6,8 +6,8 @@ extension SessionStatusTone {
         switch self {
         case .blue: .systemBlue
         case .green: .systemGreen
-        case .orange: .systemOrange
         case .gray: .secondaryLabel
+        case .red: .systemRed
         }
     }
 }

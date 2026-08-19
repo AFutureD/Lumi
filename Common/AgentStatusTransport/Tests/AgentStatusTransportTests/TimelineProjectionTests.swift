@@ -58,7 +58,8 @@ private func item(
     #expect(rows[0].tag == .contextGroup)
     #expect(rows[0].count == 3)
     #expect(rows[0].label == "CONTEXT ×3")
-    #expect(rows[0].spansLanes)
+    #expect(!rows[0].spansLanes)
+    #expect(rows[0].lane == .user)
     #expect(rows[0].items.count == 3)
     #expect(rows[1].tag == .user)
     #expect(rows[2].tag == .context)
@@ -145,4 +146,20 @@ private func item(
     """.utf8)
     let detail = try decoder.decode(SessionDetail.self, from: old)
     #expect(detail.turns.isEmpty)
+}
+
+@Test func repeatedReasoningHeadersCollapseWithinATurn() {
+    let rows = TimelineProjection.rows(from: [
+        item("r1", 0, .reasoning(ReasoningTimelinePayload(text: "**Planning**"))),
+        item("r2", 1, .reasoning(ReasoningTimelinePayload(text: "**Designing**"))),
+        // Codex re-sends the turn's headers with the next reasoning item.
+        item("r3", 2, .reasoning(ReasoningTimelinePayload(text: "**Planning**"))),
+        item("r4", 3, .reasoning(ReasoningTimelinePayload(text: "**Designing**"))),
+        item("r5", 4, .reasoning(ReasoningTimelinePayload(text: "**Testing**"))),
+        // A new turn starts over.
+        item("u", 5, turnID: TurnID("t2"), .message(MessageTimelinePayload(role: .user, text: "next"))),
+        item("r6", 6, turnID: TurnID("t2"), .reasoning(ReasoningTimelinePayload(text: "**Planning**"))),
+    ])
+    #expect(rows.map(\.text) == ["**Planning**", "**Designing**", "**Testing**", "next", "**Planning**"])
+    #expect(rows[0].items.map(\.id.rawValue) == ["r1", "r3"])
 }

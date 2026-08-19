@@ -368,3 +368,80 @@ private func hook(_ fields: [String: Any]) -> Data {
     #expect(detail.turns.first?.subagentCount == 1)
     #expect(detail.timeline.filter { if case .subagent = $0.payload { return true }; return false }.count == 2)
 }
+
+@Test func claudeSubagentBecomesAChildSessionFedByItsSidechainTranscript() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "528cd7c7-3b94-4f4c-a4b5-3397dd77c8f6"
+    let agentID = "a1de7156f3465aae3"
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    let transcript = projectDir.appendingPathComponent("\(session).jsonl")
+    let agentDir = projectDir.appendingPathComponent("\(session)/subagents", isDirectory: true)
+    try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+    try "".write(to: transcript, atomically: true, encoding: .utf8)
+    let agentTranscript = agentDir.appendingPathComponent("agent-\(agentID).jsonl")
+    try """
+    {"agentType":"claude","description":"Output hi four times","toolUseId":"toolu_1","spawnDepth":1,"model":"haiku"}
+    """.write(to: agentDir.appendingPathComponent("agent-\(agentID).meta.json"), atomically: true, encoding: .utf8)
+
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
+    let base: [String: Any] = ["session_id": session, "transcript_path": transcript.path, "cwd": "/tmp/proj", "prompt_id": "p1"]
+    _ = try pipeline.run(hookData: hook(base.merging([
+        "hook_event_name": "UserPromptSubmit", "prompt": "spawn an agent", "timestamp": "2026-08-19T09:29:25.000Z",
+    ]) { $1 }))
+
+    // SubagentStart: the sidechain transcript already has the agent's prompt.
+    let sidechain: [[String: Any]] = [
+        ["type": "user", "uuid": "s1", "isSidechain": true, "agentId": agentID, "sessionId": session, "promptId": "agent-prompt",
+         "timestamp": "2026-08-19T09:29:40.057Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "Output the word \"hi\" 4 times"]],
+    ]
+    try sidechain.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n").appending("\n")
+        .write(to: agentTranscript, atomically: true, encoding: .utf8)
+    _ = try pipeline.run(hookData: hook(base.merging([
+        "hook_event_name": "SubagentStart", "agent_id": agentID, "agent_type": "claude",
+        "timestamp": "2026-08-19T09:29:40.100Z",
+    ]) { $1 }))
+
+    let childID = ClaudeSubagentIdentity.sessionID(parent: SessionID(session), agentID: agentID)
+    var child = try #require(port.detail(childID))
+    #expect(child.summary.agent == .claudeSubagent)
+    #expect(child.summary.title == "Output hi four times")
+    #expect(child.summary.lineage?.parentSessionID == SessionID(session))
+    #expect(child.summary.lineage?.agentRole == "claude")
+    #expect(child.summary.lifecycle == .running)
+    #expect(child.turns.first?.prompt == "Output the word \"hi\" 4 times")
+    // The parent keeps its SUBAGENT row and stays on its own turn.
+    let parent = try #require(port.detail(SessionID(session)))
+    #expect(parent.summary.phase == .subagentRunning)
+    #expect(parent.turns.count == 1)
+
+    // The agent answers and stops; SubagentStop carries the transcript path.
+    let reply: [[String: Any]] = [
+        ["type": "assistant", "uuid": "s2", "isSidechain": true, "agentId": agentID, "sessionId": session, "timestamp": "2026-08-19T09:29:42.614Z",
+         "message": ["role": "assistant", "model": "claude-haiku-4-5-20251001", "stop_reason": "end_turn",
+                     "content": [["type": "text", "text": "hi\nhi\nhi\nhi"]],
+                     "usage": ["input_tokens": 10, "output_tokens": 77]]],
+    ]
+    let handle = try FileHandle(forWritingTo: agentTranscript)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data((reply.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n") + "\n").utf8))
+    try handle.close()
+    _ = try pipeline.run(hookData: hook(base.merging([
+        "hook_event_name": "SubagentStop", "agent_id": agentID, "agent_type": "claude",
+        "agent_transcript_path": agentTranscript.path, "timestamp": "2026-08-19T09:29:43.000Z",
+        "last_assistant_message": "hi\nhi\nhi\nhi",
+    ]) { $1 }))
+
+    child = try #require(port.detail(childID))
+    #expect(child.summary.lifecycle == .completed)
+    #expect(child.turns.first?.outcome == .completed)
+    #expect(child.timeline.contains { if case let .message(m) = $0.payload { return m.role == .assistant && m.text == "hi\nhi\nhi\nhi" }; return false })
+    // Sidechain records never leak into the parent.
+    #expect(port.detail(SessionID(session))?.timeline.contains { if case let .message(m) = $0.payload { return m.text == "hi\nhi\nhi\nhi" }; return false } == false)
+
+    // Identity helpers round-trip.
+    #expect(ClaudeSubagentIdentity.parse(childID)?.agentID == agentID)
+    #expect(ClaudeSubagentIdentity.transcriptPath(parentTranscriptPath: transcript.path, parent: SessionID(session), agentID: agentID) == agentTranscript.path)
+}

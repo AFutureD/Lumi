@@ -70,7 +70,8 @@ struct SessionMetricsPresentation: Equatable, Sendable {
     }
 }
 
-/// `now` / `12s` / `4m` / `1h` / `yesterday` / `3d` for the Sessions list.
+/// `now` / `12s` / `4m` / `1h` / `3d` — one unit, no words, for the Sessions
+/// list and the Notch.
 enum SessionRelativeTimeFormatter {
     static func string(from date: Date, now: Date = .now) -> String {
         let interval = max(0, now.timeIntervalSince(date))
@@ -79,7 +80,6 @@ enum SessionRelativeTimeFormatter {
         if seconds < 60 { return "\(seconds)s" }
         if seconds < 3_600 { return "\(seconds / 60)m" }
         if seconds < 86_400 { return "\(seconds / 3_600)h" }
-        if seconds < 172_800 { return "yesterday" }
         return "\(seconds / 86_400)d"
     }
 }

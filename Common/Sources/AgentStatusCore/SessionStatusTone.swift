@@ -1,11 +1,19 @@
 import AgentStatusTransport
 
 /// A platform-neutral color role shared by every Agent Status client.
+///
+/// Design system §4.1 (Session lifecycle, three tiers plus a failure state):
+/// - `blue`  — Running: the agent is working (thinking / responding / tool /
+///   subagent / compacting all collapse here).
+/// - `green` — Waiting for input: a human needs to act (awaiting input or a
+///   permission decision). The only tier that sorts a session to the top.
+/// - `gray`  — Completed / Idle.
+/// - `red`   — Failed / Aborted; sorts like Completed.
 public enum SessionStatusTone: Equatable, Sendable {
     case blue
     case green
-    case orange
     case gray
+    case red
 
     public static func resolve(
         lifecycle: SessionLifecycle,
@@ -15,11 +23,11 @@ public enum SessionStatusTone: Equatable, Sendable {
         case .starting, .running, .compacting:
             .blue
         case .waitingForInput:
-            phase == .idle ? .green : .orange
+            .green
         case .completed:
             .gray
         case .failed, .interrupted:
-            .orange
+            .red
         case .unknown:
             .gray
         }

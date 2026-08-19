@@ -328,6 +328,17 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         lifecycle == .starting && firstTurnAt == nil
     }
 
+    /// The UI-visible subset of a session list: everything non-provisional,
+    /// plus a provisional session that a visible session names as its parent
+    /// — hiding it would orphan its subagents and leave nothing to refresh.
+    public static func visible(_ summaries: [SessionSummary]) -> [SessionSummary] {
+        let parentsOfVisible = Set(summaries.compactMap { summary -> SessionID? in
+            guard !summary.isProvisional else { return nil }
+            return summary.lineage?.parentSessionID
+        })
+        return summaries.filter { !$0.isProvisional || parentsOfVisible.contains($0.id) }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case agent

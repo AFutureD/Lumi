@@ -37,7 +37,7 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
     // L1 — general (low attention)
     case session
     case compact
-    case contextGroup   // "CONTEXT ×N", session-scope context, spans lanes
+    case contextGroup   // "CONTEXT ×N", session-scope context (merged), User lane
     case context        // turn-scope context, User lane
     case reasoning
     // L2 — turn process (medium attention)
@@ -60,11 +60,12 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
         }
     }
 
-    /// `nil` spans all three lanes.
+    /// `nil` spans all three lanes (session markers only). Context of either
+    /// scope is input handed to the model, so it sits in the User lane.
     public var lane: TimelineLane? {
         switch self {
-        case .session, .compact, .contextGroup: nil
-        case .user, .context: .user
+        case .session, .compact: nil
+        case .user, .context, .contextGroup: .user
         case .reasoning, .assistant, .plan, .subagent, .turnEnd, .aborted: .model
         case .tool, .result, .failed: .exec
         }
@@ -192,11 +193,20 @@ public enum TimelineProjection {
         var subagentRowIndex: [String: Int] = [:]
         var lastAssistantIndexByTurn: [TurnID?: Int] = [:]
         var toolNames: [String: String] = [:]
+        // Codex re-emits every reasoning summary header of a turn with each
+        // new reasoning item (`agent_reasoning` A, B, then A, B, C …); one row
+        // per distinct header per turn is the readable form.
+        var reasoningRowIndexByTurn: [TurnID?: [String: Int]] = [:]
 
         for item in sorted {
             guard let draft = draft(for: item, toolNames: &toolNames) else { continue }
 
             switch draft.tag {
+            case .reasoning:
+                if let index = reasoningRowIndexByTurn[item.turnID]?[draft.text] {
+                    rows[index] = rows[index].replacing(appending: item)
+                    continue
+                }
             case .contextGroup:
                 // Adjacent session-scope context items merge into CONTEXT ×N.
                 if let last = rows.last, last.tag == .contextGroup {
@@ -241,6 +251,9 @@ public enum TimelineProjection {
             }
             if draft.tag == .assistant {
                 lastAssistantIndexByTurn[item.turnID] = rows.count - 1
+            }
+            if draft.tag == .reasoning {
+                reasoningRowIndexByTurn[item.turnID, default: [:]][draft.text] = rows.count - 1
             }
         }
         return rows

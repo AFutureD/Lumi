@@ -7,10 +7,10 @@ import Testing
     #expect(summary(lifecycle: .starting, phase: .idle).statusTone == .blue)
     #expect(summary(lifecycle: .running, phase: .thinking).statusTone == .blue)
     #expect(summary(lifecycle: .waitingForInput, phase: .idle).statusTone == .green)
-    #expect(summary(lifecycle: .waitingForInput, phase: .waitingForApproval).statusTone == .orange)
+    #expect(summary(lifecycle: .waitingForInput, phase: .waitingForApproval).statusTone == .green)
     #expect(summary(lifecycle: .completed, phase: .idle).statusTone == .gray)
-    #expect(summary(lifecycle: .failed, phase: .idle).statusTone == .orange)
-    #expect(summary(lifecycle: .interrupted, phase: .idle).statusTone == .orange)
+    #expect(summary(lifecycle: .failed, phase: .idle).statusTone == .red)
+    #expect(summary(lifecycle: .interrupted, phase: .idle).statusTone == .red)
     #expect(summary(lifecycle: .unknown("future"), phase: .unknown("future")).statusTone == .gray)
 }
 
