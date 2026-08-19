@@ -162,7 +162,7 @@ daemon 与 Hook helper 以只读方式打开 `${CODEX_HOME:-~/.codex}/state_5.sq
 | `threads` 字段 | 可用维度 | 当前处理 |
 | --- | --- | --- |
 | `id` | Codex Thread / Agent Status Session 的稳定关联键 | 直接使用 |
-| `title` | Codex 当前权威标题 | 列表、详情、Notch 与同步副本使用；不从用户消息猜测 |
+| `title` | Codex 维护的标题，与 `first_user_message` 同步 | 没有显式改名时使用；不从用户消息猜测。显式改名（用户或 `set_thread_title` 工具）不会持久保留在这一列，见下文 `session_index.jsonl` |
 | `thread_source` | `user`、`subagent` 等线程来源 | 保存到 Session lineage；Subagent 显示为 `Codex Subagent` |
 | `source` | 普通来源字符串，或 Subagent JSON | 解析 `subagent.thread_spawn` 的 parent、depth、nickname、role、path；兼容 `subagent.other` 旧格式 |
 | `agent_nickname`、`agent_role`、`agent_path` | Subagent 展示名、职责和树路径 | 优先使用列值，缺失时回退到 `source` JSON；空标题回退为“nickname · path 末段” |
@@ -175,6 +175,10 @@ daemon 与 Hook helper 以只读方式打开 `${CODEX_HOME:-~/.codex}/state_5.sq
 | `first_user_message`、`preview` | 内容摘要 | 不额外复制；用户/Assistant 内容继续来自 Timeline |
 | `archived*`、`is_pinned`、`thread_section_id`、`section_*` | Codex App 组织状态 | 当前不映射；Agent Status 的保留、删除和排序规则独立 |
 | `rollout_path`、`has_user_event`、`name` | 索引与辅助状态 | 当前不展示；可用于后续诊断与对账 |
+
+### 显式改名：`session_index.jsonl`
+
+Codex 把用户或工具（`codex_app__set_thread_title`）的显式改名追加写入 `${CODEX_HOME}/session_index.jsonl`，每行 `{"id","thread_name","updated_at"}`，同一 `id` 以最后一行为准。`threads.title` 会在后续 turn 被 Codex 写回首条用户消息，因此不能作为改名后的标题来源。`CodexThreadIdentityStore` 同时读取该文件（按文件大小与修改时间缓存解析结果），标题优先级为：`session_index.thread_name` > 非继承的 `threads.title` > Subagent 的 `nickname · path 末段`。文件缺失或行不合法时忽略，不影响 sqlite 读取。
 
 Subagent 新格式通过 `source.subagent.thread_spawn.parent_thread_id` 建立父子关系，并保留 `depth`、`agent_path`、`agent_nickname`、`agent_role`。旧的 `source.subagent.other`（例如 `guardian`）可能没有父 Session，只保留 Subagent kind，不能编造父子关系。
 

@@ -121,6 +121,7 @@ import Testing
 
     let store = CodexThreadIdentityStore(databasePath: databasePath)
     let regular = try #require(store.identity(for: SessionID("session-1")))
+    #expect(regular.threadName == nil)
     let subagent = try #require(store.identity(for: SessionID("subagent-1")))
     let guardian = try #require(store.identity(for: SessionID("guardian-1")))
     let namedSubagent = try #require(store.identity(for: SessionID("named-subagent")))
@@ -141,6 +142,85 @@ import Testing
     #expect(userTitledSubagent.displayTitle == "Direct subagent request")
     #expect(!userTitledSubagent.titleIsInheritedUserMessage)
     #expect(store.identity(for: SessionID("missing")) == nil)
+}
+
+@Test func threadIdentityStorePrefersRenamedThreadNameFromSessionIndex() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("codex-title-index-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databasePath = directory.appendingPathComponent("state_5.sqlite").path
+    let indexPath = directory.appendingPathComponent("session_index.jsonl").path
+    let database = try DatabaseQueue(path: databasePath)
+    try database.write { db in
+        try db.execute(sql: """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                first_user_message TEXT NOT NULL DEFAULT '',
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                thread_source TEXT,
+                agent_nickname TEXT,
+                agent_role TEXT,
+                agent_path TEXT,
+                source TEXT NOT NULL
+            )
+            """)
+        try db.execute(
+            sql: "INSERT INTO threads(id, title, first_user_message, source) VALUES(?, ?, ?, ?)",
+            arguments: ["session-1", "# Files mentioned by the user: long prompt", "# Files mentioned by the user: long prompt", "cli"]
+        )
+        try db.execute(
+            sql: "INSERT INTO threads(id, title, first_user_message, source) VALUES(?, ?, ?, ?)",
+            arguments: ["session-2", "Untouched title", "Untouched title", "cli"]
+        )
+        try db.execute(
+            sql: """
+                INSERT INTO threads(id, title, first_user_message, has_user_event, thread_source, agent_nickname, agent_path, source)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            arguments: [
+                "subagent-1",
+                "# Files mentioned by the user: long prompt",
+                "# Files mentioned by the user: long prompt",
+                0,
+                "subagent",
+                "Hypatia",
+                "/root/docs_review",
+                #"{"subagent":{"thread_spawn":{"parent_thread_id":"session-1","depth":1,"agent_path":"/root/docs_review","agent_nickname":"Hypatia","agent_role":null}}}"#,
+            ]
+        )
+    }
+    // Append-only: the last line for an id wins; blank names and junk lines are ignored.
+    try """
+    {"id":"session-1","thread_name":"优化 Session Activity 时间轴","updated_at":"2026-08-18T04:12:45Z"}
+    not json
+    {"id":"session-1","thread_name":"[Feature] Session Activity 时间轴优化","updated_at":"2026-08-18T04:13:11Z"}
+    {"id":"subagent-1","thread_name":"Docs review pass","updated_at":"2026-08-18T04:14:00Z"}
+    {"id":"session-2","thread_name":"   ","updated_at":"2026-08-18T04:15:00Z"}
+
+    """.write(toFile: indexPath, atomically: true, encoding: .utf8)
+
+    let store = CodexThreadIdentityStore(databasePath: databasePath)
+    let renamed = try #require(store.identity(for: SessionID("session-1")))
+    #expect(renamed.threadName == "[Feature] Session Activity 时间轴优化")
+    #expect(renamed.displayTitle == "[Feature] Session Activity 时间轴优化")
+    #expect(store.identity(for: SessionID("session-2"))?.displayTitle == "Untouched title")
+    let subagent = try #require(store.identity(for: SessionID("subagent-1")))
+    #expect(subagent.displayTitle == "Docs review pass")
+    #expect(subagent.agentKind == .codexSubagent)
+
+    let batch = store.identities(for: [SessionID("session-1"), SessionID("subagent-1"), SessionID("missing")])
+    #expect(batch[SessionID("session-1")]?.displayTitle == "[Feature] Session Activity 时间轴优化")
+    #expect(batch[SessionID("subagent-1")]?.displayTitle == "Docs review pass")
+    #expect(batch[SessionID("missing")] == nil)
+
+    // A later rename is picked up once the file changes.
+    let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: indexPath))
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("{\"id\":\"session-1\",\"thread_name\":\"Renamed again\"}\n".utf8))
+    try handle.close()
+    #expect(store.identity(for: SessionID("session-1"))?.displayTitle == "Renamed again")
 }
 
 @Test func rolloutMapsReasoningAndWorldStateToAgentDomain() throws {
