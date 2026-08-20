@@ -525,13 +525,13 @@ private struct AgentStatusNookStatusDot: View {
     }
 }
 
-/// Grid `8px 1fr auto`, column gap 9, padding `3 14 4`. Title `#fff` while
-/// the turn runs, `.78` once it has ended — and the dot steps down with it
-/// (`statusTone` resolves a finished turn to the Completed tier). The
-/// trailing group is the agent tag + a `26px` time cell; the relative time
-/// swaps in place for the 22pt archive button on hover once the turn has
-/// ended, so the right edges align and nothing shifts. Running rows carry a
-/// second line with the latest activity (category tag + summary).
+/// First line `8px dot | title | tag + 26px time cell`, column gap 9,
+/// padding `3 14 4`. Title `#fff` while the turn runs, `.78` once it has
+/// ended — and the dot steps down with it (`statusTone` resolves a finished
+/// turn to the Completed tier). The relative time swaps in place for the
+/// 22pt archive button on hover once the turn has ended, so the right edges
+/// align and nothing shifts. Running rows carry a second line with the
+/// latest activity (category tag + summary) spanning the full content width.
 private struct AgentStatusNookSessionRow: View {
     let session: AgentStatusNookSession
     /// The card provides the insets and a wider line gap.
@@ -548,12 +548,11 @@ private struct AgentStatusNookSessionRow: View {
 
     var body: some View {
         Button(action: onOpen) {
-            Grid(
+            VStack(
                 alignment: .leading,
-                horizontalSpacing: NotchMetric.rowColumnGap,
-                verticalSpacing: insideCard ? NotchMetric.cardRowLineGap : NotchMetric.rowLineGap
+                spacing: insideCard ? NotchMetric.cardRowLineGap : NotchMetric.rowLineGap
             ) {
-                GridRow {
+                HStack(spacing: NotchMetric.rowColumnGap) {
                     AgentStatusNookStatusDot(tone: session.statusTone)
 
                     Text(session.title)
@@ -594,12 +593,13 @@ private struct AgentStatusNookSessionRow: View {
                     .padding(.leading, NotchMetric.trailingClusterLeadingPad)
                 }
                 if let latestActivity {
-                    GridRow {
-                        Color.clear
-                            .frame(width: DS.StatusDot.notchSize, height: 0)
-                        AgentStatusNookActivityLine(row: latestActivity)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    // Runs under both the title and the trailing cluster (the
+                    // mock stops it at the title column) so the summary's
+                    // right edge lines up with the time cell above; indented
+                    // by the dot column + gap to keep the left edge aligned.
+                    AgentStatusNookActivityLine(row: latestActivity)
+                        .padding(.leading, DS.StatusDot.notchSize + NotchMetric.rowColumnGap)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(insideCard ? EdgeInsets() : EdgeInsets(
