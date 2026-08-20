@@ -184,23 +184,24 @@ final class AgentStatusNookController {
 
     /// L3 rows only: TURN END expands the Notch transiently with the
     /// turn-complete card, FAILED / ABORTED with a high-priority toast — both
-    /// hand the surface back after their dwell. USER updates the turn-started
-    /// card in place without expanding — visible only when the Notch is
-    /// already open. Nothing else expands the Notch.
+    /// hand the surface back after their dwell. USER (turn start) leaves the
+    /// Notch untouched: the session list reflects the new state on its own.
+    /// Nothing else expands the Notch.
     private func handleTurnEvents(
         previous: [AgentStatusNookSession],
         current: [AgentStatusNookSession]
     ) {
         let events = AgentStatusNookActivityDiff.turnEvents(previous: previous, current: current)
-        guard !events.isEmpty else { return }
+        var notified = false
         for event in events {
             guard let session = current.first(where: { $0.id == event.sessionID }) else { continue }
             switch event.kind {
             case .started:
-                model.showTurnCard(.turnStarted(session.id))
+                break
             case .ended:
                 model.showTurnCard(.turnEnded(session.id))
                 presentTurnCardSurface()
+                notified = true
             case .failed:
                 activityQueue.enqueue(NookActivity(
                     coalescingKey: session.id.rawValue,
@@ -211,8 +212,10 @@ final class AgentStatusNookController {
                     tint: Color(event.row.tag.categoryColor),
                     dwell: .seconds(2.8)
                 ))
+                notified = true
             }
         }
+        guard notified else { return }
         NookHaptics.confirm(enabled: appState.appearancePreferences.hapticFeedbackEnabled)
     }
 
