@@ -38,11 +38,16 @@ public final class ApplicationCoordinator: NSObject {
     /// inside the app bundle, so an app update must refresh the copy — a
     /// stale helper keeps exiting 0 while silently dropping every ingest
     /// capability added since it was built.
+    ///
+    /// Codex trust is then re-authorized on every launch, not only after a
+    /// rewrite of our own: its trust records are keyed by a handler's position
+    /// in `hooks.json`, so any tool editing that file silently untrusts ours.
     private func refreshInstalledHooks() {
         guard let helper = Bundle.main.url(forResource: "agent-status-helper", withExtension: nil) else { return }
         Task.detached(priority: .utility) {
+            let codex = CodexHookInstaller()
             for refresh in [
-                { try CodexHookInstaller().refreshIfStale(helperSourceURL: helper) },
+                { try codex.refreshIfStale(helperSourceURL: helper) },
                 { try ClaudeHookInstaller().refreshIfStale(helperSourceURL: helper) },
             ] {
                 do {
@@ -50,6 +55,11 @@ public final class ApplicationCoordinator: NSObject {
                 } catch {
                     NSLog("agent-status hook refresh failed: %@", String(describing: error))
                 }
+            }
+            guard codex.isInstalled() else { return }
+            let trust = CodexHookTrustAuthorizer().authorize()
+            if trust.needsAttention {
+                NSLog("agent-status codex hook trust unresolved: %@", String(describing: trust))
             }
         }
     }

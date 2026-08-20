@@ -10,10 +10,11 @@ Agent Status 把一台 Mac 上多个 Codex Agent、多个 Session 的状态集�
 
 1. 打开 Mac App，在侧边栏选择“Settings”。
 2. 在中栏选择“Daemon”并点击“Install & Start daemon”，再选择“Agents”并点击“Install Hook”。
-3. 如 Codex 要求审核 Hook，在 Codex `/hooks` 中确认 Agent Status 命令。
-4. 新建一个 Codex Session，在“Sessions”中查看状态和时间线。
+3. 新建一个 Codex Session，在“Sessions”中查看状态和时间线。
 
 完成信号：工具栏显示 Session 数量；新 Agent 事件到达时，列表和详情自动更新。
+
+Codex 只运行它信任过的 Hook，而且不信任时不给任何提示。安装 Hook 和每次启动 App 都会自动补上这份信任，所以正常情况不需要做别的；只有自动授权没成功时，“Settings > Agents”才会出现一行提示和“Authorize”按钮。
 
 ## 功能模块
 
@@ -62,7 +63,7 @@ Relay 不保存 Session 正文或可浏览的历史。Mac 不在线时，iPhone 
 
 ## 遇到卡点
 
-按“Daemon unavailable”“Hook 尚未信任”“Relay unavailable”“配对失败”或“Mac unavailable”等可见症状查看[恢复路径](friction-points.md)。
+按“Daemon unavailable”“Codex 未信任 Hook”“Relay unavailable”“配对失败”或“Mac unavailable”等可见症状查看[恢复路径](friction-points.md)。
 
 ## 当前边界
 

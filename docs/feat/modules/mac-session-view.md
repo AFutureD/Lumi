@@ -48,11 +48,10 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
    - 系统反馈：daemon 区域显示连接和运行状态。
    - 规则引用：[MAC-R-001](#mac-r-001-daemon-决定实时可用性)。
 3. 在中栏选择“Agents”，点击“Install Hook”。
-   - 系统反馈：成功或显示安装错误。
-   - 数据结果：只追加 Agent Status Hook，不覆盖其他集成。
-   - 规则引用：[MAC-R-002](#mac-r-002-安装不替换现有-hooks)。
-4. 如 Codex 要求审核，在 /hooks 中信任 Agent Status 命令。
-5. 新建一个 Codex Session。
+   - 系统反馈：成功或显示安装错误；随后 Codex 卡片显示“Trusted by Codex”和处理项数量。
+   - 数据结果：只追加 Agent Status Hook，不覆盖其他集成；Codex 的信任记录只针对 Agent Status 自己的处理项写入。
+   - 规则引用：[MAC-R-002](#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)。
+4. 新建一个 Codex Session。
    - 系统反馈：首个受支持 Agent 事件到达后，Session 出现在中栏。
    - 规则引用：[MAC-R-011](#mac-r-011-只记录启用后的新-session)。
 
@@ -100,7 +99,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 - 条件：用户点击“Install Hook”。
 - 行为：只追加尚不存在的 Agent Status Hook。
 - 结果：其他集成继续保留。
-- 限制或例外：新增 Hook 可能需要在 Codex /hooks 中审核并信任。
+- 限制或例外：写入 hooks.json 会让 Codex 已有的信任记录失效，因此安装后立即执行 [MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)。
 
 ### MAC-R-003 展示活动并保留 Session 诊断数据
 
@@ -229,12 +228,19 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 - 结果：升级 App 后 Hook 立即获得新采集能力（如 Claude Subagent 实时子 Session），无需重新点击“Install Hook”。
 - 限制或例外：从未安装过 Hook 时启动不做任何事；配置补齐仍只追加 Agent Status 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。
 
+### MAC-R-021 自动向 Codex 申请 Hook 信任
+
+- 条件：Codex Hook 已安装。发生在点击“Install Hook”之后，以及每次 App 启动时。
+- 行为：向 Codex 询问它当前怎么看待各个处理项，为其中未被信任的 Agent Status 处理项写入信任，然后再问一次以确认结果。整个过程只涉及命令为 Agent Status helper 的处理项，其他工具的 Hook 一律不读取也不改写。
+- 结果：用户不必手动审核就能继续收到 Session 事件；“Settings > Agents”的 Codex 卡片显示“Trusted by Codex”和处理项数量。
+- 限制或例外：Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。本机没有 Codex、或 Codex 版本还没有信任机制时不显示这一行。申请失败时卡片改为提示未信任并提供“Authorize”按钮，按钮仍失败则需要用户在 Codex `/hooks` 中手动信任。
+
 ## 空状态与故障
 
 - **No Sessions**：daemon 在线，但启用后尚无新 Session，或用户已删除全部记录。
 - **No active Sessions**：Notch 没有符合展示条件的 Session（都已被归档，或都超过七天没有活动）；历史仍可在主窗口查看。
 - **Daemon unavailable**：保留本地已同步内容供查看；恢复 daemon 后点击刷新图标（Refresh Sessions）。
-- **Hook 未信任**：新活动可能不能即时到达；在 Codex /hooks 完成审核。
+- **Codex 未信任 Hook**：Codex 不运行未信任的 Hook，也不给提示，表现为 Session 停更；在“Settings > Agents”点击“Authorize”，仍失败则在 Codex `/hooks` 中手动信任。
 
 更多恢复步骤见[用户摩擦点](../friction-points.md)。
 

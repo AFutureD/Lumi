@@ -17,18 +17,19 @@
 
 **完成信号**：Settings 显示 daemon 已连接。断线期间 Mac 上已同步的 Session 不会自动删除。
 
-## Hook 尚未信任
+## Codex 未信任 Hook
 
-**用户会看到**：daemon 已连接，但新 Agent 活动不能及时出现在列表；Codex 将 Hook 标为待审核。
+**用户会看到**：daemon 已连接、Hook 显示已安装，但 Codex Session 完全不出现，或停在某个时间点不再更新。Codex 侧没有任何报错——它只是不运行未信任的 Hook。“Settings > Agents”的 Codex 卡片会显示还有几个处理项未被信任。
+
+**为什么会发生**：Codex 按处理项在 `hooks.json` 中的位置记录信任。任何工具改写这个文件，位置一变，信任就失效。
 
 **恢复步骤**：
 
-1. 在 Settings 中栏选择“Agents”，点击“Install Hook”。
-2. 在 Codex 打开 /hooks。
-3. 核对 Agent Status 命令后完成信任。
-4. 新建一个 Codex Session 进行验证。
+1. 在 Settings 中栏选择“Agents”。
+2. 点击 Codex 卡片上的“Authorize”。
+3. 若按钮之后仍提示未信任，在 Codex 打开 `/hooks`，核对 Agent Status 命令后手动信任。
 
-**完成信号**：新 Session 的首个受支持事件到达后，Mac 列表自动更新。
+**完成信号**：卡片改为显示“Trusted by Codex”，新 Session 的首个受支持事件到达后 Mac 列表自动更新。
 
 ## No Sessions
 

@@ -102,6 +102,167 @@ import NookApp
     #expect(manager.fileExists(atPath: backup.path))
 }
 
+/// Replays scripted `hooks/list` answers and records every request, so a test
+/// can assert exactly what the authorizer asked Codex to write.
+private final class StubCodexAppServer: CodexAppServerTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var listResponses: [String]
+    private(set) var sent: [(method: String, params: Any)] = []
+    /// Thrown instead of answering; scoped to one method when `failingMethod` is set.
+    var failure: Error?
+    var failingMethod: String?
+
+    init(listResponses: [String], failure: Error? = nil, failingMethod: String? = nil) {
+        self.listResponses = listResponses
+        self.failure = failure
+        self.failingMethod = failingMethod
+    }
+
+    var batchWrites: [[[String: String]]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return sent
+            .filter { $0.method == "config/batchWrite" }
+            .compactMap { (($0.params as? [String: Any])?["edits"] as? [[String: String]]) }
+    }
+
+    func send(method: String, params: Data) throws -> Data {
+        if let failure, failingMethod == nil || failingMethod == method { throw failure }
+        lock.lock()
+        sent.append((method, (try? JSONSerialization.jsonObject(with: params)) ?? [:]))
+        let next = method == "hooks/list" ? (listResponses.isEmpty ? nil : listResponses.removeFirst()) : nil
+        lock.unlock()
+        return Data((next ?? "{}").utf8)
+    }
+}
+
+private func codexHooksList(_ hooks: [(key: String, command: String, hash: String, status: String)]) -> String {
+    let entries = hooks.map {
+        """
+        {"key":"\($0.key)","command":"\($0.command)","currentHash":"\($0.hash)","trustStatus":"\($0.status)"}
+        """
+    }
+    return #"{"data":[{"cwd":"/tmp","hooks":[\#(entries.joined(separator: ","))]}]}"#
+}
+
+private let agentStatusCommand = "'/Users/me/Library/Application Support/Agent Status/bin/agent-status-helper'"
+
+@Test func codexHookTrustAuthorizesOnlyOurOwnUntrustedHandlers() {
+    let untrustedKey = "/Users/me/.codex/hooks.json:pre_tool_use:0:0"
+    let stub = StubCodexAppServer(listResponses: [
+        codexHooksList([
+            (untrustedKey, agentStatusCommand, "sha256:aaa", "untrusted"),
+            ("/Users/me/.codex/hooks.json:stop:1:0", agentStatusCommand, "sha256:bbb", "trusted"),
+            ("/Users/me/.codex/hooks.json:stop:2:0", "'/Users/me/.vibe-island/bin/vibe-island-bridge'", "sha256:ccc", "untrusted"),
+        ]),
+        codexHooksList([
+            (untrustedKey, agentStatusCommand, "sha256:aaa", "trusted"),
+            ("/Users/me/.codex/hooks.json:stop:1:0", agentStatusCommand, "sha256:bbb", "trusted"),
+        ]),
+    ])
+
+    let state = CodexHookTrustAuthorizer(makeTransport: { stub }).authorize()
+
+    #expect(state == .trusted(2))
+    #expect(stub.batchWrites.count == 1)
+    let edits = stub.batchWrites.first ?? []
+    #expect(edits.count == 1)
+    #expect(edits.first?["keyPath"] == "hooks.state.\"\(untrustedKey)\".trusted_hash")
+    #expect(edits.first?["value"] == "sha256:aaa")
+    #expect(edits.first?["mergeStrategy"] == "replace")
+}
+
+@Test func codexHookTrustReportsWhatCodexStillRefusesAfterWriting() {
+    let key = "/Users/me/.codex/hooks.json:pre_tool_use:0:0"
+    let stub = StubCodexAppServer(listResponses: [
+        codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")]),
+        codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")]),
+    ])
+
+    #expect(CodexHookTrustAuthorizer(makeTransport: { stub }).authorize() == .untrusted([key]))
+}
+
+/// A rejected write must not read as "this Codex has no trust gate" — the
+/// handlers really are untrusted and the user has to be told.
+@Test func codexHookTrustDoesNotMistakeARejectedWriteForAnOlderCodex() {
+    let key = "/Users/me/.codex/hooks.json:pre_tool_use:0:0"
+    let stub = StubCodexAppServer(
+        listResponses: [codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")])],
+        failure: CodexAppServerError.rpc(code: -32603, message: "config is read-only"),
+        failingMethod: "config/batchWrite"
+    )
+
+    #expect(CodexHookTrustAuthorizer(makeTransport: { stub }).authorize() == .untrusted([key]))
+}
+
+@Test func codexHookTrustProbeReadsWithoutWriting() {
+    let key = "/Users/me/.codex/hooks.json:stop:1:0"
+    let stub = StubCodexAppServer(listResponses: [
+        codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")]),
+    ])
+
+    #expect(CodexHookTrustAuthorizer(makeTransport: { stub }).probe() == .untrusted([key]))
+    #expect(stub.batchWrites.isEmpty)
+}
+
+/// The same user-level handler is repeated once per cwd group.
+@Test func codexHookTrustCountsEachHandlerOnce() {
+    let entry = """
+    {"key":"/Users/me/.codex/hooks.json:stop:1:0","command":"\(agentStatusCommand)","currentHash":"sha256:aaa","trustStatus":"trusted"}
+    """
+    let stub = StubCodexAppServer(listResponses: [
+        #"{"data":[{"cwd":"/a","hooks":[\#(entry)]},{"cwd":"/b","hooks":[\#(entry)]}]}"#,
+    ])
+
+    #expect(CodexHookTrustAuthorizer(makeTransport: { stub }).probe() == .trusted(1))
+}
+
+@Test func codexHookTrustTreatsAMissingOrOlderCodexAsUnsupported() {
+    let noCodex = CodexHookTrustAuthorizer(makeTransport: { throw CodexAppServerError.executableNotFound })
+    #expect(noCodex.authorize() == .unsupported)
+
+    let noHooksList = StubCodexAppServer(
+        listResponses: [],
+        failure: CodexAppServerError.rpc(code: -32601, message: "method not found")
+    )
+    #expect(CodexHookTrustAuthorizer(makeTransport: { noHooksList }).authorize() == .unsupported)
+    #expect(!CodexHookTrustState.unsupported.needsAttention)
+}
+
+/// Read-only smoke test against the Codex actually installed on this machine —
+/// the stubs above cannot catch a change to the app-server's JSON-RPC contract.
+/// Opt in with `AGENT_STATUS_CODEX_INTEGRATION=1 swift test`.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["AGENT_STATUS_CODEX_INTEGRATION"] != nil))
+func codexAppServerProbeSpeaksToTheInstalledCodex() throws {
+    let transport = try CodexAppServerProcessTransport()
+    defer { transport.close() }
+    let result = try transport.send(method: "hooks/list", params: Data("{}".utf8))
+    let response = try JSONDecoder().decode(CodexHooksListResponse.self, from: result)
+
+    #expect(!response.data.isEmpty)
+    let keys = response.data.flatMap(\.hooks).map(\.key)
+    #expect(keys.allSatisfy { $0.contains(":") })
+
+    // A `.failed` here means the contract moved, not that hooks are untrusted.
+    if case .failed(let reason) = CodexHookTrustAuthorizer().probe() {
+        Issue.record("probe against the installed Codex failed: \(reason)")
+    }
+}
+
+@Test func codexHookTrustSurfacesAnUnresponsiveCodex() {
+    let stalled = StubCodexAppServer(
+        listResponses: [],
+        failure: CodexAppServerError.timedOut(method: "hooks/list")
+    )
+    let state = CodexHookTrustAuthorizer(makeTransport: { stalled }).authorize()
+
+    guard case .failed = state else {
+        Issue.record("expected a failed state, got \(state)")
+        return
+    }
+    #expect(state.needsAttention)
+}
+
 @Test @MainActor
 func nookAppearanceIsPinnedAndAdjustmentDefaultsAreFilled() {
     let original = NookAppearancePreferences(

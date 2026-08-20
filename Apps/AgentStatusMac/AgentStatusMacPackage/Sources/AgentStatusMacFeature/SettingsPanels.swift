@@ -18,6 +18,8 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var historySizeText: String?
     @Published private(set) var hookInstalled = false
     @Published private(set) var claudeHookInstalled = false
+    @Published private(set) var codexHookTrust: CodexHookTrustState = .unsupported
+    @Published private(set) var isAuthorizingCodexHooks = false
 
     let version: String
     let build: String
@@ -31,6 +33,10 @@ final class SettingsModel: ObservableObject {
     private let store: MacSessionStore
     private let loginService = SMAppService.mainApp
     private let daemonService = SMAppService.agent(plistName: "com.huanan.AgentStatusDaemon.plist")
+    /// Each probe launches a `codex app-server`, so panel re-appearances reuse
+    /// the last answer for a while.
+    private var lastCodexTrustProbe: Date?
+    private static let codexTrustProbeInterval: TimeInterval = 60
 
     init(store: MacSessionStore) {
         self.store = store
@@ -47,6 +53,24 @@ final class SettingsModel: ObservableObject {
         hookInstalled = CodexHookInstaller().isInstalled()
         claudeHookInstalled = ClaudeHookInstaller().isInstalled()
         reloadDaemonDiagnostics()
+        probeCodexHookTrust()
+    }
+
+    /// Read-only check of whether Codex will actually run our handlers. Skipped
+    /// while the hook is not installed, and rate-limited otherwise.
+    private func probeCodexHookTrust(force: Bool = false) {
+        guard hookInstalled else {
+            codexHookTrust = .noHooks
+            return
+        }
+        if !force, let last = lastCodexTrustProbe, Date().timeIntervalSince(last) < Self.codexTrustProbeInterval {
+            return
+        }
+        lastCodexTrustProbe = Date()
+        Task { [weak self] in
+            let state = await Task.detached(priority: .utility) { CodexHookTrustAuthorizer().probe() }.value
+            self?.codexHookTrust = state
+        }
     }
 
     private func reloadDaemonDiagnostics() {
@@ -130,6 +154,7 @@ final class SettingsModel: ObservableObject {
     }
 
     func toggleCodexHook() {
+        var installed = false
         do {
             let installer = CodexHookInstaller()
             if installer.isInstalled() {
@@ -139,11 +164,30 @@ final class SettingsModel: ObservableObject {
                     throw CodexHookInstallerError.helperMissing
                 }
                 try installer.install(helperSourceURL: helper)
+                installed = true
             }
         } catch {
             presentError(error)
         }
         reload()
+        // A freshly written hooks.json is untrusted by definition: Codex keys
+        // trust to a handler's position in the file, and the install just moved
+        // one in.
+        if installed { authorizeCodexHooks() }
+    }
+
+    /// Writes the trust records Codex is missing for our handlers, then reports
+    /// what Codex will enforce afterwards.
+    func authorizeCodexHooks() {
+        guard !isAuthorizingCodexHooks else { return }
+        isAuthorizingCodexHooks = true
+        Task { [weak self] in
+            let state = await Task.detached(priority: .userInitiated) { CodexHookTrustAuthorizer().authorize() }.value
+            guard let self else { return }
+            isAuthorizingCodexHooks = false
+            lastCodexTrustProbe = Date()
+            codexHookTrust = state
+        }
     }
 
     func toggleClaudeHook() {
@@ -302,6 +346,7 @@ struct AgentsSettingsPanel: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .frame(minHeight: 52)
+                    if model.hookInstalled { trustRow }
                     Divider()
                     SettingsFootnote(text: "Hooks go into ~/.codex/hooks.json. Installing the integration preserves existing Hook handlers.")
                 }
@@ -338,6 +383,42 @@ struct AgentsSettingsPanel: View {
             }
         }
         .onAppear { model.reload() }
+    }
+
+    /// Codex only runs handlers it has trusted, and it fails silently when it
+    /// has not — so the state is shown whenever the hook is installed, and the
+    /// row turns actionable the moment ingest would stop.
+    @ViewBuilder private var trustRow: some View {
+        switch model.codexHookTrust {
+        case .unsupported, .noHooks:
+            EmptyView()
+        case let .trusted(count):
+            Divider()
+            SettingsFactRow(
+                label: "Hook trust",
+                value: "Trusted by Codex · \(count) handler\(count == 1 ? "" : "s")"
+            )
+        case let .untrusted(keys):
+            Divider()
+            SettingsRow(
+                title: "Codex has not trusted \(keys.count) handler\(keys.count == 1 ? "" : "s")",
+                subtitle: "Sessions stop arriving until these are trusted. If authorizing fails, run /hooks in Codex.",
+                titleFont: AgentStatusDesign.Font.UI.rowTitle
+            ) {
+                Button(model.isAuthorizingCodexHooks ? "Authorizing…" : "Authorize") { model.authorizeCodexHooks() }
+                    .disabled(model.isAuthorizingCodexHooks)
+            }
+        case .failed:
+            Divider()
+            SettingsRow(
+                title: "Hook trust could not be verified",
+                subtitle: "Codex did not answer. Open Codex and run /hooks to check the Agent Status handlers.",
+                titleFont: AgentStatusDesign.Font.UI.rowTitle
+            ) {
+                Button(model.isAuthorizingCodexHooks ? "Checking…" : "Check again") { model.authorizeCodexHooks() }
+                    .disabled(model.isAuthorizingCodexHooks)
+            }
+        }
     }
 }
 

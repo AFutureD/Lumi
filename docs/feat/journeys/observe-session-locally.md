@@ -14,17 +14,17 @@
 
 - Mac App 已安装并启动。
 - daemon 可在当前用户下运行。
-- 如需低延迟事件，Agent Status Hook 已在 Codex 中信任。
+- 如需低延迟事件，Codex 已安装在本机（App 需要它来完成 Hook 信任）。
 
 ## 主路径
 
 1. 在侧边栏选择“Settings”，再在中栏选择“Daemon”并点击“Install & Start daemon”。
    - 系统反馈：daemon 区域显示已安装、运行和连接状态。
    - 规则引用：[MAC-R-001](../modules/mac-session-view.md#mac-r-001-daemon-决定实时可用性)。
-2. 在中栏选择“Agents”，点击“Install Hook”，必要时在 Codex /hooks 中信任。
-   - 系统反馈：安装成功或显示具体错误。
-   - 数据变化：只增加 Agent Status Hook，其他集成保留。
-   - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)。
+2. 在中栏选择“Agents”，点击“Install Hook”。
+   - 系统反馈：安装成功或显示具体错误；随后 Codex 卡片显示“Trusted by Codex”。
+   - 数据变化：只增加 Agent Status Hook，其他集成保留；Codex 的信任记录只针对 Agent Status 自己的处理项写入。
+   - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](../modules/mac-session-view.md#mac-r-021-自动向-codex-申请-hook-信任)。
 3. 回到侧边栏“Sessions”，再新建一个 Codex Session 并提交任务。
    - 系统反馈：Main Session 以标题、Agent 类型和状态出现在主窗口中栏；Subagent 作为可折叠子项显示在所属 Main Session 下，并使用自己的名称或任务身份，不复用父 Session 请求作为标题。Notch 展开后显示标题、状态和当前 Turn 用户消息。
    - 数据变化：启用前已经存在的旧 Session 不会自动导入。
@@ -64,11 +64,11 @@
 - 可执行动作：点击“Install & Start daemon”，恢复后点击刷新图标（Refresh Sessions）。
 - 数据影响：Mac 已同步内容仍可查看，不会因断线自动删除。
 
-### Hook 尚未信任
+### Codex 未信任 Hook
 
-- 用户看到：Codex 将 Hook 标为待审核，实时更新缺失。
-- 可执行动作：在 Codex /hooks 检查并信任 Agent Status 命令。
-- 数据影响：现有其他 Hooks 不变。
+- 用户看到：Hook 已安装但 Codex Session 不再更新；“Settings > Agents”的 Codex 卡片提示还有处理项未被信任。
+- 可执行动作：点击卡片上的“Authorize”；仍不成功再到 Codex `/hooks` 手动信任。
+- 数据影响：现有其他 Hooks 不变，只为 Agent Status 自己的处理项写入信任记录。
 
 ### 列表为空
 
