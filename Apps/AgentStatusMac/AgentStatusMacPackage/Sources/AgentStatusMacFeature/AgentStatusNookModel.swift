@@ -61,6 +61,13 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
 
     var isChild: Bool { parentID != nil }
 
+    /// Tier drawn in the list: once the turn has ended the dot steps down with
+    /// the title (saturated → Completed grey, no halo) so the three attention
+    /// tiers stay distinct. Failed / Aborted keeps its red.
+    var listTone: SessionStatusTone {
+        turnEnded && statusTone != .red ? .gray : statusTone
+    }
+
     /// Archive affordance and "Turn complete" state: the newest turn is closed
     /// or the session itself is no longer running a turn.
     var turnEnded: Bool {

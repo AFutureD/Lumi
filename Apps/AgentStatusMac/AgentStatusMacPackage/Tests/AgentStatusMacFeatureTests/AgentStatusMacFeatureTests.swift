@@ -590,11 +590,11 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     #expect([TimelineTag.reasoning, .assistant, .plan, .subagent, .turnEnd].map(\.lane) == [.model, .model, .model, .model, .model])
     #expect([TimelineTag.session, .compact].map(\.lane) == [nil, nil])
     #expect(TimelineTag.user.level == .l3 && TimelineTag.tool.level == .l2 && TimelineTag.reasoning.level == .l1)
-    #expect(TimelineTagStyle.style(for: .user).fill != .clear)
-    #expect(TimelineTagStyle.style(for: .session).fill == .clear)
+    #expect(TimelineTag.user.tagStyle(.light).fill != .clear)
+    #expect(TimelineTag.session.tagStyle(.light).fill == .clear)
     // Every tier carries a `.5px` ring, the Notch's dark variant included.
-    #expect(TimelineTagStyle.style(for: .session).ring.alpha > 0)
-    #expect(TimelineTagStyle.style(for: .user, appearance: .dark).ring.alpha > 0)
+    #expect(TimelineTag.session.tagStyle(.light).ring.alpha > 0)
+    #expect(TimelineTag.user.tagStyle(.dark).ring.alpha > 0)
 }
 
 @Test func sessionListFilteringKeepsAncestorsOfMatches() {
@@ -837,47 +837,63 @@ func macStoreAppliesDaemonEventsInArrivalOrderSoDiscardsWin() async throws {
 
 @Test func laneStripHitTestingSkipsGapsAndEmptyCells() {
     // 13pt cells on a 17pt pitch, three lanes; column 1 is filled in lane 1 only.
-    let geometry = LaneStripGeometry(cellSize: 13, spacing: 4, laneCount: 3)
+    let geometry = LaneStripGeometry(cellSize: 13, spacing: 4, laneCount: 3, columns: 3)
     let filled: (LaneStripGeometry.Cell) -> Bool = { $0.index == 1 && $0.lane == 1 }
     #expect(geometry.height == 47)
-    #expect(geometry.contentWidth(columns: 3) == 47)
+    #expect(geometry.contentWidth == 47)
     #expect(geometry.rect(index: 1, lane: 1) == CGRect(x: 17, y: 17, width: 13, height: 13))
     // Inside the filled square.
-    #expect(geometry.cell(at: CGPoint(x: 20, y: 20), columns: 3, isFilled: filled) == .init(index: 1, lane: 1))
+    #expect(geometry.cell(at: CGPoint(x: 20, y: 20), isFilled: filled) == .init(index: 1, lane: 1))
     // Same column, empty lane → nil.
-    #expect(geometry.cell(at: CGPoint(x: 20, y: 3), columns: 3, isFilled: filled) == nil)
+    #expect(geometry.cell(at: CGPoint(x: 20, y: 3), isFilled: filled) == nil)
     // In the 4pt gap between columns / lanes → nil even if the lane is "filled".
-    #expect(geometry.cell(at: CGPoint(x: 14, y: 20), columns: 3, isFilled: { _ in true }) == nil)
-    #expect(geometry.cell(at: CGPoint(x: 20, y: 15), columns: 3, isFilled: { _ in true }) == nil)
+    #expect(geometry.cell(at: CGPoint(x: 14, y: 20), isFilled: { _ in true }) == nil)
+    #expect(geometry.cell(at: CGPoint(x: 20, y: 15), isFilled: { _ in true }) == nil)
     // Beyond the last column or below the strip → nil.
-    #expect(geometry.cell(at: CGPoint(x: 60, y: 5), columns: 3, isFilled: { _ in true }) == nil)
-    #expect(geometry.cell(at: CGPoint(x: 5, y: 60), columns: 3, isFilled: { _ in true }) == nil)
-    #expect(geometry.cell(at: CGPoint(x: -1, y: 5), columns: 3, isFilled: { _ in true }) == nil)
+    #expect(geometry.cell(at: CGPoint(x: 60, y: 5), isFilled: { _ in true }) == nil)
+    #expect(geometry.cell(at: CGPoint(x: 5, y: 60), isFilled: { _ in true }) == nil)
+    #expect(geometry.cell(at: CGPoint(x: -1, y: 5), isFilled: { _ in true }) == nil)
     // Visible columns clamp to the content and pad one column for partial redraws.
-    #expect(geometry.visibleColumns(in: CGRect(x: 30, y: 0, width: 40, height: 47), columns: 100) == 1 ... 5)
-    #expect(geometry.visibleColumns(in: CGRect(x: 0, y: 0, width: 40, height: 47), columns: 2) == 0 ... 1)
-    #expect(geometry.visibleColumns(in: .zero, columns: 0) == nil)
+    let wide = LaneStripGeometry(cellSize: 13, spacing: 4, laneCount: 3, columns: 100)
+    #expect(wide.visibleColumns(in: CGRect(x: 30, y: 0, width: 40, height: 47)) == 1 ... 5)
+    #expect(LaneStripGeometry(cellSize: 13, spacing: 4, laneCount: 3, columns: 2)
+        .visibleColumns(in: CGRect(x: 0, y: 0, width: 40, height: 47)) == 0 ... 1)
+    #expect(LaneStripGeometry(cellSize: 13, spacing: 4, laneCount: 3, columns: 0).visibleColumns(in: .zero) == nil)
+}
+
+@Test func laneStripMarkersAreFourPointBars() {
+    // marker 4 · cell 13 · marker 4 · cell 13, gap 4 → lefts 0, 8, 25, 33; content 46.
+    let geometry = LaneStripGeometry(cellSize: 13, spacing: 4, laneCount: 3, columnWidths: [4, 13, 4, 13])
+    #expect(geometry.columnLefts == [0, 8, 25, 33, 50])
+    #expect(geometry.contentWidth == 46)
+    #expect(geometry.isMarker(0) && !geometry.isMarker(1))
+    #expect(geometry.rect(index: 2, lane: 2) == CGRect(x: 25, y: 34, width: 4, height: 13))
+    #expect(geometry.cell(at: CGPoint(x: 26, y: 40), isFilled: { _ in true }) == .init(index: 2, lane: 2))
+    #expect(geometry.cell(at: CGPoint(x: 30, y: 40), isFilled: { _ in true }) == nil) // gap after the bar
+    #expect(geometry.visibleColumns(in: CGRect(x: 26, y: 0, width: 5, height: 47)) == 2 ... 3)
 }
 
 @Test func activityScrollMapRelatesRowsAndColumnsByIndex() {
-    // Rows: marker 32 (cell), item 40 (cell), TOOL 40 (no cell), item 40 (cell). Top inset 6, pitch 17.
+    // Rows: marker 32 (4pt bar), item 40 (cell), TOOL 40 (no cell), item 40 (cell). Top inset 6, gap 4.
     let map = ActivityScrollMap(
-        rows: [(32, true), (40, true), (40, false), (40, true)],
-        topInset: 6, pitch: 17
+        rows: [(32, 4), (40, 13), (40, nil), (40, 13)],
+        topInset: 6, spacing: 4
     )
     #expect(map.rowCount == 4 && map.columnCount == 3)
     #expect(map.rowOfColumn == [0, 1, 3])
+    // Column lefts: 0 (bar), 8, 25; next 42.
+    #expect(map.columnLefts == [0, 8, 25, 42])
     // Row tops: 6, 38, 78, 118; bottom 158.
     #expect(map.rowIndex(at: 0) == 0 && map.rowIndex(at: 38) == 1 && map.rowIndex(at: 117.9) == 2 && map.rowIndex(at: 999) == 3)
-    // Row 0 top edge ↔ column 0; half way down row 1 ↔ column 1.5.
+    // Row 0 top edge ↔ column 0; half way down row 1 ↔ half way across column 1 (8 + 8.5).
     #expect(map.stripOffset(forListOffset: 6) == 0)
-    #expect(map.stripOffset(forListOffset: 58) == 25.5)
+    #expect(map.stripOffset(forListOffset: 58) == 16.5)
     // The TOOL row parks on the next cell's column (2) for its whole height.
-    #expect(map.stripOffset(forListOffset: 80) == 34.0)
-    #expect(map.stripOffset(forListOffset: 117) == 34.0)
-    // Inverse: column 2 ↔ row 3's top; column 0.5 ↔ half way down row 0.
-    #expect(map.listOffset(forStripOffset: 34) == 118)
-    #expect(map.listOffset(forStripOffset: 8.5) == 22.0)
+    #expect(map.stripOffset(forListOffset: 80) == 25)
+    #expect(map.stripOffset(forListOffset: 117) == 25)
+    // Inverse: column 2 ↔ row 3's top; half way across column 0 (4) ↔ half way down row 0.
+    #expect(map.listOffset(forStripOffset: 25) == 118)
+    #expect(map.listOffset(forStripOffset: 4) == 22.0)
     // Out of range clamps instead of crashing.
     #expect(map.listOffset(forStripOffset: 1000) == 158.0)
     #expect(ActivityScrollMap().stripOffset(forListOffset: 10) == 0)
@@ -891,7 +907,7 @@ func activityScrollLinkOnlyLetsTheDriverSteer() {
     link.scrollList = { listRequests.append($0) }
     link.scrollStrip = { stripRequests.append($0) }
     // 10 item rows of 40, every row draws a cell; pitch 17.
-    link.map = ActivityScrollMap(rows: Array(repeating: (40, true), count: 10), topInset: 0, pitch: 17)
+    link.map = ActivityScrollMap(rows: Array(repeating: (40, 13), count: 10), topInset: 0, spacing: 4)
     link.listDidScroll(.init(offset: 0, content: 400, viewport: 200))
     link.stripDidScroll(.init(offset: 0, content: 170, viewport: 85))
 

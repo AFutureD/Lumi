@@ -29,7 +29,7 @@ Notch 紧凑时显示全部符合展示条件的 Session 数量和最近一个 S
 
 ### Session 状态颜色
 
-Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 的文字转为三级灰），在 subheader 中用带描边的状态药丸（Running 蓝、Waiting for input 绿、Completed 灰、Failed / Aborted 红）；状态变化时颜色 0.2 秒过渡；只有 Running 的光晕缓慢呼吸（约 1.6 秒一次），其他状态静止。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
+Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 的文字转为三级灰），在 subheader 中用带描边的状态药丸（Running 蓝、Waiting for input 绿、Completed 灰、Failed / Aborted 红）；状态变化时颜色 0.2 秒过渡；只有进行中的状态（Running、Waiting for input）带光晕并缓慢呼吸（约 1.6 秒一次），Completed 与 Failed 的点为实心静止。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
 
 ## 首次配置
 
@@ -161,7 +161,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 - 条件：Mac、Notch 或 iPhone 显示一个 Session 的当前状态。
 - 行为：Starting、Running 和 Compacting 使用蓝色（agent 在工作）；Waiting For Input 使用绿色（需要人处理，包括等待输入和等待审批）；Completed 使用灰色；Failed 和 Interrupted 使用红色。颜色不影响列表排序。
 - 结果：用户在三个界面看到相同的状态颜色语义。
-- 限制或例外：三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观），Notch 使用深色梯度，iPhone 随系统外观在浅色 / 深色两组值之间切换。Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。Mac 列表选中行使用中性灰底、文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
+- 限制或例外：三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观），Notch 使用独立的深色取值并以纯黑实色面板承载（无材质、描边与投影，便于与刘海无缝衔接），iPhone 随系统外观在浅色 / 深色两组值之间切换。Notch 列表里 Turn 已结束的行，标题与状态点一起降为灰色、光晕消失，Agent 标签不变。Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。Mac 列表选中行使用中性灰底、文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
 
 ### MAC-R-014 Notch 显示 Session 当前状态
 
@@ -187,7 +187,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 
 - 条件：用户选择的 Session 包含一条或多条 Activity。
-- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格，只填在自己所属的泳道（User：用户输入和所有上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End；Exec：Tool、Result、Failed），其余泳道留空，只有 Session 开始/结束与上下文压缩横跨三条泳道；TOOL（工具调用）和 Claude 周期性的 total tokens reminder 上下文只出现在列表里、不占时间轴方格，Exec 泳道只放工具结果和失败；单行模式下所有记录排成一行，方格填类别色。横向时间轴与下方列表同步滚动：滚动列表时时间轴跟着移动，在时间轴上横向滚动或按住鼠标左右拖动时列表也随之滚动，拖动松手后时间轴带惯性滑行一小段（列表继续跟随），再次拖动、滚动或点击即停；只有填了色的方格可以点击（悬停时指针变为手形、方格出现描边），点击后列表滚动到对应记录并短暂高亮，空白泳道格和方格间隙不响应点击。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
+- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格，只填在自己所属的泳道（User：用户输入和所有上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End；Exec：Tool、Result、Failed），其余泳道留空；Session 开始/结束与上下文压缩不占泳道，而是在三条泳道各画一条 4 pt 窄条，靠宽度与实格区分；TOOL（工具调用）和 Claude 周期性的 total tokens reminder 上下文只出现在列表里、不占时间轴方格，Exec 泳道只放工具结果和失败；单行模式下所有记录排成一行，方格填类别色。横向时间轴与下方列表同步滚动：滚动列表时时间轴跟着移动，在时间轴上横向滚动或按住鼠标左右拖动时列表也随之滚动，拖动松手后时间轴带惯性滑行一小段（列表继续跟随），再次拖动、滚动或点击即停；只有填了色的方格可以点击（悬停时指针变为手形、方格出现描边），点击后列表滚动到对应记录并短暂高亮，空白泳道格和方格间隙不响应点击。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
 - 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
 - 限制或例外：时间轴与密度切换只改变当前详情的查看方式和位置，不修改或控制 Codex Session。
 

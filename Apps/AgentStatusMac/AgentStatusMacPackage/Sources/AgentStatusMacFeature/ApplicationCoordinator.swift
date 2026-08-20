@@ -24,6 +24,7 @@ public final class ApplicationCoordinator: NSObject {
         mainWindow.showWindow(nil)
         notch.start()
         NSApp.activate(ignoringOtherApps: true)
+        DebugSnapshotExporter.run(notch: notch)
     }
 
     public func stop() async {

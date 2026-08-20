@@ -143,11 +143,11 @@ struct SessionActivityView: View {
                     height: activity.lane == nil
                         ? AgentStatusDesign.Layout.activityMarkerRowHeight
                         : AgentStatusDesign.Layout.activityRowHeight,
-                    drawsCell: activity.appearsInLaneStrip
+                    columnWidth: activity.appearsInLaneStrip ? activity.laneStripColumnWidth : nil
                 )
             },
             topInset: DesignSystem.Spacing.s,
-            pitch: AgentStatusDesign.Layout.laneCellSize + AgentStatusDesign.Layout.laneCellSpacing
+            spacing: AgentStatusDesign.Layout.laneCellSpacing
         )
     }
 
@@ -222,6 +222,11 @@ private extension SessionActivityPresentation {
             return true
         }
     }
+
+    /// Strip column width: a 13pt cell, or the 4pt bar of a cross-lane marker.
+    var laneStripColumnWidth: CGFloat {
+        lane == nil ? AgentStatusDesign.Layout.laneMarkerWidth : AgentStatusDesign.Layout.laneCellSize
+    }
 }
 
 /// Follower / pan scrolls are instantaneous: an implicit animation here would
@@ -257,13 +262,14 @@ private func sessionActivityRowID(for activity: SessionActivityPresentation) -> 
 /// Row ↔ column mapping between the Activity list and the lane strip.
 ///
 /// Every list row has a fixed height (item 40 / marker 32) below a fixed top
-/// inset, and every strip column sits on a fixed pitch, so the two scroll
-/// offsets relate through indices, not proportions: the row at the list's top
-/// edge is the column at the strip's left edge. Rows that have no strip cell
-/// (TOOL, bookkeeping context) map onto the column of the next row that has
-/// one, so the mapping stays monotonic. Within a row / column the offset is
-/// interpolated, which keeps the follower moving smoothly. Pure value type —
-/// unit-tested, no SwiftUI.
+/// inset, and every strip column has a known left edge (13pt cells, 4pt
+/// marker bars, 4pt gaps), so the two scroll offsets relate through indices,
+/// not proportions: the row at the list's top edge is the column at the
+/// strip's left edge. Rows that have no strip cell (TOOL, bookkeeping
+/// context) map onto the column of the next row that has one, so the mapping
+/// stays monotonic. Within a row / column the offset is interpolated, which
+/// keeps the follower moving smoothly. Pure value type — unit-tested, no
+/// SwiftUI.
 struct ActivityScrollMap: Equatable {
     /// Top edge of each list row, in list content coordinates; one trailing
     /// entry holds the content bottom.
@@ -274,25 +280,29 @@ struct ActivityScrollMap: Equatable {
     private(set) var columnOfRow: [Int] = [0]
     /// List row shown by each strip column.
     private(set) var rowOfColumn: [Int] = []
-    var pitch: CGFloat = 1
+    /// Left edge of each strip column; one trailing entry holds the left edge
+    /// the next column would have (column pitch includes the gap).
+    private(set) var columnLefts: [CGFloat] = [0]
 
     init() {}
 
     /// - Parameters:
-    ///   - rows: per list row, `(height, drawsCell)`.
+    ///   - rows: per list row, `(height, columnWidth)` — `nil` width when the
+    ///     row draws no strip cell.
     ///   - topInset: list content padding above the first row.
-    ///   - pitch: strip column pitch (cell + gap).
-    init(rows: [(height: CGFloat, drawsCell: Bool)], topInset: CGFloat, pitch: CGFloat) {
-        self.pitch = pitch
+    ///   - spacing: gap between strip columns.
+    init(rows: [(height: CGFloat, columnWidth: CGFloat?)], topInset: CGFloat, spacing: CGFloat) {
         rowTops.reserveCapacity(rows.count + 1)
         columnOfRow.reserveCapacity(rows.count + 1)
         rowTops = [topInset]
         columnOfRow = []
+        columnLefts = [0]
         var column = 0
         for (index, row) in rows.enumerated() {
             columnOfRow.append(column)
-            if row.drawsCell {
+            if let width = row.columnWidth {
                 rowOfColumn.append(index)
+                columnLefts.append(columnLefts[column] + width + spacing)
                 column += 1
             }
             rowTops.append(rowTops[index] + row.height)
@@ -309,21 +319,22 @@ struct ActivityScrollMap: Equatable {
         let row = rowIndex(at: listOffset)
         let top = rowTops[row], height = rowTops[row + 1] - top
         let progress = height > 0 ? min(max((listOffset - top) / height, 0), 1) : 0
-        let column: CGFloat
-        if columnOfRow[row + 1] > columnOfRow[row] {
-            column = CGFloat(columnOfRow[row]) + progress // this row draws a cell
-        } else {
-            column = CGFloat(columnOfRow[row]) // parked on the next cell
+        let column = columnOfRow[row]
+        if columnOfRow[row + 1] > column {
+            // This row draws a cell: interpolate across its column.
+            return columnLefts[column] + progress * (columnLefts[column + 1] - columnLefts[column])
         }
-        return column * pitch
+        // Parked on the next cell (or the content end).
+        return columnLefts[min(column, columnLefts.count - 1)]
     }
 
     /// List offset whose top edge shows the row of the column at `stripOffset`.
     func listOffset(forStripOffset stripOffset: CGFloat) -> CGFloat {
         guard columnCount > 0 else { return 0 }
-        let exact = max(stripOffset, 0) / pitch
-        let column = min(Int(exact), columnCount - 1)
-        let progress = min(exact - CGFloat(column), 1)
+        let offset = max(stripOffset, 0)
+        let column = min(columnIndex(at: offset), columnCount - 1)
+        let left = columnLefts[column], width = columnLefts[column + 1] - left
+        let progress = width > 0 ? min((offset - left) / width, 1) : 0
         let row = rowOfColumn[column]
         let top = rowTops[row], height = rowTops[row + 1] - top
         return top + progress * height
@@ -337,6 +348,16 @@ struct ActivityScrollMap: Equatable {
         while low < high {
             let mid = (low + high + 1) / 2
             if rowTops[mid] <= listOffset { low = mid } else { high = mid - 1 }
+        }
+        return low
+    }
+
+    /// Index of the column whose pitch contains `stripOffset` (clamped).
+    func columnIndex(at stripOffset: CGFloat) -> Int {
+        var low = 0, high = columnCount - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if columnLefts[mid] <= stripOffset { low = mid } else { high = mid - 1 }
         }
         return low
     }
@@ -423,10 +444,12 @@ final class ActivityScrollLink {
     }
 }
 
-/// Pure geometry of the lane strip: column `index` along x, `lane` along y,
-/// `cellSize` squares on a `cellSize + spacing` pitch. Hit-testing lands only
-/// inside a square (never in the gaps) and only on a *filled* cell, so the
-/// caller supplies the fill rule. Kept free of SwiftUI so it can be unit-tested.
+/// Pure geometry of the lane strip: column `index` along x, `lane` along y.
+/// Item columns are `cellSize` squares; cross-lane markers are `markerWidth`
+/// bars (the column narrows with them) — both on a `spacing` gap. Hit-testing
+/// lands only inside a cell (never in the gaps) and only on a *filled* cell,
+/// so the caller supplies the fill rule. Kept free of SwiftUI so it can be
+/// unit-tested.
 struct LaneStripGeometry: Equatable {
     struct Cell: Equatable {
         var index: Int
@@ -436,43 +459,80 @@ struct LaneStripGeometry: Equatable {
     var cellSize: CGFloat
     var spacing: CGFloat
     var laneCount: Int
+    /// Width of each column: `cellSize` for items, `markerWidth` for markers.
+    private(set) var columnWidths: [CGFloat]
+    /// Left edge of each column plus one trailing entry (the next column's
+    /// left edge, i.e. content width + spacing).
+    private(set) var columnLefts: [CGFloat]
 
-    var pitch: CGFloat { cellSize + spacing }
-    var height: CGFloat { cellSize * CGFloat(laneCount) + spacing * CGFloat(laneCount - 1) }
-
-    func contentWidth(columns: Int) -> CGFloat {
-        max(0, CGFloat(columns) * pitch - spacing)
+    init(cellSize: CGFloat, spacing: CGFloat, laneCount: Int, columnWidths: [CGFloat]) {
+        self.cellSize = cellSize
+        self.spacing = spacing
+        self.laneCount = laneCount
+        self.columnWidths = columnWidths
+        var lefts: [CGFloat] = [0]
+        lefts.reserveCapacity(columnWidths.count + 1)
+        for width in columnWidths {
+            lefts.append(lefts[lefts.count - 1] + width + spacing)
+        }
+        columnLefts = lefts
     }
+
+    /// Uniform item columns.
+    init(cellSize: CGFloat, spacing: CGFloat, laneCount: Int, columns: Int) {
+        self.init(cellSize: cellSize, spacing: spacing, laneCount: laneCount,
+                  columnWidths: Array(repeating: cellSize, count: columns))
+    }
+
+    var columns: Int { columnWidths.count }
+    var lanePitch: CGFloat { cellSize + spacing }
+    var height: CGFloat { cellSize * CGFloat(laneCount) + spacing * CGFloat(laneCount - 1) }
+    var contentWidth: CGFloat { max(0, columnLefts[columns] - spacing) }
+
+    func width(ofColumn index: Int) -> CGFloat { columnWidths[index] }
+    /// A marker column (narrower than a cell).
+    func isMarker(_ index: Int) -> Bool { columnWidths[index] < cellSize }
 
     func rect(index: Int, lane: Int) -> CGRect {
-        CGRect(x: CGFloat(index) * pitch, y: CGFloat(lane) * pitch, width: cellSize, height: cellSize)
+        CGRect(x: columnLefts[index], y: CGFloat(lane) * lanePitch, width: columnWidths[index], height: cellSize)
     }
 
-    /// Columns intersecting `clip` (clamped to `columns`), for partial redraws.
-    func visibleColumns(in clip: CGRect, columns: Int) -> ClosedRange<Int>? {
+    /// Columns intersecting `clip`, padded by one on the right for partial redraws.
+    func visibleColumns(in clip: CGRect) -> ClosedRange<Int>? {
         guard columns > 0 else { return nil }
-        let first = max(0, Int(clip.minX / pitch))
-        let last = min(columns - 1, Int(clip.maxX / pitch) + 1)
+        let first = max(0, columnIndex(at: clip.minX))
+        let last = min(columns - 1, columnIndex(at: clip.maxX) + 1)
         return first <= last ? first ... last : nil
     }
 
     /// The cell under `location`, or `nil` over a gap, outside the strip, or
     /// on a cell `isFilled` rejects.
-    func cell(at location: CGPoint, columns: Int, isFilled: (Cell) -> Bool) -> Cell? {
-        guard location.x >= 0, location.y >= 0 else { return nil }
-        let cell = Cell(index: Int(location.x / pitch), lane: Int(location.y / pitch))
+    func cell(at location: CGPoint, isFilled: (Cell) -> Bool) -> Cell? {
+        guard location.x >= 0, location.y >= 0, columns > 0 else { return nil }
+        let cell = Cell(index: columnIndex(at: location.x), lane: Int(location.y / lanePitch))
         guard cell.index < columns, cell.lane < laneCount,
               rect(index: cell.index, lane: cell.lane).contains(location),
               isFilled(cell)
         else { return nil }
         return cell
     }
+
+    /// Index of the column whose pitch contains `x` (clamped to the last column).
+    func columnIndex(at x: CGFloat) -> Int {
+        var low = 0, high = columns - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if columnLefts[mid] <= x { low = mid } else { high = mid - 1 }
+        }
+        return low
+    }
 }
 
 /// Three lanes (User / Model / Exec); one 13pt column per strip row, drawn in
 /// a single `Canvas` (one view for the whole strip instead of thousands of
 /// cell views). A cell is filled with the tag's lane colour only in the row's
-/// own lane; rows that span all lanes fill all three. TOOL calls are list-only
+/// own lane; rows that span all lanes do not occupy a lane — each lane draws a
+/// 13×4 bar (radius 2) and the column narrows to 4. TOOL calls are list-only
 /// (the caller filters them out): the Exec lane shows results, so a call and
 /// its result do not take two columns. The strip scrolls in step with the
 /// list (and the list with the strip).
@@ -511,12 +571,13 @@ private struct SessionActivityTimeline: View {
         LaneStripGeometry(
             cellSize: AgentStatusDesign.Layout.laneCellSize,
             spacing: AgentStatusDesign.Layout.laneCellSpacing,
-            laneCount: mode == .lanes ? TimelineLane.allCases.count : 1
+            laneCount: mode == .lanes ? TimelineLane.allCases.count : 1,
+            columnWidths: activities.map(\.laneStripColumnWidth)
         )
     }
 
     private var stripHeight: CGFloat { geometry.height }
-    private var contentWidth: CGFloat { geometry.contentWidth(columns: activities.count) }
+    private var contentWidth: CGFloat { geometry.contentWidth }
 
     var body: some View {
         HStack(alignment: .top, spacing: AgentStatusDesign.Layout.activityColumnGap) {
@@ -565,13 +626,15 @@ private struct SessionActivityTimeline: View {
         // scrolls (clip rect changes), when activities change and on hover.
         Canvas(rendersAsynchronously: false) { context, _ in
             let geometry = geometry
-            guard let columns = geometry.visibleColumns(in: context.clipBoundingRect, columns: activities.count) else { return }
+            guard let columns = geometry.visibleColumns(in: context.clipBoundingRect) else { return }
             // Batch the rounded rects into one path per tag: one fill per tag
             // (a handful) instead of one per cell (hundreds while panning).
-            let radius = AgentStatusDesign.Layout.laneCellCornerRadius
             var fills: [TimelineTag: Path] = [:]
             for index in columns {
                 let activity = activities[index]
+                let radius = geometry.isMarker(index)
+                    ? AgentStatusDesign.Layout.laneMarkerCornerRadius
+                    : AgentStatusDesign.Layout.laneCellCornerRadius
                 for lane in 0 ..< geometry.laneCount where isFilled(activity, lane: lane) {
                     fills[activity.tag, default: Path()].addRoundedRect(
                         in: geometry.rect(index: index, lane: lane),
@@ -700,14 +763,16 @@ private struct SessionActivityTimeline: View {
     private func cellPath(index: Int, lane: Int) -> Path {
         Path(
             roundedRect: geometry.rect(index: index, lane: lane),
-            cornerRadius: AgentStatusDesign.Layout.laneCellCornerRadius,
+            cornerRadius: geometry.isMarker(index)
+                ? AgentStatusDesign.Layout.laneMarkerCornerRadius
+                : AgentStatusDesign.Layout.laneCellCornerRadius,
             style: .continuous
         )
     }
 
     /// The filled cell under `location`, or `nil` over an empty cell or a gap.
     private func cell(at location: CGPoint) -> LaneStripGeometry.Cell? {
-        geometry.cell(at: location, columns: activities.count) { cell in
+        geometry.cell(at: location) { cell in
             isFilled(activities[cell.index], lane: cell.lane)
         }
     }
@@ -738,7 +803,7 @@ private struct SessionActivityRow: View {
                     .lineLimit(1)
                     .frame(width: AgentStatusDesign.Layout.activityTimestampWidth, alignment: .leading)
 
-                TimelineTagChip(tag: activity.tag, label: activity.label)
+                DesignTag(activity.label, style: activity.tag.tagStyle(.light))
                     .frame(width: AgentStatusDesign.Layout.activityTagWidth)
 
                 Text(activity.content)
@@ -749,7 +814,7 @@ private struct SessionActivityRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
-                    .font(AgentStatusDesign.Font.UI.tag)
+                    .font(.system(size: DesignSystem.Typography.tag.size, weight: .semibold))
                     .foregroundStyle(AgentStatusDesign.Color.UI.chevron)
                     .frame(width: AgentStatusDesign.Layout.rowChevronSize.width, height: AgentStatusDesign.Layout.rowChevronSize.height)
             }
@@ -774,34 +839,5 @@ private struct SessionActivityRow: View {
         if isHighlighted { return Color(DesignSystem.Ink.accent.opacity(DesignSystem.Opacity.jumpHighlight)) }
         if isPairHighlighted { return Color(activity.tag.categoryColor.opacity(DesignSystem.Opacity.pairHighlight)) }
         return .clear
-    }
-}
-
-/// 82pt chip, `padding 3px 0` (height 17), radius 5, 9/700/.04em, coloured by
-/// attention level (see `TimelineTagStyle`). Every tier carries a `.5px`
-/// inset ring. `compact` is the Notch's 60pt variant: `padding 2px 0`, `.03em`.
-struct TimelineTagChip: View {
-    let tag: TimelineTag
-    let label: String
-    var appearance: DesignAppearance = .light
-    var compact = false
-
-    var body: some View {
-        let style = TimelineTagStyle.style(for: tag, appearance: appearance)
-        let text = compact ? DesignSystem.Typography.notchTag : DesignSystem.Typography.tag
-        let shape = RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.activityTagCornerRadius, style: .continuous)
-        Text(label)
-            .designText(text)
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .foregroundStyle(style.textColor)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, compact
-                ? DesignSystem.Notch.activityTagVerticalPadding
-                : AgentStatusDesign.Layout.activityTagVerticalPadding)
-            .background(style.fillColor, in: shape)
-            .overlay {
-                shape.strokeBorder(style.ringColor, lineWidth: DesignSystem.Stroke.hairline)
-            }
     }
 }

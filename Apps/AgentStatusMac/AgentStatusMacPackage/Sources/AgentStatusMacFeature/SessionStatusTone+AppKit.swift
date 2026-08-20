@@ -11,18 +11,13 @@ extension SessionStatusTone {
 
     var swiftUIColor: Color { Color(lightStyle.color) }
 
-    /// Pill fill: tinted colour composited over a white veil.
-    var pillFill: NSColor { NSColor(lightStyle.pillFill) }
+    var pillFill: NSColor { NSColor(lightStyle.pill.fill) }
 
-    var pillStroke: NSColor { NSColor(lightStyle.pillRing) }
+    var pillStroke: NSColor { NSColor(lightStyle.pill.ring) }
 
-    var pillText: NSColor { NSColor(lightStyle.pillText) }
+    var pillText: NSColor { NSColor(lightStyle.pill.text) }
 
-    /// Only the Running tone carries a halo around its dot (it "breathes").
-    var dotHalo: NSColor? {
-        switch self {
-        case .blue: lightStyle.halo.map(NSColor.init)
-        case .green, .gray, .red: nil
-        }
-    }
+    /// Halo around the dot while the tier is in progress (Running / Waiting);
+    /// it breathes. Ended tiers have none.
+    var dotHalo: NSColor? { lightStyle.halo.map(NSColor.init) }
 }

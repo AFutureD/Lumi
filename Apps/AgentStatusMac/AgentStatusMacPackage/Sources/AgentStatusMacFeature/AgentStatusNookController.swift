@@ -153,6 +153,28 @@ final class AgentStatusNookController {
         coordinator.toggleKeepNookOpen()
     }
 
+    // MARK: Debug snapshots (`DebugSnapshotExporter`)
+
+    func debugShowDetailOfFirstSession() -> Bool {
+        guard let first = model.sessions.first else { return false }
+        model.showDetail(first.id)
+        return true
+    }
+
+    func debugShowTurnEndedCardOfFirstSession() -> Bool {
+        guard let first = model.sessions.first else { return false }
+        model.showList()
+        model.showTurnCard(.turnEnded(first.id), dwell: .seconds(30))
+        return true
+    }
+
+    func debugShowTurnStartedCardOfFirstSession() -> Bool {
+        guard let first = model.sessions.first else { return false }
+        model.showList()
+        model.showTurnCard(.turnStarted(first.id), dwell: .seconds(30))
+        return true
+    }
+
     /// L3 rows only: USER opens the turn-started card, TURN END the
     /// turn-complete card, FAILED / ABORTED a high-priority toast. Nothing else
     /// expands the Notch.
@@ -193,7 +215,9 @@ final class AgentStatusNookController {
 
 // MARK: - Palette (design system · Notch / dark)
 
-/// Shorthands over the shared design system for the dark glass panel.
+/// Shorthands over the shared design system for the dark panel
+/// (`DesignSystem.InkDark` / `.SurfaceDark`, read as written — never derived
+/// from the light ladder).
 private typealias DS = DesignSystem
 private typealias NotchMetric = DesignSystem.Notch
 private typealias NotchType = DesignSystem.Typography
@@ -202,27 +226,21 @@ private extension Color {
     static let nookTitle = Color(DS.InkDark.primary)
     static let nookBody = Color(DS.InkDark.body)
     static let nookSecondary = Color(DS.InkDark.secondary)
-    static let nookSubtitle = Color(DS.InkDark.subtitle)
-    static let nookLabel = Color(DS.InkDark.label)
     static let nookTertiary = Color(DS.InkDark.tertiary)
     static let nookQuaternary = Color(DS.InkDark.quaternary)
-    static let nookHairline = Color(DS.InkDark.hairline)
-    static let nookElbow = Color(DS.InkDark.elbow)
-    static let nookCardFill = Color(DS.InkDark.cardFill)
-    static let nookCardRing = Color(DS.InkDark.cardRing)
-    static let nookControlFill = Color(DS.InkDark.controlFill)
-    static let nookTurnLabel = Color(DS.InkDark.turnLabel)
+    static let nookAccentText = Color(DS.InkDark.accentText)
+    static let nookSeparator = Color(DS.SurfaceDark.separator)
+    static let nookHairline = Color(DS.SurfaceDark.hairline)
+    static let nookConnector = Color(DS.SurfaceDark.connector)
+    static let nookCard = Color(DS.SurfaceDark.card)
+    static let nookSelection = Color(DS.SurfaceDark.selection)
+    static let nookControl = Color(DS.SurfaceDark.control)
+    static let nookSecondaryButton = Color(DS.SurfaceDark.secondaryButton)
 }
 
-/// Dark ladder of the lifecycle tiers (design system · sessionStatesDark).
+/// Dark ladder of the lifecycle tiers (design system 4.1 · Dark).
 private extension SessionStatusTone {
     var nookColor: Color { Color(darkStyle.color) }
-    /// 3px halo around the 8px dot; Completed has none.
-    var nookHalo: Color? { darkStyle.halo.map(Color.init) }
-    var nookPillFill: Color { Color(darkStyle.pillFill) }
-    var nookPillRing: Color { Color(darkStyle.pillRing) }
-    /// Pill text over the tinted pill (`Running · Model turn` in `#9DC7FF`).
-    var nookPillText: Color { Color(darkStyle.pillText) }
 }
 
 // MARK: - Home (routes)
@@ -277,7 +295,7 @@ private struct AgentStatusNookHomeView: View {
                 Text(model.daemonAvailable
                      ? "Start a Codex or Claude Code Session to see it here."
                      : "Open Agent Status Settings to check the daemon.")
-                    .designText(NotchType.notchCaption)
+                    .designText(NotchType.caption)
                     .foregroundStyle(theme.tertiaryLabel)
             }
             .frame(maxWidth: .infinity)
@@ -303,7 +321,7 @@ private struct AgentStatusNookHomeView: View {
                                 )
                             }
                             if let next, !next.isChild {
-                                Color.nookHairline
+                                Color.nookSeparator
                                     .frame(height: DS.Stroke.separator)
                                     .padding(.horizontal, NotchMetric.sideInset)
                             }
@@ -311,16 +329,16 @@ private struct AgentStatusNookHomeView: View {
                     }
                 }
                 .frame(maxHeight: NotchMetric.listMaxHeight)
-                // Footer `9 16 12`, hairline on top, "N of M sessions" 10/590 `.4`.
+                // Footer `9 16 12`, separator on top, "N of M sessions" 10/510 `.46`.
                 Text("\(model.sessions.filter { !$0.isChild }.count) of \(model.totalSessionCount) sessions")
-                    .designText(NotchType.notchChip)
-                    .foregroundStyle(Color.nookTertiary)
+                    .designText(NotchType.notchLabel)
+                    .foregroundStyle(Color.nookQuaternary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(EdgeInsets(
                         top: NotchMetric.footerTop, leading: NotchMetric.sideInset,
                         bottom: NotchMetric.footerBottom, trailing: NotchMetric.sideInset
                     ))
-                    .overlay(alignment: .top) { Color.nookHairline.frame(height: DS.Stroke.separator) }
+                    .overlay(alignment: .top) { Color.nookSeparator.frame(height: DS.Stroke.separator) }
                     .padding(.top, NotchMetric.footerGap)
             }
         }
@@ -329,59 +347,39 @@ private struct AgentStatusNookHomeView: View {
 
 // MARK: - 2 Session list
 
-/// `Codex` / `Claude` chip: height 20, r6, `.09` fill + `.6` text; completed
-/// rows dim to `.07` / `.45`.
+/// `Codex` / `Claude` label: height 20, r6, control fill `.14` + `.58` text,
+/// 10 / Medium. **The same on every row** — a finished turn only steps down
+/// the title and the dot, never the label.
 private struct AgentStatusNookAgentChip: View {
     let agent: AgentKind
-    var dimmed = false
 
     var body: some View {
         Text(agent.providerName)
-            .designText(NotchType.notchChip)
-            .foregroundStyle(Color(dimmed ? DS.InkDark.label : DS.InkDark.chipText))
+            .designText(NotchType.notchLabel)
+            .foregroundStyle(Color.nookSecondary)
             .padding(.horizontal, NotchMetric.chipHorizontalPadding)
             .frame(height: NotchMetric.chipHeight)
-            .background(
-                Color(dimmed ? DS.InkDark.chipFillDim : DS.InkDark.chipFill),
-                in: RoundedRectangle(cornerRadius: DS.Radius.notchChip, style: .continuous)
-            )
+            .background(Color.nookControl, in: RoundedRectangle(cornerRadius: DS.Radius.notchChip, style: .continuous))
     }
 }
 
-/// 8px tier dot with a 3px halo (none for Completed). The Running halo
-/// breathes (~1.6s ease-in-out); every other tier is static.
+/// 8px tier dot with a 3px halo; only in-progress tiers (Running / Waiting)
+/// carry the halo and breathe, Completed and Failed are solid.
 private struct AgentStatusNookStatusDot: View {
     let tone: SessionStatusTone
-    var size: CGFloat = NotchMetric.rowDot
-    @State private var breathing = false
+    var size: CGFloat = DS.StatusDot.notchSize
 
     var body: some View {
-        Circle()
-            .fill(tone.nookColor)
-            .frame(width: size, height: size)
-            .background {
-                if let halo = tone.nookHalo {
-                    Circle()
-                        .fill(halo)
-                        .frame(width: size + NotchMetric.rowDotHalo * 2, height: size + NotchMetric.rowDotHalo * 2)
-                        .opacity(tone == .blue && breathing ? DS.Opacity.breathingHalo : 1)
-                }
-            }
-            .onAppear { breathing = tone == .blue }
-            .onChange(of: tone) { _, newTone in breathing = newTone == .blue }
-            .animation(
-                tone == .blue ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
-                value: breathing
-            )
+        DesignStatusDot(tone.darkStyle.dot, size: size, haloWidth: DS.StatusDot.notchHalo)
     }
 }
 
 /// Grid `8px 1fr auto`, gap 10, padding `10 16 11` (`10 16 4` when subagent
-/// rows follow). Title `#fff` while active, `.72` once completed. The trailing
-/// group is agent chip + a 20pt cell holding the relative time, swapped in
-/// place for the archive button on hover once the turn has ended — no layout
-/// shift, and the cell is exactly button-width so the inset equals the row's
-/// 16pt right padding.
+/// rows follow). Title `#fff` while the turn runs, `.78` once it has ended —
+/// and the dot steps down with it (`listTone`). The trailing group is the
+/// agent label + an `auto 20px` cell: the relative time is auto-width, the
+/// 20pt archive slot is fixed; the two swap in place on hover once the turn
+/// has ended, so the right edges align and nothing shifts.
 private struct AgentStatusNookSessionRow: View {
     let session: AgentStatusNookSession
     var hasChildren = false
@@ -392,27 +390,26 @@ private struct AgentStatusNookSessionRow: View {
     var body: some View {
         Button(action: onOpen) {
             HStack(alignment: .center, spacing: NotchMetric.rowGap) {
-                AgentStatusNookStatusDot(tone: session.statusTone)
-                    .frame(width: NotchMetric.rowDot, height: NotchMetric.rowDot)
+                AgentStatusNookStatusDot(tone: session.listTone)
 
                 Text(session.title)
                     .designText(NotchType.listTitle)
-                    .foregroundStyle(session.turnEnded ? Color.nookSecondary : Color.nookTitle)
+                    .foregroundStyle(session.turnEnded ? Color.nookBody : Color.nookTitle)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: NotchMetric.rowGap) {
-                    AgentStatusNookAgentChip(agent: session.agent, dimmed: session.turnEnded)
+                    AgentStatusNookAgentChip(agent: session.agent)
                     ZStack(alignment: .trailing) {
                         if hovering && session.turnEnded {
                             Button(action: onArchive) {
                                 Image(systemName: "archivebox")
                                     .font(.system(size: NotchMetric.archiveSymbolSize, weight: .regular))
-                                    .foregroundStyle(Color.nookSecondary)
+                                    .foregroundStyle(Color.nookBody)
                                     .frame(width: NotchMetric.trailingCell, height: NotchMetric.trailingCell)
                                     .background(
-                                        Color(DS.InkDark.archiveFill),
+                                        Color.nookSecondaryButton,
                                         in: RoundedRectangle(cornerRadius: DS.Radius.notchChip, style: .continuous)
                                     )
                             }
@@ -427,7 +424,8 @@ private struct AgentStatusNookSessionRow: View {
                                 .fixedSize()
                         }
                     }
-                    .frame(width: NotchMetric.trailingCell, height: NotchMetric.trailingCell, alignment: .trailing)
+                    .frame(minWidth: NotchMetric.trailingCell, alignment: .trailing)
+                    .frame(height: NotchMetric.trailingCell)
                 }
                 .padding(.leading, NotchMetric.rowGap)
             }
@@ -446,9 +444,9 @@ private struct AgentStatusNookSessionRow: View {
 }
 
 /// Subagent row (only while the parent's turn runs): grid `6px 1fr auto`,
-/// padding `3 16 3 34` (`9` below the last child), 11/510 `.72` title, mono 10
-/// `.32` time, and a 1px `.16` elbow from the parent's dot that continues
-/// while more children follow.
+/// padding `3 16 3 34` (`9` below the last child), 11 / Regular `.78` title,
+/// mono 10 `.46` time, and a 1px `.24` connector from the parent's dot that
+/// continues while more children follow.
 private struct AgentStatusNookSubagentRow: View {
     let session: AgentStatusNookSession
     let hasFollowingSibling: Bool
@@ -458,16 +456,16 @@ private struct AgentStatusNookSubagentRow: View {
         Button(action: onOpen) {
             HStack(alignment: .center, spacing: NotchMetric.rowGap) {
                 Circle()
-                    .fill(session.statusTone.nookColor)
-                    .frame(width: NotchMetric.childDot, height: NotchMetric.childDot)
+                    .fill(session.listTone.nookColor)
+                    .frame(width: DS.StatusDot.notchChildSize, height: DS.StatusDot.notchChildSize)
                 Text(session.title)
-                    .designText(NotchType.notchCaption)
-                    .foregroundStyle(Color.nookSecondary)
+                    .designText(NotchType.caption)
+                    .foregroundStyle(Color.nookBody)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(SessionRelativeTimeFormatter.string(from: session.lastActivityAt))
                     .designText(NotchType.monoTimestamp)
-                    .foregroundStyle(Color(DS.InkDark.timestampDim))
+                    .foregroundStyle(Color.nookQuaternary)
                     .frame(width: NotchMetric.childTimeWidth, alignment: .trailing)
             }
             .padding(EdgeInsets(
@@ -483,7 +481,7 @@ private struct AgentStatusNookSubagentRow: View {
                         let x = NotchMetric.elbowX
                         let radius = NotchMetric.elbowRadius
                         let midY = proxy.size.height / 2
-                        let dotLeading = NotchMetric.childIndent - NotchMetric.childDot / 2
+                        let dotLeading = NotchMetric.childIndent - DS.StatusDot.notchChildSize / 2
                         path.move(to: CGPoint(x: x, y: 0))
                         path.addLine(to: CGPoint(x: x, y: midY - radius))
                         path.addQuadCurve(to: CGPoint(x: x + radius, y: midY), control: CGPoint(x: x, y: midY))
@@ -493,7 +491,7 @@ private struct AgentStatusNookSubagentRow: View {
                             path.addLine(to: CGPoint(x: x, y: proxy.size.height))
                         }
                     }
-                    .stroke(Color.nookElbow, lineWidth: DS.Stroke.elbow)
+                    .stroke(Color.nookConnector, lineWidth: DS.Stroke.elbow)
                 }
             }
             .contentShape(Rectangle())
@@ -505,8 +503,9 @@ private struct AgentStatusNookSubagentRow: View {
 
 // MARK: - 3 / 4 Turn cards
 
-/// Action row buttons: `30` tall, r9. Primary `#fff` on `#111` 13/590;
-/// secondary `.1` fill + `.5px` `.14` ring, 12/590.
+/// Action row buttons: `30` tall, r9. Primary: accent fill (white) with
+/// `#111` text, 13 / Semibold; secondary: `.16` fill + `.5px` `.18` ring,
+/// 12 / Semibold.
 private struct NookCardButton: View {
     enum Style { case primary, secondary }
     let title: String
@@ -518,16 +517,16 @@ private struct NookCardButton: View {
         Button(action: action) {
             Text(title)
                 .designText(style == .primary ? NotchType.notchButton : NotchType.notchSecondaryButton)
-                .foregroundStyle(style == .primary ? Color(DS.InkDark.buttonInk) : Color.nookTitle)
+                .foregroundStyle(style == .primary ? Color(DS.InkDark.onAccentFill) : Color.nookTitle)
                 .frame(maxWidth: .infinity)
                 .frame(height: NotchMetric.buttonHeight)
                 .background(
-                    style == .primary ? Color.nookTitle : Color(DS.InkDark.secondaryButtonFill),
+                    style == .primary ? Color(DS.SurfaceDark.accentFill) : Color.nookSecondaryButton,
                     in: shape
                 )
                 .overlay {
                     if style == .secondary {
-                        shape.strokeBorder(Color(DS.InkDark.secondaryButtonRing), lineWidth: DS.Stroke.hairline)
+                        shape.strokeBorder(Color.nookHairline, lineWidth: DS.Stroke.hairline)
                     }
                 }
         }
@@ -535,7 +534,8 @@ private struct NookCardButton: View {
     }
 }
 
-/// Metric chip: padding `4 9`, r8, `.07` fill; value 11/590 tabular + 10 label `.45`.
+/// Metric capsule: padding `4 9`, r8, control fill `.14`; value 11 / Semibold
+/// tabular + 10 label `.50`.
 private struct NookMetricPill: View {
     let value: String
     let label: String
@@ -543,20 +543,20 @@ private struct NookMetricPill: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: NotchMetric.metricChipInnerGap) {
             Text(value)
-                .font(Font(NotchType.notchCount).monospacedDigit())
+                .font(Font(NotchType.pill).monospacedDigit())
                 .foregroundStyle(Color.nookTitle)
             Text(label)
-                .designText(NotchType.notchChipLabel)
-                .foregroundStyle(Color.nookLabel)
+                .designText(NotchType.footnote)
+                .foregroundStyle(Color.nookTertiary)
         }
         .padding(.horizontal, NotchMetric.metricChipPaddingHorizontal)
         .padding(.vertical, NotchMetric.metricChipPaddingVertical)
-        .background(Color(DS.InkDark.chipFillDim), in: RoundedRectangle(cornerRadius: DS.Radius.notchMetricChip, style: .continuous))
+        .background(Color.nookControl, in: RoundedRectangle(cornerRadius: DS.Radius.notchMetricChip, style: .continuous))
     }
 }
 
-/// Shared card header: 13/590 title, then `label` 10/590 + elapsed mono 10 `.4`
-/// (gap 7), title↔trailing gap 10.
+/// Shared card header: 13 / Semibold title, then `label` 10 / Medium +
+/// elapsed mono 10 `.46` (gap 7), title↔trailing gap 10.
 private struct NookCardHeader<Trailing: View>: View {
     let title: String
     @ViewBuilder let trailing: () -> Trailing
@@ -587,13 +587,13 @@ private struct AgentStatusNookTurnEndedCard: View {
         VStack(alignment: .leading, spacing: NotchMetric.cardGap) {
             NookCardHeader(title: session.title) {
                 Text(session.currentTurn?.outcome == .failed ? "Turn failed" : "Turn complete")
-                    .designText(NotchType.notchChip)
+                    .designText(NotchType.notchLabel)
                     .foregroundStyle(session.currentTurn?.outcome == .failed
                         ? SessionStatusTone.red.nookColor
-                        : Color.nookTurnLabel)
+                        : Color.nookAccentText)
                 Text(session.elapsedText(now: .now))
                     .designText(NotchType.monoTimestamp)
-                    .foregroundStyle(Color.nookTertiary)
+                    .foregroundStyle(Color.nookQuaternary)
             }
             HStack(spacing: NotchMetric.metricChipGap) {
                 NookMetricPill(value: session.totalTokensText, label: "tokens")
@@ -602,7 +602,7 @@ private struct AgentStatusNookTurnEndedCard: View {
             }
             Text(session.lastAssistantMessage ?? session.currentUserMessage ?? "—")
                 .designText(NotchType.notchBody)
-                .foregroundStyle(Color(DS.InkDark.summaryBody))
+                .foregroundStyle(Color.nookBody)
                 .lineLimit(NotchMetric.bodyLineLimit)
                 .frame(maxWidth: .infinity, alignment: .leading)
             NookCardButton(title: "Jump to Agent", style: .primary) {
@@ -620,7 +620,9 @@ private struct AgentStatusNookTurnEndedCard: View {
     }
 }
 
-/// Turn just started: "Turn started" + timer, `Agent · model · ~/cwd`, USER block.
+/// Turn just started: "Turn started" + timer, `Agent · model · ~/cwd`, then
+/// the user's input verbatim (11 / Regular `.78`, up to 6 lines) — plain text,
+/// no card.
 private struct AgentStatusNookTurnStartedCard: View {
     let session: AgentStatusNookSession
     @ObservedObject var model: AgentStatusNookModel
@@ -632,36 +634,25 @@ private struct AgentStatusNookTurnStartedCard: View {
             VStack(alignment: .leading, spacing: NotchMetric.headerSubtitleGap) {
                 NookCardHeader(title: session.title) {
                     Text("Turn started")
-                        .designText(NotchType.notchChip)
-                        .foregroundStyle(Color.nookTurnLabel)
+                        .designText(NotchType.notchLabel)
+                        .foregroundStyle(Color.nookAccentText)
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(session.elapsedText(now: context.date))
                             .designText(NotchType.monoTimestamp)
-                            .foregroundStyle(Color.nookTertiary)
+                            .foregroundStyle(Color.nookQuaternary)
                     }
                 }
                 Text([session.agent.providerName, session.model, SessionPagePresentationBuilder.abbreviatedWorkspace(session.workspace)]
                     .compactMap { $0 }.joined(separator: " · "))
-                    .designText(NotchType.notchCaption)
-                    .foregroundStyle(Color.nookSubtitle)
+                    .designText(NotchType.caption)
+                    .foregroundStyle(Color.nookSecondary)
                     .lineLimit(1)
             }
-            // Echoed user input: padding `9 11`, r10, `.06` fill, `.5px` `.09` ring.
-            let cardShape = RoundedRectangle(cornerRadius: DS.Radius.notchCard, style: .continuous)
-            VStack(alignment: .leading, spacing: NotchMetric.userCardGap) {
-                Text("USER")
-                    .designText(NotchType.notchCardLabel)
-                    .foregroundStyle(Color.nookTertiary)
-                Text(session.currentUserMessage ?? "—")
-                    .designText(NotchType.notchBody)
-                    .foregroundStyle(Color(DS.InkDark.echoBody))
-                    .lineLimit(NotchMetric.bodyLineLimit)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.vertical, NotchMetric.userCardPaddingVertical)
-            .padding(.horizontal, NotchMetric.userCardPaddingHorizontal)
-            .background(Color.nookCardFill, in: cardShape)
-            .overlay { cardShape.strokeBorder(Color.nookCardRing, lineWidth: DS.Stroke.hairline) }
+            Text(session.currentUserMessage ?? "—")
+                .designText(NotchType.notchBody)
+                .foregroundStyle(Color.nookBody)
+                .lineLimit(NotchMetric.bodyLineLimit)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(EdgeInsets(
             top: NotchMetric.cardTop, leading: NotchMetric.sideInset,
@@ -688,7 +679,7 @@ private struct AgentStatusNookDetailView: View {
                             .font(.system(size: NotchMetric.backChevron, weight: .semibold))
                             .foregroundStyle(Color.nookBody)
                             .frame(width: NotchMetric.backButtonWidth, height: NotchMetric.backButtonHeight)
-                            .background(Color.nookControlFill, in: Capsule())
+                            .background(Color.nookSelection, in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back to sessions")
@@ -699,26 +690,16 @@ private struct AgentStatusNookDetailView: View {
                     Spacer(minLength: 0)
                 }
 
-                // Tier pill: tone at .18 + .32 ring, 6px dot, 10/590 tone text;
-                // then a capsule agent chip (.08 fill, .66 text).
+                // Tier pill (3.1 · Dark, compact), then a capsule agent label
+                // (selection fill `.12`, `.58` text).
                 HStack(spacing: NotchMetric.pillRowGap) {
-                    let tone = session.statusTone
-                    HStack(spacing: NotchMetric.pillDotGap) {
-                        Circle().fill(tone.nookColor).frame(width: NotchMetric.pillDot, height: NotchMetric.pillDot)
-                        Text(session.statusText)
-                            .designText(NotchType.notchChip)
-                            .foregroundStyle(tone.nookPillText)
-                    }
-                    .padding(.horizontal, NotchMetric.pillHorizontalPadding)
-                    .frame(height: NotchMetric.pillHeight)
-                    .background(tone.nookPillFill, in: Capsule())
-                    .overlay { Capsule().strokeBorder(tone.nookPillRing, lineWidth: DS.Stroke.hairline) }
+                    DesignStatusPill(session.statusText, style: session.statusTone.darkStyle.pill, compact: true)
                     Text(session.agent.providerName)
-                        .designText(NotchType.notchChip)
-                        .foregroundStyle(Color(DS.InkDark.chipTextStrong))
-                        .padding(.horizontal, NotchMetric.pillHorizontalPadding)
-                        .frame(height: NotchMetric.pillHeight)
-                        .background(Color.nookControlFill, in: Capsule())
+                        .designText(NotchType.notchLabel)
+                        .foregroundStyle(Color.nookSecondary)
+                        .padding(.horizontal, DS.StatusPill.notchHorizontalPadding)
+                        .frame(height: DS.StatusPill.notchHeight)
+                        .background(Color.nookSelection, in: Capsule())
                     Spacer(minLength: 0)
                 }
             }
@@ -735,24 +716,24 @@ private struct AgentStatusNookDetailView: View {
                 HStack(spacing: NotchMetric.activityHeaderGap) {
                     Text("RECENT ACTIVITY")
                         .designText(NotchType.notchSectionLabel)
-                        .foregroundStyle(Color.nookTertiary)
+                        .foregroundStyle(Color.nookTitle)
                     Text("\(session.recentRows.count) items")
-                        .designText(NotchType.notchChip)
-                        .foregroundStyle(Color(DS.InkDark.count))
+                        .designText(NotchType.notchLabel)
+                        .foregroundStyle(Color.nookQuaternary)
                 }
                 .padding(.bottom, NotchMetric.activityHeaderBottom)
                 if session.recentRows.isEmpty {
                     Text("No activity yet")
-                        .designText(NotchType.notchCaption)
-                        .foregroundStyle(Color.nookLabel)
+                        .designText(NotchType.caption)
+                        .foregroundStyle(Color.nookTertiary)
                         .frame(height: NotchMetric.activityRowHeight)
                 } else {
                     ForEach(session.recentRows) { row in
                         HStack(spacing: NotchMetric.activityRowGap) {
-                            TimelineTagChip(tag: row.tag, label: row.tag.shortLabel, appearance: .dark, compact: true)
-                                .frame(width: NotchMetric.activityTagWidth)
+                            DesignTag(row.tag.shortLabel, style: row.tag.tagStyle(.dark), compact: true)
+                                .frame(width: DS.Tag.compactWidth)
                             Text(row.text)
-                                .designText(NotchType.notchCaption)
+                                .designText(NotchType.caption)
                                 .foregroundStyle(Color.nookBody)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -779,8 +760,8 @@ private struct AgentStatusNookDetailView: View {
         ))
     }
 
-    /// Metric card: padding `7 9`, r10, `.06` fill; value 13/590 tabular,
-    /// label 9/590/.04em uppercase `.42`.
+    /// Metric card: padding `7 9`, r10, card fill `.10`; value 13 / Semibold
+    /// tabular, label 9 / Semibold / .04em uppercase `.50`.
     private func metricTile(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: NotchMetric.metricCardGap) {
             Text(value)
@@ -789,12 +770,12 @@ private struct AgentStatusNookDetailView: View {
                 .lineLimit(1)
             Text(label)
                 .designText(NotchType.notchMetricLabel)
-                .foregroundStyle(Color(DS.InkDark.metricLabel))
+                .foregroundStyle(Color.nookTertiary)
         }
         .padding(.vertical, NotchMetric.metricCardPaddingVertical)
         .padding(.horizontal, NotchMetric.metricCardPaddingHorizontal)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.nookCardFill, in: RoundedRectangle(cornerRadius: DS.Radius.notchCard, style: .continuous))
+        .background(Color.nookCard, in: RoundedRectangle(cornerRadius: DS.Radius.notchCard, style: .continuous))
     }
 }
 
@@ -829,7 +810,7 @@ private struct AgentStatusNookCompactStatus: View {
     @ObservedObject var model: AgentStatusNookCompactModel
 
     var body: some View {
-        AgentStatusNookStatusDot(tone: model.sessionCount == 0 ? .gray : model.statusTone, size: NotchMetric.compactDot)
+        AgentStatusNookStatusDot(tone: model.sessionCount == 0 ? .gray : model.statusTone)
             .frame(width: NotchMetric.compactSlot, height: NotchMetric.compactSlot)
             .accessibilityLabel(model.sessionCount == 0 ? "No active Sessions" : "Active Sessions")
     }
@@ -840,8 +821,8 @@ private struct AgentStatusNookCompactCount: View {
 
     var body: some View {
         Text("\(model.sessionCount)")
-            .font(Font(NotchType.notchCount).monospacedDigit())
-            .foregroundStyle(model.sessionCount == 0 ? Color(DS.InkDark.compactCountIdle) : Color.nookTitle)
+            .font(Font(NotchType.pill).monospacedDigit())
+            .foregroundStyle(model.sessionCount == 0 ? Color.nookQuaternary : Color.nookTitle)
             .frame(width: NotchMetric.compactSlot, height: NotchMetric.compactSlot)
             .accessibilityLabel("\(model.sessionCount) Sessions in Notch")
     }

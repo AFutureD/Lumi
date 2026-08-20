@@ -1,4 +1,5 @@
 import AgentStatusCore
+import AgentStatusDesignSystem
 import AgentStatusTransport
 import AppKit
 
@@ -305,7 +306,7 @@ private final class SessionRowView: NSTableCellView {
     private let agentIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
-    private let statusDot = NSView()
+    private let statusDot = StatusDotView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let countPill = NSButton(frame: .zero)
     private var layoutInfo = Layout(level: 0, hasChildren: false, isExpanded: false, childCount: 0, isLastSibling: true)
@@ -325,8 +326,6 @@ private final class SessionRowView: NSTableCellView {
         timeLabel.font = AgentStatusDesign.Font.caption
         timeLabel.textColor = AgentStatusDesign.Color.inkTertiary
         timeLabel.alignment = .right
-        statusDot.wantsLayer = true
-        statusDot.layer?.cornerRadius = 3.5
         statusLabel.font = AgentStatusDesign.Font.caption
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.maximumNumberOfLines = 1
@@ -362,9 +361,7 @@ private final class SessionRowView: NSTableCellView {
             // Status line starts on the title's left edge: dot, 6pt gap, text.
             statusDot.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             statusDot.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.secondRowCenterY),
-            statusDot.widthAnchor.constraint(equalToConstant: 7),
-            statusDot.heightAnchor.constraint(equalToConstant: 7),
-            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: DesignSystem.StatusPill.dotGap),
             statusLabel.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.secondRowCenterY),
 
             countPill.leadingAnchor.constraint(greaterThanOrEqualTo: statusLabel.trailingAnchor, constant: 10),
@@ -394,11 +391,12 @@ private final class SessionRowView: NSTableCellView {
         titleLabel.textColor = isChild ? AgentStatusDesign.Color.childTitle : .labelColor
 
         // Tier colour on dot and text; the Completed tier's text reads as
-        // tertiary ink while its dot keeps the Completed gray.
+        // tertiary ink while its dot keeps the Completed gray. In-progress
+        // tiers carry the breathing halo.
         let tone = session.statusTone
         statusLabel.stringValue = presentation.status
         statusLabel.textColor = tone == .gray ? AgentStatusDesign.Color.inkTertiary : tone.appKitColor
-        statusDot.layer?.backgroundColor = tone.appKitColor.cgColor
+        statusDot.configure(tone.lightStyle.dot)
         refreshRelativeTime()
 
         // Subagent rows leave the icon column to the tree guide.

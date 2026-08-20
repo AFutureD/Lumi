@@ -37,9 +37,7 @@ public extension DesignSystem {
         public static let card: Double = 14
         public static let popover: Double = 12
         public static let selection: Double = 8
-        public static let tag: Double = 5
         public static let checkbox: Double = 4
-        public static let laneCell: Double = 3
         /// Notch cards (echoed input, metric cards).
         public static let notchCard: Double = 10
         /// Notch action buttons.
@@ -71,10 +69,6 @@ public extension DesignSystem {
         public static let activityHeaderRowHeight: Double = 36
         public static let activityMarkerRowHeight: Double = 32
         public static let activityTimestampWidth: Double = 56
-        public static let activityTagWidth: Double = 82
-        public static let activityStatusDotColumn: Double = 10
-        public static let laneCellSize: Double = 13
-        public static let laneNameWidth: Double = 44
         public static let buttonHeight: Double = 28
         public static let switchTrackWidth: Double = 38
         public static let switchTrackHeight: Double = 22
@@ -82,15 +76,64 @@ public extension DesignSystem {
         public static let sliderTrack: Double = 4
         public static let sliderKnob: Double = 20
         public static let checkboxSize: Double = 14
-        public static let pillHeight: Double = 22
         /// Activity count pill next to the section title: `padding 1 7`, capsule.
         public static let countPillVerticalPadding: Double = 1
         public static let countPillHorizontalPadding: Double = 7
-        public static let statusDot: Double = 7
-        /// 82pt tag: `padding 3px 0`.
-        public static let tagVerticalPadding: Double = 3
         public static let rowChevronWidth: Double = 7
         public static let rowChevronHeight: Double = 11
+    }
+
+    /// 2.6 标签 Tag — a 5pt-radius rectangle (not a capsule), height 17,
+    /// `padding 0 6`, 9 / Medium / .04em, centred in a fixed 82pt column.
+    /// Every tier carries a `.5px` inset ring.
+    enum Tag {
+        public static let height: Double = 17
+        public static let horizontalPadding: Double = 6
+        /// Activity column width; the Notch's compact variant is 60.
+        public static let width: Double = 82
+        public static let compactWidth: Double = 60
+        public static let radius: Double = 5
+        public static let ring: Double = 0.5
+    }
+
+    /// 2.7 状态点 ItemStatus — 7px dot in a 10px slot after the tag. Hollow =
+    /// 1.5px ring, solid = fill, breathing = fill + 2.5px halo. Without a
+    /// status the whole slot stays empty.
+    enum StatusDot {
+        public static let size: Double = 7
+        public static let slot: Double = 10
+        public static let hollowRing: Double = 1.5
+        public static let halo: Double = 2.5
+        /// Notch list rows: 8px dot with a 3px halo; subagent children 6px.
+        public static let notchSize: Double = 8
+        public static let notchHalo: Double = 3
+        public static let notchChildSize: Double = 6
+    }
+
+    /// 3.1 状态药丸 StatusPill — solid dot + label; height 22, capsule,
+    /// `padding 0 10`, 6px slot after the dot, 11 / Semibold.
+    enum StatusPill {
+        public static let height: Double = 22
+        public static let horizontalPadding: Double = 10
+        public static let dot: Double = 7
+        public static let dotGap: Double = 6
+        public static let ring: Double = 0.5
+        /// Notch detail header: height 20, `padding 0 8`, 6px dot.
+        public static let notchHeight: Double = 20
+        public static let notchHorizontalPadding: Double = 8
+        public static let notchDot: Double = 6
+    }
+
+    /// 3.3 泳道 — three lanes of 13×13 cells, radius 3, gap 4; empty cells
+    /// stay blank. Cross-lane events do not occupy a lane: each lane draws a
+    /// 13×4 bar, radius 2, and the column narrows to 4.
+    enum Lane {
+        public static let cell: Double = 13
+        public static let radius: Double = 3
+        public static let gap: Double = 4
+        public static let markerWidth: Double = 4
+        public static let markerRadius: Double = 2
+        public static let nameWidth: Double = 44
     }
 
     /// Icons: SF Symbols, line style only.
@@ -112,14 +155,9 @@ public extension DesignSystem {
         public static let compactWidth: Double = 64
         public static let expandedWidth: Double = 520
         public static let topBandHeight: Double = 32
-        /// Collapsed status dot and its halo width.
-        public static let compactDot: Double = 8
-        public static let compactDotHalo: Double = 3
         public static let compactSlot: Double = 28
 
         // List rows: grid `8px | 1fr | auto`, column gap 10, padding `10 16 11`.
-        public static let rowDot: Double = 8
-        public static let rowDotHalo: Double = 3
         public static let rowGap: Double = 10
         public static let rowTop: Double = 10
         public static let rowBottom: Double = 11
@@ -134,7 +172,6 @@ public extension DesignSystem {
         public static let archiveSymbolSize: Double = 11
         // Subagent child rows: indent 34, 6px dot, padding `3 16 3 34`, 9 below the last.
         public static let childIndent: Double = 34
-        public static let childDot: Double = 6
         public static let childRowVertical: Double = 3
         public static let childRowLastBottom: Double = 9
         public static let childTimeWidth: Double = 34
@@ -159,9 +196,6 @@ public extension DesignSystem {
         public static let headerTrailingGap: Double = 7
         public static let headerSubtitleGap: Double = 3
         public static let headerBlockGap: Double = 6
-        public static let userCardPaddingVertical: Double = 9
-        public static let userCardPaddingHorizontal: Double = 11
-        public static let userCardGap: Double = 4
         public static let bodyLineLimit: Int = 6
         public static let metricChipGap: Double = 6
         public static let metricChipPaddingVertical: Double = 4
@@ -176,19 +210,13 @@ public extension DesignSystem {
         public static let backButtonWidth: Double = 22
         public static let backButtonHeight: Double = 20
         public static let backChevron: Double = 11
-        public static let pillHeight: Double = 20
-        public static let pillHorizontalPadding: Double = 8
-        public static let pillDot: Double = 6
-        public static let pillDotGap: Double = 6
         public static let pillRowGap: Double = 7
-        // RECENT ACTIVITY: rows 22 tall, gap 12, 60pt tag, `padding 2 0`.
+        // RECENT ACTIVITY: rows 22 tall, gap 12, 60pt tag.
         public static let activityRowHeight: Double = 22
         public static let activityRowGap: Double = 12
         public static let activityListGap: Double = 3
         public static let activityHeaderGap: Double = 8
         public static let activityHeaderBottom: Double = 2
-        public static let activityTagWidth: Double = 60
-        public static let activityTagVerticalPadding: Double = 2
         public static let emptyStateVertical: Double = 26
         public static let emptyStateGap: Double = 8
         public static let emptyStateGlyph: Double = 24
@@ -213,9 +241,5 @@ public extension DesignSystem {
         public static let hairline: Double = 0.5
         public static let separator: Double = 1
         public static let elbow: Double = 1
-        /// `started` item dot ring.
-        public static let startedRing: Double = 1.5
-        /// `running` item dot halo.
-        public static let runningHalo: Double = 2.5
     }
 }

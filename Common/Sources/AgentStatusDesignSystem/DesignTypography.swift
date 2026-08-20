@@ -1,19 +1,22 @@
 import Foundation
 
-/// SF Pro weights the design system allows. Only three: 510 / 590 / 700.
+/// SF Pro weights the design system allows — three, on SF's variable scale:
+/// Regular 400 / Medium 510 / Semibold 590. **No Bold**: macOS keeps Bold for
+/// Headline and Title 1 Emphasized, neither of which this UI uses; hierarchy
+/// comes from size, colour and position.
 public enum DesignFontWeight: Hashable, Sendable {
-    /// 510 — body, captions, sidebar labels.
+    /// 400 — the default. Body, captions, timestamps, IDs, paths.
+    case regular
+    /// 510 — only the Caption 2 10pt uppercase label (and the 9pt tag).
     case medium
-    /// 590 — list titles, pills, counts.
+    /// 590 — Emphasized. List titles, section titles, status pills.
     case semibold
-    /// 700 — titles, section headers, tag text.
-    case bold
 }
 
 public enum DesignFontFamily: Hashable, Sendable {
-    /// SF Pro (`-apple-system`).
+    /// SF Pro (`-apple-system`) — all interface text.
     case sans
-    /// SF Mono — numbers, IDs, paths, timestamps; tabular numerals.
+    /// SF Mono (`ui-monospace`) — numbers, time, paths, IDs; tabular numerals.
     case mono
 }
 
@@ -45,59 +48,86 @@ public struct DesignTextStyle: Hashable, Sendable {
     /// Extra leading above the font's natural line height (platforms that
     /// express line spacing as an increment use this).
     public var lineSpacing: Double { max(0, lineHeight - size * 1.2) }
+
+    /// Same style in SF Mono.
+    public var mono: DesignTextStyle {
+        var copy = self
+        copy.family = .mono
+        return copy
+    }
 }
 
 public extension DesignSystem {
-    /// L1 基础规范 · 排版. Five sizes, three weights; mono for numbers.
+    /// 1.2 排版. Five sizes mapped straight onto macOS system text styles, line
+    /// height following the style: 22 Title 1 / 26 · 15 Title 3 / 20 ·
+    /// 13 Body / 16 · 11 Subheadline / 14 · 10 Footnote & Caption 2 / 13.
+    /// Default Regular; to emphasise take only the style's own Emphasized
+    /// weight — 13 / 11 / 15 are Semibold, 10 takes Caption 2's Medium.
     enum Typography {
-        // MARK: Light surfaces (macOS window, iOS)
+        // MARK: System text styles
 
-        /// 22 / 700 / -.01em / 26 — detail page title.
-        public static let detailTitle = DesignTextStyle(size: 22, weight: .bold, lineHeight: 26, trackingEm: -0.01)
-        /// 15 / 700 / 18 — section title ("Activity"), Notch detail title.
-        public static let sectionTitle = DesignTextStyle(size: 15, weight: .bold, lineHeight: 18)
-        /// 13 / 700 / 16 — sidebar section header, inspector group.
-        public static let groupHeader = DesignTextStyle(size: 13, weight: .bold, lineHeight: 16)
-        /// 13 / 590 / 16 — list title, emphasis, Notch session title.
-        public static let listTitle = DesignTextStyle(size: 13, weight: .semibold, lineHeight: 16)
-        /// 13 / 510 / 16 — body, sidebar label, Activity content.
-        public static let body = DesignTextStyle(size: 13, weight: .medium, lineHeight: 16)
-        /// 11 / 590 / 14 — status pill, counts.
-        public static let pill = DesignTextStyle(size: 11, weight: .semibold, lineHeight: 14)
-        /// 11 / 510 / 14 — subtitle, caption, field value.
-        public static let caption = DesignTextStyle(size: 11, weight: .medium, lineHeight: 14)
-        /// 10 / 590 / .04em / 13 — metric label, lane name.
-        public static let metricLabel = DesignTextStyle(size: 10, weight: .semibold, lineHeight: 13, trackingEm: 0.04)
-        /// SF Mono 10 — timestamps.
-        public static let monoTimestamp = DesignTextStyle(size: 10, weight: .medium, lineHeight: 13, family: .mono)
-        /// SF Mono 11 — IDs, paths, numbers.
-        public static let monoValue = DesignTextStyle(size: 11, weight: .medium, lineHeight: 14, family: .mono)
-        /// 9 / 700 / .04em — category tag text (82pt chip).
-        public static let tag = DesignTextStyle(size: 9, weight: .bold, lineHeight: 11, trackingEm: 0.04)
-        /// 10 / 590 — collapsed-children count badge.
+        /// Title 1 — 22 / Regular / 26. Detail page title.
+        public static let title1 = DesignTextStyle(size: 22, weight: .regular, lineHeight: 26)
+        /// Title 3 Emphasized — 15 / Semibold / 20. Section titles, Notch detail title.
+        public static let title3Emphasized = DesignTextStyle(size: 15, weight: .semibold, lineHeight: 20)
+        /// Body Emphasized — 13 / Semibold / 16. Sidebar group headers, list titles, Inspector groups.
+        public static let bodyEmphasized = DesignTextStyle(size: 13, weight: .semibold, lineHeight: 16)
+        /// Body — 13 / Regular / 16. Body, sidebar labels, Activity content.
+        public static let body = DesignTextStyle(size: 13, weight: .regular, lineHeight: 16)
+        /// Subheadline Emphasized — 11 / Semibold / 14. Status pills, counts.
+        public static let subheadlineEmphasized = DesignTextStyle(size: 11, weight: .semibold, lineHeight: 14)
+        /// Subheadline — 11 / Regular / 14. Subtitles, captions, field values.
+        public static let subheadline = DesignTextStyle(size: 11, weight: .regular, lineHeight: 14)
+        /// Caption 2 — 10 / Medium / 13 / .04em. Metric labels, lane names (uppercase).
+        public static let caption2 = DesignTextStyle(size: 10, weight: .medium, lineHeight: 13, trackingEm: 0.04)
+        /// Footnote — 10 / Regular / 13. Notch chip labels, footer counts.
+        public static let footnote = DesignTextStyle(size: 10, weight: .regular, lineHeight: 13)
+        /// Footnote · SF Mono — 10 / Regular / 13. Timestamps, relative time.
+        public static let footnoteMono = footnote.mono
+        /// Subheadline · SF Mono — 11 / Regular / 14. IDs, paths, numbers.
+        public static let subheadlineMono = subheadline.mono
+
+        // MARK: Role aliases (what the surfaces call them)
+
+        /// Detail page title.
+        public static let detailTitle = title1
+        /// Section title (`Activity`), Notch detail title.
+        public static let sectionTitle = title3Emphasized
+        /// Sidebar section header, Inspector group.
+        public static let groupHeader = bodyEmphasized
+        /// List title, emphasis, Notch session title.
+        public static let listTitle = bodyEmphasized
+        /// Status pill, counts, metric chip value.
+        public static let pill = subheadlineEmphasized
+        /// Subtitle, caption, field value, Notch body copy.
+        public static let caption = subheadline
+        /// Metric-card label, lane name.
+        public static let metricLabel = caption2
+        /// Timestamps.
+        public static let monoTimestamp = footnoteMono
+        /// IDs, paths, numbers.
+        public static let monoValue = subheadlineMono
+        /// Collapsed-children count badge (10 / Semibold, tabular).
         public static let countBadge = DesignTextStyle(size: 10, weight: .semibold, lineHeight: 14)
 
-        // MARK: Notch (dark glass)
+        // MARK: Components
 
-        /// 11 / 510 / 16 — echoed user input, turn summary.
-        public static let notchBody = DesignTextStyle(size: 11, weight: .medium, lineHeight: 16)
-        /// 11 / 510 / 14 — activity row content, `agent · model · cwd`.
-        public static let notchCaption = DesignTextStyle(size: 11, weight: .medium, lineHeight: 14)
-        /// 11 / 590 — collapsed session count, metric chip value (tabular).
-        public static let notchCount = DesignTextStyle(size: 11, weight: .semibold, lineHeight: 14)
-        /// 10 / 590 / 14 — agent chip, `Turn started`, running pill, footer.
-        public static let notchChip = DesignTextStyle(size: 10, weight: .semibold, lineHeight: 14)
-        /// 10 / 510 — metric chip unit label.
-        public static let notchChipLabel = DesignTextStyle(size: 10, weight: .medium, lineHeight: 14)
-        /// 10 / 700 / .05em — `RECENT ACTIVITY` section label.
-        public static let notchSectionLabel = DesignTextStyle(size: 10, weight: .bold, lineHeight: 13, trackingEm: 0.05)
-        /// 9 / 700 / .06em — `USER` label on the echoed-input card.
-        public static let notchCardLabel = DesignTextStyle(size: 9, weight: .bold, lineHeight: 11, trackingEm: 0.06)
-        /// 9 / 590 / .04em uppercase — metric card label.
+        /// Tag (2.6) — 9 / Medium / .04em in a 17pt chip.
+        public static let tag = DesignTextStyle(size: 9, weight: .medium, lineHeight: 11, trackingEm: 0.04)
+        /// Notch 60pt tag — 9 / Medium / .03em.
+        public static let tagCompact = DesignTextStyle(size: 9, weight: .medium, lineHeight: 11, trackingEm: 0.03)
+
+        // MARK: Notch (dark panel)
+
+        /// Agent label, `Turn started`, footer count, `N items` — 10 / Medium / 14.
+        public static let notchLabel = DesignTextStyle(size: 10, weight: .medium, lineHeight: 14)
+        /// `RECENT ACTIVITY` — 10 / Medium / .05em.
+        public static let notchSectionLabel = DesignTextStyle(size: 10, weight: .medium, lineHeight: 13, trackingEm: 0.05)
+        /// Metric-card label — 9 / Semibold / .04em uppercase.
         public static let notchMetricLabel = DesignTextStyle(size: 9, weight: .semibold, lineHeight: 11, trackingEm: 0.04)
-        /// 9 / 700 / .03em — 60pt activity tag.
-        public static let notchTag = DesignTextStyle(size: 9, weight: .bold, lineHeight: 11, trackingEm: 0.03)
-        /// 13 / 590 — primary action button label; 12 / 590 secondary.
+        /// Echoed user input, turn summary — 11 / Regular / 16.
+        public static let notchBody = DesignTextStyle(size: 11, weight: .regular, lineHeight: 16)
+        /// Primary action button — 13 / Semibold; secondary 12 / Semibold.
         public static let notchButton = DesignTextStyle(size: 13, weight: .semibold, lineHeight: 16)
         public static let notchSecondaryButton = DesignTextStyle(size: 12, weight: .semibold, lineHeight: 15)
     }

@@ -1,4 +1,5 @@
 import AgentStatusCore
+import AgentStatusDesignSystem
 import AppKit
 
 /// Row view with a neutral rounded selection (`AgentStatusDesign.Color.selection`),
@@ -30,46 +31,121 @@ final class RoundedSelectionRowView: NSTableRowView {
     }
 }
 
-/// `● Running · Thinking` capsule. Colour changes animate over 0.2s; only the
-/// Running tone's halo breathes (~1.6s ease-in-out opacity pulse).
+/// Design system 2.7 status dot for AppKit: hollow ring / solid / solid +
+/// breathing halo. The halo is a sibling layer behind the dot that pulses its
+/// opacity (0.8s ease-in-out, autoreversing) while the style breathes.
+@MainActor
+final class StatusDotView: NSView {
+    private static let breathingKey = "AgentStatus.StatusDot.Breathing"
+    private let halo = NSView()
+    private let dot = NSView()
+    private var style: DesignStatusDotStyle?
+    private let size: CGFloat
+    private let haloWidth: CGFloat
+
+    init(size: CGFloat = DesignSystem.StatusDot.size, haloWidth: CGFloat = DesignSystem.StatusDot.halo) {
+        self.size = size
+        self.haloWidth = haloWidth
+        super.init(frame: .zero)
+        wantsLayer = true
+        halo.wantsLayer = true
+        halo.layer?.cornerRadius = (size + haloWidth * 2) / 2
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = size / 2
+        [halo, dot].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: size),
+            heightAnchor.constraint(equalToConstant: size),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dot.topAnchor.constraint(equalTo: topAnchor),
+            dot.widthAnchor.constraint(equalToConstant: size),
+            dot.heightAnchor.constraint(equalToConstant: size),
+            halo.centerXAnchor.constraint(equalTo: centerXAnchor),
+            halo.centerYAnchor.constraint(equalTo: centerYAnchor),
+            halo.widthAnchor.constraint(equalToConstant: size + haloWidth * 2),
+            halo.heightAnchor.constraint(equalToConstant: size + haloWidth * 2),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(_ style: DesignStatusDotStyle, animated: Bool = true) {
+        guard style != self.style else { return }
+        self.style = style
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(animated ? 0.2 : 0)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        let color = NSColor(style.color)
+        if style.isHollow {
+            dot.layer?.backgroundColor = NSColor.clear.cgColor
+            dot.layer?.borderColor = color.cgColor
+            dot.layer?.borderWidth = DesignSystem.StatusDot.hollowRing
+        } else {
+            dot.layer?.backgroundColor = color.cgColor
+            dot.layer?.borderWidth = 0
+        }
+        halo.layer?.backgroundColor = (style.breathes ? NSColor(style.halo) : .clear).cgColor
+        CATransaction.commit()
+        updateBreathing()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateBreathing()
+    }
+
+    private func updateBreathing() {
+        guard let haloLayer = halo.layer else { return }
+        if style?.breathes == true, window != nil {
+            guard haloLayer.animation(forKey: Self.breathingKey) == nil else { return }
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1
+            pulse.toValue = DesignSystem.Opacity.breathingHalo
+            pulse.duration = 0.8
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            haloLayer.add(pulse, forKey: Self.breathingKey)
+        } else {
+            haloLayer.removeAnimation(forKey: Self.breathingKey)
+        }
+    }
+}
+
+/// `● Running · Thinking` capsule (design system 3.1 StatusPill: height 22,
+/// `padding 0 10`, 7px dot + 6px slot, 11 / Semibold, `.5px` ring). Colour
+/// changes animate over 0.2s; in-progress tiers' dot breathes.
 @MainActor
 final class StatusPillView: NSView {
-    private static let breathingKey = "AgentStatus.StatusPill.Breathing"
-    private let dot = NSView()
-    private let halo = NSView()
+    private typealias Metric = DesignSystem.StatusPill
+    private let dot = StatusDotView(size: Metric.dot)
     private let label = NSTextField(labelWithString: "")
     private var tone: SessionStatusTone = .gray
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = AgentStatusDesign.Layout.pillHeight / 2
-        layer?.borderWidth = 0.5
+        layer?.cornerRadius = Metric.height / 2
+        layer?.borderWidth = Metric.ring
 
-        halo.wantsLayer = true
-        halo.layer?.cornerRadius = 6
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = 3.5
         label.font = AgentStatusDesign.Font.pill
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
 
-        [halo, dot, label].forEach {
+        [dot, label].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: AgentStatusDesign.Layout.pillHeight),
-            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            heightAnchor.constraint(equalToConstant: Metric.height),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metric.horizontalPadding),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 7),
-            dot.heightAnchor.constraint(equalToConstant: 7),
-            halo.centerXAnchor.constraint(equalTo: dot.centerXAnchor),
-            halo.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
-            halo.widthAnchor.constraint(equalToConstant: 12),
-            halo.heightAnchor.constraint(equalToConstant: 12),
-            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: Metric.dotGap),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metric.horizontalPadding),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
@@ -95,39 +171,15 @@ final class StatusPillView: NSView {
     }
 
     private func applyColors(animated: Bool) {
+        let style = tone.lightStyle
         CATransaction.begin()
         CATransaction.setAnimationDuration(animated ? 0.2 : 0)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        layer?.backgroundColor = tone.pillFill.cgColor
-        layer?.borderColor = tone.pillStroke.cgColor
-        dot.layer?.backgroundColor = tone.appKitColor.cgColor
-        halo.layer?.backgroundColor = (tone.dotHalo ?? .clear).cgColor
+        layer?.backgroundColor = NSColor(style.pill.fill).cgColor
+        layer?.borderColor = NSColor(style.pill.ring).cgColor
         CATransaction.commit()
-        label.textColor = tone.pillText
-        updateBreathing()
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        updateBreathing()
-    }
-
-    private func updateBreathing() {
-        guard let haloLayer = halo.layer else { return }
-        let shouldBreathe = tone.dotHalo != nil && window != nil
-        if shouldBreathe {
-            guard haloLayer.animation(forKey: Self.breathingKey) == nil else { return }
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 1
-            pulse.toValue = 0.35
-            pulse.duration = 0.8
-            pulse.autoreverses = true
-            pulse.repeatCount = .infinity
-            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            haloLayer.add(pulse, forKey: Self.breathingKey)
-        } else {
-            haloLayer.removeAnimation(forKey: Self.breathingKey)
-        }
+        dot.configure(style.dot, animated: animated)
+        label.textColor = NSColor(style.pill.text)
     }
 }
 

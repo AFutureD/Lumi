@@ -1,231 +1,361 @@
-# Handoff: Agent Status — macOS App + Notch (current design)
+# Handoff: Agent Status — 设计系统 + macOS / Notch 完整设计
 
 ## Overview
-Agent Status is a macOS app that monitors coding-agent sessions (Codex, Claude) on the local machine. It has two surfaces:
 
-- **macOS app window** — session list, per-session Activity timeline, Inspector, iPhone pairing, Settings.
-- **Notch panel** — a dark glass panel that drops out of the display notch: collapsed status pill, session list, turn-start / turn-end summaries, session detail.
+Agent Status 是一个 macOS 应用，实时显示多个 coding agent（Codex / Claude）会话的运行状态。它有两个界面：
 
-This bundle is the current state of both surfaces plus the design system that all values come from.
+- **主窗口** — Session 列表 + Activity 时间线 + Inspector，浅色。
+- **Notch 面板** — 屏幕顶部刘海处的常驻浮层，纯黑，用于扫读与快速跳转。
 
-## About the design files
-The files in this bundle are **design references created in HTML** — prototypes showing intended look, structure and behavior. They are **not production code to copy**. The task is to **recreate these designs in the target codebase's existing environment** (for this product: AppKit / SwiftUI in the existing Swift packages) using its established patterns, native controls and libraries. If no environment exists yet, pick the appropriate framework for a macOS menu-bar/notch app and implement there.
+本包交付这两个界面的全部当前设计，以及作为唯一取值来源的设计系统。
 
-Two kinds of file:
+## About the Design Files
 
-- **`.html` (single-file)** — for viewing. Everything is inlined; double-click to open in a browser, no other file needed. These are compiled output — do not edit them.
-- **`.dc.html` + `support.js`** — the editable source of the two app design files. Keep `support.js` next to them; without it the pages will not render.
+**这个包里的 HTML 是设计参考，不是可直接复制的生产代码。** 它们用 HTML 搭出来只是为了精确表达外观和行为。
 
-**`DESIGN SYSTEM.html` is the single source of truth for every value.** The two `完整设计` files are the current state of each screen. If a value in a screen file disagrees with the design system, the design system wins. The design system ships as a single-file HTML only.
+任务是**在目标代码库的既有环境里重建这些设计**（本项目是 Swift / AppKit + SwiftUI），沿用它已有的模式和控件，而不是把 HTML 搬进去。
+
+已有实现位于：
+
+```
+Apps/AgentStatusMac/AgentStatusMacPackage/Sources/AgentStatusMacFeature/
+  AgentStatusNookController.swift     Notch 面板全部视图
+  AgentStatusDesign.swift             设计常量的 Swift 映射
+  SessionListViewController.swift     主窗口 Session 列表
+  SessionActivityView.swift           Activity 时间线
+Common/Sources/AgentStatusDesignSystem/
+  DesignMetrics.swift                 尺寸常量
+  DesignPalette.swift                 颜色常量
+```
 
 ## Fidelity
-**High-fidelity (hifi).** Final colors, typography, spacing, control sizes and states. Recreate pixel-accurately, but always with **native AppKit / SwiftUI controls** — buttons, switches, sliders, segmented controls, pop-up buttons, checkboxes, table/outline rows. The HTML control samples exist only to pin down sizes, colors and usage; do not hand-roll a control set.
+
+**High-fidelity。** 颜色、字号、字重、行高、间距、圆角、透明度都是最终值，可以逐条取用。文案是占位内容，不是最终文案。
 
 ---
 
-## Design system structure (`DESIGN SYSTEM.html`)
-Five layers; lower layers only reference values from higher ones. New values must be added to L1 first.
+## 文件说明
 
-- **L1 基础规范** — colors (neutral / semantic / category ramps), typography, spacing & grid, materials, elevation & hairlines, icons
-- **L2 原子组件** — Button, Input, Tag, Checkbox/Radio/Switch, Segmented/Dropdown, Slider, status dot
-- **L3 分子组件** — status pill, sidebar row, session row, Activity row, lane cell, Notch row
-- **L4 组织与模式** — session lifecycle, turn phase, three attention tiers, message category table, escalation rules, three-lane Activity list
-- **L5 准则** — cross-layer do / don't
-
-The page has three tweak props (`focusLayer`, `showSpecs`, `showDarkMode`) used for browsing only — not product features.
-
----
-
-## Design tokens
-
-### Neutral ink (light)
-| Token | Value | Use |
-|---|---|---|
-| Primary | `rgb(26,26,26)` | titles, body, list titles |
-| Secondary | `rgb(64,64,64)` | secondary body, unselected segment |
-| Tertiary | `rgb(114,114,114)` | section headers, labels, captions |
-| Quaternary | `rgb(138,138,138)` | timestamps, weakest info |
-| Accent | `rgb(0,120,240)` | icons, selection, prominent button |
-| Separator | `rgba(0,0,0,.05)` | row separators, header bottom edge |
-| Hairline | `rgb(226,226,226)` | card .5px outline |
-| Selection | `rgb(242,242,242)` | sidebar / list / settings selected fill |
-
-### Neutral ink (dark, Notch)
-Four tiers mirroring the light ladder: `#fff` (active title) → `rgba(255,255,255,.72)` (subagent child rows, completed sessions) → `rgba(255,255,255,.4)` (group labels) → `rgba(255,255,255,.32~.38)` (timestamps). Panel fills: `rgba(255,255,255,.06~.09)` with `inset 0 0 0 .5px rgba(255,255,255,.09~.12)`.
-
-### Semantic
-| Meaning | Light | Dark |
-|---|---|---|
-| Agent blue / accent | `rgb(0,120,240)` | `#4C9BFF` (pill text `#9DC7FF`) |
-| User green / success | `#1DA84C` (deep text `#157A38`) | `#34C759` |
-| Error red | `#E5352F` (destructive text `#B3261E`) | `#EE4038` |
-| PLAN purple | `#8E3FE8` (text `#6A2FD1`) | `#C9AEFB` |
-| SUBAGENT orange | `#ED6A0C` (text `#8A3E05`) | `#FFB27A` |
-| TOOL·RESULT yellow | `#F0B400` (text `#6E5417`) | `#F5C862` |
-| Neutral (L1) | `#E7E8EC` | `rgba(255,255,255,.38)` |
-| Completed gray | `rgb(110,113,120)` | `rgba(255,255,255,.34)` |
-
-### Category ramps (three attention tiers)
-Same hue, three saturations. L1 = no saturation `#E7E8EC`; L2 = pale tint (lane cell `#DBECFD` blue / `#EFE4FC` purple / `#FCE7D8` orange / `#FDF3D6` yellow, tag fill = category at 14–16%); L3 = full-saturation solid + `#fff` text.
-
-**Every tag carries a `.5px` inset border, in all three tiers**: L1 neutral `rgba(0,0,0,.16)` · L2 same-hue category at 24–32% · L3 same-hue dark tone at 38% (`USER rgba(0,78,32,.38)` / `TURN END rgba(0,72,160,.38)` / `FAILED rgba(140,18,14,.38)`).
-
-### Typography
-SF Pro (`-apple-system, BlinkMacSystemFont, 'SF Pro Text'`); numbers, IDs, paths and timestamps in SF Mono (`ui-monospace, 'SF Mono', Menlo, monospace`, `font-variant-numeric: tabular-nums`). Only five sizes and three weights (510 / 590 / 700):
-
-| Spec | Use |
+| 文件 | 用途 |
 |---|---|
-| 22 / 700 / -.01em / 26 | detail page title |
-| 15 / 700 / 18 | section title |
-| 13 / 700 / 16 | sidebar section header, inspector group |
-| 13 / 590 / 16 | list title, emphasis |
-| 13 / 510 / 16 | body, sidebar label, Activity content |
-| 11 / 590 / 14 | status pill, counts |
-| 11 / 510 / 14~16 | subtitle, caption, field value, Notch body |
-| 10 / 590 / .04em / 13 | metric label, lane name |
-| SF Mono 10 | timestamps |
-| SF Mono 11 | IDs, paths, numbers |
-| 9 / 700 / .04em | category tag text |
+| `DESIGN SYSTEM.html` | **唯一取值来源。** 颜色、排版、间距、材质、组件构造、语义规则全在这里。 |
+| `Agent Status macOS - 完整设计（单文件）.html` | 主窗口全部页面的当前状态 |
+| `Agent Status Notch - 完整设计（单文件）.html` | Notch 面板全部页面的当前状态 |
+| `Agent Status macOS - 完整设计.dc.html` + `support.js` | 上面那份的**可编辑源文件** |
+| `Agent Status Notch - 完整设计.dc.html` + `support.js` | 同上 |
 
-### Spacing (4pt base — not 8pt)
-`2` control inner gap · `4` lane-cell gap, sidebar icon↔text, selection outset · `6` tag padding, dot↔text · `8` control↔label, in-card gaps · `10` pill padding, in-card group gap · `12` Activity column gap, card grid gap · `14` sidebar side padding, card padding · `16` table row padding · `18` large card padding · `24` detail area padding, Activity row side padding · `28` detail right padding · `48` page section gap.
+**（单文件）.html 是编译产物，用于查看，不要直接改。** 要改就改 `.dc.html`（需与 `support.js` 放在同一目录才能打开），改完重新打包。
 
-### Key metrics
-window radius `16` · toolbar/header height `52` · sidebar width `224`, padding `0 14`, row `32`, selected capsule radius `8` outset ±4 · section header `34` (first) / `43`, padding `0 4 9` · session list `324` · Inspector `288` · Settings category column `260`, row `44` · Activity rows item/header/marker `40 / 36 / 32`, row padding `0 24` · columns time `56` / tag `82` / status dot `10` · lane cell `13×13 r3 gap4` · detail padding `24 28 28` · card radius `14` + `.5px rgb(226,226,226)` · controls: button `28`, switch track `38×22` knob `18`, slider track `4` knob `20`, dropdown `28` · radii: control/segment `1000`, tag `5`, checkbox `4`.
+设计系统只以单文件 HTML 交付，没有可编辑源 —— 它是取值来源，不是待改的设计稿。
 
-### Materials
-- Thick (sidebar): `background rgba(246,246,246,.72); backdrop-filter blur(60px) saturate(180%)`
-- Thin (Inspector): `rgba(246,246,246,.48)` + same filter
-- Scroll edge effect (sticky headers): `rgba(255,255,255,.85); backdrop-filter blur(6px); border-bottom 1px solid rgba(0,0,0,.05)`
-- Content panel: `rgba(255,255,255,.9~.94)`, **no** backdrop-filter (opaque panels with a filter can drop internal scroll content)
-- Liquid Glass Large (window shell, metric cards): `linear-gradient(rgba(191,191,191,.1)…),linear-gradient(rgba(255,255,255,.7)…)` + `1.25px 0 0 -.75px rgb(219,219,219), -1.25px 0 0 -.75px rgb(219,219,219), 0 0 0 .5px rgb(219,219,219), 0 18px 48px rgba(0,0,0,.25)`
-- Liquid Glass Small (round / capsule controls): `linear-gradient(rgba(248,248,248,.2)…),linear-gradient(rgba(255,255,255,.25)…)` + `1.25px 0 0 -.75px rgb(208,208,208), -1.25px 0 0 -.75px rgb(208,208,208), 0 0 0 .5px rgb(232,232,232), 0 8px 15px rgba(0,0,0,.02), inset 0 24px 6px -24px rgba(40,40,40,.5), inset 0 -24px 6px -24px rgba(40,40,40,.3)`
-
-### Elevation
-hairline card `0 0 0 .5px rgb(226,226,226)` · selection: flat `rgb(242,242,242)`, no shadow · glass small rim (above) · popover `0 0 0 .5px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.18)` · glass large (above) · knob `0 1px 3px rgba(0,0,0,.18~.22)`.
-
-### Icons
-SF Symbols, line style only, two sizes: `16` at stroke `1.4` (sidebar, accent-tinted) and `14` at stroke `1.3` (toolbar, primary-tinted). Row-end chevron `7×11` stroke `1.4` `rgba(60,60,67,.3)`; disclosure `11×7` stroke `1.6` tertiary. Icon slot is 24px centered. State and category are never expressed with icons — use the status dot and the tag.
+**取值冲突时以 `DESIGN SYSTEM.html` 为准。** 完整设计文件是它的应用结果；两者不一致说明完整设计漏同步了。
 
 ---
 
-## Semantic model (implement this, not just the pixels)
+## Design Tokens
 
-### Session lifecycle — three tiers
-| Tier | Color | Rule |
+### 色板 · Light
+
+七条色阶，每条八档（700 → 50），600 为默认档。500→50 由基色混白得到，混白比例 21% / 44% / 66% / 86% / 93% / 97%。
+
+| 色相 | 700 | 600 (P) | 500 | 400 | 300 | 200 | 100 | 50 |
+|---|---|---|---|---|---|---|---|---|
+| Neutral 中性 | `#1A1A1A` | `#404040` | `#727272` | `#8A8A8A` | `#CACACA` | `#E2E2E2` | `#F2F2F2` | `#FAFAFA` |
+| Blue 蓝 | `#0069D7` | `#0078F0` | `#3694F3` | `#70B3F7` | `#A8D1FA` | `#DBECFD` | `#EDF6FE` | `#F7FBFE` |
+| Green 绿 | `#199242` | `#1DA84C` | `#4CBA72` | `#80CE9B` | `#B2E1C2` | `#DFF3E6` | `#EFF9F1` | `#F8FDF9` |
+| Red 红 | `#B3261E` | `#E5352F` | `#EA5F5B` | `#F08E8A` | `#F6BAB8` | `#FBE3E2` | `#FDF1F0` | `#FEF9F9` |
+| Yellow 黄 | `#D19D00` | `#F0B400` | `#F3C436` | `#F7D570` | `#FAE6A8` | `#FDF3D6` | `#FEFAED` | `#FEFDF7` |
+| Purple 紫 | `#7C37CA` | `#8E3FE8` | `#A667ED` | `#C093F2` | `#D9BEF7` | `#EFE4FC` | `#F7F1FE` | `#FCF9FE` |
+| Orange 橙 | `#CE5C0A` | `#ED6A0C` | `#F1893F` | `#F5AC77` | `#F9CCAC` | `#FCE7D8` | `#FEF5EF` | `#FEFBF8` |
+
+黑白：`#000000` / `#FFFFFF`。
+
+### 色板 · Dark
+
+**独立一套，不从浅色梯度取值。** 浅色梯度是基色混白算出来的，越浅越脱色；深色需要的是提亮但保饱和，两条曲线不重合。D500 为深色基准档。
+
+| 色相 | D700 | D600 | D500 (P) | D400 | D300 |
+|---|---|---|---|---|---|
+| Blue Dark | `#0069D7` | `#2A8CFF` | `#4C9BFF` | `#9DC7FF` | `#C8E0FF` |
+| Green Dark | `#1DA84C` | `#22B856` | `#34C759` | `#5EE07E` | `#96EFAF` |
+| Red Dark | `#C42B24` | `#E5352F` | `#EE4038` | `#FF8A83` | `#FFBAB6` |
+| Yellow Dark | `#D19D00` | `#F0B400` | `#F5C862` | `#F9DC9A` | `#FCEBC7` |
+| Purple Dark | `#8E3FE8` | `#A97BF0` | `#C9AEFB` | `#DCC8FC` | `#EBE0FE` |
+| Orange Dark | `#ED6A0C` | `#F58F42` | `#FFB27A` | `#FFCBA3` | `#FFE0C9` |
+
+深色面板底只有一个：`#000000`。
+
+### 使用场景 · Light
+
+**前景**
+
+| 角色 | 取值 | token | 用途 |
+|---|---|---|---|
+| 主文字 | `rgb(26,26,26)` | Neutral 700 | 标题、列表标题 |
+| 正文 | `rgb(26,26,26)` | Neutral 700 | Activity 内容、字段值（与主文字同值） |
+| 次级 | `rgb(64,64,64)` | Neutral 600 | 次级正文、分段控件未选中项 |
+| 三级 | `rgb(114,114,114)` | Neutral 500 | Section header、label、说明文字 |
+| 四级 | `rgb(138,138,138)` | Neutral 400 | 时间戳等最弱信息 |
+| 强调 | `rgb(0,120,240)` | Blue 600 | 图标、选中态、运行中状态点与文字 |
+| 破坏性 | `#B3261E` | Red 700 | 删除类操作的按钮文字 |
+
+**背景与描边**
+
+| 角色 | 取值 | token |
 |---|---|---|
-| Running | `rgb(0,120,240)`, halo `rgba(0,120,240,.18)` | agent is working: thinking / responding / toolRunning / subagentRunning / compacting all collapse here; subtitle shows the current phase; dot breathes |
-| Waiting for input | `#1DA84C` | needs a human: awaiting input, awaiting permission decision. **The only tier that sorts the session to the top of the list and pushes the notch.** |
-| Completed / Idle | `rgb(110,113,120)` | turn wrapped, session ended, or long idle. Title keeps its color; only dot and subtitle go gray. |
-| Failed / Aborted | `#E5352F` | after turnFailed / turnAborted; drops back to Completed once seen. Sorting still follows Completed. |
+| 面板底 | `#FFFFFF` | White |
+| 卡片底 | `#FFFFFF` | White（靠描边与面板区分） |
+| 选中底 | `rgb(242,242,242)` | Neutral 100 |
+| 控件底 | `rgba(120,120,128,.1)` | — |
+| 强调填充 | `rgb(0,120,240)` | Blue 600 |
+| 次级按钮底 | `rgba(120,120,128,.16)` | — |
+| 分隔线 1px | `rgba(0,0,0,.05)` | — |
+| 描边 .5px | `rgb(226,226,226)` | Neutral 200 |
+| 结构连接线 1px | `rgba(60,60,67,.24)` | — |
 
-### Turn phase
-`submitted` (hollow gray dot) · `thinking` / `responding` / `toolRunning` (blue) · `waitingPermission` (green) · `subagentRunning` (`#ED6A0C`) · `compacting` / `stopped` (gray 110) · `failed` (red) · `aborted` (gray 138). Phase only changes the status dot and the header subtitle — never the lifecycle tier color.
+### 使用场景 · Dark
 
-### Attention tiers for Activity messages
-Tier is decided by "does a human need to act", not by category. A category can move between adjacent tiers.
+底色只有 `#000`。**纯黑没有环境亮度垫底，低透明度白掉得比在灰底上快得多 —— 一律按下表取值，不要从浅色换算。**
 
-- **L1 一般消息 (low)** — session context, per-turn injected context, reasoning, all session markers. No fill, text `rgb(138,138,138)`, 9/700/.04em, no category color, `inset 0 0 0 .5px rgba(0,0,0,.16)` border; lane cell `#E7E8EC`.
-- **L2 消息过程 (medium)** — tool calls & results, assistant replies, plan updates, subagents. Fill = category at 14–16%, text = category deep tone, `inset 0 0 0 .5px` category at 24–32%; lane cell = the pale tint.
-- **L3 阶段消息 (high)** — user input, turn end, failure/abort. Solid category fill + `#fff` text + `inset 0 0 0 .5px` same-hue dark tone at 38%; +6% lightness in dark. **Only L3 can expand the notch or fire haptics.**
+**前景**
 
-### Message categories
-| Tag | Tier | Lane | Status | Note |
-|---|---|---|---|---|
-| SESSION | L1 | spans | info | SessionStarted / Ended, one row across all lanes |
-| COMPACT | L1 | spans | running→succeeded | CompactionBegan → Ended, updates in place |
-| CONTEXT ×N | L1 | User | info | instruction files / config / model config / cwd; adjacent rows merge, expandable — occupies the User lane only, not spanning |
-| USER | L3 | User | info | hand-written user input, always top tier |
-| CONTEXT | L1 | User | info | this turn's injections: attachments, system-reminder, hook output, skill expansion, compaction summary |
-| REASONING | L1 | Model | info | highest volume; never escalates |
-| ASSISTANT | L2 | Model | info · last succeeded | assistant text split per block; last row gets the deep blue dot |
-| TURN END | L3 | Model | succeeded / failed / cancelled | turnStopped closes a turn, carries duration + tool count |
-| PLAN | L2 | Model | running→succeeded | appears on plan create/rewrite, updates in place |
-| SUBAGENT | L2 | Model | started→succeeded/failed | same agentId updates in place; lane is Model, not Exec |
-| ABORTED | L3 | Model | failed / cancelled | turnFailed / turnAborted; drops a tier only after being seen |
-| TOOL | L2 | Exec | started | assistant `tool_use` goes to Exec — the **block type** decides the lane |
-| RESULT | L2 | Exec | succeeded / failed | paired with TOOL by `toolUseId`, hover highlights both, never merged; `isError` escalates to FAILED |
+| 角色 | 取值 | token |
+|---|---|---|
+| 主文字 | `#FFFFFF` | White |
+| 正文 | `rgba(255,255,255,.78)` | White 78% |
+| 次级 | `rgba(255,255,255,.58)` | White 58% |
+| 三级 | `rgba(255,255,255,.50)` | White 50% |
+| 四级 | `rgba(255,255,255,.46)` | White 46% |
+| 强调 | `#4C9BFF` | Blue D500 |
+| 破坏性 | `#EE4038` | Red D500 |
 
-Item status dots: `info` blank · `started` hollow `inset 0 0 0 1.5px rgb(0,120,240)` · `running` solid blue + `0 0 0 2.5px rgba(0,120,240,.18)` breathing · `succeeded` `#0A5FBF` · `failed` `#E5352F` · `cancelled` `rgb(138,138,138)`.
+**背景与描边**
 
-### Escalation / in-place update
-- `toolResult.isError` → RESULT becomes red FAILED (L3), pushes the notch, status `failed`; the paired TOOL row highlights until seen.
-- `subagentReturned` → no new row; same agentId flips dot `started → succeeded/failed` and swaps the text for `lastMessage`.
-- `turnStopped` → append a TURN END row; the turn's last assistant row gets the deep blue dot.
+| 角色 | 取值 | token |
+|---|---|---|
+| 面板底 | `#000000` | Surface |
+| 卡片底 | `rgba(255,255,255,.10)` | White 10% |
+| 选中底 | `rgba(255,255,255,.12)` | White 12% |
+| 控件底 | `rgba(255,255,255,.14)` | White 14% |
+| 强调填充 | `#FFFFFF` | White（配 `#111` 文字） |
+| 次级按钮底 | `rgba(255,255,255,.16)` | White 16% |
+| 分隔线 1px | `rgba(255,255,255,.14)` | White 14% |
+| 描边 .5px | `rgba(255,255,255,.18)` | White 18% |
+| 结构连接线 1px | `rgba(255,255,255,.24)` | White 24% |
 
-### Rules that are easy to miss
-- Lane is decided by block type, not message role: assistant `tool_use` and user `tool_result` both land in Exec. Lane content = what the LLM has to encode.
-- Permission requests/decisions and usage never enter the timeline — they show up in the header session state and the turn phase.
-- Ordinary messages carry no category color; body text stays 13/510 `rgb(26,26,26)`. Hierarchy comes only from tag style.
-- Max 3 L3 messages on screen; beyond that, demote the ones already seen.
-- Empty lane cells stay empty — never fill them.
-- **Subagents are only listed while their turn is running. Once the turn ends, subagent child rows disappear from the list.**
+### 排版
 
----
+字体：**SF Pro**（`-apple-system`）。数字、时间、路径、ID 用 **SF Mono**。
 
-## Screens — macOS (`Agent Status macOS - 完整设计.dc.html`)
+五个字号直接对应 macOS 系统文本样式，行高跟着样式走：
 
-Window shell: `1440×860` (screen 1) / `1440×760` (2, 3), radius `16`, Liquid Glass Large fill and shadow, `overflow: hidden`. Traffic lights `12px` circles `#FF5F57 / #FEBC2E / #28C840`, 8px apart, in a `52px` toolbar with padding `0 8 0 19`.
+| 用途 | 样式 | 规格 |
+|---|---|---|
+| 详情页大标题 | Title 1 | 22 / Regular / 26 |
+| 区块标题 | Title 3 Emphasized | 15 / Semibold / 20 |
+| 侧栏组头 · 列表标题 | Body Emphasized | 13 / Semibold / 16 |
+| 正文 | Body | 13 / Regular / 16 |
+| 状态药丸 · 计数 | Subheadline Emphasized | 11 / Semibold / 14 |
+| 副标题 · 字段值 | Subheadline | 11 / Regular / 14 |
+| 指标 label · 泳道名 | Caption 2 | 10 / Medium / 13 / .04em |
+| 时间戳 | Footnote（SF Mono） | 10 / Regular / 13 |
+| ID · 路径 | Subheadline（SF Mono） | 11 / Regular / 14 |
 
-### 1 主窗口 · Sessions + Activity (`data-screen-label="1 Sessions"`)
-Three columns: sidebar `224` (Thick material) · session list `324` · detail (Activity + Inspector `288`).
-- Sidebar: `52` toolbar with a `28` round glass refresh button; section headers 13/700 tertiary, height `34` first / `43` after, padding `0 4 9`; rows `32` with a `24` icon slot (16px accent icon) + 13/510 label + trailing count; selected row = `rgb(242,242,242)` radius `8`, outset 4px each side; the iPhone row carries a `7px` `#1DA84C` connected dot.
-- Session list: rows show a `16` agent glyph, 13/590 title, and a status line (7px dot + 11/510 tier-colored text). Subagent children indent `32` so the title aligns with the parent, with a 1px `rgba(60,60,67,.24)` elbow.
-- Activity: header "Activity" 15/700 + count pill (11/590 on `rgba(120,120,128,.12)`, radius 1000). Lane strip: 44px right-aligned lane names (10/590 tertiary) + `13×13` r3 cells, gap 4. Rows: time `56` (SF Mono 10, `rgb(138,138,138)`) + tag `82` centered (9/700/.04em, radius 5, `.5px` inset border in every tier) + single-line content 13/510 ellipsized + `7×11` chevron. Item rows `40`, marker rows `32` (no tag fill but the same L1 border, gray text; SESSION / COMPACT span all lanes, merged `CONTEXT ×N` occupies the User lane only), separators `1px rgba(0,0,0,.05)`.
+字重只有三档，数值实现用 SF 的可变字重刻度：**Regular 400 / Medium 510 / Semibold 590**。
 
-### 2 Pair iPhone (`data-screen-label="2 Pair iPhone"`)
-Header: 22/700 title + Prominent button; status row = green pill (`Relay connected`, dot `#1DA84C` + halo, text `#157A38`) plus 11/510 explanation. Body: `320` glass card holding a `280×280` white QR placeholder (radius 14, `inset 0 0 0 .5px rgb(226,226,226)`) with 13/590 + 11/510 captions below; right side lists paired devices — each row has name, state (11/510 tertiary, 52px column) and a `24` Revoke capsule with `#B3261E` text.
+**不要用 Bold。** macOS 只把 Bold 留给 Headline 和 Title 1 Emphasized，这套界面里没有这两个角色；层级靠字号、颜色和位置拉开。
 
-### 3 Settings · Daemon (`data-screen-label="3 Settings"`)
-Sidebar + `260` category column (rows `44`, selected `rgb(242,242,242)` r8) + detail. Header 22/700 with a green Running pill and 11/510 explanation. Rows `52` min-height, padding `12 16`, separators `rgba(0,0,0,.05)`; secondary actions are Bordered glass buttons `28`, destructive ones only recolor the label `#B3261E`.
+### 间距与网格
 
-### 4 Settings · remaining panels (`4 General` / `4 Agents` / `4 About` / `4 Notch`)
-`956` wide cards (400 tall, Notch panel 840). Each has a sticky header (scroll edge effect material, padding `14 28`) with a 22/700 title, then rows: 13/510 label + 11/510 caption + a native control on the right — switch `38×22` (knob 18, on = accent + `inset 0 0 0 .5px rgba(0,90,190,.35)`), pop-up button `28` capsule with a `16` accent chevron badge, slider (track 4, knob 20) with a value capsule, checkboxes `14` r4. Agents rows carry a `20` agent glyph and a `~/.codex/config.toml · agent-status-helper` mono caption.
+**4pt 基准**（macOS 桌面密度，不用 8pt）。行高与列宽都是 4 的倍数。
 
-## Screens — Notch (`Agent Status Notch - 完整设计.dc.html`)
+关键尺寸：
 
-Panel is `520pt` wide dark glass hanging from the notch; the top black band keeps the camera area clear (app glyph left, session count right, `32` tall, radius `0 0 12 12`, `background #000`).
-
-### 1 收起态 (collapsed)
-`64pt` wide: an `8px` status dot (tier color + `0 0 0 3px` halo) and the session count 11/590. Idle state uses `rgba(255,255,255,.34)` with no halo.
-
-### 2 Session 列表 (`data-screen-label="2 Notch List"`)
-Rows are a 3-column grid `8px | 1fr | auto`, padding `10 16 11`, column gap 10: status dot `8` (+3px halo) · title 13/590/16 (`#fff` active, `rgba(255,255,255,.72)` completed) · right group = agent chip (height 20, r6, `rgba(255,255,255,.09)`, 10/590 `rgba(255,255,255,.6)`; completed uses `.07` / `.45`) + a `20px` trailing cell holding the relative time (SF Mono 10, `rgba(255,255,255,.38)`, right-aligned) which swaps to a `20×20` r6 archive button on hover. Gap chip→trailing cell is `10`, and the cell is exactly button-width so the trailing inset equals the row's `16` right padding. Separators `1px rgba(255,255,255,.08)` inset 16. Subagent child rows: indent `34`, `6px` dot, 11/510/14 `.72` text, mono `10` `.32` time, 1px `.16` elbow — **only while the turn runs**. Footer: `9 16 12`, top border `.08`, "N of M sessions" 10/590 `.4`.
-
-### 3 Turn 刚启动 (`data-screen-label="3 Notch Turn Start"`)
-Header row: 13/590 title + `Turn started` 10/590 `#9DC7FF` + elapsed mono 10 `.4`; second line 11/510/14 `.52` with `agent · model · cwd`. Below, the echoed user input in a card (padding `9 11`, r10, `rgba(255,255,255,.06)`, `inset 0 0 0 .5px rgba(255,255,255,.09)`): a 9/700/.06em `USER` label `.4` plus 11/510/16 `.86` body clamped to 6 lines. Body copy stays at weight 510 — 11/590 is reserved for status pills and counts; at 11px, hierarchy comes from opacity, not weight.
-
-### 4 Turn 结束 (`data-screen-label="4 Notch Turn End"`)
-Same header with `Turn complete`; three metric chips (padding `4 9`, r8, `rgba(255,255,255,.07)`, value 11/590 tabular-nums); summary body 11/510/16 `.78` clamped to 6 lines; action row of `30` tall r9 buttons — primary `#fff` on `#111` text 13/590, secondary `rgba(255,255,255,.1)` + `inset 0 0 0 .5px rgba(255,255,255,.1)`.
-
-### 5 Session 详情 (`data-screen-label="5 Notch Detail"`)
-Back chevron `11×11` + 15/700/18 title; a running pill (h20, r1000, `rgba(76,155,255,.18)` + `inset 0 0 0 .5px rgba(76,155,255,.32)`, dot `#4C9BFF`, text 10/590 `#9DC7FF`); three metric cards (tokens / context / elapsed — value 13/590 tabular-nums, label 9/590/.04em uppercase `.42`); the RECENT ACTIVITY list; then `Show in App` / secondary actions.
-
-**RECENT ACTIVITY** — section label 10/700/.05em `.4` + item count 10/590 `.3`. One row per message category, in timeline order: SESSION · CTX ×3 · USER · CONTEXT · REASON · PLAN · TOOL · RESULT · SUBAG · ASSIST · TURN END · FAILED · COMPACT. Each row is `22` tall, column gap `12`: a `60px` centered tag (padding `2 0`, r5, 9/700/.03em, dark-mode fill + `.5px` inset border per tier — L1 rows have no fill, `rgba(255,255,255,.38)` text and a `rgba(255,255,255,.2)` border) + single-line content 11/510/14 `rgba(255,255,255,.8)` ellipsized. Labels are abbreviated to fit the 60px column (`CTX ×N`, `REASON`, `SUBAG`, `ASSIST`). The whole panel is `580` tall on this screen; screens 2–4 stay `404`.
+| | |
+|---|---|
+| 窗口圆角 | 16 |
+| 工具栏 / header 高 | 52 |
+| 侧栏宽 / 内边距 / 行高 | 224 / `0 14` / 32 |
+| 侧栏选中胶囊 | radius 8，左右各外扩 4 |
+| Activity 行高 | item 40 / header 36 / marker 32 |
+| 泳道格 | 13×13，radius 3，gap 4 |
+| Notch 面板宽 | 520 |
+| Notch 顶栏 | 高 32，padding `0 14` |
+| Notch 列表行 | padding `10 16 11`，列 `8px 1fr auto`，列间距 10 |
+| Notch subagent 子行 | padding `3 16 3 34`，末行下 9 |
+| Notch 面板下圆角 | 26 |
 
 ---
 
-## Interactions & behavior
-- **Hover** — session rows lighten their fill; the Notch row's time swaps for the archive button; TOOL and RESULT rows highlight each other via `toolUseId`.
-- **Selection** — light surfaces: `rgb(242,242,242)` r8 fill, text color unchanged. Notch light list: `rgba(0,120,240,.09)` fill, `rgb(0,120,240)` stripe, title `#0A5FBF`.
-- **Status dot** — `running` breathes (opacity/halo pulse, ~1.6s ease-in-out); other states are static.
-- **Notch expansion** — only L3 messages and the `Waiting for input` tier expand the panel and fire haptics; expansion collapses on pointer-out unless "Stay expanded" is on.
-- **Sorting** — sessions needing a human first, then running, then completed by recency.
-- **In-place updates** — COMPACT, PLAN and SUBAGENT rows update in place; no duplicate rows.
+## 组件
 
-## State
-Per session: `lifecycleTier` (running / waiting / completed / failed), `turnPhase`, `agentKind`, `model`, `cwd`, `lastActivityAt`, `tokens`, `contextPercent`, `elapsed`, `subagents[]` (visible only while the turn runs), `timelineItems[]` (each with category, attention tier, lane, `status`, `toolUseId`, timestamp, single-line content). App level: `pairedDevices[]`, `relayConnected`, `daemonRunning`, settings values, `notchExpanded`, `unseenL3Count`. Data source is the local daemon's SQLite store; the timeline is append-only with in-place updates keyed by `toolUseId` / `agentId`.
+### 标签 Tag（自定义组件）
+
+高 17，radius **5（矩形，不是胶囊）**，padding `0 6`，9 / Medium / .04em，列宽固定 82 居中。每档都带 .5px inset 描边。
+
+**注意力三档** —— 档位由「是否需要人处理」决定，不由类别决定：
+
+| 档 | Light 底 / 字 | Dark 底 / 字 |
+|---|---|---|
+| **L1 无饱和** | 无底色 + `rgba(0,0,0,.16)` 描边 / `rgb(138,138,138)` | 无底色 + `rgba(255,255,255,.28)` 描边 / `rgba(255,255,255,.46)` |
+| **L2 淡纯色** | 色相 200 档 / 色相 700 档 | 色相 600 @22–26% / 色相 D500 |
+| **L3 满饱和实色** | 色相 600 / `#FFFFFF` | 色相 D600 / `#FFFFFF` |
+
+各色相的具体取值见 `DESIGN SYSTEM.html` §2.6 的两张表。
+
+标签到色相的映射（语义，见 §4.3）：
+
+| 色相 | 档 | 标签 |
+|---|---|---|
+| Neutral | L1 | SESSION · CONTEXT · CTX · REASON · COMPACT |
+| Yellow | L2 | TOOL · RESULT |
+| Purple | L2 | PLAN |
+| Orange | L2 | SUBAGENT |
+| Blue | L2 / L3 | ASSIST（L2）· TURN END（L3） |
+| Green | L3 | USER |
+| Red | L3 | FAILED · ABORTED |
+
+### 状态点 ItemStatus（自定义组件）
+
+7px 圆点，行内位于标签后 10px 槽。**三种形态**：
+
+- **空心** — 1.5px 描边，无填充
+- **实心** — 纯色填充
+- **实心 + 呼吸** — 纯色填充 + 2.5px 光晕
+
+不需要状态时整个槽留白，不画点。
+
+呼吸圈透明度两套不同：**Light `.20`，Dark `.32`** —— 纯黑底下 `.20` 的光晕基本看不见。
+
+**只有正在进行的状态才带呼吸。** 结束态（Completed / Failed / Aborted）是实心无光晕。
+
+### 状态药丸 StatusPill
+
+高 22，radius 1000，左右内边距 10，7px 实心点 + 6px 槽 + 11 / Semibold 文案。四个值：底 / 描边 / 点 / 字。各色相取值见 §3.1。
+
+### 系统组件
+
+按钮、输入框、复选框 / 单选 / 开关、分段控件 / 下拉、滑杆 —— **一律用 AppKit / SwiftUI 原生控件。** 设计系统里标的尺寸只是对照，**真机以系统当前样式为准**；系统与文档不一致时跟系统走。
+
+---
+
+## Screens
+
+### macOS 主窗口（1440×860）
+
+**布局** — 三栏：侧栏 224 / 中栏 flex / Inspector 320。工具栏高 52 通栏。
+
+**侧栏** — Section header（13 / Semibold / Neutral 500，高 34 首个 / 43 其余，padding `0 4 9`）+ 行（高 32，图标槽 24 + 文字 + 尾部计数）。选中态：`rgb(242,242,242)` 底 + radius 8，左右各外扩 4，**文字色不变**。
+
+**Session 列表行** — 两行结构：标题行（16px agent 图标 + 13 / Semibold 标题 + 右侧时间）+ 状态行（7px 点 + 11 / Regular 状态文案，缩进 22）。subagent 子行缩进 32，带 L 形连接线 `rgba(60,60,67,.24)`。
+
+运行中的行状态点带 `2.5px` 呼吸光晕；结束态不带。
+
+**Activity 时间线** — 时间 56 + 标签 82 + 单行内容，列间距 12。marker 行横跨、无标签底色。行高 item 40 / marker 32。
+
+**泳道** — 三行，格子 13×13 / radius 3 / gap 4，空格留白不填底色。**跨泳道事件不占泳道**：三行各画一条 13 高 × 4 宽 / radius 2 的小条，列宽也收到 4，靠宽度差与实格区分。
+
+**Inspector** — 指标卡三联（15 / Semibold 数值 + 10 / Medium 全大写 label）+ 字段分组（13 / Semibold 组标题 + 11 / Regular 字段行，label 左值右对齐）。
+
+其余页面：Pair iPhone、Settings（Daemon / Relay / Appearance）。
+
+### Notch 面板（宽 520）
+
+面板 **纯黑实色 `#000`，无材质、无描边、无投影** —— 它必须和摄像头挖孔无缝拼接，任何半透明、模糊或亮边都会让接缝显形。下圆角 26。
+
+> ⚠️ 这不是可选项。Nook chrome 的 `NookStyle` 只暴露 `topCornerRadius` / `bottomCornerRadius` / `expandedContentInsets`，没有 surface color 或 material 参数，面板底色由 chrome 画成不透明黑。
+
+**顶栏** — 高 32，padding `0 14`。左侧应用标识（15px 线图标 + 11 / Regular / 58% 文字），右侧设置与锁图标（15px，描边 62% 白）。这条横带把摄像头区留空。
+
+五个页面：
+
+1. **收起态** — 236×32，下圆角 12，状态点 + 会话数。三种：无会话（42% 白点 / 46% 白数字）、运行中（`#4C9BFF` + 呼吸）、待处理（`#34C759` + 呼吸）。
+2. **Session 列表** — 行 `padding:10 16 11`，列 `8px 1fr auto`，列间距 10。8px 状态点 + 13 / Semibold 标题 + agent 标签 + 等宽相对时间。subagent 子行缩进 34、6px 点、11 / Regular / 78% 标题，L 形引导线 24% 白从父行状态点连下来。**archive 图标只在 turn 已结束的行上、hover 时替换时间戳**（同一 20px 槽位交换，不产生位移）。
+3. **Turn 刚启动** — 标题 + 「Turn started」+ 计时，下方用户输入原文（11 / Regular / 78%，最多 6 行）。
+4. **Turn 结束** — 标题 + 「Turn complete」+ 耗时，指标胶囊三联（tokens / context / still running），总结正文最多 6 行，底部主按钮。
+5. **Session 详情** — 返回键 + 15 / Semibold 标题，状态药丸 + agent 标签，指标卡三联，RECENT ACTIVITY 列表（60pt 标签 + 单行内容，行高 22），底部主按钮 + 次级按钮。
+
+**agent 标签在所有行上同色**（`.14` 底 + `.58` 字）。轮次结束只降标题（`#fff` → `.78`）和状态点（饱和色 → `42%` 白无光晕），不降标签。
+
+---
+
+## 语义规则
+
+### Session 生命周期（四档）
+
+| 状态 | 色相 | 点 | 说明 |
+|---|---|---|---|
+| Running | Blue | 实心 + 呼吸 | agent 在跑：thinking / responding / toolRunning / subagentRunning / compacting 都归这一档，副标题换成当前 phase |
+| Waiting for input | Green | 实心 + 呼吸 | 需要人处理。**唯一会把 session 排到列表最前并推 notch 的一档** |
+| Completed / Idle | Neutral | 实心 | 轮次收尾或长时间无事件。标题不降色，只有状态点与副标题转灰 |
+| Failed / Aborted | Red | 实心 | 失败或中断 |
+
+### Turn phase（十个）
+
+phase 只换状态点与页头副标题，**不换生命周期那一档颜色**。
+
+| phase | 色相 | 形态 |
+|---|---|---|
+| submitted | Neutral | 空心（唯一不填充的） |
+| thinking / responding / toolRunning | Blue | 实心 + 呼吸 |
+| waitingPermission | Green | 实心 + 呼吸 |
+| subagentRunning | Orange | 实心 + 呼吸 |
+| compacting | Neutral | 实心 + 呼吸 |
+| stopped / aborted | Neutral | 实心 |
+| failed | Red | 实心 |
+
+### 消息类别
+
+泳道由 **block 类型**决定，不是消息角色：assistant 的 `tool_use` 与 user 的 `tool_result` 都进 Exec。完整对照表见 `DESIGN SYSTEM.html` §4.3。
+
+---
+
+## Interactions & Behavior
+
+- **archive 按钮** — 只在 `turnEnded` 的行上、hover 时出现，占用时间戳所在的 20pt 槽位，两者互斥交换，不产生布局位移。
+- **呼吸动画** — 运行中状态点的光晕循环缩放。
+- **Notch 展开** — 只有 L3 阶段消息（USER / TURN END / FAILED）能触发展开和触感反馈。
+- **列表排序** — 需要人处理的 session 排到最前。
+
+---
+
+## 已知的代码与设计差异
+
+这份设计与现有 Swift 实现对比后发现的两处，实现侧需要修：
+
+**1. 状态点降级与标题降级是两套独立开关**
+
+`AgentStatusNookController.swift`：
+
+```swift
+.foregroundStyle(session.turnEnded ? Color.nookSecondary : Color.nookTitle)
+```
+
+标题用 `session.turnEnded` 降级，圆点用 `session.statusTone` 上色。结果是标题变灰了但点还是满饱和绿，三档注意力塌成一档。两者应该同步。
+
+**2. 时间戳被塞进 20pt 固定槽**
+
+```swift
+Text(SessionRelativeTimeFormatter.string(...))
+    .fixedSize()
+}
+.frame(width: NotchMetric.trailingCell, height: ..., alignment: .trailing)
+```
+
+`trailingCell = 20`，但 10pt 等宽的 `11m` / `now` 实际宽 22–26pt，`.fixedSize()` 让它溢出这个框，时间戳右边缘与 archive 按钮对不齐。设计里这一列是 `auto 20px`：时间是 auto 宽，只有 archive 槽位固定 20。
+
+---
 
 ## Assets
-No bitmap assets. Agent glyphs (Codex, Claude) are inline SVGs in the HTML — replace with the real vendor marks available in the app bundle. All other icons are SF Symbols. QR code is a placeholder.
 
-## Files
-View (single-file HTML, double-click to open — compiled output, don't edit):
-- `DESIGN SYSTEM.html` — design system, **the only source of values** (L1–L5)
-- `Agent Status macOS - 完整设计（单文件）.html` — current state of macOS screens 1–4
-- `Agent Status Notch - 完整设计（单文件）.html` — current state of Notch screens 1–5
+无位图资源。全部图标是内联 SVG 线图标，实现时换成对应的 SF Symbols：
 
-Editable source:
-- `Agent Status macOS - 完整设计.dc.html`
-- `Agent Status Notch - 完整设计.dc.html`
-- `support.js` — runtime required by the two `.dc.html` files
+| 设计中的图标 | SF Symbol |
+|---|---|
+| 终端（应用标识） | `terminal` |
+| 齿轮（设置） | `gearshape` |
+| 锁 | `lock` |
+| 归档 | `archivebox` |
+| 返回 chevron | `chevron.left` |
+
+图标只有 14 / 16 两个尺寸，描边宽度随尺寸 1.3 / 1.4 / 1.6，**不用填充图标**。状态与类别不用图标表达，用状态点与标签。

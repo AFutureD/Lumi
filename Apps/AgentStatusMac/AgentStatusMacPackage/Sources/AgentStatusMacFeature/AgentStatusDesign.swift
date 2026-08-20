@@ -22,9 +22,9 @@ extension NSColor {
 extension NSFont {
     static func design(_ style: DesignTextStyle) -> NSFont {
         let weight: NSFont.Weight = switch style.weight {
+        case .regular: .regular
         case .medium: .medium
         case .semibold: .semibold
-        case .bold: .bold
         }
         switch style.family {
         case .sans:
@@ -71,7 +71,7 @@ enum AgentStatusDesign {
 
         static let subheaderTopInset: CGFloat = DS.Metrics.sidebarGroupBottomInset
         static let subheaderBottomInset: CGFloat = DS.Spacing.lPlus
-        static let pillHeight: CGFloat = DS.Metrics.pillHeight
+        static let pillHeight: CGFloat = DS.StatusPill.height
 
         static let activityRowHeight: CGFloat = DS.Metrics.activityRowHeight
         /// SESSION / COMPACT / CONTEXT ×N rows that span all lanes.
@@ -79,13 +79,13 @@ enum AgentStatusDesign {
         static let activityHorizontalInset: CGFloat = DS.Spacing.xxl
         static let activityColumnGap: CGFloat = DS.Spacing.l
         static let activityTimestampWidth: CGFloat = DS.Metrics.activityTimestampWidth
-        static let activityTagWidth: CGFloat = DS.Metrics.activityTagWidth
-        static let activityTagCornerRadius: CGFloat = DS.Radius.tag
-        static let activityTagVerticalPadding: CGFloat = DS.Metrics.tagVerticalPadding
-        static let laneCellSize: CGFloat = DS.Metrics.laneCellSize
-        static let laneCellSpacing: CGFloat = DS.Spacing.xs
-        static let laneCellCornerRadius: CGFloat = DS.Radius.laneCell
-        static let laneNameWidth: CGFloat = DS.Metrics.laneNameWidth
+        static let activityTagWidth: CGFloat = DS.Tag.width
+        static let laneCellSize: CGFloat = DS.Lane.cell
+        static let laneCellSpacing: CGFloat = DS.Lane.gap
+        static let laneCellCornerRadius: CGFloat = DS.Lane.radius
+        static let laneMarkerWidth: CGFloat = DS.Lane.markerWidth
+        static let laneMarkerCornerRadius: CGFloat = DS.Lane.markerRadius
+        static let laneNameWidth: CGFloat = DS.Lane.nameWidth
         static let rowChevronSize = CGSize(width: DS.Metrics.rowChevronWidth, height: DS.Metrics.rowChevronHeight)
 
         static let inspectorInsets = NSEdgeInsets(top: DS.Spacing.xl, leading: DS.Spacing.xl, bottom: DS.Spacing.xl + DS.Spacing.xs, trailing: DS.Spacing.xl)
@@ -125,7 +125,6 @@ enum AgentStatusDesign {
             static let metricValue = SwiftUI.Font(DS.Typography.sectionTitle).monospacedDigit()
             static let metricLabel = SwiftUI.Font(DS.Typography.metricLabel)
             static let laneName = SwiftUI.Font(DS.Typography.metricLabel)
-            static let tag = SwiftUI.Font(DS.Typography.tag)
             static let mono = SwiftUI.Font(DS.Typography.monoValue)
             static let monoSmall = SwiftUI.Font(DS.Typography.monoTimestamp)
         }
@@ -133,22 +132,22 @@ enum AgentStatusDesign {
 
     enum Color {
         /// Selected row tint for the Sessions list and Settings categories.
-        static let selection = NSColor(AdaptiveDesignColor(light: DS.Ink.selection, dark: DS.InkDark.chipFill))
+        static let selection = NSColor(AdaptiveDesignColor(light: DS.Surface.selection, dark: DS.SurfaceDark.selection))
         static let hairline = NSColor.separatorColor
-        static let chipFill = NSColor(DS.Ink.chipFill)
-        static let chipStroke = NSColor(DS.Ink.chipStroke)
-        static let cardFill = NSColor(AdaptiveDesignColor(light: DS.Ink.cardFill, dark: DS.InkDark.cardFill))
-        static let cardStroke = NSColor(AdaptiveDesignColor(light: DS.Ink.hairline, dark: DS.InkDark.archiveFill))
-        static let elbow = NSColor(DS.Ink.elbow)
-        static let destructiveText = NSColor(DS.Ink.destructiveText)
-        static let zebra = NSColor(DS.Ink.zebra)
+        static let chipFill = NSColor(DS.Surface.chipFill)
+        static let chipStroke = NSColor(DS.Surface.chipRing)
+        static let cardFill = NSColor(AdaptiveDesignColor(light: DS.Surface.cardGlass, dark: DS.SurfaceDark.card))
+        static let cardStroke = NSColor(AdaptiveDesignColor(light: DS.Surface.hairline, dark: DS.SurfaceDark.hairline))
+        static let elbow = NSColor(DS.Surface.connector)
+        static let destructiveText = NSColor(DS.Ink.destructive)
+        static let zebra = NSColor(DS.Surface.zebra)
         static let inkPrimary = NSColor(DS.Ink.primary)
         static let inkSecondary = NSColor(DS.Ink.secondary)
         static let inkTertiary = NSColor(DS.Ink.tertiary)
         static let inkQuaternary = NSColor(DS.Ink.quaternary)
         static let childTitle = NSColor(DS.Ink.childTitle)
         static let countBadge = NSColor(DS.Ink.countBadge)
-        static let activityHairline = NSColor(DS.Ink.separator)
+        static let activityHairline = NSColor(DS.Surface.separator)
         static let chevron = NSColor(DS.Ink.chevron)
         static let connected = NSColor(DS.Semantic.connected)
 
@@ -162,9 +161,9 @@ enum AgentStatusDesign {
             static let inkPrimary = SwiftUI.Color(DS.Ink.primary)
             static let inkTertiary = SwiftUI.Color(DS.Ink.tertiary)
             static let inkQuaternary = SwiftUI.Color(DS.Ink.quaternary)
-            static let activityHairline = SwiftUI.Color(DS.Ink.separator)
+            static let activityHairline = SwiftUI.Color(DS.Surface.separator)
             static let chevron = SwiftUI.Color(DS.Ink.chevron)
-            static let destructiveText = SwiftUI.Color(DS.Ink.destructiveText)
+            static let destructiveText = SwiftUI.Color(DS.Ink.destructive)
             static let accent = SwiftUI.Color(DS.Ink.accent)
         }
     }

@@ -21,9 +21,9 @@ extension UIColor {
 extension UIFont {
     static func design(_ style: DesignTextStyle) -> UIFont {
         let weight: UIFont.Weight = switch style.weight {
+        case .regular: .regular
         case .medium: .medium
         case .semibold: .semibold
-        case .bold: .bold
         }
         switch style.family {
         case .sans:
