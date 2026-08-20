@@ -79,7 +79,7 @@ public extension DesignSystem {
         public static let secondary = DesignColor(white: 1, alpha: 0.58)
         /// 三级 — metric labels, counts (White 50 %).
         public static let tertiary = DesignColor(white: 1, alpha: 0.50)
-        /// 四级 — timestamps, L1 tag text (White 46 %).
+        /// 四级 — timestamps (White 46 %).
         public static let quaternary = DesignColor(white: 1, alpha: 0.46)
         /// 强调 — icons, selection, the Running dot and text (Blue D500).
         public static let accent = Palette.blueDark.d500

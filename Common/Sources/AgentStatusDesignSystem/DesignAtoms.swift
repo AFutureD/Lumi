@@ -9,7 +9,8 @@ import Foundation
 
 /// Tag colours: fill / text / `.5px` inset ring. The tier is decided by
 /// whether a human must act, never by the category:
-/// - **L1 无饱和** — no fill, grey text, neutral ring.
+/// - **L1 无饱和底** — no fill, neutral ring; text still carries the hue
+///   (same value as the L2 tint text) — neutral tags stay grey.
 /// - **L2 淡纯色** — hue 600 at 14–26 %, hue 700 text (light) or D400 / D500 (dark), same-hue ring.
 /// - **L3 满饱和实色** — solid hue, white text, deep same-hue ring at 38 %.
 public struct DesignTagStyle: Hashable, Sendable {
@@ -29,9 +30,9 @@ public extension DesignHue {
     func tagStyle(_ tier: TimelineAttentionLevel, appearance: DesignAppearance) -> DesignTagStyle {
         switch (tier, appearance) {
         case (.l1, .light):
-            return DesignTagStyle(fill: .clear, text: DesignSystem.Ink.quaternary, ring: DesignColor(white: 0, alpha: 0.16))
+            return DesignTagStyle(fill: .clear, text: l1TextLight, ring: DesignColor(white: 0, alpha: 0.16))
         case (.l1, .dark):
-            return DesignTagStyle(fill: .clear, text: DesignSystem.InkDark.quaternary, ring: DesignColor(white: 1, alpha: 0.28))
+            return DesignTagStyle(fill: .clear, text: l1TextDark, ring: DesignColor(white: 1, alpha: 0.20))
         case (.l2, .light):
             return lightTint
         case (.l2, .dark):
@@ -43,9 +44,22 @@ public extension DesignHue {
         }
     }
 
+    /// L1 text: no fill, but the text still carries the hue — same value as
+    /// the L2 tint text. Neutral keeps the dedicated grey.
+    var l1TextLight: DesignColor {
+        self == .neutral ? DesignSystem.Ink.quaternary : lightTint.text
+    }
+
+    /// L1 dark text (White 38 %). Neutral is a dedicated value, distinct
+    /// from `InkDark.quaternary` (White 46 %, used for timestamps).
+    var l1TextDark: DesignColor {
+        self == .neutral ? DesignColor(white: 1, alpha: 0.38) : darkTint.text
+    }
+
     /// L2 on light: hue 600 at 14 % (blue, red, purple) / 16 % (green, yellow,
-    /// orange); text hue 700 (yellow takes a darker `#6E5417` for contrast);
-    /// ring hue 600 at 24–32 %. Neutral: `rgba(120,120,128,.12)` + Neutral 500.
+    /// orange); text hue 700 (yellow takes a darker `#8A6A00` for contrast —
+    /// pure yellow, not a red-tinted brown); ring hue 600 at 24–32 %.
+    /// Neutral: `rgba(120,120,128,.12)` + Neutral 500.
     var lightTint: DesignTagStyle {
         switch self {
         case .neutral:
@@ -57,7 +71,7 @@ public extension DesignHue {
         case .red:
             return DesignTagStyle(fill: base.opacity(0.14), text: ramp.s700, ring: base.opacity(0.24))
         case .yellow:
-            return DesignTagStyle(fill: base.opacity(0.16), text: DesignColor(hex: 0x6E5417), ring: base.opacity(0.32))
+            return DesignTagStyle(fill: base.opacity(0.16), text: DesignColor(hex: 0x8A6A00), ring: base.opacity(0.32))
         case .purple:
             return DesignTagStyle(fill: base.opacity(0.14), text: ramp.s700, ring: base.opacity(0.24))
         case .orange:
@@ -158,12 +172,14 @@ public extension DesignHue {
 // MARK: - Timeline tags → hue + tier
 
 public extension TimelineTag {
-    /// Hue of the tag (`4.3 消息类别`): Neutral for L1, Yellow TOOL · RESULT,
-    /// Purple PLAN, Orange SUBAGENT, Blue ASSIST (L2) · TURN END (L3),
-    /// Green USER, Red FAILED · ABORTED.
+    /// Hue of the tag (`4.3 消息类别`): Neutral SESSION · COMPACT · CONTEXT ·
+    /// CONTEXT ×N (L1); Blue REASONING (L1) · ASSISTANT (L2) · TURN END (L3);
+    /// Yellow TOOL (L1) · RESULT (L2); Purple PLAN (L2); Orange SUBAGENT (L2);
+    /// Green USER (L3); Red FAILED · ABORTED (L3).
     var hue: DesignHue {
         switch self {
-        case .session, .compact, .contextGroup, .context, .reasoning: .neutral
+        case .session, .compact, .contextGroup, .context: .neutral
+        case .reasoning: .blue
         case .tool, .result: .yellow
         case .plan: .purple
         case .subagent: .orange
@@ -188,9 +204,12 @@ public extension TimelineTag {
         }
     }
 
-    /// Full-saturation category colour (L3 base) for toasts and pair highlights.
+    /// Full-saturation category colour (hue base) for toasts and pair
+    /// highlights. Always the hue's own colour, not gated by tier — TOOL (L1)
+    /// and RESULT (L2) share a hue and must still highlight in the same
+    /// colour when their `toolUseID` pairs them.
     var categoryColor: DesignColor {
-        level == .l1 ? DesignSystem.Palette.neutralMarker : hue.base
+        hue.base
     }
 
     /// Narrow-chip label for the Notch's 60pt tags (`ASSIST`, `SUBAG`, `REASON`).

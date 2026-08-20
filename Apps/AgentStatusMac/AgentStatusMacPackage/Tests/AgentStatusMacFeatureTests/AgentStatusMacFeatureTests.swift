@@ -267,7 +267,7 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     let before = nookSession([nookRow("u1", .user)])
     let after = nookSession([
         nookRow("u1", .user),
-        nookRow("t1", .tool),          // L2: never a notch event
+        nookRow("t1", .tool),          // L1: never a notch event
         nookRow("r1", .reasoning),     // L1: never a notch event
         nookRow("e1", .turnEnd),
         nookRow("f1", .failed),
@@ -604,7 +604,7 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     #expect([TimelineTag.tool, .result, .failed].map(\.lane) == [.exec, .exec, .exec])
     #expect([TimelineTag.reasoning, .assistant, .plan, .subagent, .turnEnd].map(\.lane) == [.model, .model, .model, .model, .model])
     #expect([TimelineTag.session, .compact].map(\.lane) == [nil, nil])
-    #expect(TimelineTag.user.level == .l3 && TimelineTag.tool.level == .l2 && TimelineTag.reasoning.level == .l1)
+    #expect(TimelineTag.user.level == .l3 && TimelineTag.tool.level == .l1 && TimelineTag.reasoning.level == .l1)
     #expect(TimelineTag.user.tagStyle(.light).fill != .clear)
     #expect(TimelineTag.session.tagStyle(.light).fill == .clear)
     // Every tier carries a `.5px` ring, the Notch's dark variant included.

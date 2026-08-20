@@ -30,8 +30,10 @@ private func item(
     #expect(rows[0].tag == .tool)
     #expect(rows[0].status == .started)
     #expect(rows[0].lane == .exec)
+    #expect(rows[0].level == .l1)
     #expect(rows[1].tag == .result)
     #expect(rows[1].status == .succeeded)
+    #expect(rows[1].level == .l2)
     #expect(rows[0].toolUseID == "tu1" && rows[1].toolUseID == "tu1")
     #expect(rows[1].text.contains("7.1s"))
 }

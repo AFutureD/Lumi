@@ -26,7 +26,7 @@ public struct DesignStatusPillStyle: Hashable, Sendable {
 public extension DesignHue {
     /// `3.1 状态药丸` light / dark tables.
     /// Light: the hue's L2 tint (hue 200 / hue 600 at 14–16 %), ring hue 600 at
-    /// 24–32 %, dot hue 600, text hue 700 (yellow `#6E5417`). Dark: D500 at
+    /// 24–32 %, dot hue 600, text hue 700 (yellow `#8A6A00`). Dark: D500 at
     /// `.18`, ring D500 at `.32`, dot D500, text D400 (yellow / purple / orange
     /// one step lighter than their tint text). Neutral: chip fill + Neutral 500
     /// / white `.12` + `.78`.

@@ -40,8 +40,8 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
     case contextGroup   // "CONTEXT ×N", session-scope context (merged), User lane
     case context        // turn-scope context, User lane
     case reasoning
-    // L2 — turn process (medium attention)
     case tool
+    // L2 — turn process (medium attention)
     case result
     case assistant
     case plan
@@ -54,8 +54,8 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
 
     public var level: TimelineAttentionLevel {
         switch self {
-        case .session, .compact, .contextGroup, .context, .reasoning: .l1
-        case .tool, .result, .assistant, .plan, .subagent: .l2
+        case .session, .compact, .contextGroup, .context, .reasoning, .tool: .l1
+        case .result, .assistant, .plan, .subagent: .l2
         case .user, .turnEnd, .failed, .aborted: .l3
         }
     }

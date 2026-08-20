@@ -84,7 +84,8 @@ typealias DS = DesignSystem
         switch tag.level {
         case .l1:
             #expect(style.fill == .clear)
-            #expect(style.text == DS.Ink.quaternary)
+            // Neutral L1 tags stay grey; every other hue's L1 text matches its L2 tint text.
+            #expect(style.text == (tag.hue == .neutral ? DS.Ink.quaternary : tag.hue.lightTint.text))
         case .l2:
             #expect(style.fill.alpha > 0 && style.fill.alpha < 1)
             #expect(style.text == tag.hue.ramp.s700 || tag.hue == .yellow)
@@ -102,8 +103,8 @@ typealias DS = DesignSystem
     #expect(TimelineTag.failed.tagStyle(.dark).fill == DesignColor(hex: 0xEE4038))
     #expect(TimelineTag.assistant.tagStyle(.dark).text == DesignColor(hex: 0x9DC7FF))
     #expect(TimelineTag.plan.tagStyle(.dark).text == DesignColor(hex: 0xC9AEFB))
-    #expect(TimelineTag.session.tagStyle(.dark).ring.alpha == 0.28)
-    #expect(TimelineTag.session.tagStyle(.dark).text.alpha == 0.46)
+    #expect(TimelineTag.session.tagStyle(.dark).ring.alpha == 0.20)
+    #expect(TimelineTag.session.tagStyle(.dark).text.alpha == 0.38)
 }
 
 @Test func tagHuesFollowTheCategoryTable() {
@@ -111,10 +112,21 @@ typealias DS = DesignSystem
     #expect(TimelineTag.plan.hue == .purple && TimelineTag.subagent.hue == .orange)
     #expect(TimelineTag.assistant.hue == .blue && TimelineTag.turnEnd.hue == .blue)
     #expect(TimelineTag.user.hue == .green && TimelineTag.failed.hue == .red)
+    #expect(TimelineTag.context.hue == .neutral && TimelineTag.contextGroup.hue == .neutral)
+    #expect(TimelineTag.reasoning.hue == .blue)
+    // REASONING / TOOL are L1 but keep their hue — same text as the L2 tint. CONTEXT stays neutral grey.
+    #expect(TimelineTag.tool.level == .l1)
+    #expect(TimelineTag.context.tagStyle(.light).text == DS.Ink.quaternary)
+    #expect(TimelineTag.reasoning.tagStyle(.light).text == DesignColor(hex: 0x0069D7))
+    #expect(TimelineTag.tool.tagStyle(.light).text == DesignColor(hex: 0x8A6A00))
     #expect(TimelineTag.reasoning.laneCellColor == DS.Palette.neutralMarker)
     #expect(TimelineTag.assistant.laneCellColor == DS.Palette.blue.s200)
     #expect(TimelineTag.user.laneCellColor == DS.Palette.green.s600)
     #expect(TimelineTag.assistant.shortLabel == "ASSIST" && TimelineTag.user.shortLabel == "USER")
+    // TOOL (L1) and RESULT (L2) share a hue and must share a pair-highlight colour
+    // despite the tier split, or their toolUseID-linked rows stop looking paired.
+    #expect(TimelineTag.tool.categoryColor == TimelineTag.result.categoryColor)
+    #expect(TimelineTag.tool.categoryColor == DS.Palette.yellow.s600)
 }
 
 // MARK: L2 · status dot
