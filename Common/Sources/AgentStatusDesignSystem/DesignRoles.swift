@@ -121,16 +121,20 @@ public extension DesignSystem {
         public static let accentFill = Palette.white
         /// 次级按钮底 — secondary buttons, archive key (White 16 %).
         public static let secondaryButton = DesignColor(white: 1, alpha: 0.16)
-        /// 分隔线 1px — row separators, footer top edge (White 14 %).
-        public static let separator = DesignColor(white: 1, alpha: 0.14)
+        /// 分隔线 1px — row separators, footer top edge (White 8 %; the mock's
+        /// 12 % reads too bright over the translucent backdrop).
+        public static let separator = DesignColor(white: 1, alpha: 0.08)
         /// 描边 .5px — card outline, secondary-button ring (White 18 %).
         public static let hairline = DesignColor(white: 1, alpha: 0.18)
 
         // Notch list (`Agent Status Notch - 完整设计` Screen 2) extras.
 
-        /// Agent tag fill — deliberately opaque so the tag reads identically
-        /// on the running card (`listCard`) and on pure black.
-        public static let agentTag = DesignColor(rgb: 40, 40, 40)
+        /// Agent tag fill — translucent white, not the mock's opaque
+        /// `rgb(40,40,40)`: the panel backdrop is only pure black in the
+        /// Solid chrome style, and over the frosted / glass materials an
+        /// opaque near-black fill disappears. White alpha composites above
+        /// whatever backdrop the user picked.
+        public static let agentTag = DesignColor(white: 1, alpha: 0.14)
         /// Running-with-subagents card fill (White 7 %).
         public static let listCard = DesignColor(white: 1, alpha: 0.07)
         /// Subagent pill fill (White 13 %).

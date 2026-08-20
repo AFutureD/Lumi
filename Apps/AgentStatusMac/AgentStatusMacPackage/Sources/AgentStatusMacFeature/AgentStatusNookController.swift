@@ -446,8 +446,8 @@ private struct AgentStatusNookHomeView: View {
 
 // MARK: - 2 Session list
 
-/// `Codex` / `Claude` tag: 15 tall, `0 5`, r4, **opaque** `rgb(40,40,40)`
-/// fill so it reads identically on the running card and on pure black,
+/// `Codex` / `Claude` tag: 15 tall, `0 5`, r4, translucent white fill
+/// (`SurfaceDark.agentTag`) so it reads over any chrome backdrop,
 /// 9 / Medium `.52` text. The same on every row — a finished turn only
 /// steps down the title and the dot, never the tag.
 private struct AgentStatusNookAgentChip: View {

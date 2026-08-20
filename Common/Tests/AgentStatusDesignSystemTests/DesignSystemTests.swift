@@ -33,8 +33,10 @@ typealias DS = DesignSystem
     #expect(DS.SurfaceDark.control.alpha == 0.14)
     #expect(DS.SurfaceDark.secondaryButton.alpha == 0.16)
     #expect(DS.SurfaceDark.panel == .black)
-    // Notch list extras: the agent tag is deliberately opaque.
-    #expect(DS.SurfaceDark.agentTag == DesignColor(rgb: 40, 40, 40))
+    // Notch list extras: the agent tag is translucent so it reads over any
+    // chrome backdrop, not just solid black.
+    #expect(DS.SurfaceDark.agentTag.alpha == 0.14)
+    #expect(DS.SurfaceDark.separator.alpha == 0.08)
     #expect(DS.SurfaceDark.listCard.alpha == 0.07)
     #expect(DS.SurfaceDark.subagentPill.alpha == 0.13)
     #expect(DS.InkDark.agentTagText.alpha == 0.52)
