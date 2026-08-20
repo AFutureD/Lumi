@@ -18,7 +18,7 @@ flowchart LR
 
 ## Session 状态与时间线
 
-- **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标。
+- **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标，以及两个由用户操作产生的标记——已查看（清除绿色待查看，[MAC-R-019](modules/mac-session-view.md#mac-r-019-打开-session-即视为已查看)）和 Notch 归档（[MAC-R-014](modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)）。
 - **创建来源**：启用 Agent Status 后新建的 Codex Session。
 - **更新来源**：Codex Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。用户在 CLI 里主动中止（Esc）Claude 后，即使 Claude 不再上报任何事件，Session 也会在数秒内变为中断（红色），中止前最后设置的标题一并生效。
 - **主要消费者**：Mac 主窗口、Notch，以及在线的已配对 iPhone。
@@ -34,7 +34,7 @@ flowchart LR
 4. Mac 把当前结果按目标 iPhone 加密，经 Relay 转发。
 5. iPhone 更新对应 Mac 的同步副本和界面。
 
-外部 Session 内容只在三种时机同步：App 启动、用户手动刷新、Agent 事件。删除和清空会立即同步操作结果；系统不会周期轮询。规则见 [MAC-R-009](modules/mac-session-view.md#mac-r-009-外部内容只有三种同步入口)。
+外部 Session 内容只在三种时机同步：App 启动、用户手动刷新、Agent 事件。删除、清空、标记已查看和 Notch 归档会立即同步操作结果；手动刷新的重算保留这两个人为标记；系统不会周期轮询。规则见 [MAC-R-009](modules/mac-session-view.md#mac-r-009-外部内容只有三种同步入口)。
 
 ### 删除
 

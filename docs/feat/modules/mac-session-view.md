@@ -25,11 +25,21 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 
 ### Notch：活动摘要
 
-Notch 紧凑时显示全部符合展示条件的 Session 数量和最近一个 Session 的状态色；展开后列出其中最近更新的最多四个，帮助用户快速判断各 Session 正在做什么。Notch 顶部的设置按钮打开主 App 的 Notch 设置，不在 Notch 内维护第二套设置页。完整展示规则和可用选项见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态) 和 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
+Notch 紧凑时显示全部符合展示条件的 Session 数量和最近一个 Session 的状态色；展开后列出其中最近更新的最多六个主 Session，帮助用户快速判断各 Session 正在做什么。Notch 顶部的设置按钮打开主 App 的 Notch 设置，不在 Notch 内维护第二套设置页。完整展示规则和可用选项见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态) 和 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
 
 ### Session 状态颜色
 
-Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进行中、等待下一轮、等待用户处理、完成和异常状态。Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 的文字转为三级灰），在 subheader 中用带描边的状态药丸（Running 蓝、Waiting for input 绿、Completed 灰、Failed / Aborted 红）；状态变化时颜色 0.2 秒过渡；只有进行中的状态（Running、Waiting for input）带光晕并缓慢呼吸（约 1.6 秒一次），Completed 与 Failed 的点为实心静止。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
+Mac Session 列表、详情、Notch 和 iPhone 用同一套五档状态颜色回答“该先看哪条”：
+
+- **蓝 · Running**：Agent 正在工作（含启动和上下文压缩）。
+- **橙 · Waiting for input**：Turn 停在等待你审批或回答，人不处理就不会继续。
+- **绿 · 待查看**：Turn 已结束，但你还没打开过这条 Session——它就是下一条该看的。
+- **灰 · Completed**：Turn 已结束且你看过了，或 Session 处于空闲。
+- **红 · Failed / Interrupted**：失败或被中断。
+
+在 Mac 列表点击某行，或从 Notch 打开详情，都算“看过”，绿色随即降为灰色并同步到所有端；见 [MAC-R-019](#mac-r-019-打开-session-即视为已查看)。
+
+Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 档的文字转为三级灰），在 subheader 中用同档色系、带描边的状态药丸；状态变化时颜色 0.2 秒过渡。蓝、橙、绿三档的色点带光晕并缓慢呼吸（约 1.6 秒一次）；灰与红的点为实心静止。选中行使用中性灰底，文字颜色不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
 
 ## 首次配置
 
@@ -102,7 +112,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-004 查看不控制 Agent
 
 - 条件：用户选择 Session 或时间线项目。
-- 行为：只改变当前查看对象。
+- 行为：改变当前查看对象；选中一条绿色待查看的 Session 会同时把它标记为已查看（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
 - 结果：Codex Session 不会被批准、终止或修改。
 - 限制或例外：v1 没有远程控制入口。
 
@@ -137,8 +147,8 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-009 外部内容只有三种同步入口
 
 - 条件：App 启动、用户点击刷新图标（Refresh）或收到 Agent 事件。
-- 行为：分别执行首次同步、完整手动同步或增量更新。手动刷新时若有选中的 Session，daemon 先用该 Session 的 transcript / rollout 从头重算它（修正卡住的状态、补齐漏掉的内容），再做完整同步。
-- 结果：界面不依赖周期轮询。
+- 行为：分别执行首次同步、完整手动同步或增量更新。手动刷新时若有选中的 Session，daemon 先用该 Session 的本机对话记录从头重算它（修正卡住的状态、补齐漏掉的内容），再做完整同步。重算保留人为标记：已查看状态（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）和 Notch 归档（[MAC-R-014](#mac-r-014-notch-显示-session-当前状态)）不因刷新重置。
+- 结果：界面不依赖周期轮询；刷新不会让看过的 Session 重新变绿，也不会让归档的 Session 回到 Notch。
 - 限制或例外：删除和清空会立即同步操作结果；连接恢复会重新建立事件通道，但不会引入定时轮询。
 
 ### MAC-R-010 单 Session 删除跨端同步
@@ -165,16 +175,16 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-013 Session 状态颜色跨端一致
 
 - 条件：Mac、Notch 或 iPhone 显示一个 Session 的当前状态。
-- 行为：Starting、Running 和 Compacting 使用蓝色（agent 在工作）；Waiting For Input 使用绿色（需要人处理，包括等待输入和等待审批）；Completed 使用灰色；Failed 和 Interrupted 使用红色。颜色不影响列表排序。
-- 结果：用户在三个界面看到相同的状态颜色语义。
-- 限制或例外：三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观），Notch 使用独立的深色取值并以纯黑实色面板承载（无材质、描边与投影，便于与刘海无缝衔接），iPhone 随系统外观在浅色 / 深色两组值之间切换。Notch 列表里 Turn 已结束的行，标题与状态点一起降为灰色、光晕消失，Agent 标签不变。Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。Mac 列表选中行使用中性灰底、文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
+- 行为：五档映射——Starting、Running、Compacting 使用蓝色（Agent 在工作）；Turn 停在等待审批或回答时使用橙色（人不处理就不会继续）；Turn 已结束但还没被打开过时使用绿色（待查看）；Turn 已结束且已查看，或 Session 空闲时使用灰色；Failed 和 Interrupted 使用红色。命令行回到提示符等待下一条指令的 Session 按“已结束”档显示（绿或灰，状态文字为 Completed），不算等待审批。颜色不影响列表排序。
+- 结果：用户在三个界面看到相同的状态颜色语义；绿色专指“已结束但还没看过”，看过即降灰（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
+- 限制或例外：三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观），Notch 使用独立的深色取值并以纯黑实色面板承载（无材质、描边与投影，便于与刘海无缝衔接），iPhone 随系统外观在浅色 / 深色两组值之间切换。蓝、橙、绿三档的状态点在 Mac 主窗口和 Notch 带光晕呼吸，灰与红为实心；iPhone 的状态标记是实心图标（Failed / Interrupted 显示为感叹号标记），不带呼吸光晕。Mac Inspector Overview 的 Lifecycle 字段显示原始生命周期，停在提示符的 Session 在该字段显示 Waiting For Input 而非 Completed。Notch 列表里 Turn 已结束的行标题降为次级亮度，状态点仍按本档显示（未查看为绿色呼吸、已查看为灰色实心），Agent 标签不变。Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。Mac 列表选中行使用中性灰底、文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
 
 ### MAC-R-014 Notch 显示 Session 当前状态
 
-- 条件：Mac 本地同步数据中存在 Starting、Running、Waiting For Input、Failed 或 Interrupted 的 Session。
-- 行为：紧凑状态统计全部符合条件的 Session；展开后按最近更新时间列出最多六个主 Session；Subagent 只在父 Session 的 Turn 仍在运行时挂在父行下方，Turn 结束后子行消失。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
-- 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么。
-- 限制或例外：Completed 和未知状态不持续留在展开列表；Session 刚进入 Completed 时仍可短暂显示完成卡片。用户在 Notch 归档的 Session 不进入列表和统计，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
+- 条件：Mac 本地同步数据中存在命令行仍开着的 Session——正在启动、工作、压缩上下文、等待审批，或 Turn 已结束停在提示符（待查看与已查看都算）——或以失败 / 中断收尾的 Session。
+- 行为：紧凑状态统计全部符合条件的 Session；展开后按最近更新时间列出最多六个主 Session；Subagent 只在父 Session 正在工作（蓝色档）时挂在父行下方，父级进入其他档后子行消失。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
+- 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么；已结束的 Turn 留在列表里，直到看过降灰、被归档或会话关闭。
+- 限制或例外：会话已关闭（Completed）或状态未知的 Session 不留在展开列表；刚关闭时仍可短暂显示完成卡片。用户在 Notch 归档的 Session 不进入列表和统计，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
 
 ### MAC-R-015 Notch 设置集中在主 App
 
@@ -200,15 +210,22 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ### MAC-R-018 Subagent 使用自己的标题与活动
 
 - 条件：Codex 或 Claude Code 为 Main Session 启动一个 Subagent，Agent Status 收到该 Subagent 的身份和任务活动。
-- 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随 SubagentStart / SubagentStop（结束后为 Completed，不会显示为等待输入）。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
+- 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随子代理的启动与结束（结束后为 Completed，不会显示为等待输入）。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
 - 补录：升级前记录的 Claude Session 没有子行；选中该 Session 点工具栏 Refresh 会从本机对话记录补出它的 Subagent。
 - 结果：用户在父子层级中能按任务辨认 Subagent，打开详情时只看到该 Subagent 实际开始工作后的活动。
 - 限制或例外：缺少父子关系的旧格式或孤立 Subagent 仍保留在顶层；其可用身份信息不足时显示通用 Subagent 名称。
 
+### MAC-R-019 打开 Session 即视为已查看
+
+- 条件：一条 Session 的 Turn 已结束且还没被打开过（状态为绿色待查看）。
+- 行为：在 Mac 列表点击该行（重复点击已选中的行同样生效），或在 Notch 打开它的详情，都把它标记为已查看；Notch 详情开着期间新结束的 Turn 也立即视为已查看。标记写入 daemon 和 Mac 本地副本，并同步到已连接 iPhone。
+- 结果：绿色降为灰色，三个界面一致；列表里剩下的绿色就是还没看过的 Session。
+- 限制或例外：在 iPhone 上打开 Session 不清除待查看标记（iPhone 只读展示，等 Mac 侧打开后同步降灰）。该 Session 下一个 Turn 结束时会重新变绿。刷新重算不重置此标记（[MAC-R-009](#mac-r-009-外部内容只有三种同步入口)）。
+
 ## 空状态与故障
 
 - **No Sessions**：daemon 在线，但启用后尚无新 Session，或用户已删除全部记录。
-- **No active Sessions**：Notch 没有 Starting、Running、Waiting For Input、Failed 或 Interrupted 的 Session（或它们都已被归档）；历史仍可在主窗口查看。
+- **No active Sessions**：Notch 没有符合展示条件的 Session（命令行都已关闭，或剩下的都被归档）；历史仍可在主窗口查看。
 - **Daemon unavailable**：保留本地已同步内容供查看；恢复 daemon 后点击刷新图标（Refresh Sessions）。
 - **Hook 未信任**：新活动可能不能即时到达；在 Codex /hooks 完成审核。
 

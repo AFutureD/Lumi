@@ -109,9 +109,9 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道。每�
 ### IOS-R-009 Session 状态颜色与 Mac 一致
 
 - 条件：iPhone 在线显示来自任意已配对 Mac 的 Session。
-- 行为：状态标记遵循 [MAC-R-013 Session 状态颜色跨端一致](./mac-session-view.md#mac-r-013-session-状态颜色跨端一致)。
+- 行为：状态标记遵循五档梯级 [MAC-R-013 Session 状态颜色跨端一致](./mac-session-view.md#mac-r-013-session-状态颜色跨端一致)，包括绿色“已结束但还没看过”档。
 - 结果：切换 Mac 通道或查看同一 Session 的不同客户端时，颜色含义不变。
-- 限制或例外：iPhone 的状态文字与状态标记同色（Completed 转为三级灰），取值来自共享设计系统并随系统浅色 / 深色外观切换。
+- 限制或例外：在 iPhone 上打开 Session 不会把绿色标记为已查看；该标记只在 Mac 侧打开时清除，并同步到 iPhone（[MAC-R-019](./mac-session-view.md#mac-r-019-打开-session-即视为已查看)）。iPhone 的状态文字与状态标记同色（Completed 档转为三级灰），取值来自共享设计系统并随系统浅色 / 深色外观切换。
 
 ## 空状态与故障
 

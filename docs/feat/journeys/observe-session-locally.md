@@ -7,7 +7,7 @@
 ## 用户目标
 
 - 同时运行多个 Codex Session 时，不必逐个切换终端。
-- 快速判断哪个 Session 正在执行、等待输入、完成或出错。
+- 快速判断哪个 Session 正在执行、等着自己审批、已结束但还没看过、看过了，或者出错。
 - 需要时查看消息与执行时间线，但不从 Agent Status 控制 Agent。
 
 ## 前置条件
@@ -31,8 +31,8 @@
    - 规则引用：[MAC-R-011](../modules/mac-session-view.md#mac-r-011-只记录启用后的新-session)、[MAC-R-014](../modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
 4. 在中栏选择目标 Session。
    - 系统反馈：工具栏显示 Session 标题，subheader 显示 Agent、状态药丸和工作目录；右栏 Activity 展示属于当前 Session 的全部记录，粘顶 header 提供可在三泳道与单行之间切换的时间轴，点击方格可跳到对应记录并短暂高亮；右侧 Inspector 显示 Token / Context / Elapsed 指标与 Overview、Model、Usage 字段。Subagent 为执行任务获得的父 Session 历史不会重复出现在其 Activity。
-   - 数据变化：只改变查看对象。
-   - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-017](../modules/mac-session-view.md#mac-r-017-activity-全量显示并支持时间轴定位)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
+   - 数据变化：改变查看对象；这条 Session 若是绿色待查看，会被标记为已查看（绿降灰）并同步到所有端。
+   - 规则引用：[MAC-R-004](../modules/mac-session-view.md#mac-r-004-查看不控制-agent)、[MAC-R-016](../modules/mac-session-view.md#mac-r-016-session-列表与详情按信息层级展示)、[MAC-R-017](../modules/mac-session-view.md#mac-r-017-activity-全量显示并支持时间轴定位)、[MAC-R-018](../modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)、[MAC-R-019](../modules/mac-session-view.md#mac-r-019-打开-session-即视为已查看)。
 5. 继续使用 Codex。
    - 系统反馈：收到 Agent 事件时，列表状态、Inspector 和 Activity 自动更新；Inspector 中的字段值可以选择；停在 Activity 底部时新记录会跟随显示，否则保持当前滚动位置。
    - 数据变化：新活动同步到本地保存内容。
