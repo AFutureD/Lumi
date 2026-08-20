@@ -222,6 +222,13 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 - 结果：绿色降为灰色，三个界面一致；列表里剩下的绿色就是还没看过的 Session。
 - 限制或例外：在 iPhone 上打开 Session 不清除待查看标记（iPhone 只读展示，等 Mac 侧打开后同步降灰）。该 Session 下一个 Turn 结束时会重新变绿。刷新重算不重置此标记（[MAC-R-009](#mac-r-009-外部内容只有三种同步入口)）。
 
+### MAC-R-020 启动时自动更新已安装的 Hook helper
+
+- 条件：Hook 已安装（Codex 或 Claude Code），且 Mac App 启动时自带的 helper 与已安装副本不一致。
+- 行为：启动时自动把 helper 更新为当前版本，并在支持的 Hook 事件有新增时补齐配置；两者都一致时不写任何文件。
+- 结果：升级 App 后 Hook 立即获得新采集能力（如 Claude Subagent 实时子 Session），无需重新点击“Install Hook”。
+- 限制或例外：从未安装过 Hook 时启动不做任何事；配置补齐仍只追加 Agent Status 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。
+
 ## 空状态与故障
 
 - **No Sessions**：daemon 在线，但启用后尚无新 Session，或用户已删除全部记录。

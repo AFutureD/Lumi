@@ -56,6 +56,35 @@ public struct AgentHookConfigInstaller: Sendable {
         try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
     }
 
+    /// Refreshes an existing install after an app update. Hooks execute the
+    /// copied helper, not the bundle's, and a stale copy silently ignores
+    /// newer ingest capabilities while still exiting 0 — so the binary is
+    /// replaced whenever its bytes differ from the bundled one, and the hook
+    /// config is re-merged when the supported events or the helper command
+    /// changed. A launch where nothing is stale writes nothing. No-op when
+    /// the hooks were never installed.
+    public func refreshIfStale(helperSourceURL: URL) throws {
+        guard isInstalled() else { return }
+        let manager = FileManager.default
+        if !manager.contentsEqual(atPath: helperSourceURL.path, andPath: installedHelperURL.path) {
+            try Self.installHelperBinary(from: helperSourceURL, to: installedHelperURL)
+        }
+        let existingData = try? Data(contentsOf: configURL)
+        let merged = try Self.merging(
+            existingData,
+            helperCommand: helperCommand,
+            events: supportedEvents,
+            timeout: timeoutSeconds
+        )
+        if let existingData,
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? NSDictionary,
+           let updated = try? JSONSerialization.jsonObject(with: merged) as? NSDictionary,
+           updated.isEqual(existing) {
+            return
+        }
+        try mergeHooks()
+    }
+
     public static func installHelperBinary(from helperSourceURL: URL, to installedHelperURL: URL) throws {
         guard FileManager.default.isExecutableFile(atPath: helperSourceURL.path) else {
             throw CodexHookInstallerError.helperMissing
@@ -207,6 +236,7 @@ public struct CodexHookInstaller: Sendable {
     public var installedHelperURL: URL { inner.installedHelperURL }
 
     public func install(helperSourceURL: URL) throws { try inner.install(helperSourceURL: helperSourceURL) }
+    public func refreshIfStale(helperSourceURL: URL) throws { try inner.refreshIfStale(helperSourceURL: helperSourceURL) }
     public func isInstalled() -> Bool { inner.isInstalled() }
     public func uninstall() throws { try inner.uninstall() }
 
@@ -261,6 +291,7 @@ public struct ClaudeHookInstaller: Sendable {
     public var installedHelperURL: URL { inner.installedHelperURL }
 
     public func install(helperSourceURL: URL) throws { try inner.install(helperSourceURL: helperSourceURL) }
+    public func refreshIfStale(helperSourceURL: URL) throws { try inner.refreshIfStale(helperSourceURL: helperSourceURL) }
     public func isInstalled() -> Bool { inner.isInstalled() }
     public func uninstall() throws { try inner.uninstall() }
 

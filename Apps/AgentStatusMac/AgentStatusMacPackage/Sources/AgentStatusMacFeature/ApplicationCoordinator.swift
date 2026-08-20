@@ -19,6 +19,7 @@ public final class ApplicationCoordinator: NSObject {
 
     public func start() {
         installMenu()
+        refreshInstalledHooks()
         _ = relayHost
         store.start()
         mainWindow.showWindow(nil)
@@ -31,6 +32,26 @@ public final class ApplicationCoordinator: NSObject {
         store.stop()
         await relayHost.stop()
         await notch.stop()
+    }
+
+    /// Hooks execute the helper copied into Application Support, not the one
+    /// inside the app bundle, so an app update must refresh the copy — a
+    /// stale helper keeps exiting 0 while silently dropping every ingest
+    /// capability added since it was built.
+    private func refreshInstalledHooks() {
+        guard let helper = Bundle.main.url(forResource: "agent-status-helper", withExtension: nil) else { return }
+        Task.detached(priority: .utility) {
+            for refresh in [
+                { try CodexHookInstaller().refreshIfStale(helperSourceURL: helper) },
+                { try ClaudeHookInstaller().refreshIfStale(helperSourceURL: helper) },
+            ] {
+                do {
+                    try refresh()
+                } catch {
+                    NSLog("agent-status hook refresh failed: %@", String(describing: error))
+                }
+            }
+        }
     }
 
     @objc private func showMainWindow() {

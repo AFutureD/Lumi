@@ -54,6 +54,54 @@ import NookApp
     #expect(removedRoot["model"] as? String == "opus")
 }
 
+@Test func hookRefreshReplacesStaleHelperAndSkipsFreshInstall() throws {
+    let manager = FileManager.default
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+    try manager.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? manager.removeItem(at: dir) }
+    let config = dir.appendingPathComponent("settings.json")
+    let installed = dir.appendingPathComponent("bin/agent-status-helper")
+    let bundled = dir.appendingPathComponent("bundled-helper")
+    try Data("new-build".utf8).write(to: bundled)
+    try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundled.path)
+    let installer = AgentHookConfigInstaller(
+        configURL: config,
+        installedHelperURL: installed,
+        supportedEvents: ["Stop"],
+        helperArguments: ["--agent", "claude"]
+    )
+
+    // Never installed: refresh must not create anything.
+    try installer.refreshIfStale(helperSourceURL: bundled)
+    #expect(!manager.fileExists(atPath: config.path))
+    #expect(!manager.fileExists(atPath: installed.path))
+
+    // Stale binary after an app update is replaced.
+    try installer.install(helperSourceURL: bundled)
+    try Data("old-build".utf8).write(to: installed)
+    try installer.refreshIfStale(helperSourceURL: bundled)
+    #expect(try Data(contentsOf: installed) == Data("new-build".utf8))
+
+    // Nothing stale: the config is not rewritten (a rewrite leaves a backup).
+    let backup = config.appendingPathExtension("agent-status-backup")
+    try? manager.removeItem(at: backup)
+    try installer.refreshIfStale(helperSourceURL: bundled)
+    #expect(!manager.fileExists(atPath: backup.path))
+
+    // A newly supported event re-merges the hook config.
+    let widened = AgentHookConfigInstaller(
+        configURL: config,
+        installedHelperURL: installed,
+        supportedEvents: ["Stop", "SubagentStart"],
+        helperArguments: ["--agent", "claude"]
+    )
+    try widened.refreshIfStale(helperSourceURL: bundled)
+    let root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
+    let hooks = try #require(root["hooks"] as? [String: Any])
+    #expect(hooks["SubagentStart"] != nil)
+    #expect(manager.fileExists(atPath: backup.path))
+}
+
 @Test @MainActor
 func nookAppearanceIsPinnedAndAdjustmentDefaultsAreFilled() {
     let original = NookAppearancePreferences(
