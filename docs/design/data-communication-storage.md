@@ -9,7 +9,7 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 
 跨进程和跨设备模型由 `AgentStatusTransport` 唯一声明：
 
-- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力标记、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
+- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力 / 待查看标记（`needsAttention` / `needsReview`）、Notch 归档标记（`hiddenInNotch`：只把 Session 从 Notch 隐藏，Mac / iOS 照常显示；新 prompt 或会话重启时清除）、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
 - `SessionDetail`：一个 Summary、完整或分页 Timeline、下一页游标。
 - `TimelineItem`：稳定 ID、Session ID、可选 Turn ID、时间和 payload。
 - `TimelinePayload`：消息、工具、计划、子 Agent、错误、模型配置、内部上下文、消耗指标和 unknown。
@@ -89,16 +89,17 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 | `ingest` | 提交一个归一化事件 | 短连接请求 |
 | `ingest_batch` | helper 一次提交一批事件（每帧 ≤200 条） | 短连接请求 |
 | `get_rollout_cursor` / `save_rollout_cursor` | helper 读取 / 推进 transcript 游标（游标由 daemon 持有） | 短连接请求 |
-| `snapshot_sessions` | 一次取得全部 SessionDetail 和 health | 短连接请求 |
-| `list_sessions` | 查询 Summary | 短连接请求 |
-| `get_session` | 分页查询一个 Timeline | 短连接请求 |
+| `list_sessions` | 查询全部 Summary（对账索引） | 短连接请求 |
+| `get_session` | 分页查询一个 Session 的 Timeline（全量只按单 Session 传输） | 短连接请求 |
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
-| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / turns / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；返回重建后的 SessionDetail。不走事件流，调用方随后 `snapshot_sessions` 同步 | 短连接请求（15s） |
+| `mark_session_reviewed` | 人打开了 Session：清除 `needsReview` | 短连接请求 |
+| `mark_session_hidden_in_notch` | 人在 Notch 点了 Archive：置 `hiddenInNotch`（仅 Notch 隐藏；新 prompt 或会话重启时由 reducer 清除） | 短连接请求 |
+| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / turns / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；返回重建后的 SessionDetail。不走事件流，调用方把返回的 detail 写入本地缓存并跟一次对账 | 短连接请求（15s） |
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
 | `health` | daemon 状态 | 短连接请求 |
 | `subscribe` | 全部 Session 共用的事件流 | Mac App 持久连接 |
 
-daemon 使用一个 NIO event loop。Session 在协议内多路复用，不为 Session 创建 event loop 或 channel。
+daemon 使用一个 NIO event loop。Session 在协议内多路复用，不为 Session 创建 event loop 或 channel。响应在发送前检查 8 MiB frame 上限：超限时改发 `response_too_large` 失败帧（不重试、提示缩小分页），而不是发出一个客户端注定拒收的帧。
 
 ## 本地同步流程
 
@@ -122,13 +123,13 @@ sequenceDiagram
     end
 ```
 
-Mac Session 内容只有三种外部刷新入口：
+Mac Session 内容只有三种外部刷新入口，全量同步只按单 Session 维度传输（对账）：
 
-1. **启动**：先读 Mac SQLite，再请求 daemon 完整快照。
-2. **手动 Refresh**：请求完整快照并原子替换缓存。
+1. **启动 / 事件流重连**：先读 Mac SQLite，再做一次对账——`health` + `list_sessions` 索引，summary 与本地不一致或本地缺失的 Session 逐个用 `get_session` 分页拉全量并 `replaceSession` 原子替换，索引之外的本地 Session 用 `pruneSessions` 裁掉（不写墓碑）。
+2. **手动 Refresh**：同一段对账；索引一致时不拉取任何 Session。
 3. **Agent 事件**：从持久订阅流收到事件，50ms 合并后增量写入缓存。
 
-删除和清空是用户操作结果同步，不属于额外的内容轮询；完成后 Mac 请求一次权威快照。
+删除和清空先做乐观本地写（本地墓碑 / 清空，UI 立即收敛），再发 IPC，随后一次对账向 daemon 的权威状态收敛——若 daemon 侧删除失败，对账会把 Session 拉回来。诊断类事件（不推进 `updatedAt`）不改变 summary，离线期间的纯诊断漂移对账不追，由下一个推进事件愈合。
 
 ## 远程同步流程
 
@@ -144,28 +145,29 @@ sequenceDiagram
     participant I as iOS Channel
     participant IDB as iOS SQLite
 
-    D-->>M: Snapshot 或 Agent event
+    D-->>M: 对账结果或 Agent event
     M->>MDB: 保存同步副本
     M-->>H: dataRevision / daemon availability 变化
-    H->>H: 100ms 合并发布请求
-    H->>MDB: 读取全部 SessionDetail
+    H->>H: 5s 合并发布请求
+    H->>MDB: 读取全部 SessionDetail 并 diff 出变更 Session
     loop 每个未撤销 iOS 设备
-        H->>H: 增加该设备 sequence 并 E2EE 加密
-        H->>R: 定向 routing frame
+        H->>H: 预留并持久化 sequence 区间，逐帧 E2EE 加密
+        H->>R: 变更 Session 帧（可分片）… 最后一帧 index
         R-->>I: 不透明转发
         I->>I: 校验 sequence 并解密
-        I->>IDB: replaceSnapshot
+        I->>IDB: replaceSession / index 到达后 pruneSessions
         I-->>R: ACK sequence
     end
 ```
 
-远程协议发送完整 `RemoteSessionPayload.snapshot`：
+远程协议同样只按单 Session 传输，一次发布 = 变更 Session 帧 + 收尾 index 帧：
 
-- 一个 payload 包含该 Mac 当前全部 SessionDetail。
-- Mac 为每台 iPhone 使用不同公钥、不同密文和独立 sequence。
-- 一条 Host WSS 发送所有设备的定向 frame。
-- 每个 iOS Mac 通道维护自己的 Device WSS、ACK cursor 和 SQLite。
-- daemon 不可用时，Mac 发送一次 `unavailable` payload；iOS 隐藏旧 Session。
+- `RemoteSessionPayload.session`：一个 Session 的一个分片（压缩后超过预算的 Session 按 timeline 切片，part 0 携带 turns，末片 `nextCursor == nil`）。任何变化（含 flag 翻转）都整 Session 重发，杜绝 summary 与 detail 脱节。
+- `RemoteSessionPayload.index`：本批的提交标记——当前可见 Session id 全集；iOS 收到后裁剪本地缓存,并校验批次完整性。
+- `RemoteSessionPayload.unavailable`：daemon 不可用；iOS 隐藏旧 Session。
+- payload 明文在加密前做 zlib 压缩；Mac 为每台 iPhone 使用不同公钥、不同密文和独立 sequence，sequence 区间在发送前写入 Keychain（空洞合法、复用致命）。
+- 一条 Host WSS 发送所有设备的定向 frame；每个 iOS Mac 通道维护自己的 Device WSS、ACK cursor 和 SQLite。
+- 恢复路径：Relay 不再保留重放缓冲。设备的 `hello`（携带最后 ACK）被原样转发给 Mac，落后于通道 sequence 就触发对该设备的全量重发；iOS 在 index 不完整或看到 sequence 空洞时也会主动发 hello。
 
 ## 一致性规则
 
@@ -184,18 +186,17 @@ sequenceDiagram
 
 ### 分页
 
-- 单页 Timeline 最大 500 项。
-- `snapshot_sessions` 在 daemon 内循环分页，再通过一个 IPC response 返回完整结果。
+- 单页 Timeline 最大 500 项；Mac 对账默认按 200 拉取，收到 `response_too_large` 时降到 25 重试该页。
 - Mac 和 iOS 从本地 SQLite 读取详情时同样循环分页。
-- 单个本地 frame 仍受 8 MiB 上限约束；当前没有分片快照协议。
+- 单个本地 frame 仍受 8 MiB 上限约束；跨进程不再存在"整库一帧"的载荷。
 
 ### 删除
 
-1. daemon 将 Session ID 写入 `ignored_sessions`。
-2. 删除 `sessions`，Timeline / Turn 通过外键级联删除。
+1. Mac 先做乐观本地删除（本地墓碑 + 行删除），UI 立即收敛。
+2. daemon 将 Session ID 写入 `ignored_sessions`，删除 `sessions`，Timeline / Turn 通过外键级联删除。
 3. 之后到达的 Hook 或 rollout 事件被拒绝。
-4. Mac 通过权威快照删除本地副本。
-5. Mac 发布新远程快照，iOS 原子替换对应通道副本。
+4. Mac 随后一次对账确认（daemon 侧失败时 Session 会被拉回）。
+5. Mac 发布的下一个 index 不再包含该 Session，iOS 据此裁剪通道副本。
 
 helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一段删除，但不经过 `delete_session`：daemon 在 `apply` 内删除 + 写墓碑并返回"已应用"，事件经订阅流发布，Mac cache 应用同一事件时执行同样的删除。Mac 端按到达顺序应用事件（有序队列），保证与 daemon 结果一致。
 
@@ -206,32 +207,29 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 - Mac UI 不直接查询 daemon；它观察 `MacSessionStore`，详情从本地 SQLite 延迟读取。
 - Notch 只读取 Mac 已同步缓存，最多加载四个可展示 Session 的详情。
 - Relay 发布也读取 Mac 缓存，不额外触发 daemon snapshot。
-- `dataRevision` 在任意 Session 或 Timeline 数据成功持久化后增加；完整快照替换会比较全部 SessionDetail，确保未选中 Session 的诊断变化也能触发 Relay。仅健康状态通知不增加，避免无数据变化时发布。
-- iOS 可以预读本地 SQLite，但状态门禁要求“WSS 已连接 + Host 在线 + 已收到当前快照”才暴露 Session 给 UI。
+- `dataRevision` 在任意 Session 或 Timeline 数据成功持久化后增加；Relay 发布端按 Session 逐个比较 detail，确保未选中 Session 的诊断变化也能触发发布。仅健康状态通知不增加，避免无数据变化时发布。
+- iOS 可以预读本地 SQLite，但状态门禁要求“WSS 已连接 + Host 在线 + 同步完整（index 已到且其中每个 Session 都已收全）”才暴露 Session 给 UI。
 
 ## 故障与恢复
 
 | 故障 | 当前行为 | 恢复 |
 | --- | --- | --- |
 | helper 找不到 daemon | 1 秒内失败、stderr、非零退出 | daemon 恢复后等待下一 Hook；rollout watcher 补充持久事件 |
-| Mac 订阅断开 | health 置空，2 秒后重连 | 手动 Refresh 或重连后的事件/快照 |
-| Mac daemon 不可用 | 保留 Mac SQLite 供本地查看，远程发送 unavailable | daemon 恢复后重新发布完整快照 |
-| iOS WSS 断开 | 隐藏旧 Session，2 秒后重连 | hello 携带最后 ACK；优先短暂重放，随后等待当前快照 |
-| Relay 对象重启 | 授权/序号元数据保留，内存重放丢失 | Mac 重连后重新发布当前快照 |
+| Mac 订阅断开 | health 置空，2 秒后重连 | 重连成功即触发一次对账，补上断线期间的缺口 |
+| Mac daemon 不可用 | 保留 Mac SQLite 供本地查看，远程发送 unavailable | daemon 恢复后重新对账并重新发布 |
+| iOS WSS 断开 | 隐藏旧 Session，2 秒后重连 | hello 携带最后 ACK，转发给 Mac 触发该设备全量重发 |
+| Relay 对象重启 | 授权/序号元数据保留 | 设备 hello 触发 Mac 全量重发 |
 | SQLite 写失败 | UI/控制器记录可见错误，不把内存状态当作持久成功 | 修复磁盘/权限后重新同步 |
 
 ## 当前容量边界
 
-- 本地 frame：8 MiB。
+- 本地 frame：8 MiB；daemon 发送侧超限改发 `response_too_large`，客户端降低分页重试。
 - Relay HTTP body：64 KiB。
-- Relay WebSocket 外层 JSON message：2 MiB；密文经过 Base64 后，明文快照安全预算约 1.5 MiB且还需扣除路由头、nonce 与认证标签。
+- Relay WebSocket 外层 JSON message：2 MiB。远程载荷按单 Session 发送、明文 zlib 压缩、压缩后超过 600 KB 再按 timeline 切片，单个 sealed frame 保持在 ~1 MiB 以下。
 - Session list 请求上限：10,000。
-- Timeline 单页上限：500。
-- Relay 短暂重放：60 秒、约 64 帧、仅内存。
+- Timeline 单页上限：500（IPC）；Mac 对账默认 200。
 - 远程 frame 当前为 JSON text，`Data` 字段会以 Base64 表达。
-- reasoning、世界状态和压缩历史可能显著增加 Timeline 与完整快照体积；诊断数据按类别只保留最新记录，但达到现有 frame 上限时请求仍会失败，当前没有分片或压缩。
-
-远程明文快照接近约 1.5 MiB 时就需要引入分片、压缩或增量同步；当前没有精确预检或自动降级。
+- 超过 1.5 MB（压缩后）的单条 timeline item 只会从 Relay 副本中省略；Mac 与 daemon 不受影响。
 
 ## 相关文档
 

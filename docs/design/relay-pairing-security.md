@@ -134,16 +134,16 @@ Relay 不持久化 nonce、ciphertext、Session、Timeline 或用户消息。
 - iOS 解密并保存成功后发送 ACK，并把 cursor 保存到 Keychain。
 - 重连时 iOS 发送 `hello(acknowledgedSequence)`。
 - Relay 只重放 60 秒内仍在对象内存的较新密文帧。
-- Mac 重连后会清除上次发送比较值并发布当前完整快照。
+- Mac 重连后会清除逐 Session 的发送比较值并对所有设备全量重发。
 
-短暂重放不是业务历史：对象重启、内存回收或超过窗口时，iOS 必须等待 Mac 的当前快照。
+Relay 不保留重放缓冲：设备 hello 被原样转发给 Mac，落后于通道 sequence 即触发该设备的全量重发。
 
 ## 在线状态
 
 - Host WSS 建立：Relay 向所有 Device sockets 广播 `presence: online`。
 - 最后一个 Host WSS 关闭：广播 `presence: offline`。
 - Device WSS 建立：立即收到当前 Host 是否在线。
-- iOS 收到 offline 后清除“当前快照有效”标记，不展示本地旧 Session。
+- iOS 收到 offline 后清除同步完整标记，不展示本地旧 Session。
 
 daemon 仍在线但 Mac App 退出时，Host WSS 同样关闭；当前架构会让 iOS 显示不可用。
 
@@ -177,7 +177,7 @@ iPhone 本地“Remove Mac”只删除自己的 Keychain 通道、SQLite 内容�
 | 凭据泄露 | Relay 只存 hash；端点存 Keychain | 配对 QR 在有效期内需要像 bearer credential 一样保护 |
 | 重放 | per-device sequence + ACK | 短暂重放仅内存，不保证跨对象重启 |
 | 设备被撤销 | 持久 revoked_at + 主动关闭 socket | iPhone 需重新配对才能恢复 |
-| 大快照 | 2 MiB message 上限 | 当前没有分片、压缩或增量降级 |
+| 大 Session | 2 MiB message 上限 | 载荷按单 Session 发送、明文 zlib 压缩、超预算按 timeline 分片；超大单条 item 只在 Relay 副本中省略 |
 | 路由头篡改 | Host/Device/sequence 规则校验 | sequence/kind 当前没有作为 AEAD AAD |
 | 手机后台更新 | 当前无 APNs | App 未运行时没有通用唤醒通知 |
 

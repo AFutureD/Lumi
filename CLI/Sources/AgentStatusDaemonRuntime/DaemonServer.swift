@@ -116,11 +116,28 @@ private final class ChannelResponseWriter: @unchecked Sendable {
 
     func send(_ envelope: TransportEnvelope<IPCResponse>) {
         do {
-            let body = try TransportCoding.makeEncoder().encode(envelope)
+            var body = try TransportCoding.makeEncoder().encode(envelope)
+            if body.count > LengthPrefixedFrameCodec.maximumFrameLength {
+                // The client-side decoder rejects oversized frames and drops
+                // the connection; a clean failure keeps the channel usable and
+                // tells the caller to page down.
+                body = try TransportCoding.makeEncoder().encode(TransportEnvelope(
+                    requestID: envelope.requestID,
+                    payload: IPCResponse(
+                        status: .error,
+                        failure: IPCFailure(
+                            code: "response_too_large",
+                            message: "The response exceeds the IPC frame limit; request a smaller page.",
+                            retryable: false
+                        )
+                    )
+                ))
+            }
+            let frame = body
             channel.eventLoop.execute { [channel] in
-                var buffer = channel.allocator.buffer(capacity: body.count + 4)
-                buffer.writeInteger(UInt32(body.count), endianness: .big)
-                buffer.writeBytes(body)
+                var buffer = channel.allocator.buffer(capacity: frame.count + 4)
+                buffer.writeInteger(UInt32(frame.count), endianness: .big)
+                buffer.writeBytes(frame)
                 channel.writeAndFlush(buffer, promise: nil)
             }
         } catch {

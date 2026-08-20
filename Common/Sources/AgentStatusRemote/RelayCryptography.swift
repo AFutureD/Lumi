@@ -25,6 +25,10 @@ public struct RelayPreparedPayload: Sendable {
     fileprivate init(plaintext: Data) {
         self.plaintext = plaintext
     }
+
+    /// Compressed size before sealing; ChaChaPoly keeps the length, so the
+    /// wire ciphertext is this plus a 16-byte tag (then Base64).
+    public var byteCount: Int { plaintext.count }
 }
 
 public enum RelayCryptography {
@@ -56,12 +60,15 @@ public enum RelayCryptography {
         )
     }
 
+    /// Encodes and deflates the payload once; `seal` then encrypts the same
+    /// bytes per device. JSON timelines deflate several-fold, which is what
+    /// keeps a single-session frame inside the relay's message limit.
     public static func prepare(
         _ payload: RemoteSessionPayload
     ) throws -> RelayPreparedPayload {
-        RelayPreparedPayload(
-            plaintext: try TransportCoding.makeEncoder().encode(payload)
-        )
+        let encoded = try TransportCoding.makeEncoder().encode(payload)
+        let compressed = try (encoded as NSData).compressed(using: .zlib)
+        return RelayPreparedPayload(plaintext: compressed as Data)
     }
 
     public static func seal(
@@ -120,7 +127,8 @@ public enum RelayCryptography {
             tag: tag
         )
         let plaintext = try ChaChaPoly.open(box, using: key)
-        return try TransportCoding.makeDecoder().decode(RemoteSessionPayload.self, from: plaintext)
+        let inflated = try (plaintext as NSData).decompressed(using: .zlib)
+        return try TransportCoding.makeDecoder().decode(RemoteSessionPayload.self, from: inflated as Data)
     }
 
     private static func symmetricKey(

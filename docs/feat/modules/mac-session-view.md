@@ -56,7 +56,13 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 
 ### 删除单个 Session
 
-选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 会从 daemon、Mac 和已连接 iPhone 中删除。删除不影响 Codex 自身 Session；之后到达的同一 Session 活动也不会让它重新出现在 Agent Status 中。
+选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 立即从列表消失，并从 daemon、Mac 和已连接 iPhone 中删除。删除不影响 Codex 自身 Session；之后到达的同一 Session 活动也不会让它重新出现在 Agent Status 中。
+
+### 从 Notch 归档 Session
+
+在 Notch 展开列表中，把鼠标悬停到一条 Turn 已结束的 Session 行上，行尾的相对时间会原地换成归档按钮，点击后该 Session 立即从 Notch 的列表和统计里消失。归档只影响 Notch：主窗口和已连接 iPhone 照常显示这个 Session，历史也不删除。你在该 Session 里发出新请求（或它重新启动）时，它会自动回到 Notch。
+
+- 规则引用：[MAC-R-014](#mac-r-014-notch-显示-session-当前状态)。
 
 ### 清空全部历史
 
@@ -168,7 +174,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 - 条件：Mac 本地同步数据中存在 Starting、Running、Waiting For Input、Failed 或 Interrupted 的 Session。
 - 行为：紧凑状态统计全部符合条件的 Session；展开后按最近更新时间列出最多六个主 Session；Subagent 只在父 Session 的 Turn 仍在运行时挂在父行下方，Turn 结束后子行消失。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
 - 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么。
-- 限制或例外：Completed 和未知状态不持续留在展开列表；Session 刚进入 Completed 时仍可短暂显示完成卡片。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
+- 限制或例外：Completed 和未知状态不持续留在展开列表；Session 刚进入 Completed 时仍可短暂显示完成卡片。用户在 Notch 归档的 Session 不进入列表和统计，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
 
 ### MAC-R-015 Notch 设置集中在主 App
 
@@ -202,7 +208,7 @@ Mac Session 列表、详情、Notch 和 iPhone 使用相同颜色语义区分进
 ## 空状态与故障
 
 - **No Sessions**：daemon 在线，但启用后尚无新 Session，或用户已删除全部记录。
-- **No active Sessions**：Notch 没有 Starting、Running、Waiting For Input、Failed 或 Interrupted 的 Session；历史仍可在主窗口查看。
+- **No active Sessions**：Notch 没有 Starting、Running、Waiting For Input、Failed 或 Interrupted 的 Session（或它们都已被归档）；历史仍可在主窗口查看。
 - **Daemon unavailable**：保留本地已同步内容供查看；恢复 daemon 后点击刷新图标（Refresh Sessions）。
 - **Hook 未信任**：新活动可能不能即时到达；在 Codex /hooks 完成审核。
 

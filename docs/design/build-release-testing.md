@@ -132,7 +132,7 @@ pnpm exec wrangler deploy
 ### Core/Adapter
 
 - reducer 幂等与乱序不回退。
-- GRDB 保存、删除、tombstone 和 snapshot 原子替换。
+- GRDB 保存、删除、tombstone、单 Session 原子替换（replaceSession）与索引裁剪（pruneSessions）。
 - Hook 与 rollout 解析。
 - 模型配置、reasoning/world state/压缩上下文和 Token/rate-limit 保留。
 - 三端状态颜色语义。
@@ -141,7 +141,7 @@ pnpm exec wrangler deploy
 
 - owner-only Unix socket。
 - daemon 缺失和坏 stdin。
-- 一个 IPC snapshot 返回多个 Session。
+- `list_sessions` 索引 + 分页 `get_session` 重组出与仓库一致的 Session；超限响应变成 `response_too_large` 失败帧。
 - 单事件流多 Session 复用。
 - rollout offset 恢复和首次基线。
 - 单 Session 删除后晚事件不复活。
@@ -157,7 +157,7 @@ pnpm exec wrangler deploy
 
 ### Apps
 
-- Mac Hook merge、Relay 恢复发布和 Notch snapshot/activity 规则。
+- Mac Hook merge、Relay 逐 Session 发布计划（RelayPublishPlan / 分片器）和 Notch snapshot/activity 规则。
 - Xcode UI/runtime 验证三栏布局、Notch、配对和删除。
 - iOS Simulator 验证多 Mac 分组、在线门禁和 Timeline。
 
@@ -178,7 +178,7 @@ pnpm exec wrangler deploy
 2. 干净 Mac 上安装、SMAppService 授权、daemon 更新和卸载。
 3. 真实 Codex `/hooks` 触发的端到端链路。
 4. 物理 iPhone 摄像头配对、前后台和弱网恢复。
-5. 较大 Session 快照、长时间 Relay 连接和 Durable Object 重启测试。
+5. 超大单 Session（分片路径）、长时间 Relay 连接和 Durable Object 重启测试。
 
 APNs 不属于当前发布门槛；它是后续独立能力。
 

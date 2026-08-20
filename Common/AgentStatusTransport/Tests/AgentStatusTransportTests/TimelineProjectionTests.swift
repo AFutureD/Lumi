@@ -144,7 +144,7 @@ private func item(
 
     // Older detail JSON without `turns` still decodes.
     let old = Data("""
-    {"summary":{"id":"s","agent":"codex","title":"t","lifecycle":"running","phase":"idle","startedAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z","lastActivityAt":"2024-01-01T00:00:00Z","needsAttention":false},"timeline":[]}
+    {"summary":{"id":"s","agent":"codex","title":"t","lifecycle":"running","phase":"idle","startedAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z","lastActivityAt":"2024-01-01T00:00:00Z","needsAttention":false,"needsReview":false,"hiddenInNotch":false},"timeline":[]}
     """.utf8)
     let detail = try decoder.decode(SessionDetail.self, from: old)
     #expect(detail.turns.isEmpty)

@@ -210,13 +210,15 @@ public struct SyncCursor: Codable, Hashable, Sendable {
 }
 
 public enum RemotePayloadKind: Hashable, Sendable {
-    case snapshot
+    case index
+    case session
     case unavailable
     case unknown(String)
 
     public var rawValue: String {
         switch self {
-        case .snapshot: "snapshot"
+        case .index: "index"
+        case .session: "session"
         case .unavailable: "unavailable"
         case let .unknown(value): value
         }
@@ -227,7 +229,8 @@ extension RemotePayloadKind: Codable {
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         self = switch value {
-        case "snapshot": .snapshot
+        case "index": .index
+        case "session": .session
         case "unavailable": .unavailable
         default: .unknown(value)
         }
@@ -239,29 +242,44 @@ extension RemotePayloadKind: Codable {
     }
 }
 
-/// The encrypted application payload sent through Relay. Relay only sees the routing frame.
+/// The encrypted application payload sent through Relay. Relay only sees the
+/// routing frame. Full state travels one session at a time:
+/// - `.session` carries one part of one session; `session.nextCursor != nil`
+///   means more parts follow, `part` counts from 0 and part 0 restarts a
+///   transfer (later parts carry empty `turns`).
+/// - `.index` closes a publish batch: the authoritative visible id set the
+///   device prunes its cache to.
+/// - `.unavailable` reports the Mac daemon being down.
 public struct RemoteSessionPayload: Codable, Hashable, Sendable {
     public let kind: RemotePayloadKind
     public let generatedAt: Date
-    public let sessions: [SessionDetail]
+    public let sessionIDs: [SessionID]?
+    public let session: SessionDetail?
+    public let part: Int?
     public let message: String?
 
     public init(
         kind: RemotePayloadKind,
         generatedAt: Date = Date(),
-        sessions: [SessionDetail] = [],
+        sessionIDs: [SessionID]? = nil,
+        session: SessionDetail? = nil,
+        part: Int? = nil,
         message: String? = nil
     ) {
         self.kind = kind
         self.generatedAt = generatedAt
-        self.sessions = sessions
+        self.sessionIDs = sessionIDs
+        self.session = session
+        self.part = part
         self.message = message
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind
         case generatedAt
-        case sessions
+        case sessionIDs
+        case session
+        case part
         case message
     }
 }

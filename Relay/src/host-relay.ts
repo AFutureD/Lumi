@@ -40,18 +40,9 @@ interface PairingOfferRow {
   consumed_at: number | null;
 }
 
-interface BufferedFrame {
-  raw: string;
-  sequence: number;
-  deviceID?: string;
-  storedAt: number;
-}
-
 class RateLimitError extends Error {}
 
 export class HostRelay extends DurableObject<Env> {
-  private replayFrames: BufferedFrame[] = [];
-
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     void this.ctx.blockConcurrencyWhile(() => {
@@ -334,20 +325,6 @@ export class HostRelay extends DurableObject<Env> {
       ? this.ctx.getWebSockets(`device:${frame.deviceID}`)
       : this.deviceSockets();
     for (const target of targets) target.send(raw);
-
-    if (frame.kind === "data" || frame.kind === "attention") {
-      const cutoff = Date.now() - 60_000;
-      this.replayFrames = this.replayFrames
-        .filter((buffered) => buffered.storedAt >= cutoff)
-        .slice(-63);
-      this.replayFrames.push({
-        raw,
-        sequence: frame.sequence,
-        ...(frame.deviceID === undefined ? {} : { deviceID: frame.deviceID }),
-        storedAt: Date.now(),
-      });
-    }
-
   }
 
   private handleDeviceFrame(
@@ -360,17 +337,9 @@ export class HostRelay extends DurableObject<Env> {
       socket.close(1008, "device is read-only");
       return;
     }
-    if (frame.kind === "hello") {
-      const acknowledged = frame.acknowledgedSequence ?? -1;
-      const cutoff = Date.now() - 60_000;
-      for (const buffered of this.replayFrames) {
-        if (buffered.storedAt >= cutoff
-          && buffered.sequence > acknowledged
-          && (buffered.deviceID === undefined || buffered.deviceID === attachment.deviceID)) {
-          socket.send(buffered.raw);
-        }
-      }
-    }
+    // The relay keeps no replay buffer: hello and ack frames are forwarded
+    // to the Mac verbatim, and a hello behind the channel sequence makes the
+    // Mac resend every session followed by a fresh index.
     for (const host of this.hostSockets()) host.send(raw);
   }
 

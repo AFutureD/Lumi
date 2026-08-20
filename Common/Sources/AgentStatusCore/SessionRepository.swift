@@ -8,7 +8,14 @@ public protocol SessionRepository: Sendable {
     func apply(_ event: AgentIngressEvent) async throws -> Bool
     func listSessions(limit: Int) async throws -> [SessionSummary]
     func sessionDetail(id: SessionID, cursor: PaginationCursor?, limit: Int) async throws -> SessionDetail?
-    func replaceSnapshot(_ details: [SessionDetail]) async throws
+    /// Atomically installs one authoritative session: clears its tombstone,
+    /// then replaces summary, turns and timeline wholesale. Never touches
+    /// processed events — client-side event dedupe must survive.
+    func replaceSession(_ detail: SessionDetail) async throws
+    /// Drops local sessions absent from an authoritative index. Writes no
+    /// tombstones: the authoritative side may resurrect any of them later.
+    @discardableResult
+    func pruneSessions(keeping ids: Set<SessionID>) async throws -> Int
     func deleteSession(id: SessionID) async throws -> Bool
     func deleteAllSessions() async throws -> Int
     func rolloutCursor(path: String) async throws -> RolloutCursor?
@@ -23,6 +30,10 @@ public protocol SessionRepository: Sendable {
     func markSessionIgnored(_ sessionID: SessionID) async throws
     /// The human opened the session: clear `SessionSummary.needsReview`.
     func markSessionReviewed(_ sessionID: SessionID) async throws
+    /// The human archived the session from the Notch: set
+    /// `SessionSummary.hiddenInNotch`. Only re-engaging the session (a new
+    /// prompt or a restart) clears it, via `SessionReduction`.
+    func markSessionHiddenInNotch(_ sessionID: SessionID) async throws
     func isRolloutBaselineInitialized() async throws -> Bool
     func markRolloutBaselineInitialized() async throws
 }
@@ -45,6 +56,11 @@ public enum SessionReduction {
         // is the only thing that clears it.
         let endsTurn = if case .turnEnd = event.timelineItem?.payload { true } else { false }
         let needsReview = endsTurn || (current?.needsReview ?? false)
+        // Sticky until the human engages the session again, under the same
+        // predicate that resurrects a deleted one.
+        let hiddenInNotch = event.resurrectsHiddenSession
+            ? false
+            : (current?.hiddenInNotch ?? false)
         // The tiers a human should act on: approval orange, unreviewed green,
         // failure red.
         let needsAttention = switch SessionStatusTone.resolve(
@@ -104,6 +120,7 @@ public enum SessionReduction {
                 : (current?.lastActivityAt ?? event.occurredAt),
             needsAttention: needsAttention,
             needsReview: needsReview,
+            hiddenInNotch: hiddenInNotch,
             lineage: event.lineage ?? current?.lineage,
             firstTurnAt: firstTurnAt
         )
@@ -302,15 +319,25 @@ public actor InMemorySessionRepository: SessionRepository {
         } ?? []
     }
 
-    public func replaceSnapshot(_ details: [SessionDetail]) async throws {
-        // The snapshot source is authoritative; local tombstones must not
-        // swallow events for a session it brought back.
-        ignoredSessionIDs.removeAll()
-        sessions = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0.summary) })
-        timeline = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0.timeline) })
-        turns = Dictionary(uniqueKeysWithValues: details.map { detail in
-            (detail.summary.id, Dictionary(uniqueKeysWithValues: detail.turns.map { ($0.id, $0) }))
-        })
+    public func replaceSession(_ detail: SessionDetail) async throws {
+        let id = detail.summary.id
+        // The authoritative source brought the session back; a local
+        // tombstone must not swallow its future events.
+        ignoredSessionIDs.remove(id)
+        sessions[id] = detail.summary
+        timeline[id] = detail.timeline
+        turns[id] = Dictionary(uniqueKeysWithValues: detail.turns.map { ($0.id, $0) })
+    }
+
+    @discardableResult
+    public func pruneSessions(keeping ids: Set<SessionID>) async throws -> Int {
+        let pruned = sessions.keys.filter { !ids.contains($0) }
+        for id in pruned {
+            sessions.removeValue(forKey: id)
+            timeline.removeValue(forKey: id)
+            turns.removeValue(forKey: id)
+        }
+        return pruned.count
     }
 
     public func deleteAllSessions() async throws -> Int {
@@ -352,24 +379,17 @@ public actor InMemorySessionRepository: SessionRepository {
         sessions[sessionID] = summary.reviewed
     }
 
+    public func markSessionHiddenInNotch(_ sessionID: SessionID) async throws {
+        guard let summary = sessions[sessionID] else { return }
+        sessions[sessionID] = summary.withHiddenInNotch(true)
+    }
+
     public func isRolloutBaselineInitialized() async throws -> Bool {
         rolloutBaselineInitialized
     }
 
     public func markRolloutBaselineInitialized() async throws {
         rolloutBaselineInitialized = true
-    }
-
-    public func sessionDetails(limit: Int = 500) async throws -> [SessionDetail] {
-        var result: [SessionDetail] = []
-        for summary in try await listSessions(limit: limit) {
-            result.append(SessionDetail(
-                summary: summary,
-                turns: sortedTurns(summary.id),
-                timeline: timeline[summary.id, default: []]
-            ))
-        }
-        return result
     }
 
     public func rolloutCursor(path: String) async throws -> RolloutCursor? {

@@ -26,7 +26,7 @@ flowchart TD
 ```
 
 - `MacSessionStore`：daemon 连接、Mac SQLite、Session 选择和观察通知。
-- `RelayHostController`：配对、Host WSS、按设备加密和远程快照发布。
+- `RelayHostController`：配对、Host WSS、按设备加密和逐 Session 的远程发布。
 - `MainWindowController`：AppKit 窗口、toolbar 和三栏导航。
 - `AgentStatusNookController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
 
@@ -48,8 +48,8 @@ Mac 外部 Session 内容只有三个入口：
 
 | 入口 | 行为 |
 | --- | --- |
-| App 启动 | 读缓存、请求 daemon 全量 snapshot、连接事件流 |
-| toolbar Refresh | 手动请求全量 snapshot |
+| App 启动 | 读缓存、与 daemon 做一次按 Session 对账、连接事件流 |
+| toolbar Refresh | 手动触发一次对账（选中 Session 时先 reingest）|
 | Agent event | 50ms 合并后增量应用到 Mac SQLite |
 
 没有定时 Session 轮询。daemon 健康和 Relay 设备列表可以独立刷新，但不能修改 Session 内容。
@@ -60,7 +60,7 @@ Mac 外部 Session 内容只有三个入口：
 - 详情在选择、Summary 或当前选中 Session 的 Timeline 数据变化时重新加载；其他 Session 的诊断变化只推进数据 revision 和 Relay 发布。
 - Timeline 每次从 SQLite 以 500 项分页拼接。
 - Agent event 用 Event ID 字典合并，同一短时间批次只触发一次 reload。
-- snapshot 请求等待正在写入的事件批次完成，避免全量替换与增量写交错。
+- 对账等待正在写入的事件批次完成，避免整 Session 替换与增量写交错。
 - `dataRevision` 只在业务数据实际变化时增长。
 - Relay 和 Notch 都读缓存，不增加 daemon 请求。
 
@@ -108,7 +108,7 @@ iOS 即使已经从 SQLite 载入旧 Session，也只有同时满足以下条件
 
 1. Device WSS 已连接。
 2. Relay 报告 Host 在线。
-3. 当前连接已收到并保存一个 `snapshot`。
+3. 当前连接同步完整：`index` 已到，且其中每个 Session 都已收全。
 
 缺少任一条件，列表显示 `Mac unavailable`，避免把旧缓存误认为实时状态。
 
@@ -143,7 +143,7 @@ UI 控制器不直接跨线程操作 GRDB 或 NIO。阻塞的本地 IPC request 
 ```mermaid
 stateDiagram-v2
     [*] --> Cached: App 启动读取 SQLite
-    Cached --> Current: daemon snapshot 成功
+    Cached --> Current: daemon 对账成功
     Current --> Current: Agent event 增量更新
     Current --> Cached: daemon/订阅断开
     Cached --> Current: 手动刷新或连接恢复

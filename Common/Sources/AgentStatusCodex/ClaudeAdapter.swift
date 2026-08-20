@@ -470,7 +470,21 @@ public struct ClaudeAdapter: AgentAdapter {
                     }
                     let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { continue }
-                    if let kind = Self.injectedKind(trimmed) {
+                    if Self.interruptMarkers.contains(trimmed) {
+                        // The user pressed stop. No Stop hook fires for an
+                        // interrupt; this transcript marker is the only signal
+                        // that the turn is over.
+                        events.append(makeEvent(
+                            lifecycle: .interrupted,
+                            phase: .idle,
+                            turn: turnID.map {
+                                TurnSummary(id: $0, sessionID: sessionID, phase: .idle, startedAt: occurredAt, endedAt: occurredAt, outcome: .aborted)
+                            },
+                            timeline: .turnEnd(TurnEndTimelinePayload(outcome: .aborted, message: trimmed)),
+                            suffix: next(),
+                            itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
+                        ))
+                    } else if let kind = Self.injectedKind(trimmed) {
                         events.append(makeEvent(
                             timeline: .context(ContextTimelinePayload(
                                 scope: .turn,
@@ -695,6 +709,14 @@ public struct ClaudeAdapter: AgentAdapter {
     /// session; folding it in would flip a finished turn back to running.
     /// `tool_use` continues the turn; anything else the API returns ends it.
     static let turnEndingStopReasons: Set<String> = ["end_turn", "stop_sequence", "max_tokens", "refusal"]
+
+    /// Transcript user-text markers Claude Code writes when the user presses
+    /// stop. An interrupt fires no Stop hook, so these are the only turn-end
+    /// signal for an aborted turn.
+    static let interruptMarkers: Set<String> = [
+        "[Request interrupted by user]",
+        "[Request interrupted by user for tool use]",
+    ]
 
     public static func isRealSubagent(_ root: [String: Any]) -> Bool {
         guard let type = root.string("agent_type") else { return false }

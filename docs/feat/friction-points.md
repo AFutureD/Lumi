@@ -67,13 +67,13 @@
 1. 打开“Settings > Daemon”。
 2. 点击“Stop & Uninstall daemon”。
 3. 点击“Install & Start daemon”。
-4. 返回 Sessions，点击刷新图标（Refresh）取得完整快照。
+4. 返回 Sessions，点击刷新图标（Refresh）与 daemon 重新同步。
 
 **完成信号**：Main Session 显示与 Codex 一致的标题；有 parent 的 Subagent 显示为可折叠子项，并标记为 `Codex Subagent`。
 
 ## Delete Session 失败
 
-**用户会看到**：确认删除后 Session 仍保留，并显示连接错误。
+**用户会看到**：确认删除后 Session 立即从列表消失；如果 daemon 侧删除失败，它会在随后的一次同步中回到列表，并显示连接错误。
 
 **恢复步骤**：
 
@@ -81,7 +81,7 @@
 2. 再次选择目标 Session。
 3. 点击删除图标（Delete Session），再在确认框点击“Delete”。
 
-**完成信号**：该 Session 从 Mac 和在线 iPhone 中消失。Codex 自身 Session 不受影响。
+**完成信号**：该 Session 从 Mac 和在线 iPhone 中消失且不再回来。Codex 自身 Session 不受影响。
 
 ## Relay unavailable
 
@@ -119,7 +119,7 @@
 
 1. 在目标 Mac 启动 Agent Status。
 2. 确认 daemon 与 Relay 均已连接。
-3. 保持 App 在线，等待当前快照同步。
+3. 保持 App 在线，等待同步完成。
 
 **完成信号**：该 Mac 显示 Online，并重新出现当前 Session。其他 Mac 通道不受影响。
 

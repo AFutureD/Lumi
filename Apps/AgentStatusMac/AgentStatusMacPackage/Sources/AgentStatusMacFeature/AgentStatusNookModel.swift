@@ -144,11 +144,12 @@ enum AgentStatusNookSnapshot {
 
     static func eligibleSummaries(from summaries: [SessionSummary]) -> [SessionSummary] {
         summaries.filter { summary in
+            guard !summary.hiddenInNotch else { return false }
             switch summary.lifecycle {
             case .starting, .running, .waitingForInput, .compacting, .failed, .interrupted:
-                true
+                return true
             case .completed, .unknown:
-                false
+                return false
             }
         }
     }
@@ -361,8 +362,10 @@ final class AgentStatusNookModel: ObservableObject {
 
     // MARK: - Actions
 
+    /// Archive is Notch-only: the session is hidden here but stays in the
+    /// Mac window and on iOS. A new prompt or a restart brings it back.
     func archive(_ id: SessionID) {
-        store?.deleteSession(id)
+        store?.markSessionHiddenInNotch(id)
         if route == .detail(id) { route = .list }
     }
 

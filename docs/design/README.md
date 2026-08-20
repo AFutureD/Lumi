@@ -47,7 +47,7 @@
 | daemon | 本地后台服务和 Session 权威存储 |
 | helper | Codex Hook 调用的无状态命令行程序 |
 | channel | 一台 Mac 与一台 iPhone 的逻辑授权、密钥和序号域 |
-| snapshot | 一台 Mac 当前全部已保存 Session 的完整同步结果 |
+| index | Relay 一次发布的收尾帧：当前可见 Session id 全集，设备据此裁剪与校验完整性 |
 | Relay | 只负责授权、在线状态和密文路由的 Cloudflare 服务 |
 
 ## 代码入口

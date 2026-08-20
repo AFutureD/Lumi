@@ -60,7 +60,12 @@ final class RelayHostController {
     private var reconnectTask: Task<Void, Never>?
     private var publishTask: Task<Void, Never>?
     private var publishPending = false
-    private var lastSentDetails: [SessionDetail]?
+    /// Per-session copy of what every up-to-date device holds; `nil` forces a
+    /// full resend (host reconnect).
+    private var lastSentDetails: [SessionID: SessionDetail]?
+    /// Devices that missed frames (fresh pairing, or a hello behind our
+    /// sequence): they get every session plus the index on the next publish.
+    private var devicesNeedingFullResend: Set<DeviceID> = []
     private var sentUnavailable = false
     private var lastObservedStoreRevision: UInt64 = 0
     private var lastObservedDaemonAvailable = false
@@ -189,7 +194,10 @@ final class RelayHostController {
             devices = refreshed
             let activeIDs = Set(refreshed.filter { $0.revokedAt == nil }.map(\.id))
             if activeIDs != previousActiveIDs {
-                lastSentDetails = nil
+                // Only the newly paired devices need history; devices that
+                // were already current keep receiving increments.
+                devicesNeedingFullResend.formUnion(activeIDs.subtracting(previousActiveIDs))
+                devicesNeedingFullResend.formIntersection(activeIDs)
                 sentUnavailable = false
                 if let store { schedulePublish(from: store) }
             }
@@ -236,7 +244,11 @@ final class RelayHostController {
             if let store { schedulePublish(from: store) }
             connectionTask = Task { [weak self] in
                 do {
-                    while !Task.isCancelled { _ = try await socket.next() }
+                    while !Task.isCancelled {
+                        let message = try await socket.next()
+                        guard case let .frame(frame) = message else { continue }
+                        self?.handleDeviceFrame(frame)
+                    }
                 } catch {
                     guard !Task.isCancelled else { return }
                     self?.isConnected = false
@@ -280,50 +292,87 @@ final class RelayHostController {
         }
     }
 
+    /// A device's forwarded `hello` behind our channel sequence means it
+    /// missed frames: queue a full resend. This is the recovery path — the
+    /// relay keeps no replay buffer.
+    private func handleDeviceFrame(_ frame: RelayRoutingFrame) {
+        guard frame.kind == .hello,
+              let deviceID = frame.deviceID,
+              let credentials else { return }
+        let current = credentials.channelSequences[deviceID.rawValue] ?? credentials.lastSequence
+        guard (frame.acknowledgedSequence ?? 0) < current else { return }
+        devicesNeedingFullResend.insert(deviceID)
+        if let store { schedulePublish(from: store) }
+    }
+
     private func publishCurrentState(from store: MacSessionStore) async {
         guard isConnected, credentials != nil, let socket else { return }
         do {
             let activeDevices = devices.filter { $0.revokedAt == nil }
             guard !activeDevices.isEmpty else { return }
-            let details: [SessionDetail]
-            let payload: RemoteSessionPayload
             if store.health == nil {
                 guard !sentUnavailable else { return }
-                details = []
-                payload = RemoteSessionPayload(kind: .unavailable, message: "Mac daemon unavailable")
-                sentUnavailable = true
-            } else {
-                let wasUnavailable = sentUnavailable
-                details = try await store.snapshotDetails()
-                guard RelayPublishDecision.shouldSendSnapshot(
-                    wasUnavailable: wasUnavailable,
-                    previous: lastSentDetails,
-                    current: details
-                ) else { return }
-                payload = RemoteSessionPayload(kind: .snapshot, sessions: details)
-                sentUnavailable = false
-            }
-            guard var credentials else { return }
-            let preparedPayload = try RelayCryptography.prepare(payload)
-            for device in activeDevices {
-                let channelKey = device.id.rawValue
-                let previousSequence = credentials.channelSequences[channelKey] ?? credentials.lastSequence
-                let sequence = previousSequence + 1
-                credentials.channelSequences[channelKey] = sequence
-                credentials.lastSequence = max(credentials.lastSequence, sequence)
-                let frame = try RelayCryptography.seal(
-                    preparedPayload,
-                    hostID: credentials.hostID,
-                    deviceID: device.id,
-                    sequence: sequence,
-                    kind: details.contains(where: { $0.summary.needsAttention }) ? .attention : .data,
-                    privateKey: credentials.keyPair.privateKey,
-                    peerPublicKey: device.publicKey
+                let prepared = try RelayCryptography.prepare(
+                    RemoteSessionPayload(kind: .unavailable, message: "Mac daemon unavailable")
                 )
-                try await socket.send(frame)
+                try await sendFrames(
+                    [(prepared, false)],
+                    to: activeDevices,
+                    perDeviceExtras: [:],
+                    socket: socket
+                )
+                sentUnavailable = true
+                lastSentDetails = nil
+                lastError = nil
+                return
             }
-            self.credentials = credentials
-            try secureStore.save(credentials, account: credentialsAccount)
+
+            let wasUnavailable = sentUnavailable
+            let generatedAt = Date()
+            let orderedDetails = try await store.snapshotDetails()
+            let details = Dictionary(uniqueKeysWithValues: orderedDetails.map { ($0.summary.id, $0) })
+            let previous = wasUnavailable ? nil : lastSentDetails
+            let changed = RelayPublishPlan.changedSessions(previous: previous, current: details)
+            let needsFull = !devicesNeedingFullResend.isEmpty
+            let indexChanged = previous.map { Set($0.keys) != Set(details.keys) } ?? true
+            guard !changed.isEmpty || indexChanged || needsFull || wasUnavailable else { return }
+
+            // Session frames first, the index last: the index is the commit
+            // marker a device prunes and completes against.
+            var partsBySession: [SessionID: [(RelayPreparedPayload, Bool)]] = [:]
+            let idsToPrepare = needsFull ? Array(details.keys) : changed
+            for id in idsToPrepare {
+                guard let detail = details[id] else { continue }
+                partsBySession[id] = try RelaySessionPartitioner
+                    .parts(for: detail, generatedAt: generatedAt)
+                    .map { ($0.prepared, detail.summary.needsAttention) }
+            }
+            let anyAttention = orderedDetails.contains { $0.summary.needsAttention }
+            let preparedIndex = try RelayCryptography.prepare(RemoteSessionPayload(
+                kind: .index,
+                generatedAt: generatedAt,
+                sessionIDs: orderedDetails.map(\.summary.id)
+            ))
+
+            let changedFrames: [(RelayPreparedPayload, Bool)] = changed
+                .compactMap { partsBySession[$0] }
+                .flatMap { $0 } + [(preparedIndex, anyAttention)]
+            let fullFrames: [(RelayPreparedPayload, Bool)] = orderedDetails
+                .compactMap { partsBySession[$0.summary.id] }
+                .flatMap { $0 } + [(preparedIndex, anyAttention)]
+
+            var perDeviceExtras: [DeviceID: [(RelayPreparedPayload, Bool)]] = [:]
+            for device in activeDevices where devicesNeedingFullResend.contains(device.id) {
+                perDeviceExtras[device.id] = fullFrames
+            }
+            try await sendFrames(
+                changedFrames,
+                to: activeDevices.filter { !devicesNeedingFullResend.contains($0.id) },
+                perDeviceExtras: perDeviceExtras,
+                socket: socket
+            )
+            devicesNeedingFullResend.subtract(activeDevices.map(\.id))
+            sentUnavailable = false
             lastSentDetails = details
             lastError = nil
         } catch {
@@ -332,8 +381,61 @@ final class RelayHostController {
         }
     }
 
-    /// Coalesces daemon changes into one full snapshot operation. The snapshot
-    /// contains every session and is then encrypted once per paired device channel.
+    /// Seals and sends one batch per device, reserving and persisting the
+    /// channel sequences BEFORE anything hits the wire: a crash mid-publish
+    /// leaves a legal gap, never a fatal sequence reuse.
+    private func sendFrames(
+        _ frames: [(RelayPreparedPayload, Bool)],
+        to devices: [RelayDeviceRecord],
+        perDeviceExtras: [DeviceID: [(RelayPreparedPayload, Bool)]],
+        socket: RelayWebSocketClient
+    ) async throws {
+        guard var credentials else { return }
+        var batches: [(RelayDeviceRecord, [(RelayPreparedPayload, Bool)], UInt64)] = []
+        for device in devices where !frames.isEmpty {
+            batches.append((device, frames, reserve(&credentials, device: device, count: frames.count)))
+        }
+        for (deviceID, extras) in perDeviceExtras {
+            guard let device = self.devices.first(where: { $0.id == deviceID }), !extras.isEmpty else { continue }
+            batches.append((device, extras, reserve(&credentials, device: device, count: extras.count)))
+        }
+        guard !batches.isEmpty else { return }
+        self.credentials = credentials
+        try secureStore.save(credentials, account: credentialsAccount)
+        for (device, batch, firstSequence) in batches {
+            for (offset, item) in batch.enumerated() {
+                let frame = try RelayCryptography.seal(
+                    item.0,
+                    hostID: credentials.hostID,
+                    deviceID: device.id,
+                    sequence: firstSequence + UInt64(offset),
+                    kind: item.1 ? .attention : .data,
+                    privateKey: credentials.keyPair.privateKey,
+                    peerPublicKey: device.publicKey
+                )
+                try await socket.send(frame)
+            }
+        }
+    }
+
+    private func reserve(
+        _ credentials: inout RelayHostCredentials,
+        device: RelayDeviceRecord,
+        count: Int
+    ) -> UInt64 {
+        let channelKey = device.id.rawValue
+        let previous = credentials.channelSequences[channelKey] ?? credentials.lastSequence
+        let first = previous + 1
+        let last = previous + UInt64(count)
+        credentials.channelSequences[channelKey] = last
+        credentials.lastSequence = max(credentials.lastSequence, last)
+        return first
+    }
+
+    /// Coalesces daemon changes into one publish batch: the sessions that
+    /// changed since the last publish, each as one or more `.session` frames,
+    /// closed by an `.index` frame. Each payload is prepared once and then
+    /// encrypted per paired device channel.
     private func schedulePublish(from store: MacSessionStore) {
         publishPending = true
         guard publishTask == nil else { return }
@@ -372,12 +474,19 @@ enum RelayPublishDecision {
     ) -> Bool {
         previousRevision != currentRevision || wasDaemonAvailable != isDaemonAvailable
     }
+}
 
-    static func shouldSendSnapshot(
-        wasUnavailable: Bool,
-        previous: [SessionDetail]?,
-        current: [SessionDetail]
-    ) -> Bool {
-        wasUnavailable || previous != current
+enum RelayPublishPlan {
+    /// The sessions whose relay copy is stale: inserted or byte-different.
+    /// Deletions never appear here — the trailing index prunes them.
+    /// `previous == nil` means everything must go out again.
+    static func changedSessions(
+        previous: [SessionID: SessionDetail]?,
+        current: [SessionID: SessionDetail]
+    ) -> [SessionID] {
+        guard let previous else { return Array(current.keys) }
+        return current.compactMap { id, detail in
+            previous[id] == detail ? nil : id
+        }
     }
 }

@@ -103,12 +103,13 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "missing_session_id", message: "The review request has no id.")
                 }
-            case .snapshotSessions:
-                payload = IPCResponse(
-                    status: .ok,
-                    sessionDetails: try await snapshotSessions(limit: envelope.payload.limit ?? 10_000),
-                    health: try await health(now: now).health
-                )
+            case .markSessionHiddenInNotch:
+                if let id = envelope.payload.sessionID {
+                    try await repository.markSessionHiddenInNotch(id)
+                    payload = IPCResponse(status: .ok)
+                } else {
+                    payload = failure(code: "missing_session_id", message: "The archive request has no id.")
+                }
             case .subscribe:
                 let currentHealth = try await health(now: now)
                 payload = IPCResponse(status: .accepted, health: currentHealth.health)
@@ -138,7 +139,7 @@ public actor DaemonService {
                     do {
                         // The rebuild is not streamed: subscribers cannot
                         // express "this session was wiped", so they take the
-                        // returned detail (or a fresh snapshot) instead.
+                        // returned detail (or reconcile per session) instead.
                         let report = try await reingester.reingest(
                             sessionID: id,
                             generation: String(Int64(now.timeIntervalSince1970 * 1000))
@@ -193,33 +194,6 @@ public actor DaemonService {
                 relayConnected: relayConnected
             )
         )
-    }
-
-    /// Builds one transport snapshot inside the daemon. The caller uses a single
-    /// NIO channel for the request regardless of the number of sessions.
-    private func snapshotSessions(limit: Int) async throws -> [SessionDetail] {
-        let summaries = try await repository.listSessions(limit: limit)
-        var result: [SessionDetail] = []
-        result.reserveCapacity(summaries.count)
-
-        for summary in summaries {
-            var cursor: PaginationCursor?
-            var timeline: [TimelineItem] = []
-            var turns: [TurnSummary] = []
-            repeat {
-                guard let page = try await repository.sessionDetail(
-                    id: summary.id,
-                    cursor: cursor,
-                    limit: 500
-                ) else { break }
-                timeline.append(contentsOf: page.timeline)
-                turns = page.turns
-                cursor = page.nextCursor
-            } while cursor != nil
-            result.append(SessionDetail(summary: summary, turns: turns, timeline: timeline))
-        }
-
-        return result
     }
 
     private func failure(code: String, message: String, retryable: Bool = false) -> IPCResponse {

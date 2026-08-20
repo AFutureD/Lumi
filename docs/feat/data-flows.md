@@ -20,7 +20,7 @@ flowchart LR
 
 - **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标。
 - **创建来源**：启用 Agent Status 后新建的 Codex Session。
-- **更新来源**：Codex Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。
+- **更新来源**：Codex Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。用户在 CLI 里主动中止（Esc）Claude 后，即使 Claude 不再上报任何事件，Session 也会在数秒内变为中断（红色），中止前最后设置的标题一并生效。
 - **主要消费者**：Mac 主窗口、Notch，以及在线的已配对 iPhone。
 - **保留方式**：不按时间自动删除；用户可删除单条或清空全部。
 - **展示边界**：主活动时间线显示属于当前 Session 的消息、工具、计划、子 Agent、错误和已进入 Timeline 的未知记录；Subagent 为执行任务获得的父 Session 历史不重复显示为自身活动。模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情在独立模块展示这些诊断数据；iPhone 当前仍只展示活动时间线。规则见 [MAC-R-018](modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
@@ -69,14 +69,14 @@ flowchart LR
 | --- | --- | --- |
 | daemon | 该 Mac 已加入 Agent Status 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
 | Mac App | 与 daemon 同步的完整本地副本 | 快速启动和浏览；断线时仍可查看最近同步内容 |
-| iPhone App | 每台已配对 Mac 的独立完整同步副本 | 只有收到在线状态与当前快照后展示主活动数据 |
+| iPhone App | 每台已配对 Mac 的独立完整同步副本 | 只有收到在线状态且本轮同步完整后展示主活动数据 |
 | Relay | 设备授权和运行所需信息 | 不提供 Session 正文或历史查询 |
 
 ## 离线与恢复
 
 - **daemon 离线**：Mac 保留已同步内容供查看，但显示不可用；恢复后可手动刷新。
 - **Mac 或通道离线**：iPhone 将该 Mac 标为 Unavailable，不展示旧 Session；其他 Mac 通道不受影响。
-- **恢复在线**：Mac 发送当前快照，iPhone 再显示已确认的当前内容。
+- **恢复在线**：Mac 按 Session 重新推送全部内容，iPhone 收全后再显示当前内容。
 
 ## 相关文档
 

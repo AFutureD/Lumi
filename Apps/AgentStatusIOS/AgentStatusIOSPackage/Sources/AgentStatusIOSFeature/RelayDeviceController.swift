@@ -158,8 +158,22 @@ private final class RelayDeviceChannel {
     private var sessions: [SessionDetail] = []
     private var isHostOnline = false
     private var isConnected = false
-    private var hasCurrentSnapshot = false
+    /// The visible id set promised by the latest `.index` frame; `nil` until
+    /// one arrives on this connection.
+    private var indexIDs: Set<SessionID>?
+    /// Parts of sessions still in flight, keyed by session.
+    private var partBuffers: [SessionID: [RemoteSessionPayload]] = [:]
+    /// Highest frame sequence seen on this connection, for gap detection.
+    private var lastReceivedSequence: UInt64 = 0
+    private var needsResync = false
     private var lastError: String?
+
+    /// The sync is current when the latest index has arrived and every
+    /// session it references was fully received.
+    private var hasCompleteSync: Bool {
+        guard let indexIDs else { return false }
+        return RelayFrameReduction.missingIDs(index: indexIDs, sessions: sessions).isEmpty
+    }
 
     init(
         credentials: RelayDeviceCredentials,
@@ -175,7 +189,7 @@ private final class RelayDeviceChannel {
         RelayDeviceChannelState(
             hostID: credentials.hostID,
             displayName: credentials.displayName,
-            sessions: isConnected && isHostOnline && hasCurrentSnapshot ? sessions : [],
+            sessions: isConnected && isHostOnline && hasCompleteSync ? sessions : [],
             isHostOnline: isHostOnline,
             isConnected: isConnected,
             lastError: lastError
@@ -201,7 +215,10 @@ private final class RelayDeviceChannel {
         self.socket = socket
         isConnected = false
         isHostOnline = false
-        hasCurrentSnapshot = false
+        indexIDs = nil
+        partBuffers = [:]
+        lastReceivedSequence = 0
+        needsResync = false
         do {
             try await socket.connect(
                 hostID: credentials.hostID,
@@ -244,7 +261,8 @@ private final class RelayDeviceChannel {
         }
         isConnected = false
         isHostOnline = false
-        hasCurrentSnapshot = false
+        indexIDs = nil
+        partBuffers = [:]
         onChange()
     }
 
@@ -260,7 +278,8 @@ private final class RelayDeviceChannel {
     private func connectionFailed(_ error: Error) {
         isConnected = false
         isHostOnline = false
-        hasCurrentSnapshot = false
+        indexIDs = nil
+        partBuffers = [:]
         lastError = String(describing: error)
         onChange()
         scheduleReconnect(after: error)
@@ -291,7 +310,7 @@ private final class RelayDeviceChannel {
         switch message {
         case let .presence(online):
             isHostOnline = online
-            if !online { hasCurrentSnapshot = false }
+            if !online { indexIDs = nil }
         case let .frame(frame):
             guard frame.hostID == credentials.hostID,
                   frame.deviceID == credentials.deviceID,
@@ -302,15 +321,13 @@ private final class RelayDeviceChannel {
                     privateKey: credentials.keyPair.privateKey,
                     peerPublicKey: credentials.hostPublicKey
                 )
-                if payload.kind == .snapshot {
-                    try await cache.replaceSnapshot(payload.sessions)
-                    await loadCachedSessions()
-                    isHostOnline = true
-                    hasCurrentSnapshot = true
-                } else {
-                    isHostOnline = false
-                    hasCurrentSnapshot = false
+                // A hole in the sequence means dropped frames: finish this
+                // batch, then ask the host for a full resend at the index.
+                if lastReceivedSequence != 0, frame.sequence > lastReceivedSequence + 1 {
+                    needsResync = true
                 }
+                lastReceivedSequence = frame.sequence
+                try await apply(payload, socket: socket)
                 credentials.lastAcknowledgedSequence = frame.sequence
                 try await socket.send(RelayRoutingFrame(
                     hostID: credentials.hostID,
@@ -327,6 +344,50 @@ private final class RelayDeviceChannel {
         onChange()
     }
 
+    private func apply(_ payload: RemoteSessionPayload, socket: RelayWebSocketClient) async throws {
+        switch payload.kind {
+        case .session:
+            guard let page = payload.session else { return }
+            let id = page.summary.id
+            if (payload.part ?? 0) == 0 { partBuffers[id] = [] }
+            partBuffers[id, default: []].append(payload)
+            guard page.nextCursor == nil,
+                  let detail = RelayFrameReduction.assemble(parts: partBuffers[id] ?? []) else { return }
+            partBuffers[id] = nil
+            try await cache.replaceSession(detail)
+            sessions = RelayFrameReduction.upsert(detail, into: sessions)
+            isHostOnline = true
+        case .index:
+            let ids = Set(payload.sessionIDs ?? [])
+            try await cache.pruneSessions(keeping: ids)
+            sessions = RelayFrameReduction.prune(sessions, keeping: ids)
+            partBuffers = partBuffers.filter { ids.contains($0.key) }
+            indexIDs = ids
+            isHostOnline = true
+            // The index closes a batch. Anything still missing (partial
+            // delivery, dropped frames) is healed by a full resend. This
+            // hello goes out before the index frame's own ack lands in
+            // `credentials`, so the host still sees the device as behind.
+            if needsResync || !RelayFrameReduction.missingIDs(index: ids, sessions: sessions).isEmpty {
+                needsResync = false
+                try await socket.send(RelayRoutingFrame(
+                    hostID: credentials.hostID,
+                    deviceID: credentials.deviceID,
+                    sequence: credentials.lastAcknowledgedSequence,
+                    kind: .hello,
+                    acknowledgedSequence: credentials.lastAcknowledgedSequence
+                ))
+            }
+        case .unavailable:
+            isHostOnline = false
+            indexIDs = nil
+        case .unknown:
+            // A newer host build; fail safe into the syncing state.
+            isHostOnline = false
+            indexIDs = nil
+        }
+    }
+
     private func loadCachedSessions() async {
         do {
             let summaries = try await cache.listSessions(limit: 10_000)
@@ -334,6 +395,7 @@ private final class RelayDeviceChannel {
             details.reserveCapacity(summaries.count)
             for summary in summaries {
                 var cursor: PaginationCursor?
+                var turns: [TurnSummary] = []
                 var timeline: [TimelineItem] = []
                 repeat {
                     guard let page = try await cache.sessionDetail(
@@ -341,10 +403,11 @@ private final class RelayDeviceChannel {
                         cursor: cursor,
                         limit: 500
                     ) else { break }
+                    turns = page.turns
                     timeline.append(contentsOf: page.timeline)
                     cursor = page.nextCursor
                 } while cursor != nil
-                details.append(SessionDetail(summary: summary, timeline: timeline))
+                details.append(SessionDetail(summary: summary, turns: turns, timeline: timeline))
             }
             sessions = details
         } catch {

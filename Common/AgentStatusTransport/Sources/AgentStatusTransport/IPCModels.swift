@@ -120,7 +120,7 @@ public enum IPCOperation: Hashable, Sendable {
     case getSession
     case deleteSession
     case markSessionReviewed
-    case snapshotSessions
+    case markSessionHiddenInNotch
     case subscribe
     case health
     case clearHistory
@@ -137,7 +137,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .getSession: "get_session"
         case .deleteSession: "delete_session"
         case .markSessionReviewed: "mark_session_reviewed"
-        case .snapshotSessions: "snapshot_sessions"
+        case .markSessionHiddenInNotch: "mark_session_hidden_in_notch"
         case .subscribe: "subscribe"
         case .health: "health"
         case .clearHistory: "clear_history"
@@ -159,7 +159,7 @@ extension IPCOperation: Codable {
         case "get_session": .getSession
         case "delete_session": .deleteSession
         case "mark_session_reviewed": .markSessionReviewed
-        case "snapshot_sessions": .snapshotSessions
+        case "mark_session_hidden_in_notch": .markSessionHiddenInNotch
         case "subscribe": .subscribe
         case "health": .health
         case "clear_history": .clearHistory
@@ -292,7 +292,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let status: IPCResponseStatus
     public let sessions: [SessionSummary]?
     public let session: SessionDetail?
-    public let sessionDetails: [SessionDetail]?
     public let health: DaemonHealth?
     public let event: AgentIngressEvent?
     public let acceptedCount: Int?
@@ -303,7 +302,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         status: IPCResponseStatus,
         sessions: [SessionSummary]? = nil,
         session: SessionDetail? = nil,
-        sessionDetails: [SessionDetail]? = nil,
         health: DaemonHealth? = nil,
         event: AgentIngressEvent? = nil,
         acceptedCount: Int? = nil,
@@ -313,7 +311,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.status = status
         self.sessions = sessions
         self.session = session
-        self.sessionDetails = sessionDetails
         self.health = health
         self.event = event
         self.acceptedCount = acceptedCount
@@ -325,7 +322,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case status
         case sessions
         case session
-        case sessionDetails
         case health
         case event
         case acceptedCount
@@ -338,7 +334,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         status = try c.decode(IPCResponseStatus.self, forKey: .status)
         sessions = try c.decodeIfPresent([SessionSummary].self, forKey: .sessions)
         session = try c.decodeIfPresent(SessionDetail.self, forKey: .session)
-        sessionDetails = try c.decodeIfPresent([SessionDetail].self, forKey: .sessionDetails)
         health = try c.decodeIfPresent(DaemonHealth.self, forKey: .health)
         event = try c.decodeIfPresent(AgentIngressEvent.self, forKey: .event)
         acceptedCount = try c.decodeIfPresent(Int.self, forKey: .acceptedCount)

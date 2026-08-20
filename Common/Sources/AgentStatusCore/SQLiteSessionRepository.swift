@@ -112,6 +112,19 @@ public actor SQLiteSessionRepository: SessionRepository {
                 WHERE json_extract(CAST(summary AS TEXT), '$.needsReview') IS NULL;
                 """)
         }
+        // Backfill `hiddenInNotch` into summaries written before the flag
+        // existed so strict decoding keeps working; nothing was archived from
+        // the Notch yet, so every session starts visible there.
+        migrator.registerMigration("agent-status-v5-hidden-in-notch") { db in
+            try db.execute(sql: """
+                UPDATE sessions SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.hiddenInNotch', json('false')
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.hiddenInNotch') IS NULL;
+                """)
+        }
         try migrator.migrate(database)
     }
 
@@ -336,46 +349,65 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
-    /// Atomically makes a client cache match the daemon's authoritative snapshot.
-    public func replaceSnapshot(_ details: [SessionDetail]) async throws {
+    /// Atomically installs one authoritative session: clears its tombstone,
+    /// then replaces summary, turns and timeline wholesale. `processed_events`
+    /// is untouched so client-side event dedupe survives the replace.
+    public func replaceSession(_ detail: SessionDetail) async throws {
         let encoder = encoder
         try await database.write { db in
-            // The snapshot source is authoritative; local tombstones must not
-            // swallow events for a session it brought back.
-            try db.execute(sql: "DELETE FROM ignored_sessions")
-            try db.execute(sql: "DELETE FROM sessions")
-            for detail in details {
-                let summary = detail.summary
+            let summary = detail.summary
+            // The authoritative source brought the session back; a local
+            // tombstone must not swallow its future events.
+            try db.execute(
+                sql: "DELETE FROM ignored_sessions WHERE id = ?",
+                arguments: [summary.id.rawValue]
+            )
+            try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [summary.id.rawValue])
+            try db.execute(
+                sql: """
+                    INSERT INTO sessions(id, summary, updated_at, last_activity_at)
+                    VALUES(?, ?, ?, ?)
+                    """,
+                arguments: [
+                    summary.id.rawValue,
+                    try encoder.encode(summary),
+                    summary.updatedAt.timeIntervalSince1970,
+                    summary.lastActivityAt.timeIntervalSince1970,
+                ]
+            )
+            for turn in detail.turns {
+                try Self.upsertTurn(db, turn, encoder: encoder)
+            }
+            for item in detail.timeline {
                 try db.execute(
                     sql: """
-                        INSERT INTO sessions(id, summary, updated_at, last_activity_at)
+                        INSERT INTO timeline(id, session_id, occurred_at, item)
                         VALUES(?, ?, ?, ?)
                         """,
                     arguments: [
+                        item.id.rawValue,
                         summary.id.rawValue,
-                        try encoder.encode(summary),
-                        summary.updatedAt.timeIntervalSince1970,
-                        summary.lastActivityAt.timeIntervalSince1970,
+                        item.occurredAt.timeIntervalSince1970,
+                        try encoder.encode(item),
                     ]
                 )
-                for turn in detail.turns {
-                    try Self.upsertTurn(db, turn, encoder: encoder)
-                }
-                for item in detail.timeline {
-                    try db.execute(
-                        sql: """
-                            INSERT INTO timeline(id, session_id, occurred_at, item)
-                            VALUES(?, ?, ?, ?)
-                            """,
-                        arguments: [
-                            item.id.rawValue,
-                            summary.id.rawValue,
-                            item.occurredAt.timeIntervalSince1970,
-                            try encoder.encode(item),
-                        ]
-                    )
-                }
             }
+        }
+    }
+
+    @discardableResult
+    public func pruneSessions(keeping ids: Set<SessionID>) async throws -> Int {
+        try await database.write { db in
+            try db.execute(sql: "CREATE TEMP TABLE IF NOT EXISTS keep(id TEXT PRIMARY KEY)")
+            try db.execute(sql: "DELETE FROM keep")
+            for id in ids {
+                try db.execute(sql: "INSERT OR IGNORE INTO keep(id) VALUES(?)", arguments: [id.rawValue])
+            }
+            // No tombstones: the authoritative side may resurrect any of these.
+            try db.execute(sql: "DELETE FROM sessions WHERE id NOT IN (SELECT id FROM keep)")
+            let pruned = db.changesCount
+            try db.execute(sql: "DELETE FROM keep")
+            return pruned
         }
     }
 
@@ -517,6 +549,23 @@ public actor SQLiteSessionRepository: SessionRepository {
                 arguments: [sessionID.rawValue]
             ) else { return }
             let summary = try decoder.decode(SessionSummary.self, from: data).reviewed
+            try db.execute(
+                sql: "UPDATE sessions SET summary = ? WHERE id = ?",
+                arguments: [try encoder.encode(summary), sessionID.rawValue]
+            )
+        }
+    }
+
+    public func markSessionHiddenInNotch(_ sessionID: SessionID) async throws {
+        let encoder = encoder
+        let decoder = decoder
+        try await database.write { db in
+            guard let data = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [sessionID.rawValue]
+            ) else { return }
+            let summary = try decoder.decode(SessionSummary.self, from: data).withHiddenInNotch(true)
             try db.execute(
                 sql: "UPDATE sessions SET summary = ? WHERE id = ?",
                 arguments: [try encoder.encode(summary), sessionID.rawValue]

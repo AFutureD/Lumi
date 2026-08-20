@@ -140,37 +140,110 @@ import Testing
     #expect(response.health?.daemonVersion == DaemonService.version)
 }
 
-@Test func snapshotReturnsAllSessionsOverOneIPCRequest() async throws {
+@Test func listPlusPagedGetSessionReassemblesEverySession() async throws {
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock")
     let date = Date(timeIntervalSince1970: 1_700_000_000)
 
-    for index in 1...3 {
-        let sessionID = SessionID("session-\(index)")
-        let event = AgentIngressEvent(
-            eventID: EventID("event-\(index)"),
+    // Two sessions, one of them wider than a single page.
+    for (session, itemCount) in [("session-1", 5), ("session-2", 12)] {
+        let sessionID = SessionID(session)
+        for index in 0..<itemCount {
+            _ = try await repository.apply(AgentIngressEvent(
+                eventID: EventID("\(session)-event-\(index)"),
+                sessionID: sessionID,
+                agent: .codex,
+                occurredAt: date.addingTimeInterval(Double(index)),
+                lifecycle: .running,
+                phase: .executing,
+                timelineItem: TimelineItem(
+                    id: TimelineItemID("\(session)-item-\(index)"),
+                    sessionID: sessionID,
+                    occurredAt: date.addingTimeInterval(Double(index)),
+                    payload: .message(MessageTimelinePayload(role: .assistant, text: "Update \(index)"))
+                )
+            ))
+        }
+    }
+
+    // The reconcile shape: a summary index, then per-session paged fetches.
+    let list = await service.handle(TransportEnvelope(
+        payload: IPCRequest(operation: .listSessions, limit: 10_000)
+    ))
+    #expect(list.payload.sessions?.count == 2)
+
+    for summary in list.payload.sessions ?? [] {
+        var cursor: PaginationCursor?
+        var timeline: [TimelineItem] = []
+        var pages = 0
+        repeat {
+            let response = await service.handle(TransportEnvelope(
+                payload: IPCRequest(operation: .getSession, sessionID: summary.id, cursor: cursor, limit: 5)
+            ))
+            guard let page = response.payload.session else { break }
+            timeline.append(contentsOf: page.timeline)
+            cursor = page.nextCursor
+            pages += 1
+        } while cursor != nil
+        let expected = try await repository.sessionDetail(id: summary.id, cursor: nil, limit: 500)
+        #expect(timeline == expected?.timeline)
+        #expect(pages == (summary.id.rawValue == "session-2" ? 3 : 1))
+    }
+
+    // The removed whole-snapshot operation now reads as unknown.
+    let removed = await service.handle(TransportEnvelope(
+        payload: IPCRequest(operation: .unknown("snapshot_sessions"))
+    ))
+    #expect(removed.payload.failure?.code == "unknown_operation")
+}
+
+@Test func oversizedResponseBecomesACleanFailureFrame() async throws {
+    let socketPath = "/tmp/as-large-\(UUID().uuidString.prefix(8)).sock"
+    defer { try? FileManager.default.removeItem(atPath: socketPath) }
+    let repository = InMemorySessionRepository()
+    let service = DaemonService(repository: repository, socketPath: socketPath)
+    let server = DaemonServer(socketPath: socketPath, service: service)
+    try server.start()
+    defer { server.shutdown() }
+
+    let sessionID = SessionID("huge")
+    let date = Date(timeIntervalSince1970: 1_700_000_000)
+    // Ten 1 MiB items: one 500-limit page overflows the 8 MiB frame,
+    // a 5-item page fits.
+    for index in 0..<10 {
+        _ = try await repository.apply(AgentIngressEvent(
+            eventID: EventID("huge-event-\(index)"),
             sessionID: sessionID,
             agent: .codex,
             occurredAt: date.addingTimeInterval(Double(index)),
             lifecycle: .running,
             phase: .executing,
             timelineItem: TimelineItem(
-                id: TimelineItemID("item-\(index)"),
+                id: TimelineItemID("huge-item-\(index)"),
                 sessionID: sessionID,
                 occurredAt: date.addingTimeInterval(Double(index)),
-                payload: .message(MessageTimelinePayload(role: .assistant, text: "Update \(index)"))
+                payload: .message(MessageTimelinePayload(
+                    role: .assistant,
+                    text: String(repeating: "x", count: 1_048_576)
+                ))
             )
-        )
-        _ = try await repository.apply(event)
+        ))
     }
 
-    let snapshot = await service.handle(TransportEnvelope(
-        payload: IPCRequest(operation: .snapshotSessions, limit: 250)
-    ))
+    let oversized = try DaemonIPCClient().request(
+        IPCRequest(operation: .getSession, sessionID: sessionID, limit: 500),
+        socketPath: socketPath,
+        timeout: .seconds(15)
+    )
+    #expect(oversized.failure?.code == "response_too_large")
 
-    #expect(snapshot.payload.status == .ok)
-    #expect(snapshot.payload.sessionDetails?.count == 3)
-    #expect(snapshot.payload.sessionDetails?.allSatisfy { $0.timeline.count == 1 } == true)
+    let paged = try DaemonIPCClient().request(
+        IPCRequest(operation: .getSession, sessionID: sessionID, limit: 5),
+        socketPath: socketPath,
+        timeout: .seconds(15)
+    )
+    #expect(paged.session?.timeline.count == 5)
+    #expect(paged.session?.nextCursor != nil)
 }
 
 @Test func unavailableUnixSocketReturnsAnErrorWithoutLeakingPromises() {
@@ -475,4 +548,68 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     ))
     let orphan = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .reingestSession, sessionID: SessionID("orphan"))))
     #expect(orphan.payload.failure?.code == "rich_source_unavailable")
+}
+
+// A user interrupt fires no hook: only the transcript records it. The watcher
+// must pick up the increment for active Claude sessions (cursor resume), and
+// must leave parked sessions alone.
+@Test func claudeWatcherIngestsInterruptAndTitleWrittenAfterTheLastHook() async throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-claude-watcher-\(UUID().uuidString)", isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-project", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let sid = SessionID("aaaa1111-0000-0000-0000-000000000001")
+    let transcript = projectDir.appendingPathComponent("\(sid.rawValue).jsonl")
+    try Data("""
+    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:44:42Z","message":{"role":"user","content":"Do the thing"}}
+
+    """.utf8).write(to: transcript)
+
+    let repository = InMemorySessionRepository()
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("seed"), sessionID: sid, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 1_787_219_000), workspace: "/tmp/project",
+        lifecycle: .running, phase: .thinking
+    ))
+
+    let watcher = ClaudeTranscriptWatcher(repository: repository, homeDirectory: home)
+    await watcher.scanOnce()
+    let running = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    #expect(running?.summary.lifecycle == .running)
+    #expect(running?.timeline.contains { if case .message = $0.payload { true } else { false } } == true)
+
+    // Stop pressed: title + interrupt marker land with no hook ever firing.
+    let handle = try FileHandle(forWritingTo: transcript)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("""
+    {"type":"custom-title","customTitle":"Renamed session","sessionId":"\(sid.rawValue)"}
+    {"type":"user","sessionId":"\(sid.rawValue)","timestamp":"2026-08-20T09:44:44Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+
+    """.utf8))
+    try handle.close()
+
+    await watcher.scanOnce()
+    let interrupted = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    #expect(interrupted?.summary.lifecycle == .interrupted)
+    #expect(interrupted?.summary.title == "Renamed session")
+    #expect(interrupted?.timeline.contains { item in
+        if case let .turnEnd(end) = item.payload { end.outcome == .aborted } else { false }
+    } == true)
+
+    // A parked finished session is not polled, even with a marker in its file.
+    let parked = SessionID("aaaa1111-0000-0000-0000-000000000002")
+    try Data("""
+    {"type":"user","sessionId":"\(parked.rawValue)","timestamp":"2026-08-20T09:50:00Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+
+    """.utf8).write(to: projectDir.appendingPathComponent("\(parked.rawValue).jsonl"))
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("seed-parked"), sessionID: parked, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 1_787_219_000), workspace: "/tmp/project",
+        lifecycle: .waitingForInput, phase: .idle
+    ))
+    await watcher.scanOnce()
+    let untouched = try await repository.sessionDetail(id: parked, cursor: nil, limit: 100)
+    #expect(untouched?.summary.lifecycle == .waitingForInput)
 }

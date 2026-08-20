@@ -347,19 +347,75 @@ import Testing
     #expect(try await repository.listSessions(limit: 100).map(\.id) == [keptID])
 }
 
-@Test func grdbRepositoryAtomicallyReplacesClientSnapshot() async throws {
+@Test func grdbRepositoryKeepsNotchArchiveUntilTheHumanReEngages() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-snapshot-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("agent-status-notch-archive-tests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
+    let sessionID = SessionID("archived")
+    let date = Date(timeIntervalSince1970: 3_000)
+
+    #expect(try await repository.apply(AgentIngressEvent(
+        eventID: EventID("create"),
+        sessionID: sessionID,
+        agent: .codex,
+        occurredAt: date,
+        lifecycle: .waitingForInput,
+        phase: .idle
+    )))
+    try await repository.markSessionHiddenInNotch(sessionID)
+    #expect(try await repository.listSessions(limit: 100).first?.hiddenInNotch == true)
+
+    // Passive activity (a lifecycle/phase update without a prompt) keeps the
+    // session archived; only human engagement brings it back to the Notch.
+    #expect(try await repository.apply(AgentIngressEvent(
+        eventID: EventID("passive"),
+        sessionID: sessionID,
+        agent: .codex,
+        occurredAt: date.addingTimeInterval(10),
+        lifecycle: .running,
+        phase: .executing
+    )))
+    #expect(try await repository.listSessions(limit: 100).first?.hiddenInNotch == true)
+
+    #expect(try await repository.apply(promptEvent(sessionID, id: "re-engage", at: 3_020)))
+    #expect(try await repository.listSessions(limit: 100).first?.hiddenInNotch == false)
+}
+
+@Test func grdbRepositoryReplacesOneSessionAndPrunesToAnIndex() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-replace-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("cache.sqlite3").path)
     let first = SessionDetail(summary: summary(id: "first", updatedAt: 1), timeline: [])
-    let second = SessionDetail(summary: summary(id: "second", updatedAt: 2), timeline: [])
+    let second = SessionDetail(
+        summary: summary(id: "second", updatedAt: 2),
+        turns: [TurnSummary(id: TurnID("t1"), sessionID: SessionID("second"), phase: .idle, startedAt: Date(timeIntervalSince1970: 2))],
+        timeline: [TimelineItem(
+            id: TimelineItemID("second-item"),
+            sessionID: SessionID("second"),
+            occurredAt: Date(timeIntervalSince1970: 2),
+            payload: .message(MessageTimelinePayload(role: .user, text: "hi"))
+        )]
+    )
 
-    try await repository.replaceSnapshot([first, second])
+    try await repository.replaceSession(first)
+    try await repository.replaceSession(second)
     #expect(try await repository.listSessions(limit: 100).map(\.id) == [second.summary.id, first.summary.id])
 
-    try await repository.replaceSnapshot([second])
+    // A replace is wholesale: stale turns and timeline are gone, not merged.
+    let trimmed = SessionDetail(summary: summary(id: "second", updatedAt: 3), timeline: [])
+    try await repository.replaceSession(trimmed)
+    let detail = try await repository.sessionDetail(id: second.summary.id, cursor: nil, limit: 100)
+    #expect(detail?.turns.isEmpty == true)
+    #expect(detail?.timeline.isEmpty == true)
+
+    // Pruning drops what the index no longer lists — and writes no tombstone,
+    // so the pruned session can come back through a later replace.
+    #expect(try await repository.pruneSessions(keeping: [second.summary.id]) == 1)
     #expect(try await repository.listSessions(limit: 100).map(\.id) == [second.summary.id])
+    try await repository.replaceSession(first)
+    #expect(try await repository.listSessions(limit: 100).count == 2)
 }
 
 private func summary(id: String, updatedAt: TimeInterval) -> SessionSummary {
@@ -483,23 +539,36 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
     try await assertDiscardSemantics(repository)
 }
 
-@Test func grdbSnapshotReplacementClearsClientTombstones() async throws {
+@Test func grdbSessionReplaceClearsOnlyItsOwnClientTombstone() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-snapshot-tombstone-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("agent-status-replace-tombstone-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("cache.sqlite3").path)
     let ghost = SessionID("ghost")
+    let other = SessionID("other")
     #expect(try await repository.apply(startEvent(ghost, id: "start", at: 100)))
     #expect(try await repository.apply(discardEvent(ghost, id: "discard", at: 101)))
+    #expect(try await repository.apply(startEvent(other, id: "other-start", at: 100)))
+    #expect(try await repository.apply(discardEvent(other, id: "other-discard", at: 101)))
 
-    // The daemon resurrected it while this client was offline; the snapshot
+    // The daemon resurrected it while this client was offline; the replace
     // brings it back and later passive events must apply again.
-    try await repository.replaceSnapshot([SessionDetail(summary: summary(id: "ghost", updatedAt: 200), timeline: [])])
+    try await repository.replaceSession(SessionDetail(summary: summary(id: "ghost", updatedAt: 200), timeline: []))
     #expect(try await repository.apply(AgentIngressEvent(
-        eventID: EventID("after-snapshot"), sessionID: ghost, agent: .claude,
+        eventID: EventID("after-replace"), sessionID: ghost, agent: .claude,
         occurredAt: Date(timeIntervalSince1970: 201), lifecycle: .running, phase: .executing
     )))
     #expect(try await repository.sessionDetail(id: ghost, cursor: nil, limit: 10)?.summary.phase == .executing)
+
+    // The other tombstone is untouched: its passive events stay swallowed.
+    #expect(try await !repository.apply(AgentIngressEvent(
+        eventID: EventID("other-after"), sessionID: other, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 201), lifecycle: .running, phase: .executing
+    )))
+
+    // A replayed pre-replace event is still deduped: the replace keeps
+    // processed events so old increments cannot double-apply.
+    #expect(try await !repository.apply(startEvent(ghost, id: "start", at: 100)))
 }
 
 @Test func grdbMigrationSweepsEmptyCompletedClaudeSessionsOnly() async throws {

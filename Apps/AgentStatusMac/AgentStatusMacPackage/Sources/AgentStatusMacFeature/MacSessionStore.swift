@@ -3,6 +3,18 @@ import AgentStatusIPCClient
 import AgentStatusTransport
 import Foundation
 
+/// The store's daemon request seam; production is `DaemonIPCClient`, tests
+/// inject a scripted stub.
+public protocol MacDaemonClient: Sendable {
+    func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse
+}
+
+extension DaemonIPCClient: MacDaemonClient {
+    public func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse {
+        try self.request(request, socketPath: socketPath, timeout: .seconds(timeoutSeconds))
+    }
+}
+
 @MainActor
 public final class MacSessionStore {
     public private(set) var sessions: [SessionSummary] = []
@@ -11,7 +23,7 @@ public final class MacSessionStore {
     public private(set) var connectionError: String?
     public private(set) var dataRevision: UInt64 = 0
 
-    private let client = DaemonIPCClient()
+    private let client: any MacDaemonClient
     private let eventSubscriber = DaemonEventSubscriber()
     private let socketPath: String
     private let cache: SQLiteSessionRepository?
@@ -19,8 +31,8 @@ public final class MacSessionStore {
     private var started = false
     private var observers: [UUID: () -> Void] = [:]
     private var pendingSelectionID: SessionID?
-    private var snapshotTask: Task<Void, Never>?
-    private var snapshotPending = false
+    private var reconcileTask: Task<Void, Never>?
+    private var reconcilePending = false
     private var eventApplyTask: Task<Void, Never>?
     /// Kept in arrival order: the daemon's order is the only correct one once
     /// a batch can contain a session discard next to a resurrecting prompt.
@@ -31,9 +43,11 @@ public final class MacSessionStore {
 
     public init(
         socketPath: String = DaemonEndpoint.defaultSocketPath(),
-        cachePath: String? = nil
+        cachePath: String? = nil,
+        client: any MacDaemonClient = DaemonIPCClient()
     ) {
         self.socketPath = socketPath
+        self.client = client
         let resolvedCachePath = cachePath ?? Self.defaultCachePath()
         self.cachePath = resolvedCachePath
         do {
@@ -52,15 +66,15 @@ public final class MacSessionStore {
         Task { [weak self] in
             guard let self else { return }
             await self.reloadFromCache(reloadSelected: true)
-            self.scheduleSnapshotRefresh()
+            self.scheduleReconcile()
             self.connectEventStream()
         }
     }
 
     public func stop() {
         started = false
-        snapshotTask?.cancel()
-        snapshotTask = nil
+        reconcileTask?.cancel()
+        reconcileTask = nil
         eventApplyTask?.cancel()
         eventApplyTask = nil
         reconnectTask?.cancel()
@@ -118,7 +132,7 @@ public final class MacSessionStore {
 
     /// Daemon-management actions: resync from the daemon as it is.
     public func refresh() {
-        scheduleSnapshotRefresh()
+        scheduleReconcile()
         connectEventStream()
     }
 
@@ -138,6 +152,13 @@ public final class MacSessionStore {
                     extendedTimeout: true
                 )
                 if let failure = response.failure { throw failure }
+                // The rebuild is not streamed; the returned detail is the
+                // wiped-and-rebuilt session.
+                if let detail = response.session, let cache {
+                    try await cache.replaceSession(detail)
+                    cachedSnapshotDetails = nil
+                    await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
+                }
             } catch {
                 handleConnectionFailure(error)
             }
@@ -173,12 +194,50 @@ public final class MacSessionStore {
         }
     }
 
+    /// The human archived the session from the Notch: raise its
+    /// `hiddenInNotch` flag in the in-memory list at once (the Notch row
+    /// disappears immediately), then in the local cache and the daemon so
+    /// every mirror agrees. The Mac window keeps showing the session.
+    public func markSessionHiddenInNotch(_ sessionID: SessionID) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+              !sessions[index].hiddenInNotch else { return }
+        sessions[index] = sessions[index].withHiddenInNotch(true)
+        if let selected = selectedSession, selected.summary.id == sessionID {
+            selectedSession = SessionDetail(
+                summary: selected.summary.withHiddenInNotch(true),
+                turns: selected.turns,
+                timeline: selected.timeline,
+                nextCursor: selected.nextCursor
+            )
+        }
+        cachedSnapshotDetails = nil
+        notifyObservers(dataChanged: true)
+        Task {
+            do {
+                if let cache { try await cache.markSessionHiddenInNotch(sessionID) }
+                let response = try await request(IPCRequest(operation: .markSessionHiddenInNotch, sessionID: sessionID))
+                if let failure = response.failure { throw failure }
+            } catch {
+                handleConnectionFailure(error)
+            }
+        }
+    }
+
     public func deleteSession(_ sessionID: SessionID) {
         Task {
             do {
+                // Optimistic local delete: the row leaves the UI at once; the
+                // local tombstone swallows in-flight stragglers exactly like
+                // the daemon's, and reconcile converges on the daemon's truth
+                // either way.
+                if let cache {
+                    _ = try await cache.deleteSession(id: sessionID)
+                    cachedSnapshotDetails = nil
+                    await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
+                }
                 let response = try await request(IPCRequest(operation: .deleteSession, sessionID: sessionID))
                 if let failure = response.failure { throw failure }
-                scheduleSnapshotRefresh()
+                scheduleReconcile()
             } catch {
                 handleConnectionFailure(error)
             }
@@ -188,9 +247,14 @@ public final class MacSessionStore {
     public func clearHistory() {
         Task {
             do {
+                if let cache {
+                    _ = try await cache.deleteAllSessions()
+                    cachedSnapshotDetails = nil
+                    await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
+                }
                 let response = try await request(IPCRequest(operation: .clearHistory))
                 if let failure = response.failure { throw failure }
-                scheduleSnapshotRefresh()
+                scheduleReconcile()
             } catch {
                 handleConnectionFailure(error)
             }
@@ -246,58 +310,95 @@ public final class MacSessionStore {
         return try await cache.currentTurnUserMessages(sessionIDs: ids)
     }
 
-    private func scheduleSnapshotRefresh() {
+    /// Reconciles the local cache with the daemon at session granularity: a
+    /// summary index decides which sessions to refetch in full (paged
+    /// `get_session`) and which to prune. Full state never crosses the socket
+    /// in one frame — the whole-snapshot pull outgrew the IPC frame limit.
+    private func scheduleReconcile() {
         guard cache != nil else { return }
-        snapshotPending = true
-        guard snapshotTask == nil else { return }
-        snapshotTask = Task { [weak self] in
+        reconcilePending = true
+        guard reconcileTask == nil else { return }
+        reconcileTask = Task { [weak self] in
             guard let self else { return }
-            while self.snapshotPending, !Task.isCancelled {
-                self.snapshotPending = false
+            while self.reconcilePending, !Task.isCancelled {
+                self.reconcilePending = false
                 if let eventApplyTask = self.eventApplyTask {
                     await eventApplyTask.value
                 }
                 do {
-                    let response = try await self.request(
-                        IPCRequest(operation: .snapshotSessions, limit: 10_000),
-                        extendedTimeout: true
-                    )
-                    if let failure = response.failure { throw failure }
-                    let details = (response.sessionDetails ?? [])
-                        .sorted { $0.summary.updatedAt > $1.summary.updatedAt }
-                    // The cache keeps everything (a provisional session must
-                    // still be there when its first Turn arrives); the visible
-                    // snapshot excludes provisional sessions (unless one is the
-                    // parent of a visible subagent).
-                    let visibleIDs = Set(SessionSummary.visible(details.map(\.summary)).map(\.id))
-                    let visibleDetails = details.filter { visibleIDs.contains($0.summary.id) }
-                    let previousDetails = try await self.snapshotDetails()
-                    let snapshotDataChanged = Dictionary(
-                        uniqueKeysWithValues: previousDetails.map { ($0.summary.id, $0) }
-                    ) != Dictionary(
-                        uniqueKeysWithValues: visibleDetails.map { ($0.summary.id, $0) }
-                    )
-                    if let cache = self.cache { try await cache.replaceSnapshot(details) }
-                    self.cachedSnapshotDetails = Dictionary(
-                        uniqueKeysWithValues: visibleDetails.map { ($0.summary.id, $0) }
-                    )
-                    self.health = response.health
-                    self.connectionError = nil
-                    await self.reloadFromCache(
-                        reloadSelected: true,
-                        persistedDataChanged: snapshotDataChanged
-                    )
+                    try await self.reconcileOnce()
                 } catch {
                     self.handleConnectionFailure(error)
                 }
             }
-            self.snapshotTask = nil
-            if self.snapshotPending, !Task.isCancelled {
-                self.scheduleSnapshotRefresh()
+            self.reconcileTask = nil
+            if self.reconcilePending, !Task.isCancelled {
+                self.scheduleReconcile()
             } else if !self.pendingEvents.isEmpty, !Task.isCancelled {
                 self.scheduleEventApply()
             }
         }
+    }
+
+    private func reconcileOnce() async throws {
+        guard let cache else { return }
+        let healthResponse = try await request(IPCRequest(operation: .health))
+        if let failure = healthResponse.failure { throw failure }
+        let indexResponse = try await request(IPCRequest(operation: .listSessions, limit: 10_000))
+        if let failure = indexResponse.failure { throw failure }
+        // The cache keeps everything (a provisional session must still be
+        // there when its first Turn arrives); visibility is filtered at read
+        // time, so the index and the fetches carry all sessions.
+        let index = indexResponse.sessions ?? []
+        let local = try await cache.listSessions(limit: 10_000)
+        let plan = SessionReconcilePlan.make(local: local, daemon: index)
+        var changed = false
+        for id in plan.fetch {
+            guard let detail = try await fetchFullDetail(id: id) else { continue }
+            try await cache.replaceSession(detail)
+            changed = true
+        }
+        let pruned = try await cache.pruneSessions(keeping: Set(index.map(\.id)))
+        if changed || pruned > 0 { cachedSnapshotDetails = nil }
+        health = healthResponse.health
+        connectionError = nil
+        await reloadFromCache(
+            reloadSelected: true,
+            persistedDataChanged: changed || pruned > 0
+        )
+    }
+
+    /// Pages one session out of the daemon. A page that overflows the IPC
+    /// frame limit is retried with a much smaller page; a session deleted
+    /// mid-reconcile is skipped (the next index prunes it).
+    private func fetchFullDetail(id: SessionID) async throws -> SessionDetail? {
+        var cursor: PaginationCursor?
+        var timeline: [TimelineItem] = []
+        var turns: [TurnSummary] = []
+        var summary: SessionSummary?
+        var limit = 200
+        var done = false
+        while !done {
+            let response = try await request(
+                IPCRequest(operation: .getSession, sessionID: id, cursor: cursor, limit: limit),
+                extendedTimeout: true
+            )
+            if let failure = response.failure {
+                if failure.code == "session_not_found" { return nil }
+                if failure.code == "response_too_large", limit > 25 {
+                    limit = 25
+                    continue
+                }
+                throw failure
+            }
+            guard let page = response.session else { return nil }
+            summary = page.summary
+            if !page.turns.isEmpty { turns = page.turns }
+            timeline.append(contentsOf: page.timeline)
+            cursor = page.nextCursor
+            done = cursor == nil
+        }
+        return summary.map { SessionDetail(summary: $0, turns: turns, timeline: timeline) }
     }
 
     func enqueueAgentEvent(_ event: AgentIngressEvent) {
@@ -314,8 +415,17 @@ public final class MacSessionStore {
         }
     }
 
+    /// Test hook: runs one reconcile pass to completion without touching the
+    /// event stream.
+    func reconcileForTesting() async {
+        scheduleReconcile()
+        while let task = reconcileTask {
+            await task.value
+        }
+    }
+
     private func scheduleEventApply() {
-        guard eventApplyTask == nil, snapshotTask == nil else { return }
+        guard eventApplyTask == nil, reconcileTask == nil else { return }
         eventApplyTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .milliseconds(50))
@@ -412,9 +522,13 @@ public final class MacSessionStore {
                     },
                     onHealth: { health in
                         Task { @MainActor in
-                            storeReference.value?.health = health
-                            storeReference.value?.connectionError = nil
-                            storeReference.value?.notifyObservers()
+                            guard let store = storeReference.value else { return }
+                            store.health = health
+                            store.connectionError = nil
+                            store.notifyObservers()
+                            // The stream just (re)connected; catch up on
+                            // whatever it missed while down.
+                            store.scheduleReconcile()
                         }
                     },
                     onDisconnect: {
@@ -450,7 +564,7 @@ public final class MacSessionStore {
             try client.request(
                 request,
                 socketPath: socketPath,
-                timeout: extendedTimeout ? .seconds(15) : .seconds(2)
+                timeoutSeconds: extendedTimeout ? 15 : 2
             )
         }.value
     }
@@ -461,6 +575,7 @@ public final class MacSessionStore {
     ) async throws -> SessionDetail? {
         var cursor: PaginationCursor?
         var summary: SessionSummary?
+        var turns: [TurnSummary] = []
         var timeline: [TimelineItem] = []
         repeat {
             guard let page = try await repository.sessionDetail(
@@ -469,10 +584,11 @@ public final class MacSessionStore {
                 limit: 500
             ) else { return nil }
             summary = page.summary
+            turns = page.turns
             timeline.append(contentsOf: page.timeline)
             cursor = page.nextCursor
         } while cursor != nil
-        return summary.map { SessionDetail(summary: $0, timeline: timeline) }
+        return summary.map { SessionDetail(summary: $0, turns: turns, timeline: timeline) }
     }
 
     static func merging(

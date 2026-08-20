@@ -1,6 +1,6 @@
 # Agent Hook 设计
 
-Codex 接入由两条互补路径组成：Hook 提供低延迟，rollout watcher 提供持久日志补充与 daemon 离线恢复。两条路径都先经过 `CodexAdapter`，再写入同一个 reducer。
+Codex 与 Claude 接入都由两条互补路径组成：Hook 提供低延迟；持久日志侧 Codex 有 rollout watcher（默认关闭的兜底），Claude 有 transcript watcher（默认开启，覆盖没有任何 hook 的写入，如用户中断）。两条路径都先经过对应 Adapter，再写入同一个 reducer。
 
 ## 目标
 
@@ -44,7 +44,7 @@ flowchart LR
 
 ## 重算（`reingest_session`）
 
-Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_session`，再做全量 `snapshot_sessions`。daemon 侧 `SessionReingester`（`Common/AgentStatusCodex`）：
+Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_session`，把返回的 detail 写入本地缓存，再做一次按 Session 的对账。daemon 侧 `SessionReingester`（`Common/AgentStatusCodex`）：
 
 1. 取该 Session 现有 summary + 全部 timeline；按 `rollout_cursors.session_id` 找到 rich source（找不到时按 agent 用 `RichSourceLocator` 搜 `~/.claude/projects` / `~/.codex/sessions`；仍找不到 → `rich_source_unavailable`，不动数据）。
 2. `RichSourceReader` 从 offset 0 全量读（不截尾），逐行经 ClaudeAdapter / CodexAdapter 归约。
@@ -121,6 +121,7 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | record / block | 结果 |
 | --- | --- |
 | `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(turn, system_reminder)`；`<command-name>` 等标签块为 `context(turn, <tag>)` |
+| `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
 | `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)` |
 | `assistant` `thinking` / `text` / `tool_use` | `reasoning` / `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
 | `assistant` `stop_reason` ∈ {`end_turn`, `stop_sequence`, `max_tokens`, `refusal`} | Turn 结束：Waiting For Input / Idle + Turn `endedAt/outcome=completed/lastAssistantMessage` + `turnEnd`（ID `turn_end:<s>:<turn>`，与 Stop hook 同一行）。transcript 自己就能收口，Stop hook 丢失或被后到事件覆盖时下一次读增量即自愈；`tool_use` 不结束 Turn |
@@ -177,6 +178,18 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 4. 写入 `rollout_baseline_initialized = 1`。
 
 因此只有之后创建的新 rollout 文件进入 Agent Status。已存在 Session 后续追加内容仍被忽略。
+
+## Claude transcript watcher
+
+`ClaudeTranscriptWatcher`（daemon 内，默认开启，`AGENT_STATUS_CLAUDE_WATCHER=0` 关闭）弥补 hook 驱动读取的盲区：**用户中断不触发任何 hook**，此后写入 transcript 的一切（中断标记、`custom-title`、最后的 assistant 输出）在下一个 hook 到来前都不可见；用户就此弃置的 Session 会永远停在 Running。
+
+与 rollout watcher 不同，它不扫描目录、没有首次基线问题：
+
+- 每个轮询周期（默认 2 秒）取 `listSessions`，只轮询**活跃**的 Claude Session——`starting` / `running` / `compacting`，以及 `waitingForInput` 且 phase 非 `idle`（审批悬挂时按 Esc 同样只写标记）。停在 `waitingForInput · idle` 的已完成 Session 不轮询：它的下一次 transcript 写入必然伴随 `UserPromptSubmit` hook。
+- transcript 路径来自该 Session 的 cursor；从未成功读过的 Session（启动数秒即被中断，hook 触发时文件尚未落盘）退回 `RichSourceLocator` 按 cwd slug 推导。Subagent 子 Session 由 `<parent>:agent:<id>` 解析出父路径推导 sidechain transcript。
+- 读取复用 `RichSourceReader`（cursor 增量、32 MiB 尾部截断、open Turn 归属），事件幂等去重，与 helper 共享同一 cursor——两路并发读同一增量时靠 processed event 去重收敛。
+- 文件尺寸未变化的路径跳过（同 rollout watcher 的 `scannedFileSizes`）。
+- Session 一旦被标记 Interrupted 便退出活跃集，不再被轮询。
 
 ## Codex state 元数据
 
@@ -283,9 +296,10 @@ events(fromRolloutLine:context:state:) -> [AgentIngressEvent]  // state: current
 
 ## 当前限制
 
-- helper 只在 hook 到达时读增量；两次 hook 之间写入的长 assistant 输出会延后到下一个 hook 才可见（最晚 `Stop`）。
+- helper 只在 hook 到达时读增量；Claude 活跃 Session 由 transcript watcher 每 2 秒兜底，Codex 两次 hook 之间写入的长输出仍延后到下一个 hook 才可见（最晚 `Stop`）。
+- 父 Session 被中断时，仍在运行的 Subagent 子 Session 不会级联收口（sidechain transcript 不写中断标记），停留在 running 直至手动 reingest。
 - Codex subagent 自己的 rollout 没有 hook 触发，只能靠父 Session 的 `SubagentStart/Stop` 或开启 daemon watcher 兜底。
-- 未安装 hook 的 Agent 不再被自动发现（watcher 默认关闭）。
+- 未安装 hook 的 Agent 不再被自动发现（rollout watcher 默认关闭）。
 - rollout / transcript 格式不是稳定 API；未知或变化字段必须默认忽略。
 - helper 没有磁盘队列。
 

@@ -78,15 +78,15 @@ describe("relay pairing and authorization", () => {
     expect(first.toString()).not.toBe(second.toString());
   });
 
-  it("replays only the short in-memory ciphertext window after reconnect", async () => {
+  it("forwards device hellos to the host and a frame burst to the device in order", async () => {
     await registerHost();
-    const replayChallenge = "pairing-challenge-replay-000000000001";
+    const resyncChallenge = "pairing-challenge-resync-000000000001";
     await SELF.fetch(`https://example.com/v1/hosts/${hostID}/pairing-offers`, {
       method: "POST",
       headers: authHeaders(hostSecret),
       body: JSON.stringify({
-        challenge: replayChallenge,
-        hostPublicKey: "host-public-key-replay-000000000000001",
+        challenge: resyncChallenge,
+        hostPublicKey: "host-public-key-resync-000000000000001",
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
       }),
     });
@@ -94,36 +94,48 @@ describe("relay pairing and authorization", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        challenge: replayChallenge,
+        challenge: resyncChallenge,
         deviceID,
-        deviceName: "Replay iPhone",
-        devicePublicKey: "device-public-key-replay-00000000000001",
+        deviceName: "Resync iPhone",
+        devicePublicKey: "device-public-key-resync-00000000000001",
       }),
     });
     const pairing = await paired.json<{ deviceToken: string }>();
 
     const host = await openSocket("host", hostSecret);
-    const firstDevice = await openSocket("device", pairing.deviceToken, deviceID);
-    const firstMessages = collectMessages(firstDevice);
-    host.send(routingFrame(1));
-    expect(await firstMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 1 }));
-    firstDevice.close();
+    const hostMessages = collectMessages(host);
+    const device = await openSocket("device", pairing.deviceToken, deviceID);
+    const deviceMessages = collectMessages(device);
 
-    host.send(routingFrame(2));
-    const secondDevice = await openSocket("device", pairing.deviceToken, deviceID);
-    const secondMessages = collectMessages(secondDevice);
-    secondDevice.send(JSON.stringify({
+    // The relay keeps no replay buffer: a hello behind the host's sequence is
+    // forwarded verbatim so the Mac can resend everything itself.
+    device.send(JSON.stringify({
       version: { major: 1, minor: 0 },
       hostID,
       deviceID,
-      sequence: 1,
+      sequence: 0,
       kind: "hello",
-      acknowledgedSequence: 1,
+      acknowledgedSequence: 0,
     }));
-    expect(await secondMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 2 }));
+    expect(await hostMessages.nextFrame("hello")).toEqual(
+      expect.objectContaining({ deviceID, acknowledgedSequence: 0 }),
+    );
+
+    // A publish batch (sessions then index) arrives complete and in order.
+    host.send(routingFrame(1));
+    host.send(routingFrame(2));
+    host.send(routingFrame(3));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 1 }));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 2 }));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 3 }));
+
+    // Non-monotonic host frames are still dropped.
+    host.send(routingFrame(2));
+    host.send(routingFrame(4));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 4 }));
 
     host.close();
-    secondDevice.close();
+    device.close();
   });
 
   it("tracks monotonic sequences independently for each iOS channel", async () => {

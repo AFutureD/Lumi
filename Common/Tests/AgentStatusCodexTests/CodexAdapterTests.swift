@@ -430,6 +430,40 @@ import Testing
     #expect(plan.steps.map(\.status) == [.completed, .inProgress])
 }
 
+// A user stop writes only a `[Request interrupted by user]` user record to the
+// transcript — no Stop hook fires — so the marker must end the turn itself.
+@Test func claudeTranscriptInterruptMarkerEndsTheTurnAsAborted() throws {
+    let adapter = ClaudeAdapter()
+    var state = RolloutReadState()
+    let context = RolloutRecordContext(path: "/tmp/session.jsonl", byteOffset: 0, sessionID: SessionID("session-1"))
+
+    let prompt = Data("""
+    {"type":"user","sessionId":"session-1","promptId":"p1","timestamp":"2026-08-20T09:44:42Z","message":{"role":"user","content":"Do the thing"}}
+    """.utf8)
+    let promptEvents = try adapter.events(fromRolloutLine: prompt, context: context, state: &state)
+    #expect(promptEvents.last?.lifecycle == .running)
+
+    for marker in ["[Request interrupted by user]", "[Request interrupted by user for tool use]"] {
+        let interrupt = Data("""
+        {"type":"user","sessionId":"session-1","timestamp":"2026-08-20T09:44:44Z","message":{"role":"user","content":[{"type":"text","text":"\(marker)"}]}}
+        """.utf8)
+        let events = try adapter.events(
+            fromRolloutLine: interrupt,
+            context: RolloutRecordContext(path: context.path, byteOffset: 100, sessionID: context.sessionID),
+            state: &state
+        )
+        #expect(events.count == 1)
+        #expect(events[0].lifecycle == .interrupted)
+        #expect(events[0].phase == .idle)
+        #expect(events[0].turn?.outcome == .aborted)
+        guard case let .turnEnd(end)? = events[0].timelineItem?.payload else {
+            Issue.record("Expected a turn-end payload for \(marker)")
+            continue
+        }
+        #expect(end.outcome == .aborted)
+    }
+}
+
 struct FixedThreadIdentities: CodexThreadIdentityProviding {
     let identities: [SessionID: CodexThreadIdentity]
 

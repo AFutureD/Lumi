@@ -1,6 +1,6 @@
 # 整体架构设计
 
-Agent Status 使用“本地权威、客户端持久副本、Relay 不透明转发”的结构。daemon 负责采集与归并；macOS App 负责本机 UI、Notch 和远程发布；iOS 只读消费按 Mac 划分的快照。
+Agent Status 使用“本地权威、客户端持久副本、Relay 不透明转发”的结构。daemon 负责采集与归并；macOS App 负责本机 UI、Notch 和远程发布；iOS 只读消费按 Mac 划分、逐 Session 推送的副本。
 
 ## 目标
 
@@ -96,8 +96,8 @@ flowchart LR
 | helper | 读取 Hook stdin、归一化、发送事件、报告失败 | 保存状态、扫描日志、重试队列 |
 | daemon | 建立基线、归并事件、SQLite 权威存储、本地查询与事件扇出 | UI、QR 配对、当前远程 WSS |
 | Mac App | SQLite 客户端缓存、AppKit UI、Notch、daemon 管理、Hook 安装、Relay Host | 解析原始 rollout、成为业务权威 |
-| iOS App | 多 Mac 配对、每通道 SQLite、当前快照展示 | Agent 控制、Relay 历史查询 |
-| Relay | Host/Device 鉴权、配对、撤销、在线状态、密文转发、短暂重放 | 解密 Session、保存业务快照 |
+| iOS App | 多 Mac 配对、每通道 SQLite、同步完整后展示 | Agent 控制、Relay 历史查询 |
+| Relay | Host/Device 鉴权、配对、撤销、在线状态、密文转发 | 解密 Session、保存业务数据、重放历史 |
 | Transport Package | DTO、版本、编码、framing、golden fixture | 网络连接、SQLite、UI、Reducer |
 
 ## Swift Package 分层
@@ -146,8 +146,8 @@ flowchart TD
 
 1. **Agent 原始事实**：Codex Hook JSON 与 rollout JSONL。
 2. **本机产品事实**：daemon SQLite；Reducer 决定当前 Session 状态。
-3. **Mac 展示副本**：Mac SQLite；启动/手动快照可整体替换，Agent 事件可增量应用。
-4. **iOS 展示副本**：每台 Mac 一个 SQLite；只由解密后的完整快照替换。
+3. **Mac 展示副本**：Mac SQLite；启动/手动对账按 Session 替换与裁剪，Agent 事件可增量应用。
+4. **iOS 展示副本**：每台 Mac 一个 SQLite；由解密后的单 Session 载荷替换、index 载荷裁剪。
 5. **Relay 元数据**：授权、配对、限流和序号；不是业务事实源。
 
 删除操作先进入 daemon。daemon 记录 ignored Session tombstone 后再删除业务数据，避免之后到达的晚事件让 Session 复活。
@@ -165,7 +165,7 @@ flowchart TD
 ### macOS App
 
 1. 打开 Mac SQLite 缓存并先渲染已保存内容。
-2. 请求 daemon 完整快照并原子替换缓存。
+2. 与 daemon 对账：索引 diff 后逐 Session 拉取替换、裁剪多余项。
 3. 建立一个持久事件订阅 channel。
 4. 启动 Relay Host 连接、主窗口和 OpenNook。
 
@@ -174,13 +174,13 @@ flowchart TD
 1. 从 Keychain 恢复所有 Mac 通道凭据。
 2. 为每台 Mac 打开独立 SQLite 并建立 Device WSS。
 3. 发送最后确认序号。
-4. 只有收到 Host 在线和当前快照后才显示缓存内容。
+4. 只有 Host 在线且同步完整（index 已到且逐 Session 收全）才显示缓存内容。
 
 ## 当前实现约束
 
 - `DaemonHealth.relayConnected` 已预留，但 daemon 当前没有连接 Relay，因此该值没有被 Relay Host 状态驱动。
 - macOS App 退出时，即使 daemon 仍运行，iOS 也会因为 Host WSS 关闭而显示不可用。
-- 远程同步使用完整快照，不是字段级或 Timeline 增量协议。
+- 远程同步按整 Session 重发，不是字段级或 Timeline 增量协议。
 - Release 签名、公证、干净机器 LaunchAgent 和真实物理 iPhone 仍待最终验收。
 
 ## 相关文档

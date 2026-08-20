@@ -138,6 +138,20 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible).count == AgentStatusNookSnapshot.maximumVisibleSessions)
 }
 
+@Test func nookSnapshotHidesArchivedSessionsWhileTheMacListKeepsThem() {
+    let active = nookSummary(id: "active", lifecycle: .running, phase: .executing, updatedAt: 20)
+    let archived = nookSummary(id: "archived", lifecycle: .waitingForInput, phase: .idle, updatedAt: 10)
+        .withHiddenInNotch(true)
+
+    // Archived sessions leave the Notch entirely: rows and the footer count.
+    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [active, archived]).map(\.id) == [active.id])
+    #expect(AgentStatusNookSnapshot.visibleSummaries(from: [active, archived]).map(\.id) == [active.id])
+
+    // The Mac window ignores the flag.
+    let hierarchy = SessionListHierarchy.build(from: [active, archived])
+    #expect(hierarchy.roots.map(\.summary.id) == [active.id, archived.id])
+}
+
 @Test func nookListKeepsStoreOrderAndListsSubagentsOnlyWhileTheTurnRuns() {
     let running = nookSummary(id: "running", lifecycle: .running, phase: .executing, updatedAt: 30)
     let waiting = nookSummary(id: "waiting", lifecycle: .waitingForInput, phase: .idle, updatedAt: 20)
@@ -283,7 +297,7 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     #expect(AgentStatusNookActivityDiff.turnEvents(previous: [], current: [after]).isEmpty)
 }
 
-@Test func relayRecoveryResendsAnUnchangedSnapshot() {
+@Test func relayPublishPlanSendsOnlyChangedSessions() {
     #expect(RelayPublishDecision.shouldSchedule(
         previousRevision: 10,
         currentRevision: 10,
@@ -296,17 +310,11 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
         wasDaemonAvailable: true,
         isDaemonAvailable: true
     ))
-    #expect(RelayPublishDecision.shouldSendSnapshot(wasUnavailable: true, previous: [], current: []))
-    #expect(!RelayPublishDecision.shouldSendSnapshot(wasUnavailable: false, previous: [], current: []))
 
-    let diagnosticSummary = nookSummary(
-        id: "diagnostic",
-        lifecycle: .running,
-        phase: .thinking,
-        updatedAt: 10
-    )
-    let previous = SessionDetail(summary: diagnosticSummary, timeline: [])
-    let current = SessionDetail(summary: diagnosticSummary, timeline: [
+    let stable = nookSummary(id: "stable", lifecycle: .running, phase: .thinking, updatedAt: 10)
+    let diagnosticSummary = nookSummary(id: "diagnostic", lifecycle: .running, phase: .thinking, updatedAt: 10)
+    let previousDetail = SessionDetail(summary: diagnosticSummary, timeline: [])
+    let currentDetail = SessionDetail(summary: diagnosticSummary, timeline: [
         TimelineItem(
             id: TimelineItemID("usage"),
             sessionID: diagnosticSummary.id,
@@ -316,11 +324,83 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
             ))
         ),
     ])
-    #expect(RelayPublishDecision.shouldSendSnapshot(
-        wasUnavailable: false,
-        previous: [previous],
-        current: [current]
-    ))
+    let stableDetail = SessionDetail(summary: stable, timeline: [])
+
+    // nil previous ⇒ everything goes out again.
+    #expect(Set(RelayPublishPlan.changedSessions(
+        previous: nil,
+        current: [stable.id: stableDetail]
+    )) == [stable.id])
+    // A diagnostic-only timeline delta still counts as a change worth sending.
+    #expect(RelayPublishPlan.changedSessions(
+        previous: [stable.id: stableDetail, diagnosticSummary.id: previousDetail],
+        current: [stable.id: stableDetail, diagnosticSummary.id: currentDetail]
+    ) == [diagnosticSummary.id])
+    // Deletions never ride as session frames; the trailing index prunes them.
+    #expect(RelayPublishPlan.changedSessions(
+        previous: [stable.id: stableDetail, diagnosticSummary.id: previousDetail],
+        current: [stable.id: stableDetail]
+    ).isEmpty)
+}
+
+@Test func sessionReconcilePlanFetchesChangedAndPrunesAbsent() {
+    let unchanged = nookSummary(id: "unchanged", lifecycle: .running, phase: .thinking, updatedAt: 10)
+    let stale = nookSummary(id: "stale", lifecycle: .running, phase: .thinking, updatedAt: 10)
+    let fresh = nookSummary(id: "stale", lifecycle: .waitingForInput, phase: .idle, updatedAt: 20)
+    let added = nookSummary(id: "added", lifecycle: .running, phase: .executing, updatedAt: 30)
+    let removed = nookSummary(id: "removed", lifecycle: .completed, phase: .idle, updatedAt: 5)
+
+    let plan = SessionReconcilePlan.make(
+        local: [unchanged, stale, removed],
+        daemon: [added, fresh, unchanged]
+    )
+    #expect(plan.fetch == [added.id, fresh.id])
+    #expect(plan.prune == [removed.id])
+
+    let idle = SessionReconcilePlan.make(local: [unchanged], daemon: [unchanged])
+    #expect(idle.fetch.isEmpty)
+    #expect(idle.prune.isEmpty)
+}
+
+@Test func relaySessionPartitionerSplitsOversizedSessions() throws {
+    let date = Date(timeIntervalSince1970: 100)
+    let small = SessionDetail(
+        summary: nookSummary(id: "small", lifecycle: .running, phase: .thinking, updatedAt: 100),
+        turns: [TurnSummary(id: TurnID("t"), sessionID: SessionID("small"), phase: .thinking, startedAt: date)],
+        timeline: [TimelineItem(
+            id: TimelineItemID("one"), sessionID: SessionID("small"), occurredAt: date,
+            payload: .message(MessageTimelinePayload(role: .user, text: "hi"))
+        )]
+    )
+    let singleParts = try RelaySessionPartitioner.parts(for: small, generatedAt: date)
+    #expect(singleParts.count == 1)
+    #expect(singleParts[0].payload.session?.nextCursor == nil)
+    #expect(singleParts[0].payload.part == 0)
+
+    // Random payloads defeat compression, so many 64 KiB items force a split.
+    let bigTimeline = (0..<64).map { index in
+        TimelineItem(
+            id: TimelineItemID("big-\(index)"), sessionID: SessionID("big"), occurredAt: date,
+            payload: .message(MessageTimelinePayload(
+                role: .assistant,
+                text: Data((0..<65_536).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
+            ))
+        )
+    }
+    let big = SessionDetail(
+        summary: nookSummary(id: "big", lifecycle: .running, phase: .thinking, updatedAt: 100),
+        turns: [TurnSummary(id: TurnID("t"), sessionID: SessionID("big"), phase: .thinking, startedAt: date)],
+        timeline: bigTimeline
+    )
+    let parts = try RelaySessionPartitioner.parts(for: big, generatedAt: date)
+    #expect(parts.count > 1)
+    #expect(parts.dropLast().allSatisfy { $0.payload.session?.nextCursor != nil })
+    #expect(parts.last?.payload.session?.nextCursor == nil)
+    #expect(parts.allSatisfy { $0.prepared.byteCount <= RelaySessionPartitioner.maxCompressedBytes })
+    #expect(parts.first?.payload.session?.turns.isEmpty == false)
+    #expect(parts.dropFirst().allSatisfy { $0.payload.session?.turns.isEmpty == true })
+    let reassembled = parts.flatMap { $0.payload.session?.timeline ?? [] }
+    #expect(reassembled == bigTimeline)
 }
 
 @Test func sessionListPresentationShowsTitleAgentAndStatus() {
@@ -782,15 +862,144 @@ private func flatten(_ node: SessionListNode) -> [SessionSummary] {
 // MARK: - Provisional sessions in the Mac store
 
 @MainActor
-private func macStoreFixture() throws -> (MacSessionStore, URL) {
+private func macStoreFixture(client: (any MacDaemonClient)? = nil) throws -> (MacSessionStore, URL) {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-status-mac-store-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let store = MacSessionStore(
-        socketPath: directory.appendingPathComponent("missing.sock").path,
-        cachePath: directory.appendingPathComponent("cache.sqlite3").path
-    )
+    let store = if let client {
+        MacSessionStore(
+            socketPath: directory.appendingPathComponent("missing.sock").path,
+            cachePath: directory.appendingPathComponent("cache.sqlite3").path,
+            client: client
+        )
+    } else {
+        MacSessionStore(
+            socketPath: directory.appendingPathComponent("missing.sock").path,
+            cachePath: directory.appendingPathComponent("cache.sqlite3").path
+        )
+    }
     return (store, directory)
+}
+
+/// A scripted daemon: summaries + full details behind offset-cursor paging,
+/// mirroring the repository's `get_session` semantics.
+private final class StubDaemonClient: MacDaemonClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var summaries: [SessionSummary]
+    private var details: [SessionID: SessionDetail]
+    private(set) var operations: [IPCOperation] = []
+
+    init(details: [SessionDetail]) {
+        summaries = details.map(\.summary)
+        self.details = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0) })
+    }
+
+    func replace(details: [SessionDetail]) {
+        lock.lock()
+        defer { lock.unlock() }
+        summaries = details.map(\.summary)
+        self.details = Dictionary(uniqueKeysWithValues: details.map { ($0.summary.id, $0) })
+    }
+
+    func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse {
+        lock.lock()
+        defer { lock.unlock() }
+        operations.append(request.operation)
+        switch request.operation {
+        case .health:
+            return IPCResponse(status: .ok, health: DaemonHealth(
+                daemonVersion: "test", uptimeSeconds: 1, activeSessionCount: summaries.count,
+                retainedSessionCount: summaries.count, socketPath: socketPath, relayConnected: false
+            ))
+        case .listSessions:
+            return IPCResponse(status: .ok, sessions: summaries)
+        case .getSession:
+            guard let id = request.sessionID, let detail = details[id] else {
+                return IPCResponse(status: .error, failure: IPCFailure(
+                    code: "session_not_found", message: "gone", retryable: false
+                ))
+            }
+            let offset = max(0, Int(request.cursor?.value ?? "0") ?? 0)
+            let pageSize = max(1, min(request.limit ?? 200, 500))
+            let page = Array(detail.timeline.dropFirst(offset).prefix(pageSize))
+            let nextOffset = offset + page.count
+            return IPCResponse(status: .ok, session: SessionDetail(
+                summary: detail.summary,
+                turns: detail.turns,
+                timeline: page,
+                nextCursor: nextOffset < detail.timeline.count
+                    ? PaginationCursor(value: String(nextOffset))
+                    : nil
+            ))
+        case .deleteSession:
+            if let id = request.sessionID {
+                summaries.removeAll { $0.id == id }
+                details.removeValue(forKey: id)
+            }
+            return IPCResponse(status: .ok)
+        default:
+            return IPCResponse(status: .ok)
+        }
+    }
+}
+
+private func reconcileDetail(_ id: String, items: Int, updatedAt: TimeInterval) -> SessionDetail {
+    let sessionID = SessionID(id)
+    let date = Date(timeIntervalSince1970: updatedAt)
+    return SessionDetail(
+        summary: SessionSummary(
+            id: sessionID, agent: .claude, title: id.capitalized,
+            lifecycle: .running, phase: .thinking,
+            startedAt: date, updatedAt: date, lastActivityAt: date,
+            firstTurnAt: date
+        ),
+        turns: [TurnSummary(id: TurnID("\(id)-turn"), sessionID: sessionID, phase: .thinking, prompt: "hi", startedAt: date)],
+        timeline: (0..<items).map { index in
+            TimelineItem(
+                id: TimelineItemID("\(id)-item-\(index)"), sessionID: sessionID,
+                occurredAt: date.addingTimeInterval(Double(index)),
+                payload: .message(MessageTimelinePayload(role: .assistant, text: "Update \(index)"))
+            )
+        }
+    )
+}
+
+@Test @MainActor
+func macStoreReconcileFetchesPagesPrunesAndConvergesOnDelete() async throws {
+    let alpha = reconcileDetail("alpha", items: 7, updatedAt: 100)
+    let beta = reconcileDetail("beta", items: 2, updatedAt: 90)
+    let stub = StubDaemonClient(details: [alpha, beta])
+    let (store, directory) = try macStoreFixture(client: stub)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    await store.reconcileForTesting()
+    #expect(store.sessions.map(\.id) == [alpha.summary.id, beta.summary.id])
+    #expect(store.health?.daemonVersion == "test")
+    let fetched = try await store.cachedSessionDetails(ids: [alpha.summary.id]).first
+    #expect(fetched?.timeline.count == 7)
+    #expect(fetched?.turns.count == 1)
+
+    // Nothing changed: the second pass fetches no session.
+    let before = stub.operations.filter { $0 == .getSession }.count
+    await store.reconcileForTesting()
+    #expect(stub.operations.filter { $0 == .getSession }.count == before)
+
+    // The daemon dropped beta and advanced alpha: fetch one, prune one.
+    let freshAlpha = reconcileDetail("alpha", items: 8, updatedAt: 200)
+    stub.replace(details: [freshAlpha])
+    await store.reconcileForTesting()
+    #expect(store.sessions.map(\.id) == [alpha.summary.id])
+    #expect(try await store.cachedSessionDetails(ids: [alpha.summary.id]).first?.timeline.count == 8)
+
+    // Deleting converges: gone locally at once, still gone after reconcile.
+    store.deleteSession(alpha.summary.id)
+    for _ in 0..<100 where !store.sessions.isEmpty {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(store.sessions.isEmpty)
+    await store.reconcileForTesting()
+    #expect(store.sessions.isEmpty)
+    #expect(try await store.cachedSessionDetails(ids: [alpha.summary.id]).isEmpty)
 }
 
 private func macStartEvent(_ id: String, event: String, at: TimeInterval) -> AgentIngressEvent {

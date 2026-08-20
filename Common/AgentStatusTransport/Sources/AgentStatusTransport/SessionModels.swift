@@ -289,6 +289,10 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     /// The finished turn has not been looked at yet: set when a turn ends,
     /// cleared when the human opens the session (app or Notch detail).
     public let needsReview: Bool
+    /// The human archived the session from the Notch: hide it there only.
+    /// Every other surface (Mac window, iOS) still shows the session. Cleared
+    /// when the human engages the session again (a new prompt or a restart).
+    public let hiddenInNotch: Bool
     public let lineage: SessionLineage?
     /// When the session's first Turn began (earliest turn-scoped event). Never
     /// cleared — a later `resume` / `compact` restart keeps it.
@@ -306,6 +310,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         lastActivityAt: Date,
         needsAttention: Bool = false,
         needsReview: Bool = false,
+        hiddenInNotch: Bool = false,
         lineage: SessionLineage? = nil,
         firstTurnAt: Date? = nil
     ) {
@@ -320,6 +325,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.lastActivityAt = lastActivityAt
         self.needsAttention = needsAttention
         self.needsReview = needsReview
+        self.hiddenInNotch = hiddenInNotch
         self.lineage = lineage
         self.firstTurnAt = firstTurnAt
     }
@@ -339,6 +345,27 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             lastActivityAt: lastActivityAt,
             needsAttention: needsAttention,
             needsReview: needsReview,
+            hiddenInNotch: hiddenInNotch,
+            lineage: lineage,
+            firstTurnAt: firstTurnAt
+        )
+    }
+
+    /// The same summary with the Notch-archive flag replaced.
+    public func withHiddenInNotch(_ hidden: Bool) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            agent: agent,
+            title: title,
+            workspace: workspace,
+            lifecycle: lifecycle,
+            phase: phase,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            lastActivityAt: lastActivityAt,
+            needsAttention: needsAttention,
+            needsReview: needsReview,
+            hiddenInNotch: hidden,
             lineage: lineage,
             firstTurnAt: firstTurnAt
         )
@@ -376,6 +403,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case lastActivityAt
         case needsAttention
         case needsReview
+        case hiddenInNotch
         case lineage
         case firstTurnAt
     }
