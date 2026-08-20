@@ -126,6 +126,87 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     #expect(again.detail.timeline.count == after.timeline.count)
 }
 
+// A resumed Claude Code session's transcript slice can open with control
+// records (`custom-title`, `bridge-session`) that carry no `timestamp`
+// field at all. A reingest must not let the fallback for that missing
+// timestamp outrun the real, later-timestamped turns that follow it in the
+// same file — see RolloutReadState.lastTimestamp.
+@Test func reingestDoesNotStallOnATimestamplessLeadRecord() async throws {
+    let session = "99999999-1111-2222-3333-444444444444"
+    let sid = SessionID(session)
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let path = projectDir.appendingPathComponent("\(session).jsonl").path
+    let records: [[String: Any]] = [
+        // Real Claude Code resume transcripts open with control records like
+        // these two, timestamped nowhere in their own JSON. Only the
+        // queue-operation ahead of them carries a real time to inherit.
+        ["type": "queue-operation", "operation": "enqueue", "timestamp": "2026-08-19T06:41:00.000Z", "sessionId": session, "content": "commit"],
+        ["type": "custom-title", "customTitle": "Resumed work", "sessionId": session],
+        ["type": "bridge-session", "sessionId": session, "bridgeSessionId": "cse_1", "lastSequenceNum": 0],
+    ] + claudeTranscript(session: session, prompt: "p1")
+    try jsonl(records).write(toFile: path, atomically: true, encoding: .utf8)
+
+    let repository = InMemorySessionRepository()
+    let adapter = ClaudeAdapter()
+    // A session must already be known before a reingest will touch it — the
+    // daemon's live pipeline is what first creates the row; simulate that
+    // with the same full-file read reingest itself will later redo.
+    let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
+    for event in live.events { _ = try await repository.apply(event) }
+    try await repository.saveRolloutCursor(live.cursor)
+
+    let reingester = SessionReingester(repository: repository, claudeAdapter: adapter, homeDirectory: home)
+    let report = try await reingester.reingest(sessionID: sid, generation: "g1")
+
+    #expect(report.detail.summary.lifecycle == .waitingForInput)
+    #expect(report.detail.summary.phase == .idle)
+    #expect(report.detail.turns.first?.outcome == .completed)
+}
+
+// The very first record in the whole file can be one of those timestampless
+// control records, with nothing earlier in the window to inherit from — and
+// real Claude Code transcripts are not strictly time-ordered even among the
+// records that do carry a timestamp (a queued-prompt record can be logged
+// ahead of the session-start hook chronologically before it). The fallback
+// must still land at or before every real event that follows, not at
+// wall-clock `Date()` — see RichSourceReader.earliestTimestamp.
+@Test func reingestDoesNotStallWhenTheFirstRecordInTheFileHasNoTimestamp() async throws {
+    let session = "88888888-1111-2222-3333-444444444444"
+    let sid = SessionID(session)
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let path = projectDir.appendingPathComponent("\(session).jsonl").path
+    let records: [[String: Any]] = [
+        ["type": "custom-title", "customTitle": "Fresh session", "sessionId": session],
+        ["type": "mode", "mode": "normal", "sessionId": session],
+        // This is the only other record ahead of the transcript itself, and
+        // its own timestamp is LATER than the transcript's first record
+        // below — a naive "first timestamp found" fallback would seed the
+        // two control records above at 06:45, after the first real turn
+        // events at 06:42–06:43, stalling them exactly like `Date()` would.
+        ["type": "queue-operation", "operation": "enqueue", "timestamp": "2026-08-19T06:45:00.000Z", "sessionId": session, "content": "commit"],
+    ] + claudeTranscript(session: session, prompt: "p1")
+    try jsonl(records).write(toFile: path, atomically: true, encoding: .utf8)
+
+    let repository = InMemorySessionRepository()
+    let adapter = ClaudeAdapter()
+    let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
+    for event in live.events { _ = try await repository.apply(event) }
+    try await repository.saveRolloutCursor(live.cursor)
+
+    let reingester = SessionReingester(repository: repository, claudeAdapter: adapter, homeDirectory: home)
+    let report = try await reingester.reingest(sessionID: sid, generation: "g1")
+
+    #expect(report.detail.summary.lifecycle == .waitingForInput)
+    #expect(report.detail.summary.phase == .idle)
+    #expect(report.detail.turns.first?.outcome == .completed)
+}
+
 @Test func reingestKeepsCompletedLifecycleFromSessionEnd() async throws {
     let session = "eeeeeeee-1111-2222-3333-444444444444"
     let sid = SessionID(session)

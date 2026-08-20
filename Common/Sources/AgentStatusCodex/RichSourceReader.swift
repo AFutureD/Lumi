@@ -98,6 +98,16 @@ public enum RichSourceReader {
                 data = Data(data[data.index(after: newline)...])
             }
         }
+        // A record ahead of every timestamped one in this window (a
+        // resume's `custom-title` / `bridge-session` control records, which
+        // carry no `timestamp` field of their own) has nothing earlier to
+        // inherit from. Seed the earliest real timestamp found anywhere in
+        // the window rather than leaving the per-line carry-forward to fall
+        // back to wall-clock `Date()` — records here are not necessarily in
+        // strict timestamp order (a queued-prompt record can be logged
+        // ahead of the session-start hook it followed), so the minimum,
+        // not the first occurrence, is the only safe floor.
+        state.lastTimestamp = earliestTimestamp(in: data)
 
         var events: [AgentIngressEvent] = []
         var lines = 0
@@ -132,5 +142,23 @@ public enum RichSourceReader {
             ),
             lines: lines
         )
+    }
+
+    /// Earliest `"timestamp":"…"` value found anywhere in `data`, scanning
+    /// raw bytes rather than parsing every line as JSON.
+    private static func earliestTimestamp(in data: Data) -> Date? {
+        let needle = Data("\"timestamp\":\"".utf8)
+        var searchStart = data.startIndex
+        var earliest: Date?
+        while let range = data.range(of: needle, in: searchStart..<data.endIndex) {
+            let valueStart = range.upperBound
+            guard let quoteEnd = data[valueStart...].firstIndex(of: 0x22) else { break }
+            if let value = String(data: data[valueStart..<quoteEnd], encoding: .utf8),
+               let date = AdapterDates.parse(value), earliest.map({ date < $0 }) ?? true {
+                earliest = date
+            }
+            searchStart = quoteEnd
+        }
+        return earliest
     }
 }

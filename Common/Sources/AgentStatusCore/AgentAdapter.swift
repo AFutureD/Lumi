@@ -21,11 +21,24 @@ public struct RolloutReadState: Hashable, Sendable {
     public var toolNames: [String: String]
     /// Newest tool-call id whose call has been seen but not its result.
     public var openToolUseIDs: [String]
+    /// The most recent resolved `occurredAt` seen in this read, real or
+    /// inherited. A record with no `timestamp` field falls back to this
+    /// instead of wall-clock `Date()`: during a replay of a historical file,
+    /// "now" is never the right time for an untimed record, and stamping it
+    /// with the ingestion moment can leave it later than every event that
+    /// follows in the file, which then reads as out of order.
+    public var lastTimestamp: Date?
 
-    public init(currentTurnID: TurnID? = nil, toolNames: [String: String] = [:], openToolUseIDs: [String] = []) {
+    public init(
+        currentTurnID: TurnID? = nil,
+        toolNames: [String: String] = [:],
+        openToolUseIDs: [String] = [],
+        lastTimestamp: Date? = nil
+    ) {
         self.currentTurnID = currentTurnID
         self.toolNames = toolNames
         self.openToolUseIDs = openToolUseIDs
+        self.lastTimestamp = lastTimestamp
     }
 }
 

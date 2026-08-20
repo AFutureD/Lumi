@@ -394,7 +394,8 @@ public struct ClaudeAdapter: AgentAdapter {
         }
         let agent: AgentKind = subagentSessionID == nil ? .claude : .claudeSubagent
 
-        let occurredAt = root.date("timestamp") ?? Date()
+        let occurredAt = root.date("timestamp") ?? state.lastTimestamp ?? Date()
+        state.lastTimestamp = occurredAt
         let stableID = Self.digest(
             data: Data("\(context.path):\(context.byteOffset):".utf8) + data,
             prefix: "claude-transcript:"
