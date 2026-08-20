@@ -21,8 +21,9 @@ public struct SessionReingestReport: Sendable {
 /// — no tombstone — and the whole transcript / rollout is reduced again from
 /// byte 0. Hook-only facts that the rich source cannot express are carried
 /// over from the previous state: session markers (start / end / compaction,
-/// with `session_ended` restoring the completed lifecycle), and the title /
-/// lineage when the rebuild produced none. Event ids are salted with the
+/// with `session_ended` restoring the completed lifecycle), the title /
+/// lineage when the rebuild produced none, and the human-set review /
+/// Notch-archive flags. Event ids are salted with the
 /// `generation` so the daemon's idempotency table does not swallow the replay.
 public struct SessionReingester: Sendable {
     public let repository: any SessionRepository
@@ -77,6 +78,7 @@ public struct SessionReingester: Sendable {
            let identity = Self.identityEvent(previous: previous.summary, rebuilt: rebuilt, generation: generation) {
             if try await repository.apply(identity) { applied += 1 }
         }
+        try await restoreHumanFlags(from: previous.summary, on: sessionID)
         try await repository.saveRolloutCursor(read.cursor)
 
         // A Claude parent also rebuilds its subagents' child sessions from the
@@ -116,6 +118,7 @@ public struct SessionReingester: Sendable {
             let childID = ClaudeSubagentIdentity.sessionID(parent: parent, agentID: agentID)
             let read = try RichSourceReader.read(path: path, sessionID: childID, adapter: claudeAdapter, fromOffset: 0)
             guard !read.events.isEmpty else { continue }
+            let previousChild = try await repository.sessionDetail(id: childID, cursor: nil, limit: 1)?.summary
             _ = try await repository.resetSession(id: childID)
             for event in read.events {
                 if try await repository.apply(event.salted(generation)) { applied += 1 }
@@ -131,9 +134,26 @@ public struct SessionReingester: Sendable {
                 lineage: ClaudeSubagentIdentity.lineage(parent: parent, agentType: meta?.agentType, meta: meta)
             )
             if try await repository.apply(identity) { applied += 1 }
+            if let previousChild {
+                try await restoreHumanFlags(from: previousChild, on: childID)
+            }
             try await repository.saveRolloutCursor(read.cursor)
         }
         return applied
+    }
+
+    /// Human-set summary flags live outside the event stream, so the replay
+    /// cannot restore them: `needsReview` is cleared only by the human opening
+    /// the session, and the rebuilt turn ends would flip it green again;
+    /// `hiddenInNotch` is set only by the human archiving from the Notch, and
+    /// the rebuilt user prompts would unhide it.
+    private func restoreHumanFlags(from previous: SessionSummary, on sessionID: SessionID) async throws {
+        if !previous.needsReview {
+            try await repository.markSessionReviewed(sessionID)
+        }
+        if previous.hiddenInNotch {
+            try await repository.markSessionHiddenInNotch(sessionID)
+        }
     }
 
     // MARK: - Pieces

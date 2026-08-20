@@ -207,6 +207,43 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     #expect(report.detail.turns.first?.outcome == .completed)
 }
 
+// Opening a session (gray) and archiving it from the Notch are human acts
+// recorded only on the summary. The rebuild replays every turn end, which
+// would flip `needsReview` back to green — the flags must be carried over.
+@Test func reingestKeepsReviewedAndNotchArchivedFlags() async throws {
+    let session = "abababab-1111-2222-3333-444444444444"
+    let sid = SessionID(session)
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let path = projectDir.appendingPathComponent("\(session).jsonl").path
+    try jsonl(claudeTranscript(session: session, prompt: "p1")).write(toFile: path, atomically: true, encoding: .utf8)
+
+    let repository = InMemorySessionRepository()
+    let adapter = ClaudeAdapter()
+    let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
+    for event in live.events { _ = try await repository.apply(event) }
+    try await repository.saveRolloutCursor(live.cursor)
+    let reingester = SessionReingester(repository: repository, claudeAdapter: adapter, homeDirectory: home)
+
+    // Unreviewed (green) stays unreviewed across a rebuild.
+    let green = try await reingester.reingest(sessionID: sid, generation: "g0")
+    #expect(green.detail.summary.needsReview)
+
+    try await repository.markSessionReviewed(sid)
+    try await repository.markSessionHiddenInNotch(sid)
+    let before = try #require(try await repository.sessionDetail(id: sid, cursor: nil, limit: 500))
+    #expect(!before.summary.needsReview)
+    #expect(before.summary.statusTone == .gray)
+
+    let report = try await reingester.reingest(sessionID: sid, generation: "g1")
+    #expect(!report.detail.summary.needsReview)
+    #expect(!report.detail.summary.needsAttention)
+    #expect(report.detail.summary.statusTone == .gray)
+    #expect(report.detail.summary.hiddenInNotch)
+}
+
 @Test func reingestKeepsCompletedLifecycleFromSessionEnd() async throws {
     let session = "eeeeeeee-1111-2222-3333-444444444444"
     let sid = SessionID(session)
