@@ -32,6 +32,16 @@ final class AgentStatusNookController {
     private var activityNotificationsEnabled = false
     private var activityNotificationArmTask: Task<Void, Never>?
 
+    /// Surface claim held while the turn-ended card is on screen. The token is
+    /// shared across back-to-back turn ends: a newer presentation restarts the
+    /// dwell instead of releasing and re-acquiring (which would flicker).
+    private var turnCardSurfaceToken: NookSurfaceToken?
+    private var turnCardSurfaceGeneration = 0
+    private var turnCardSurfaceTask: Task<Void, Never>?
+
+    /// Matches the turn card's route dwell in `AgentStatusNookModel.showTurnCard`.
+    private static let turnCardSurfaceDwell: Duration = .seconds(6)
+
     init(store: MacSessionStore, actions: AgentStatusNookActions) {
         let model = AgentStatusNookModel(store: store)
         let activityQueue = NookActivityQueue()
@@ -96,16 +106,9 @@ final class AgentStatusNookController {
         coordinator = AppCoordinator(appState: appState, configuration: configuration)
         coordinatorBox.coordinator = coordinator
 
-        model.onSnapshot = { [weak self, weak model, activityQueue] previous, current, initial in
-            guard let self, let model, self.activityNotificationsEnabled, !initial else { return }
-            Self.handleTurnEvents(
-                previous: previous,
-                current: current,
-                model: model,
-                hapticEnabled: appState.appearancePreferences.hapticFeedbackEnabled,
-                queue: activityQueue,
-                coordinator: self.coordinator
-            )
+        model.onSnapshot = { [weak self] previous, current, initial in
+            guard let self, self.activityNotificationsEnabled, !initial else { return }
+            self.handleTurnEvents(previous: previous, current: current)
         }
     }
 
@@ -145,6 +148,7 @@ final class AgentStatusNookController {
         activityNotificationsEnabled = false
         model.stop()
         await activityQueue.quiesce()
+        await releaseTurnCardSurface()
         coordinator.hideNook()
     }
 
@@ -178,16 +182,14 @@ final class AgentStatusNookController {
         return true
     }
 
-    /// L3 rows only: USER opens the turn-started card, TURN END the
-    /// turn-complete card, FAILED / ABORTED a high-priority toast. Nothing else
-    /// expands the Notch.
-    private static func handleTurnEvents(
+    /// L3 rows only: TURN END expands the Notch transiently with the
+    /// turn-complete card, FAILED / ABORTED with a high-priority toast — both
+    /// hand the surface back after their dwell. USER updates the turn-started
+    /// card in place without expanding — visible only when the Notch is
+    /// already open. Nothing else expands the Notch.
+    private func handleTurnEvents(
         previous: [AgentStatusNookSession],
-        current: [AgentStatusNookSession],
-        model: AgentStatusNookModel,
-        hapticEnabled: Bool,
-        queue: NookActivityQueue,
-        coordinator: AppCoordinator
+        current: [AgentStatusNookSession]
     ) {
         let events = AgentStatusNookActivityDiff.turnEvents(previous: previous, current: current)
         guard !events.isEmpty else { return }
@@ -196,12 +198,11 @@ final class AgentStatusNookController {
             switch event.kind {
             case .started:
                 model.showTurnCard(.turnStarted(session.id))
-                coordinator.showHome()
             case .ended:
                 model.showTurnCard(.turnEnded(session.id))
-                coordinator.showHome()
+                presentTurnCardSurface()
             case .failed:
-                queue.enqueue(NookActivity(
+                activityQueue.enqueue(NookActivity(
                     coalescingKey: session.id.rawValue,
                     priority: .high,
                     title: session.title,
@@ -212,7 +213,54 @@ final class AgentStatusNookController {
                 ))
             }
         }
-        NookHaptics.confirm(enabled: hapticEnabled)
+        NookHaptics.confirm(enabled: appState.appearancePreferences.hapticFeedbackEnabled)
+    }
+
+    /// Expands the Notch for the turn-ended card through the arbiter's
+    /// transient channel: claim, dwell, release — so the surface settles back
+    /// to compact on its own instead of staying open (`showHome()` would mark
+    /// the open user-initiated and never collapse). The arbiter denies the
+    /// claim while the user owns the surface (hovering, opened it themselves,
+    /// pinned); the card is still routed and visible whenever the panel is
+    /// open. A FAILED toast (`.urgent`) can preempt this claim (`.normal`).
+    private func presentTurnCardSurface() {
+        turnCardSurfaceGeneration &+= 1
+        let generation = turnCardSurfaceGeneration
+        turnCardSurfaceTask?.cancel()
+        let predecessor = turnCardSurfaceTask
+        turnCardSurfaceTask = Task { @MainActor [weak self] in
+            // Serialize behind the superseded presentation: cancellation wakes
+            // its sleep early, and it leaves the held token for this task
+            // (its release is guarded by the generation check below).
+            await predecessor?.value
+            guard let self, generation == self.turnCardSurfaceGeneration else { return }
+            if self.turnCardSurfaceToken == nil {
+                let claim = NookSurfaceClaim(
+                    moduleID: self.coordinator.activeModuleID,
+                    priority: .normal
+                )
+                guard let token = await self.coordinator.beginTransientPresentation(claim) else { return }
+                self.turnCardSurfaceToken = token
+            }
+            try? await Task.sleep(for: Self.turnCardSurfaceDwell)
+            guard !Task.isCancelled, generation == self.turnCardSurfaceGeneration,
+                  let token = self.turnCardSurfaceToken else { return }
+            self.turnCardSurfaceToken = nil
+            await self.coordinator.endTransientPresentation(token)
+        }
+    }
+
+    /// Releases a turn-card surface claim still held (or mid-acquisition) so
+    /// `stop()` cannot leave a claim whose eventual release would re-show the
+    /// surface after `hideNook()`.
+    private func releaseTurnCardSurface() async {
+        turnCardSurfaceGeneration &+= 1
+        turnCardSurfaceTask?.cancel()
+        await turnCardSurfaceTask?.value
+        turnCardSurfaceTask = nil
+        guard let token = turnCardSurfaceToken else { return }
+        turnCardSurfaceToken = nil
+        await coordinator.endTransientPresentation(token)
     }
 }
 
