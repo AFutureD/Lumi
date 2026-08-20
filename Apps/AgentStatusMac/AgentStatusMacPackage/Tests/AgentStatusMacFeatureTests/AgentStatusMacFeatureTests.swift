@@ -489,7 +489,12 @@ func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
     #expect(merged.timeline.last?.payload == replacement.payload)
 }
 
-private func nookRow(_ id: String, _ tag: TimelineTag, _ text: String = "x") -> AgentStatusNookActivityRow {
+private func nookRow(
+    _ id: String,
+    _ tag: TimelineTag,
+    _ text: String = "x",
+    toolUseID: String? = nil
+) -> AgentStatusNookActivityRow {
     AgentStatusNookActivityRow(row: TimelineRow(
         id: id,
         sessionID: SessionID("session"),
@@ -503,13 +508,19 @@ private func nookRow(_ id: String, _ tag: TimelineTag, _ text: String = "x") -> 
             sessionID: SessionID("session"),
             occurredAt: Date(timeIntervalSince1970: 0),
             payload: .message(MessageTimelinePayload(role: .user, text: text))
-        )]
+        )],
+        toolUseID: toolUseID
     ))
 }
 
-private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: SessionLifecycle = .running) -> AgentStatusNookSession {
+private func nookSession(
+    _ rows: [AgentStatusNookActivityRow],
+    lifecycle: SessionLifecycle = .running,
+    id: String = "session",
+    parentID: SessionID? = nil
+) -> AgentStatusNookSession {
     AgentStatusNookSession(
-        id: SessionID("session"),
+        id: SessionID(id),
         title: "Session",
         agent: .codex,
         workspace: nil,
@@ -519,8 +530,8 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
         currentUserMessage: "Build it",
         lastActivityAt: Date(timeIntervalSince1970: 0),
         startedAt: Date(timeIntervalSince1970: 0),
-        parentID: nil,
-        depth: 0,
+        parentID: parentID,
+        depth: parentID == nil ? 0 : 1,
         currentTurn: nil,
         model: nil,
         totalTokens: nil,
@@ -547,6 +558,50 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     // Unchanged rows never re-fire, and unknown sessions are ignored.
     #expect(AgentStatusNookActivityDiff.turnEvents(previous: [after], current: [after]).isEmpty)
     #expect(AgentStatusNookActivityDiff.turnEvents(previous: [], current: [after]).isEmpty)
+}
+
+@Test func nookTurnEventsSkipListedSubagentsAndRowBackfills() {
+    let parent = nookSession([nookRow("p1", .user)], id: "parent")
+    let childBefore = nookSession([nookRow("c1", .user)], id: "child", parentID: parent.id)
+    let childAfter = nookSession(
+        childBefore.recentRows + [nookRow("c2", .turnEnd)],
+        id: "child",
+        parentID: parent.id
+    )
+    // A subagent whose parent is listed is the parent's internal progress.
+    #expect(AgentStatusNookActivityDiff.turnEvents(
+        previous: [parent, childBefore],
+        current: [parent, childAfter]
+    ).isEmpty)
+    // The same session promoted to top level (parent not listed) notifies.
+    #expect(AgentStatusNookActivityDiff.turnEvents(
+        previous: [childBefore],
+        current: [childAfter]
+    ).map(\.kind) == [.ended])
+
+    // Rows appearing in bulk over an empty window are a detail-cache backfill,
+    // not fresh activity — replaying them would re-fire old turn ends.
+    let summaryOnly = nookSession([])
+    let backfilled = nookSession([nookRow("u1", .user), nookRow("e1", .turnEnd)])
+    #expect(AgentStatusNookActivityDiff.turnEvents(
+        previous: [summaryOnly],
+        current: [backfilled]
+    ).isEmpty)
+
+    // One tool call failing mid-turn (row carries its toolUseID) is routine
+    // noise; only turn-level failures notify.
+    let toolFailure = nookSession(
+        backfilled.recentRows + [nookRow("f1", .failed, toolUseID: "tool-1")]
+    )
+    #expect(AgentStatusNookActivityDiff.turnEvents(
+        previous: [backfilled],
+        current: [toolFailure]
+    ).isEmpty)
+    let turnFailure = nookSession(toolFailure.recentRows + [nookRow("f2", .failed)])
+    #expect(AgentStatusNookActivityDiff.turnEvents(
+        previous: [toolFailure],
+        current: [turnFailure]
+    ).map(\.kind) == [.failed])
 }
 
 @Test func relayPublishPlanSendsOnlyChangedSessions() {

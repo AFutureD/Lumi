@@ -274,9 +274,17 @@ enum AgentStatusNookActivityDiff {
         current: [AgentStatusNookSession]
     ) -> [AgentStatusNookTurnEvent] {
         let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        let listedIDs = Set(current.map(\.id))
         var events: [AgentStatusNookTurnEvent] = []
         for session in current {
-            guard let old = previousByID[session.id] else { continue }
+            // Subagents render as pills inside their parent's card; their turn
+            // boundaries are the parent's internal progress, not notifications.
+            // An orphan promoted to top level still notifies.
+            if let parentID = session.parentID, listedIDs.contains(parentID) { continue }
+            // A session whose rows appear in bulk — its detail cache just
+            // loaded — is a backfill: diffing against the empty window would
+            // replay old turn ends as fresh notifications.
+            guard let old = previousByID[session.id], !old.recentRows.isEmpty else { continue }
             let seen = Set(old.recentRows.map(\.id))
             for row in session.recentRows where !seen.contains(row.id) && row.level == .l3 {
                 switch row.tag {
@@ -285,6 +293,10 @@ enum AgentStatusNookActivityDiff {
                 case .turnEnd:
                     events.append(.init(sessionID: session.id, kind: .ended, row: row))
                 case .failed, .aborted:
+                    // A failed row carrying a toolUseID is one tool call going
+                    // wrong mid-turn — routine, recoverable noise. Only
+                    // turn-level failures and aborts notify.
+                    guard row.toolUseID == nil else { break }
                     events.append(.init(sessionID: session.id, kind: .failed, row: row))
                 default:
                     break

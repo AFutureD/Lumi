@@ -16,7 +16,7 @@ let package = Package(
         .package(name: "AgentStatusTransport", path: "../../../Common/AgentStatusTransport"),
         .package(
             url: "https://github.com/AFutureD/opennook.git",
-            revision: "7b0ca6ca251885aecec5834b374ef4dc0907bd8f"
+            revision: "e4c51a4d161d12ce91aac360706dc818c0c3a96d"
         ),
         .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "swift-6.2.4-RELEASE"),
     ],

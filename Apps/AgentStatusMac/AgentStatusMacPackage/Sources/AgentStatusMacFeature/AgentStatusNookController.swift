@@ -42,6 +42,9 @@ final class AgentStatusNookController {
     /// Matches the turn card's route dwell in `AgentStatusNookModel.showTurnCard`.
     private static let turnCardSurfaceDwell: Duration = .seconds(6)
 
+    /// Non-nil only when launched with `-AgentStatusNotchStateLog <path>`.
+    private var stateLogger: DebugNotchStateLogger?
+
     init(store: MacSessionStore, actions: AgentStatusNookActions) {
         let model = AgentStatusNookModel(store: store)
         let activityQueue = NookActivityQueue()
@@ -128,6 +131,7 @@ final class AgentStatusNookController {
     }
 
     func start() {
+        if stateLogger == nil { stateLogger = DebugNotchStateLogger(appState: appState) }
         model.start()
         activityNotificationArmTask?.cancel()
         activityNotificationArmTask = Task { [weak self] in
@@ -197,12 +201,14 @@ final class AgentStatusNookController {
             guard let session = current.first(where: { $0.id == event.sessionID }) else { continue }
             switch event.kind {
             case .started:
-                break
+                stateLogger?.log("event=started session=\(session.id.rawValue) (no-op)")
             case .ended:
+                stateLogger?.log("event=ended session=\(session.id.rawValue)")
                 model.showTurnCard(.turnEnded(session.id))
                 presentTurnCardSurface()
                 notified = true
             case .failed:
+                stateLogger?.log("event=failed session=\(session.id.rawValue)")
                 activityQueue.enqueue(NookActivity(
                     coalescingKey: session.id.rawValue,
                     priority: .high,
@@ -237,6 +243,15 @@ final class AgentStatusNookController {
             // (its release is guarded by the generation check below).
             await predecessor?.value
             guard let self, generation == self.turnCardSurfaceGeneration else { return }
+            // A held claim whose surface the user has since dismissed
+            // (hover-exit compacts without ending the claim) is stale — drop
+            // it so this presentation expands again instead of dwelling on a
+            // closed panel.
+            if let stale = self.turnCardSurfaceToken, !self.appState.isNookVisible {
+                self.turnCardSurfaceToken = nil
+                await self.coordinator.endTransientPresentation(stale)
+                guard generation == self.turnCardSurfaceGeneration else { return }
+            }
             if self.turnCardSurfaceToken == nil {
                 let claim = NookSurfaceClaim(
                     moduleID: self.coordinator.activeModuleID,

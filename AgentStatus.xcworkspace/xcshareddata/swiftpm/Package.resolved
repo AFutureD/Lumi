@@ -1,5 +1,5 @@
 {
-  "originHash" : "05aa6d40b412258d3e9cb7af86aea9c7faf87c05db48aaddfbd58da2574b536c",
+  "originHash" : "cedf45af2d8b47dcc4468a017a5ee533345559b1da92e19f78b87fe2325c7801",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -15,7 +15,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/AFutureD/opennook.git",
       "state" : {
-        "revision" : "7b0ca6ca251885aecec5834b374ef4dc0907bd8f"
+        "revision" : "e4c51a4d161d12ce91aac360706dc818c0c3a96d"
       }
     },
     {
