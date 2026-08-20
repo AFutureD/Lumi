@@ -32,8 +32,14 @@ typealias DS = DesignSystem
     #expect(DS.SurfaceDark.card.alpha == 0.10)
     #expect(DS.SurfaceDark.control.alpha == 0.14)
     #expect(DS.SurfaceDark.secondaryButton.alpha == 0.16)
-    #expect(DS.SurfaceDark.connector.alpha == 0.24)
     #expect(DS.SurfaceDark.panel == .black)
+    // Notch list extras: the agent tag is deliberately opaque.
+    #expect(DS.SurfaceDark.agentTag == DesignColor(rgb: 40, 40, 40))
+    #expect(DS.SurfaceDark.listCard.alpha == 0.07)
+    #expect(DS.SurfaceDark.subagentPill.alpha == 0.13)
+    #expect(DS.InkDark.agentTagText.alpha == 0.52)
+    #expect(DS.InkDark.pillName.alpha == 0.82)
+    #expect(DS.InkDark.pillTime.alpha == 0.44)
 }
 
 @Test func colorLiteralsRoundTrip() {
@@ -53,6 +59,7 @@ typealias DS = DesignSystem
         T.title1, T.title3Emphasized, T.bodyEmphasized, T.body, T.subheadlineEmphasized, T.subheadline,
         T.caption2, T.footnote, T.footnoteMono, T.subheadlineMono, T.tag, T.tagCompact, T.countBadge,
         T.notchLabel, T.notchSectionLabel, T.notchMetricLabel, T.notchBody, T.notchButton, T.notchSecondaryButton,
+        T.notchAgentTag, T.notchActivityTag,
     ]
     #expect(Set(styles.map(\.size)).isSubset(of: [22, 15, 13, 12, 11, 10, 9]))
     // No Bold anywhere.

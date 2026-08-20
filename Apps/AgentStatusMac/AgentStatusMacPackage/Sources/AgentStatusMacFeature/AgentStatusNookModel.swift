@@ -116,6 +116,15 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     }
 }
 
+/// One row of the session list: a parent session plus the subagents its
+/// card renders as pills (empty for flat rows).
+struct AgentStatusNookListItem: Identifiable, Equatable, Sendable {
+    let session: AgentStatusNookSession
+    var children: [AgentStatusNookSession]
+
+    var id: SessionID { session.id }
+}
+
 /// What the expanded Notch is showing.
 enum AgentStatusNookRoute: Equatable, Sendable {
     case list
@@ -139,32 +148,32 @@ struct AgentStatusNookTurnEvent: Equatable, Sendable {
 }
 
 enum AgentStatusNookSnapshot {
-    static let maximumVisibleSessions = 6
     static let recentRowLimit = 8
+    static let maximumSessionAge: TimeInterval = 7 * 86_400
 
-    static func eligibleSummaries(from summaries: [SessionSummary]) -> [SessionSummary] {
+    /// Notch-worthy sessions: not archived from the Notch, a known lifecycle,
+    /// and active within the last seven days. A session crossing the age
+    /// boundary drops out on the next data change, not the moment it turns
+    /// seven days old.
+    static func eligibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
         summaries.filter { summary in
             guard !summary.hiddenInNotch else { return false }
-            switch summary.lifecycle {
-            case .starting, .running, .waitingForInput, .compacting, .failed, .interrupted:
-                return true
-            case .completed, .unknown:
-                return false
-            }
+            guard summary.lastActivityAt > now.addingTimeInterval(-maximumSessionAge) else { return false }
+            if case .unknown = summary.lifecycle { return false }
+            return true
         }
     }
 
     /// Parents in the store's order (newest activity first), each followed
     /// by its children. Subagent rows are listed only while the parent's turn
-    /// is running; once the turn ends they disappear. Capped by
-    /// `maximumVisibleSessions` parents.
-    static func visibleSummaries(from summaries: [SessionSummary]) -> [SessionSummary] {
-        let eligible = eligibleSummaries(from: summaries)
+    /// is running; once the turn ends they disappear.
+    static func visibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
+        let eligible = eligibleSummaries(from: summaries, now: now)
         let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
         var ordered: [SessionSummary] = []
         var seen: Set<SessionID> = []
         let parents = eligible.filter { $0.lineage?.parentSessionID.flatMap { byID[$0] } == nil }
-        for parent in parents.prefix(maximumVisibleSessions) {
+        for parent in parents {
             guard seen.insert(parent.id).inserted else { continue }
             ordered.append(parent)
             guard parent.statusTone == .blue else { continue }
@@ -173,6 +182,22 @@ enum AgentStatusNookSnapshot {
             }
         }
         return ordered
+    }
+
+    /// The list renders parents; a parent whose turn is running with
+    /// subagents becomes a card that carries them as pills. Children follow
+    /// their parent in `sessions`; a child whose parent is not listed (the
+    /// store promoted it to top level) gets a flat row of its own.
+    static func listItems(from sessions: [AgentStatusNookSession]) -> [AgentStatusNookListItem] {
+        var items: [AgentStatusNookListItem] = []
+        for session in sessions {
+            if let parentID = session.parentID, parentID == items.last?.session.id {
+                items[items.count - 1].children.append(session)
+            } else {
+                items.append(AgentStatusNookListItem(session: session, children: []))
+            }
+        }
+        return items
     }
 
     static func make(
@@ -288,7 +313,8 @@ final class AgentStatusNookCompactModel: ObservableObject {
 @MainActor
 final class AgentStatusNookModel: ObservableObject {
     @Published private(set) var sessions: [AgentStatusNookSession] = []
-    @Published private(set) var totalSessionCount = 0
+    /// Parent sessions in the list — the footer text and the compact badge.
+    @Published private(set) var listedSessionCount = 0
     @Published private(set) var daemonAvailable = false
     @Published var route: AgentStatusNookRoute = .list
     let compactModel = AgentStatusNookCompactModel()
@@ -372,12 +398,11 @@ final class AgentStatusNookModel: ObservableObject {
     // MARK: - Loading
 
     private func reload(from store: MacSessionStore, immediate: Bool = false) {
-        let allSummaries = store.sessions
-        let summaries = AgentStatusNookSnapshot.visibleSummaries(from: allSummaries)
-        let nextTotalSessionCount = AgentStatusNookSnapshot.eligibleSummaries(from: allSummaries).count
-        if totalSessionCount != nextTotalSessionCount {
-            totalSessionCount = nextTotalSessionCount
-            compactModel.update(sessionCount: nextTotalSessionCount)
+        let summaries = AgentStatusNookSnapshot.visibleSummaries(from: store.sessions, now: Date())
+        let nextListedSessionCount = Self.parentCount(of: summaries)
+        if listedSessionCount != nextListedSessionCount {
+            listedSessionCount = nextListedSessionCount
+            compactModel.update(sessionCount: nextListedSessionCount)
         }
         refreshTask?.cancel()
         refreshGeneration &+= 1
@@ -424,10 +449,19 @@ final class AgentStatusNookModel: ObservableObject {
         }
     }
 
+    /// Top-level rows among the visible summaries — a child only counts as
+    /// nested while its parent is in the list.
+    private static func parentCount(of summaries: [SessionSummary]) -> Int {
+        let ids = Set(summaries.map(\.id))
+        return summaries.count { summary in
+            guard let parentID = summary.lineage?.parentSessionID else { return true }
+            return !ids.contains(parentID)
+        }
+    }
+
     private func requiresImmediateRefresh(from store: MacSessionStore) -> Bool {
-        let summaries = AgentStatusNookSnapshot.visibleSummaries(from: store.sessions)
-        let eligibleCount = AgentStatusNookSnapshot.eligibleSummaries(from: store.sessions).count
-        guard eligibleCount == totalSessionCount, summaries.count == sessions.count else { return true }
+        let summaries = AgentStatusNookSnapshot.visibleSummaries(from: store.sessions, now: Date())
+        guard Self.parentCount(of: summaries) == listedSessionCount, summaries.count == sessions.count else { return true }
         let currentByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         return summaries.contains { summary in
             guard let current = currentByID[summary.id] else { return true }

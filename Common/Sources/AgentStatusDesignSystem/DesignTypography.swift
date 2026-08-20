@@ -130,5 +130,9 @@ public extension DesignSystem {
         /// Primary action button — 13 / Semibold; secondary 12 / Semibold.
         public static let notchButton = DesignTextStyle(size: 13, weight: .semibold, lineHeight: 16)
         public static let notchSecondaryButton = DesignTextStyle(size: 12, weight: .semibold, lineHeight: 15)
+        /// List agent tag (`Codex` / `Claude`) — 9 / Medium / 12 / .01em.
+        public static let notchAgentTag = DesignTextStyle(size: 9, weight: .medium, lineHeight: 12, trackingEm: 0.01)
+        /// List activity-line category tag — 9 / Semibold / .03em.
+        public static let notchActivityTag = DesignTextStyle(size: 9, weight: .semibold, lineHeight: 11, trackingEm: 0.03)
     }
 }

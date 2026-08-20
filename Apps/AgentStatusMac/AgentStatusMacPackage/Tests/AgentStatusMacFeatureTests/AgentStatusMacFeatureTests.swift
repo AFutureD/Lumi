@@ -100,7 +100,11 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     #expect(!PairingViewController.usesCompactContentLayout(availableWidth: minimum))
 }
 
-@Test func nookSnapshotShowsTheCurrentTurnUserMessageAndExcludesCompletedSessions() {
+/// Fixtures use epoch-relative dates, so tests pass an epoch-relative `now`
+/// that keeps them inside the seven-day window.
+private let nookNow = Date(timeIntervalSince1970: 100)
+
+@Test func nookSnapshotShowsTheCurrentTurnUserMessageAndListsEverySession() {
     let active = nookSummary(id: "active", lifecycle: .running, phase: .executing, updatedAt: 20)
     let completed = nookSummary(id: "completed", lifecycle: .completed, phase: .idle, updatedAt: 10)
     let firstTurn = TurnID("turn-1")
@@ -122,34 +126,53 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
         ),
     ])
 
-    let visible = AgentStatusNookSnapshot.visibleSummaries(from: [active, completed])
+    // A completed session stays in the list (grey dot, archivable).
+    let visible = AgentStatusNookSnapshot.visibleSummaries(from: [active, completed], now: nookNow)
     let rows = AgentStatusNookSnapshot.make(summaries: visible, details: [active.id: detail])
 
-    #expect(rows.map(\.id) == [active.id])
+    #expect(rows.map(\.id) == [active.id, completed.id])
     #expect(rows.first?.currentUserMessage == "Current request")
     #expect(rows.first?.statusText == "Running · Executing")
     #expect(rows.first?.recentRows.map(\.tag) == [.user, .user])
     #expect(rows.first?.turnEnded == false)
+    #expect(rows.last?.turnEnded == true)
+    #expect(rows.last?.statusTone == .gray)
 
+    // No cap: the viewport scrolls, so every eligible session is listed.
     let eligible = [active] + (1...7).map {
         nookSummary(id: "extra-\($0)", lifecycle: .running, phase: .executing, updatedAt: TimeInterval(20 - $0))
     }
-    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: eligible).count == 8)
-    #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible).count == AgentStatusNookSnapshot.maximumVisibleSessions)
+    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: eligible, now: nookNow).count == 8)
+    #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible, now: nookNow).count == 8)
 }
 
-@Test func nookSnapshotHidesArchivedSessionsWhileTheMacListKeepsThem() {
+@Test func nookSnapshotHidesArchivedStaleAndUnknownSessions() {
     let active = nookSummary(id: "active", lifecycle: .running, phase: .executing, updatedAt: 20)
     let archived = nookSummary(id: "archived", lifecycle: .waitingForInput, phase: .idle, updatedAt: 10)
         .withHiddenInNotch(true)
 
     // Archived sessions leave the Notch entirely: rows and the footer count.
-    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [active, archived]).map(\.id) == [active.id])
-    #expect(AgentStatusNookSnapshot.visibleSummaries(from: [active, archived]).map(\.id) == [active.id])
+    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
+    #expect(AgentStatusNookSnapshot.visibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
 
     // The Mac window ignores the flag.
     let hierarchy = SessionListHierarchy.build(from: [active, archived])
     #expect(hierarchy.roots.map(\.summary.id) == [active.id, archived.id])
+
+    // Sessions idle for more than seven days drop out; the boundary is exact.
+    let sevenDays = AgentStatusNookSnapshot.maximumSessionAge
+    let now = Date(timeIntervalSince1970: sevenDays + 1_000)
+    let stale = nookSummary(id: "stale", lifecycle: .waitingForInput, phase: .idle, updatedAt: 999)
+    let fresh = nookSummary(id: "fresh", lifecycle: .waitingForInput, phase: .idle, updatedAt: 1_001)
+    let boundary = nookSummary(id: "boundary", lifecycle: .waitingForInput, phase: .idle, updatedAt: 1_000)
+    #expect(
+        AgentStatusNookSnapshot.eligibleSummaries(from: [stale, fresh, boundary], now: now).map(\.id.rawValue)
+            == ["fresh"]
+    )
+
+    // Unknown lifecycles stay out.
+    let unknown = nookSummary(id: "mystery", lifecycle: .unknown("mystery"), phase: .idle, updatedAt: 20)
+    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [unknown], now: nookNow).isEmpty)
 }
 
 @Test func nookListKeepsStoreOrderAndListsSubagentsOnlyWhileTheTurnRuns() {
@@ -162,9 +185,29 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     // Store order (newest first) is kept; running keeps its children, a
     // session whose turn is no longer running drops them.
     let visible = AgentStatusNookSnapshot.visibleSummaries(
-        from: [running, runningChild, failed, waiting, waitingChild]
+        from: [running, runningChild, failed, waiting, waitingChild],
+        now: nookNow
     )
     #expect(visible.map(\.id.rawValue) == ["running", "running-child", "failed", "waiting"])
+}
+
+@Test func nookListItemsFoldChildrenIntoTheirParentCard() {
+    let rows = AgentStatusNookSnapshot.make(
+        summaries: [
+            nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30),
+            hierarchySummary(id: "child-a", parentID: "parent", updatedAt: 29),
+            hierarchySummary(id: "child-b", parentID: "parent", updatedAt: 28),
+            nookSummary(id: "flat", lifecycle: .waitingForInput, phase: .idle, updatedAt: 20),
+            // A promoted orphan keeps a flat row instead of joining a stranger.
+            hierarchySummary(id: "orphan", parentID: "missing", updatedAt: 10),
+        ],
+        details: [:]
+    )
+
+    let items = AgentStatusNookSnapshot.listItems(from: rows)
+    #expect(items.map(\.id.rawValue) == ["parent", "flat", "orphan"])
+    #expect(items.first?.children.map(\.id.rawValue) == ["child-a", "child-b"])
+    #expect(items.dropFirst().allSatisfy { $0.children.isEmpty })
 }
 
 @Test @MainActor

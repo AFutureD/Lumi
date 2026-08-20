@@ -25,7 +25,7 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 
 ### Notch：活动摘要
 
-Notch 紧凑时显示全部符合展示条件的 Session 数量和最近一个 Session 的状态色；展开后列出其中最近更新的最多六个主 Session，帮助用户快速判断各 Session 正在做什么。Notch 顶部的设置按钮打开主 App 的 Notch 设置，不在 Notch 内维护第二套设置页。完整展示规则和可用选项见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态) 和 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
+Notch 紧凑时显示列表中的 Session 数量和最近一个 Session 的状态色；展开后按最近更新时间列出最近七天内活动过的全部主 Session（包括已关闭的会话），视口一次最多显示约六行，更多内容向下滚动，底部一行显示列表中的 Session 总数。正在工作的 Session 在标题下多一行最近活动（类别标签 + 摘要）；带 Subagent 的工作中 Session 显示为一张卡片，Subagent 以“名称 + 已运行时长”的胶囊排在卡片里，点击胶囊直接打开该 Subagent。Notch 顶部的设置按钮打开主 App 的 Notch 设置，不在 Notch 内维护第二套设置页。完整展示规则和可用选项见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态) 和 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
 
 ### Session 状态颜色
 
@@ -70,7 +70,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 从 Notch 归档 Session
 
-在 Notch 展开列表中，把鼠标悬停到一条 Turn 已结束的 Session 行上，行尾的相对时间会原地换成归档按钮，点击后该 Session 立即从 Notch 的列表和统计里消失。归档只影响 Notch：主窗口和已连接 iPhone 照常显示这个 Session，历史也不删除。你在该 Session 里发出新请求（或它重新启动）时，它会自动回到 Notch。
+在 Notch 展开列表中，把鼠标悬停到一条 Turn 已结束的 Session 行上（等待输入或已关闭都算），行尾的相对时间会原地换成归档按钮，点击后该 Session 立即从 Notch 的列表和计数里消失。归档只影响 Notch：主窗口和已连接 iPhone 照常显示这个 Session，历史也不删除。你在该 Session 里发出新请求（或它重新启动）时，它会自动回到 Notch。不手动归档的话，超过七天没有活动的 Session 也会自动离开 Notch 列表。
 
 - 规则引用：[MAC-R-014](#mac-r-014-notch-显示-session-当前状态)。
 
@@ -181,10 +181,10 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### MAC-R-014 Notch 显示 Session 当前状态
 
-- 条件：Mac 本地同步数据中存在命令行仍开着的 Session——正在启动、工作、压缩上下文、等待审批，或 Turn 已结束停在提示符（待查看与已查看都算）——或以失败 / 中断收尾的 Session。
-- 行为：紧凑状态统计全部符合条件的 Session；展开后按最近更新时间列出最多六个主 Session；Subagent 只在父 Session 正在工作（蓝色档）时挂在父行下方，父级进入其他档后子行消失。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
-- 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么；已结束的 Turn 留在列表里，直到看过降灰、被归档或会话关闭。
-- 限制或例外：会话已关闭（Completed）或状态未知的 Session 不留在展开列表；刚关闭时仍可短暂显示完成卡片。用户在 Notch 归档的 Session 不进入列表和统计，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
+- 条件：Mac 本地同步数据中存在最近七天内活动过、未被 Notch 归档且状态已知的 Session——正在启动、工作、压缩上下文、等待审批、Turn 已结束停在提示符（待查看与已查看都算）、已关闭（Completed），或以失败 / 中断收尾。
+- 行为：紧凑状态显示列表中的主 Session 数量；展开后按最近更新时间全量列出这些主 Session，视口一次最多显示约六行，更多内容向下滚动，底部一行显示列表中的 Session 总数。正在工作（蓝色档）的行在标题下显示最近一条活动（类别标签 + 摘要）；带 Subagent 的工作中 Session 显示为卡片，Subagent 以“名称 + 已运行时长”的胶囊排在卡片内，点击胶囊打开该 Subagent 的详情，父级离开蓝色档后胶囊消失。新 Session、生命周期变化、当前用户消息变化，以及进入或离开等待审批时会短暂显示活动卡片。
+- 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么；已结束的 Turn 和已关闭的会话留在列表里，直到被归档或超过七天没有新活动。
+- 限制或例外：状态未知的 Session 不进入列表。超过七天没有活动的 Session 自动移出列表和计数，没有单独入口找回（主窗口照常显示）；跨过七天边界的移出要等下一次数据变化才生效，不是即时的。用户在 Notch 归档的 Session 不进入列表和计数，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
 
 ### MAC-R-015 Notch 设置集中在主 App
 
@@ -225,7 +225,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 ## 空状态与故障
 
 - **No Sessions**：daemon 在线，但启用后尚无新 Session，或用户已删除全部记录。
-- **No active Sessions**：Notch 没有符合展示条件的 Session（命令行都已关闭，或剩下的都被归档）；历史仍可在主窗口查看。
+- **No active Sessions**：Notch 没有符合展示条件的 Session（都已被归档，或都超过七天没有活动）；历史仍可在主窗口查看。
 - **Daemon unavailable**：保留本地已同步内容供查看；恢复 daemon 后点击刷新图标（Refresh Sessions）。
 - **Hook 未信任**：新活动可能不能即时到达；在 Codex /hooks 完成审核。
 

@@ -96,6 +96,14 @@ public extension DesignSystem {
         public static let icon = DesignColor(white: 1, alpha: 0.62)
         /// Top-bar app glyph stroke.
         public static let brandIcon = DesignColor(white: 1, alpha: 0.72)
+        /// List archive glyph stroke (White 72 %).
+        public static let archiveGlyph = DesignColor(white: 1, alpha: 0.72)
+        /// List agent tag text (White 52 %).
+        public static let agentTagText = DesignColor(white: 1, alpha: 0.52)
+        /// Subagent pill name (White 82 %).
+        public static let pillName = DesignColor(white: 1, alpha: 0.82)
+        /// Subagent pill duration (White 44 %).
+        public static let pillTime = DesignColor(white: 1, alpha: 0.44)
     }
 
     /// Dark · 背景与描边. Fills are white at `.10 / .12 / .14 / .16`, one step
@@ -117,8 +125,16 @@ public extension DesignSystem {
         public static let separator = DesignColor(white: 1, alpha: 0.14)
         /// 描边 .5px — card outline, secondary-button ring (White 18 %).
         public static let hairline = DesignColor(white: 1, alpha: 0.18)
-        /// 结构连接线 1px — subagent elbow (White 24 %).
-        public static let connector = DesignColor(white: 1, alpha: 0.24)
+
+        // Notch list (`Agent Status Notch - 完整设计` Screen 2) extras.
+
+        /// Agent tag fill — deliberately opaque so the tag reads identically
+        /// on the running card (`listCard`) and on pure black.
+        public static let agentTag = DesignColor(rgb: 40, 40, 40)
+        /// Running-with-subagents card fill (White 7 %).
+        public static let listCard = DesignColor(white: 1, alpha: 0.07)
+        /// Subagent pill fill (White 13 %).
+        public static let subagentPill = DesignColor(white: 1, alpha: 0.13)
     }
 
     /// Semantic hues: which hue each meaning takes, light / dark.

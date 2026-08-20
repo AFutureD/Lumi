@@ -44,8 +44,12 @@ public extension DesignSystem {
         public static let notchButton: Double = 9
         /// Notch metric chips.
         public static let notchMetricChip: Double = 8
-        /// Notch agent chip, archive button.
+        /// Notch subagent pill, archive button.
         public static let notchChip: Double = 6
+        /// Notch list agent tag.
+        public static let notchAgentTag: Double = 4
+        /// Notch list activity-line category tag.
+        public static let notchActivityTag: Double = 3
     }
 
     /// Key metrics of the macOS window (L1 → L3 sizes).
@@ -107,7 +111,8 @@ public extension DesignSystem {
         /// Notch list rows: 8px dot with a 3px halo; subagent children 6px.
         public static let notchSize: Double = 8
         public static let notchHalo: Double = 3
-        public static let notchChildSize: Double = 6
+        /// Status dot inside a subagent pill.
+        public static let notchPillDot: Double = 5
     }
 
     /// 3.1 状态药丸 StatusPill — solid dot + label; height 22, capsule,
@@ -166,32 +171,54 @@ public extension DesignSystem {
         public static let topBarIconBox: Double = 15
         public static let compactSlot: Double = 28
 
-        // List rows: grid `8px | 1fr | auto`, column gap 10, padding `10 16 11`.
-        public static let rowGap: Double = 10
-        public static let rowTop: Double = 10
-        public static let rowBottom: Double = 11
-        /// Bottom padding when subagent rows follow.
-        public static let rowBottomWithChildren: Double = 4
+        // List rows: grid `8px | 1fr | auto`, column gap 9, row gap 2 (4 in
+        // the card grid), padding `3 14 4` → a single-line row is ~28pt.
+        public static let rowColumnGap: Double = 9
+        public static let rowLineGap: Double = 2
+        public static let cardRowLineGap: Double = 4
+        public static let rowTop: Double = 3
+        public static let rowBottom: Double = 4
+        /// List rows and separators sit at 14; cards and the detail keep 16.
+        public static let listSideInset: Double = 14
         public static let sideInset: Double = 16
-        public static let chipHeight: Double = 20
-        public static let chipHorizontalPadding: Double = 7
-        /// Trailing cell holding the relative time / archive button.
-        public static let trailingCell: Double = 20
-        /// The design draws a 13px line glyph; `archivebox` at 11pt matches it optically.
-        public static let archiveSymbolSize: Double = 11
-        // Subagent child rows: indent 34, 6px dot, padding `3 16 3 34`, 9 below the last.
-        public static let childIndent: Double = 34
-        public static let childRowVertical: Double = 3
-        public static let childRowLastBottom: Double = 9
-        public static let childTimeWidth: Double = 34
-        /// Elbow: vertical at x = sideInset + rowDot / 2, radius 5.
-        public static let elbowX: Double = 20
-        public static let elbowRadius: Double = 5
-        public static let listMaxHeight: Double = 320
-        // Footer `9 16 12`.
-        public static let footerTop: Double = 9
-        public static let footerBottom: Double = 12
-        public static let footerGap: Double = 4
+        public static let listTopPadding: Double = 2
+        // Agent tag: 15 tall, padding `0 5`, r4, opaque fill.
+        public static let agentTagHeight: Double = 15
+        public static let agentTagHorizontalPadding: Double = 5
+        // Right cluster: tag + a 26pt time cell (22 tall), gap 5, 8 before.
+        public static let trailingClusterGap: Double = 5
+        public static let trailingClusterLeadingPad: Double = 8
+        public static let timeCellWidth: Double = 26
+        public static let timeCellHeight: Double = 22
+        /// Archive button replacing the time in place on hover.
+        public static let archiveButton: Double = 22
+        /// The design draws a 15px line glyph; `archivebox` at 12.5pt matches it optically.
+        public static let archiveSymbolSize: Double = 12.5
+        // Activity line (running rows): 14pt tag, padding `0 4`, gap 6.
+        public static let activityTagHeight: Double = 14
+        public static let activityTagHorizontalPadding: Double = 4
+        public static let activityLineGap: Double = 6
+        // Running-with-subagents card: margin `2 6 3`, padding `6 8 7`, r10.
+        // 6 + 8 keeps the status dot at x = 14, aligned with the flat rows.
+        public static let cardMarginTop: Double = 2
+        public static let cardMarginHorizontal: Double = 6
+        public static let cardMarginBottom: Double = 3
+        public static let cardPaddingTop: Double = 6
+        public static let cardPaddingHorizontal: Double = 8
+        public static let cardPaddingBottom: Double = 7
+        public static let cardInnerGap: Double = 7
+        // Subagent pills: 20 tall, padding `0 7`, r6, wrap at 5pt gaps,
+        // indented 17 so they align with the title text.
+        public static let pillHeight: Double = 20
+        public static let pillHorizontalPadding: Double = 7
+        public static let pillInnerGap: Double = 6
+        public static let pillFlowGap: Double = 5
+        public static let pillIndent: Double = 17
+        /// Viewport caps at six single-line rows (6×28 + 5 separators);
+        /// taller card rows simply show fewer. The list scrolls beyond.
+        public static let listMaxHeight: Double = 173
+        /// Footer: fixed height, top separator, text centred both axes.
+        public static let footerHeight: Double = 26
 
         // Cards (turn started / ended / detail).
         public static let cardTop: Double = 14
@@ -248,6 +275,5 @@ public extension DesignSystem {
     enum Stroke {
         public static let hairline: Double = 0.5
         public static let separator: Double = 1
-        public static let elbow: Double = 1
     }
 }
