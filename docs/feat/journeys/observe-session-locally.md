@@ -50,7 +50,7 @@
 
 ### 删除单个 Session
 
-选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 从 daemon、Mac 与在线 iPhone 中移除；随后选择会转到剩余列表中的 Session，删除最后一条时中栏显示 No Sessions、右栏显示 Select a Session。点击“Cancel”则不改变数据。
+选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 从 daemon、Mac 与在线 iPhone 中移除；删除 Main Session 时其下的全部 Subagent 一并移除。随后选择会转到剩余列表中的 Session，删除最后一条时中栏显示 No Sessions、右栏显示 Select a Session。点击“Cancel”则不改变数据。
 
 ### 清空全部历史
 

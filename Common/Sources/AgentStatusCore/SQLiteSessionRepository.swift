@@ -430,7 +430,25 @@ public actor SQLiteSessionRepository: SessionRepository {
                 sql: "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)",
                 arguments: [id.rawValue]
             ) ?? false
-            try Self.tombstone(db, id)
+            // The lineage subtree goes with the root: subagents can spawn
+            // subagents, so walk `$.lineage.parentSessionID` transitively.
+            let doomed = try String.fetchAll(
+                db,
+                sql: """
+                    WITH RECURSIVE doomed(id) AS (
+                        VALUES(?)
+                        UNION
+                        SELECT s.id FROM sessions s
+                        JOIN doomed
+                          ON json_extract(CAST(s.summary AS TEXT), '$.lineage.parentSessionID') = doomed.id
+                    )
+                    SELECT id FROM doomed
+                    """,
+                arguments: [id.rawValue]
+            )
+            for member in doomed {
+                try Self.tombstone(db, SessionID(member))
+            }
             return existed
         }
     }

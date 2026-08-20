@@ -38,7 +38,7 @@ flowchart LR
 
 ### 删除
 
-- **单条删除**：用户在 Mac 选择 Session，通过删除图标（Delete Session）并确认后，daemon、Mac 和已连接 iPhone 移除同一 Session。
+- **单条删除**：用户在 Mac 选择 Session，通过删除图标（Delete Session）并确认后，daemon、Mac 和已连接 iPhone 移除同一 Session。删除 Main Session 会连带删除挂在它下面的全部 Subagent（含 Subagent 的 Subagent）；单独删除一个 Subagent 不影响父级。
 - **全部清空**：用户在 Settings 确认“Clear Session history…”后，全部 Agent Status Session 被清空。
 - **删除后的新事件**：同一已删除 Session 不会重新出现在 Agent Status。
 - **外部影响**：Codex 自身 Session 和日志不被删除。

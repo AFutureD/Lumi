@@ -347,6 +347,80 @@ import Testing
     #expect(try await repository.listSessions(limit: 100).map(\.id) == [keptID])
 }
 
+@Test func inMemoryRepositoryDeletesTheLineageSubtreeWithTheParent() async throws {
+    let repository = InMemorySessionRepository()
+    try await seedLineageFixture(repository)
+
+    #expect(try await repository.deleteSession(id: SessionID("parent")))
+
+    let remaining = try await repository.listSessions(limit: 100).map(\.id)
+    #expect(remaining == [SessionID("unrelated")])
+    // The subagent is tombstoned like the parent: a straggling event must
+    // not resurrect it.
+    #expect(try await !repository.apply(AgentIngressEvent(
+        eventID: EventID("late-child-event"),
+        sessionID: SessionID("child"),
+        agent: .codexSubagent,
+        occurredAt: Date(timeIntervalSince1970: 5_000),
+        lifecycle: .running,
+        phase: .executing
+    )))
+    #expect(try await repository.listSessions(limit: 100).map(\.id) == [SessionID("unrelated")])
+}
+
+@Test func grdbRepositoryDeletesTheLineageSubtreeWithTheParent() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-status-cascade-tests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
+    try await seedLineageFixture(repository)
+
+    #expect(try await repository.deleteSession(id: SessionID("parent")))
+
+    let remaining = try await repository.listSessions(limit: 100).map(\.id)
+    #expect(remaining == [SessionID("unrelated")])
+    #expect(try await !repository.apply(AgentIngressEvent(
+        eventID: EventID("late-grandchild-event"),
+        sessionID: SessionID("grandchild"),
+        agent: .codexSubagent,
+        occurredAt: Date(timeIntervalSince1970: 5_000),
+        lifecycle: .running,
+        phase: .executing
+    )))
+    #expect(try await repository.listSessions(limit: 100).map(\.id) == [SessionID("unrelated")])
+}
+
+/// Parent → child → grandchild lineage plus one unrelated session that a
+/// cascade must never touch.
+private func seedLineageFixture(_ repository: some SessionRepository) async throws {
+    let date = Date(timeIntervalSince1970: 4_000)
+    let members: [(SessionID, SessionLineage?)] = [
+        (SessionID("parent"), nil),
+        (SessionID("child"), SessionLineage(
+            threadSource: "subagent",
+            parentSessionID: SessionID("parent"),
+            subagentDepth: 1
+        )),
+        (SessionID("grandchild"), SessionLineage(
+            threadSource: "subagent",
+            parentSessionID: SessionID("child"),
+            subagentDepth: 2
+        )),
+        (SessionID("unrelated"), nil),
+    ]
+    for (index, (sessionID, lineage)) in members.enumerated() {
+        #expect(try await repository.apply(AgentIngressEvent(
+            eventID: EventID("seed-\(sessionID.rawValue)"),
+            sessionID: sessionID,
+            agent: lineage == nil ? .codex : .codexSubagent,
+            occurredAt: date.addingTimeInterval(Double(index)),
+            lifecycle: .running,
+            phase: .thinking,
+            lineage: lineage
+        )))
+    }
+}
+
 @Test func grdbRepositoryKeepsNotchArchiveUntilTheHumanReEngages() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-status-notch-archive-tests-\(UUID().uuidString)", isDirectory: true)

@@ -16,6 +16,10 @@ public protocol SessionRepository: Sendable {
     /// tombstones: the authoritative side may resurrect any of them later.
     @discardableResult
     func pruneSessions(keeping ids: Set<SessionID>) async throws -> Int
+    /// Deletes the session and, transitively, every session whose lineage
+    /// names it as parent — a subagent session is part of its parent's story
+    /// and must not outlive it. Each member is tombstoned. Returns whether
+    /// the root session existed.
     func deleteSession(id: SessionID) async throws -> Bool
     func deleteAllSessions() async throws -> Int
     func rolloutCursor(path: String) async throws -> RolloutCursor?
@@ -351,10 +355,25 @@ public actor InMemorySessionRepository: SessionRepository {
     }
 
     public func deleteSession(id: SessionID) async throws -> Bool {
-        ignoredSessionIDs.insert(id)
-        timeline.removeValue(forKey: id)
-        turns.removeValue(forKey: id)
-        return sessions.removeValue(forKey: id) != nil
+        let existed = sessions[id] != nil
+        var doomed: Set<SessionID> = [id]
+        var frontier: Set<SessionID> = [id]
+        while !frontier.isEmpty {
+            frontier = Set(sessions.values
+                .filter { summary in
+                    guard let parent = summary.lineage?.parentSessionID else { return false }
+                    return frontier.contains(parent) && !doomed.contains(summary.id)
+                }
+                .map(\.id))
+            doomed.formUnion(frontier)
+        }
+        for member in doomed {
+            ignoredSessionIDs.insert(member)
+            sessions.removeValue(forKey: member)
+            timeline.removeValue(forKey: member)
+            turns.removeValue(forKey: member)
+        }
+        return existed
     }
 
     public func rolloutCursor(sessionID: SessionID) async throws -> RolloutCursor? {
