@@ -214,9 +214,10 @@ public extension DesignSystem {
         public static let pillInnerGap: Double = 6
         public static let pillFlowGap: Double = 5
         public static let pillIndent: Double = 17
-        /// Viewport caps at six single-line rows (6×28 + 5 separators);
-        /// taller card rows simply show fewer. The list scrolls beyond.
-        public static let listMaxHeight: Double = 173
+        /// The viewport shows this many sessions; the list scrolls beyond.
+        /// The height comes from the rendered rows (cards are taller than
+        /// flat rows), measured in the view.
+        public static let listMaxVisibleRows: Int = 6
         /// Footer: fixed height, top separator, text centred both axes.
         public static let footerHeight: Double = 26
 

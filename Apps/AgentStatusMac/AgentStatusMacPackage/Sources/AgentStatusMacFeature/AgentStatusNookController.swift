@@ -319,6 +319,9 @@ private struct AgentStatusNookHomeView: View {
     let actions: AgentStatusNookActions
     let coordinatorBox: AgentStatusNookCoordinatorBox
     @Environment(\.nookResolvedTheme) private var theme
+    /// Measured heights of the list items, so the viewport can end exactly
+    /// after the sixth session no matter how tall its rows are.
+    @State private var listItemHeights: [SessionID: Double] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -381,23 +384,32 @@ private struct AgentStatusNookHomeView: View {
         } else {
             let items = AgentStatusNookSnapshot.listItems(from: model.sessions)
             VStack(spacing: 0) {
-                // The viewport holds up to six single-line rows (card rows are
-                // taller and show fewer); everything beyond scrolls.
+                // The viewport ends exactly after the sixth session (measured
+                // heights — running rows and cards are taller than flat rows);
+                // everything beyond scrolls. Plain VStack: every row lays out,
+                // so the first six always report a height.
                 ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            if item.children.isEmpty {
-                                AgentStatusNookSessionRow(
-                                    session: item.session,
-                                    onOpen: { model.showDetail(item.session.id) },
-                                    onArchive: { model.archive(item.session.id) }
-                                )
-                            } else {
-                                AgentStatusNookSessionCard(
-                                    item: item,
-                                    onOpen: { model.showDetail($0) },
-                                    onArchive: { model.archive(item.session.id) }
-                                )
+                            Group {
+                                if item.children.isEmpty {
+                                    AgentStatusNookSessionRow(
+                                        session: item.session,
+                                        onOpen: { model.showDetail(item.session.id) },
+                                        onArchive: { model.archive(item.session.id) }
+                                    )
+                                } else {
+                                    AgentStatusNookSessionCard(
+                                        item: item,
+                                        onOpen: { model.showDetail($0) },
+                                        onArchive: { model.archive(item.session.id) }
+                                    )
+                                }
+                            }
+                            .onGeometryChange(for: Double.self) { proxy in
+                                proxy.size.height
+                            } action: { height in
+                                listItemHeights[item.id] = height
                             }
                             if index < items.count - 1 {
                                 Color.nookSeparator
@@ -408,7 +420,7 @@ private struct AgentStatusNookHomeView: View {
                     }
                     .padding(.top, NotchMetric.listTopPadding)
                 }
-                .frame(maxHeight: NotchMetric.listMaxHeight)
+                .frame(maxHeight: listViewportHeight(for: items))
                 // Footer: fixed 26pt, separator on top, count centred both axes.
                 Text("\(model.listedSessionCount) session\(model.listedSessionCount == 1 ? "" : "s")")
                     .designText(NotchType.notchLabel)
@@ -418,6 +430,17 @@ private struct AgentStatusNookHomeView: View {
                     .overlay(alignment: .top) { Color.nookSeparator.frame(height: DS.Stroke.separator) }
             }
         }
+    }
+
+    /// Top padding + the first six items at their measured heights + the
+    /// separators between them. Items not yet measured fall back to the
+    /// flat-row height so the first pass is already close.
+    private func listViewportHeight(for items: [AgentStatusNookListItem]) -> Double {
+        let visible = items.prefix(NotchMetric.listMaxVisibleRows)
+        let flatRow = NotchMetric.rowTop + NotchMetric.timeCellHeight + NotchMetric.rowBottom
+        let rows = visible.reduce(0.0) { $0 + (listItemHeights[$1.id] ?? flatRow) }
+        let separators = Double(max(0, visible.count - 1)) * DS.Stroke.separator
+        return NotchMetric.listTopPadding + rows + separators
     }
 }
 
