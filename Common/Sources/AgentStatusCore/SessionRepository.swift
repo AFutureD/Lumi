@@ -21,6 +21,8 @@ public protocol SessionRepository: Sendable {
     /// tombstone. Returns whether the session existed.
     func resetSession(id: SessionID) async throws -> Bool
     func markSessionIgnored(_ sessionID: SessionID) async throws
+    /// The human opened the session: clear `SessionSummary.needsReview`.
+    func markSessionReviewed(_ sessionID: SessionID) async throws
     func isRolloutBaselineInitialized() async throws -> Bool
     func markRolloutBaselineInitialized() async throws
 }
@@ -39,9 +41,19 @@ public enum SessionReduction {
         let phase = shouldUpdateVisibleState
             ? (event.phase ?? current?.phase ?? .idle)
             : (current?.phase ?? .idle)
-        let needsAttention = switch lifecycle {
-        case .waitingForInput, .failed, .interrupted: true
-        default: false
+        // Sticky until the human opens the session; `markSessionReviewed`
+        // is the only thing that clears it.
+        let endsTurn = if case .turnEnd = event.timelineItem?.payload { true } else { false }
+        let needsReview = endsTurn || (current?.needsReview ?? false)
+        // The tiers a human should act on: approval orange, unreviewed green,
+        // failure red.
+        let needsAttention = switch SessionStatusTone.resolve(
+            lifecycle: lifecycle,
+            phase: phase,
+            needsReview: needsReview
+        ) {
+        case .orange, .green, .red: true
+        case .blue, .gray: false
         }
         let isIdentityOnly = event.title != nil
             && event.workspace == nil
@@ -91,6 +103,7 @@ public enum SessionReduction {
                 ? max(current?.lastActivityAt ?? event.occurredAt, event.occurredAt)
                 : (current?.lastActivityAt ?? event.occurredAt),
             needsAttention: needsAttention,
+            needsReview: needsReview,
             lineage: event.lineage ?? current?.lineage,
             firstTurnAt: firstTurnAt
         )
@@ -332,6 +345,11 @@ public actor InMemorySessionRepository: SessionRepository {
 
     public func markSessionIgnored(_ sessionID: SessionID) async throws {
         ignoredSessionIDs.insert(sessionID)
+    }
+
+    public func markSessionReviewed(_ sessionID: SessionID) async throws {
+        guard let summary = sessions[sessionID] else { return }
+        sessions[sessionID] = summary.reviewed
     }
 
     public func isRolloutBaselineInitialized() async throws -> Bool {

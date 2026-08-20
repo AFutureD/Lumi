@@ -94,6 +94,24 @@ public actor SQLiteSessionRepository: SessionRepository {
                 DROP TABLE sweep;
                 """)
         }
+        // Backfill `needsReview` into summaries written before the flag
+        // existed so strict decoding keeps working; old sessions were
+        // presumably seen, so they start reviewed, and `needsAttention` is
+        // re-derived under the same rule (approval / failure only).
+        migrator.registerMigration("agent-status-v4-needs-review") { db in
+            try db.execute(sql: """
+                UPDATE sessions SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.needsReview', json('false'),
+                        '$.needsAttention',
+                        CASE WHEN json_extract(CAST(summary AS TEXT), '$.phase') = 'waiting_for_approval'
+                               OR json_extract(CAST(summary AS TEXT), '$.lifecycle') IN ('failed', 'interrupted')
+                             THEN json('true') ELSE json('false') END
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.needsReview') IS NULL;
+                """)
+        }
         try migrator.migrate(database)
     }
 
@@ -485,6 +503,23 @@ public actor SQLiteSessionRepository: SessionRepository {
             try db.execute(
                 sql: "INSERT OR IGNORE INTO ignored_sessions(id) VALUES(?)",
                 arguments: [sessionID.rawValue]
+            )
+        }
+    }
+
+    public func markSessionReviewed(_ sessionID: SessionID) async throws {
+        let encoder = encoder
+        let decoder = decoder
+        try await database.write { db in
+            guard let data = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [sessionID.rawValue]
+            ) else { return }
+            let summary = try decoder.decode(SessionSummary.self, from: data).reviewed
+            try db.execute(
+                sql: "UPDATE sessions SET summary = ? WHERE id = ?",
+                arguments: [try encoder.encode(summary), sessionID.rawValue]
             )
         }
     }

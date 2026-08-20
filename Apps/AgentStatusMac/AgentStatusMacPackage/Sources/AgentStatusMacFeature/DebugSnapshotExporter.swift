@@ -18,18 +18,25 @@ enum DebugSnapshotExporter {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try? await Task.sleep(for: .seconds(6))
             snapshotWindows(prefix: "01-main")
+            // The panel can auto-collapse between captures (hover-dependent),
+            // so re-expand before every shot.
             notch.showNook()
             try? await Task.sleep(for: .seconds(2))
+            notch.showNook()
+            try? await Task.sleep(for: .seconds(1))
             snapshotWindows(prefix: "02-notch-list")
             if notch.debugShowDetailOfFirstSession() {
+                notch.showNook()
                 try? await Task.sleep(for: .seconds(1))
                 snapshotWindows(prefix: "03-notch-detail")
             }
             if notch.debugShowTurnEndedCardOfFirstSession() {
+                notch.showNook()
                 try? await Task.sleep(for: .seconds(1))
                 snapshotWindows(prefix: "04-notch-turn-ended")
             }
             if notch.debugShowTurnStartedCardOfFirstSession() {
+                notch.showNook()
                 try? await Task.sleep(for: .seconds(1))
                 snapshotWindows(prefix: "05-notch-turn-started")
             }

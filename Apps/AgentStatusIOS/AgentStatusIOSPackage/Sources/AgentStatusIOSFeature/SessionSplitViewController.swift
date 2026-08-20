@@ -78,7 +78,7 @@ final class SessionSplitViewController: UISplitViewController, UITableViewDataSo
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         cell.textLabel?.text = session.summary.title
         cell.textLabel?.font = .design(DesignSystem.Typography.listTitle)
-        cell.detailTextLabel?.text = "\(session.summary.lifecycle.rawValue) · \(session.summary.phase.rawValue)"
+        cell.detailTextLabel?.text = "\(session.summary.displayLifecycle.rawValue) · \(session.summary.phase.rawValue)"
         cell.detailTextLabel?.font = .design(DesignSystem.Typography.caption)
         cell.accessoryType = .disclosureIndicator
         let tone = session.summary.statusTone

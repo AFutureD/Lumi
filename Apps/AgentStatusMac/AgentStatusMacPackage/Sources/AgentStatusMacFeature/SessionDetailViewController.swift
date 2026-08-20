@@ -92,6 +92,15 @@ final class SessionDetailViewController: NSViewController {
         emptyLabel.isHidden = true
         applySubheader(detail.summary)
 
+        // The detail is in front of the user, so a turn that just ended is
+        // being looked at right now. Only while the window is actually shown —
+        // a background window must not eat the review flag.
+        if detail.summary.needsReview,
+           !view.isHiddenOrHasHiddenAncestor,
+           let window = view.window, window.isVisible, window.isKeyWindow {
+            store.markSessionReviewed(detail.summary.id)
+        }
+
         if sessionChanged {
             presentation = nil
             activityState.reset()

@@ -393,7 +393,7 @@ private final class SessionRowView: NSTableCellView {
         // Tier colour on dot and text; the Completed tier's text reads as
         // tertiary ink while its dot keeps the Completed gray. In-progress
         // tiers carry the breathing halo.
-        let tone = session.statusTone
+        let tone = presentation.tone
         statusLabel.stringValue = presentation.status
         statusLabel.textColor = tone == .gray ? AgentStatusDesign.Color.inkTertiary : tone.appKitColor
         statusDot.configure(tone.lightStyle.dot)

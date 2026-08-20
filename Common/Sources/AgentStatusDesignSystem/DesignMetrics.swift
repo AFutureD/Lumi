@@ -154,7 +154,16 @@ public extension DesignSystem {
     enum Notch {
         public static let compactWidth: Double = 64
         public static let expandedWidth: Double = 520
+        // Top band: height 32, padding `0 14`; left cluster gap 10 (15px brand
+        // glyph + 11 / Regular title), right cluster gap 15 (15px line icons).
         public static let topBandHeight: Double = 32
+        public static let topBarSideInset: Double = 14
+        public static let topBarLeadingGap: Double = 10
+        public static let topBarTrailingGap: Double = 15
+        /// Design draws 15px 1.25–1.3 stroke line glyphs; SF Symbols at this
+        /// point size match them optically, laid out in a 15px box.
+        public static let topBarGlyph: Double = 12
+        public static let topBarIconBox: Double = 15
         public static let compactSlot: Double = 28
 
         // List rows: grid `8px | 1fr | auto`, column gap 10, padding `10 16 11`.
@@ -178,7 +187,6 @@ public extension DesignSystem {
         /// Elbow: vertical at x = sideInset + rowDot / 2, radius 5.
         public static let elbowX: Double = 20
         public static let elbowRadius: Double = 5
-        public static let listTopInset: Double = 4
         public static let listMaxHeight: Double = 320
         // Footer `9 16 12`.
         public static let footerTop: Double = 9
@@ -220,7 +228,7 @@ public extension DesignSystem {
         public static let emptyStateVertical: Double = 26
         public static let emptyStateGap: Double = 8
         public static let emptyStateGlyph: Double = 24
-        public static let settingsGlyph: Double = 12
+        /// Hit target of the top-bar icon buttons.
         public static let settingsButton: Double = 24
     }
 

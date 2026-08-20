@@ -249,6 +249,7 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
         workspace: nil,
         lifecycle: lifecycle,
         phase: .thinking,
+        needsReview: false,
         currentUserMessage: "Build it",
         lastActivityAt: Date(timeIntervalSince1970: 0),
         startedAt: Date(timeIntervalSince1970: 0),
@@ -396,6 +397,20 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
     ])
     #expect(original.hasSameStructure(as: phaseChange))
     #expect(original.updateSummaries(from: phaseChange.roots.flatMap(flatten)) == [SessionID("main")])
+
+    // `needsReview` flips the tone (green ⇄ gray) without changing the
+    // status text; the row diff must still report the change.
+    let reviewFlip = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "main", lifecycle: .waitingForInput, phase: .idle, needsReview: true, updatedAt: 202),
+        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 202),
+    ])
+    #expect(original.hasSameStructure(as: reviewFlip))
+    #expect(original.updateSummaries(from: reviewFlip.roots.flatMap(flatten)) == [SessionID("main")])
+    let reviewed = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "main", lifecycle: .waitingForInput, phase: .idle, needsReview: false, updatedAt: 203),
+        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 203),
+    ])
+    #expect(original.updateSummaries(from: reviewed.roots.flatMap(flatten)) == [SessionID("main")])
 
     let reordered = SessionListHierarchy.build(from: [
         hierarchySummary(id: "child", parentID: "main", depth: 1),
@@ -658,12 +673,14 @@ private func nookSession(_ rows: [AgentStatusNookActivityRow], lifecycle: Sessio
 
 @Test @MainActor
 func statusTonesResolveDistinctPillColors() {
-    let tones: [SessionStatusTone] = [.blue, .green, .gray, .red]
+    let tones: [SessionStatusTone] = [.blue, .orange, .green, .gray, .red]
     let fills = Set(tones.map { $0.pillFill.description })
     let texts = Set(tones.map { $0.pillText.description })
-    #expect(fills.count == 4)
-    #expect(texts.count == 4)
+    #expect(fills.count == 5)
+    #expect(texts.count == 5)
     #expect(SessionStatusTone.blue.dotHalo != nil)
+    #expect(SessionStatusTone.orange.dotHalo != nil)
+    #expect(SessionStatusTone.green.dotHalo != nil)
     #expect(SessionStatusTone.gray.dotHalo == nil)
 }
 
@@ -729,7 +746,9 @@ private func hierarchySummary(
     id: String,
     parentID: String? = nil,
     depth: Int? = nil,
+    lifecycle: SessionLifecycle = .running,
     phase: TurnPhase = .thinking,
+    needsReview: Bool = false,
     updatedAt: TimeInterval = 100
 ) -> SessionSummary {
     let date = Date(timeIntervalSince1970: updatedAt)
@@ -746,11 +765,12 @@ private func hierarchySummary(
         id: SessionID(id),
         agent: lineage == nil ? .codex : .codexSubagent,
         title: id,
-        lifecycle: .running,
+        lifecycle: lifecycle,
         phase: phase,
         startedAt: date,
         updatedAt: date,
         lastActivityAt: date,
+        needsReview: needsReview,
         lineage: lineage
     )
 }

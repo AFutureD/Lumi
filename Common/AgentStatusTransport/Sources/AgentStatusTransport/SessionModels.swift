@@ -286,6 +286,9 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     public let updatedAt: Date
     public let lastActivityAt: Date
     public let needsAttention: Bool
+    /// The finished turn has not been looked at yet: set when a turn ends,
+    /// cleared when the human opens the session (app or Notch detail).
+    public let needsReview: Bool
     public let lineage: SessionLineage?
     /// When the session's first Turn began (earliest turn-scoped event). Never
     /// cleared — a later `resume` / `compact` restart keeps it.
@@ -302,6 +305,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         updatedAt: Date,
         lastActivityAt: Date,
         needsAttention: Bool = false,
+        needsReview: Bool = false,
         lineage: SessionLineage? = nil,
         firstTurnAt: Date? = nil
     ) {
@@ -315,8 +319,29 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.lastActivityAt = lastActivityAt
         self.needsAttention = needsAttention
+        self.needsReview = needsReview
         self.lineage = lineage
         self.firstTurnAt = firstTurnAt
+    }
+
+    /// The same summary with the review flag and its derived attention bit
+    /// replaced (all fields are `let`).
+    public func withReviewState(needsAttention: Bool, needsReview: Bool) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            agent: agent,
+            title: title,
+            workspace: workspace,
+            lifecycle: lifecycle,
+            phase: phase,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            lastActivityAt: lastActivityAt,
+            needsAttention: needsAttention,
+            needsReview: needsReview,
+            lineage: lineage,
+            firstTurnAt: firstTurnAt
+        )
     }
 
     /// A provisional session: the agent process is up but no Turn has started
@@ -350,6 +375,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case updatedAt
         case lastActivityAt
         case needsAttention
+        case needsReview
         case lineage
         case firstTurnAt
     }

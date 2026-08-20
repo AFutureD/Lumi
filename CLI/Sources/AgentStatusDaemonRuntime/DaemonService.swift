@@ -96,6 +96,13 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "missing_session_id", message: "The delete request has no id.")
                 }
+            case .markSessionReviewed:
+                if let id = envelope.payload.sessionID {
+                    try await repository.markSessionReviewed(id)
+                    payload = IPCResponse(status: .ok)
+                } else {
+                    payload = failure(code: "missing_session_id", message: "The review request has no id.")
+                }
             case .snapshotSessions:
                 payload = IPCResponse(
                     status: .ok,

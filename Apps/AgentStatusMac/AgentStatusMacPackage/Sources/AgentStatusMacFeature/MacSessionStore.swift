@@ -83,6 +83,9 @@ public final class MacSessionStore {
             notifyObservers()
             return
         }
+        // Selecting is viewing — even a re-click of the already selected row
+        // clears a review flag a fresh turn end may have raised.
+        markSessionReviewed(sessionID)
         guard pendingSelectionID != sessionID || selectedSession?.summary.id != sessionID else { return }
         pendingSelectionID = sessionID
         guard let cache else { return }
@@ -139,6 +142,34 @@ public final class MacSessionStore {
                 handleConnectionFailure(error)
             }
             refresh()
+        }
+    }
+
+    /// The human opened the session: clear its review flag in the in-memory
+    /// list at once (the tier steps down while they look), then in the local
+    /// cache and the daemon so every mirror agrees.
+    public func markSessionReviewed(_ sessionID: SessionID) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+              sessions[index].needsReview else { return }
+        sessions[index] = sessions[index].reviewed
+        if let selected = selectedSession, selected.summary.id == sessionID {
+            selectedSession = SessionDetail(
+                summary: selected.summary.reviewed,
+                turns: selected.turns,
+                timeline: selected.timeline,
+                nextCursor: selected.nextCursor
+            )
+        }
+        cachedSnapshotDetails = nil
+        notifyObservers(dataChanged: true)
+        Task {
+            do {
+                if let cache { try await cache.markSessionReviewed(sessionID) }
+                let response = try await request(IPCRequest(operation: .markSessionReviewed, sessionID: sessionID))
+                if let failure = response.failure { throw failure }
+            } catch {
+                handleConnectionFailure(error)
+            }
         }
     }
 

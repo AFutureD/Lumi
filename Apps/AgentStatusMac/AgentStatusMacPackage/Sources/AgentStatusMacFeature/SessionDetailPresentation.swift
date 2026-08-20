@@ -1,3 +1,4 @@
+import AgentStatusCore
 import AgentStatusTransport
 import Foundation
 
@@ -5,13 +6,17 @@ struct SessionListRowPresentation: Equatable {
     let title: String
     let agent: String
     let status: String
+    /// Part of the row diff: `needsReview` changes the tone without changing
+    /// the status text (green ⇄ gray), so text alone under-reports changes.
+    let tone: SessionStatusTone
 
     init(session: SessionSummary) {
         title = session.title
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
         agent = session.agent.displayName
-        status = "\(session.lifecycle.displayName) · \(session.phase.displayName)"
+        status = "\(session.displayLifecycle.displayName) · \(session.phase.displayName)"
+        tone = session.statusTone
     }
 }
 

@@ -40,10 +40,14 @@ final class AgentStatusNookController {
             Self.normalizedAppearancePreferences(appState.appearancePreferences)
         )
 
+        // The home closure renders before `coordinator` exists; the box hands
+        // the host top bar its keep-open toggle once the coordinator is up.
+        let coordinatorBox = AgentStatusNookCoordinatorBox()
+
         var configuration = NookConfiguration()
         configuration.setHome {
             NookActivityHost(queue: activityQueue) {
-                AgentStatusNookHomeView(model: model, actions: actions)
+                AgentStatusNookHomeView(model: model, actions: actions, coordinatorBox: coordinatorBox)
             }
         }
         configuration.setCompactLeading {
@@ -52,12 +56,13 @@ final class AgentStatusNookController {
         configuration.setCompactTrailing {
             AgentStatusNookCompactCount(model: model.compactModel)
         }
+        // The chrome's own top bar pads its clusters by the geometric corner
+        // clearance (24pt here) and cannot hit the design's `0 14` band, so
+        // the host draws the whole top band itself (`AgentStatusNookTopBar`).
         configuration.topBar = NookTopBarConfiguration(
-            showsTopBar: true,
+            showsTopBar: false,
             showsSettings: false,
             showsStatusBanner: false,
-            leadingTitle: { _ in "Agent Status" },
-            leadingIcon: "terminal",
             width: .intrinsic
         )
         // Rows pad themselves by `sideInset`, so every chrome-side horizontal
@@ -72,9 +77,6 @@ final class AgentStatusNookController {
             expandedContentInsets: .zero
         )
         configuration.metrics.edgePadding = 0
-        configuration.setTopBarTrailingItems {
-            AgentStatusNookSettingsButton(action: actions.openMainSettings)
-        }
         configuration.showsMenuBarExtra = false
         configuration.branding = NookHostBranding(
             hostName: "Agent Status",
@@ -92,6 +94,7 @@ final class AgentStatusNookController {
         self.activityQueue = activityQueue
         self.appState = appState
         coordinator = AppCoordinator(appState: appState, configuration: configuration)
+        coordinatorBox.coordinator = coordinator
 
         model.onSnapshot = { [weak self, weak model, activityQueue] previous, current, initial in
             guard let self, let model, self.activityNotificationsEnabled, !initial else { return }
@@ -245,13 +248,81 @@ private extension SessionStatusTone {
 
 // MARK: - Home (routes)
 
+/// Hands the host top bar the chrome coordinator once it exists.
+@MainActor
+final class AgentStatusNookCoordinatorBox {
+    weak var coordinator: AppCoordinator?
+}
+
+/// The panel's top band (host-drawn; the chrome's bar is disabled): height 32,
+/// padding `0 14`, brand glyph + 11 / Regular `.58` title on the left, gear and
+/// keep-open lock (15px line icons, `.62`) on the right, gaps 10 / 15. The
+/// middle stays empty for the camera.
+private struct AgentStatusNookTopBar: View {
+    let actions: AgentStatusNookActions
+    let coordinatorBox: AgentStatusNookCoordinatorBox
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: NotchMetric.topBarLeadingGap) {
+                Image(systemName: "terminal")
+                    .font(.system(size: NotchMetric.topBarGlyph, weight: .regular))
+                    .foregroundStyle(Color(DS.InkDark.brandIcon))
+                    .frame(width: NotchMetric.topBarIconBox, height: NotchMetric.topBarIconBox)
+                Text("Agent Status")
+                    .designText(NotchType.caption)
+                    .foregroundStyle(Color.nookSecondary)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: NotchMetric.topBarTrailingGap) {
+                topBarButton("gearshape", help: "Open Agent Status Settings", action: actions.openMainSettings)
+                topBarButton(
+                    appState.keepNookOpen ? "lock.fill" : "lock.open",
+                    active: appState.keepNookOpen,
+                    help: appState.keepNookOpen ? "Let the panel close on its own" : "Keep the panel open"
+                ) {
+                    coordinatorBox.coordinator?.toggleKeepNookOpen()
+                }
+            }
+        }
+        .padding(.horizontal, NotchMetric.topBarSideInset)
+        .frame(height: NotchMetric.topBandHeight)
+    }
+
+    private func topBarButton(
+        _ systemName: String, active: Bool = false, help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: NotchMetric.topBarGlyph, weight: .regular))
+                .foregroundStyle(active ? Color.nookTitle : Color(DS.InkDark.icon))
+                .frame(width: NotchMetric.topBarIconBox, height: NotchMetric.topBarIconBox)
+                // Layout is the 15px glyph box so the design's gaps and the 14pt
+                // trailing inset hold; the hit target still spans 24pt.
+                .contentShape(Rectangle().inset(by: (NotchMetric.topBarIconBox - NotchMetric.settingsButton) / 2))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
 private struct AgentStatusNookHomeView: View {
     @ObservedObject var model: AgentStatusNookModel
     let actions: AgentStatusNookActions
+    let coordinatorBox: AgentStatusNookCoordinatorBox
     @Environment(\.nookResolvedTheme) private var theme
-    @Environment(\.nookContentInsets) private var contentInsets
 
     var body: some View {
+        VStack(spacing: 0) {
+            AgentStatusNookTopBar(actions: actions, coordinatorBox: coordinatorBox)
+            routeBody
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var routeBody: some View {
         Group {
             switch model.route {
             case .list:
@@ -276,8 +347,9 @@ private struct AgentStatusNookHomeView: View {
                 }
             }
         }
-        .padding(.top, NotchMetric.listTopInset)
-        .padding(.bottom, contentInsets.bottom)
+        // Routes carry their own bottom padding (footer 12 / cards 12–15); the
+        // chrome's 24pt corner-clearance would double it — measured, the panel's
+        // 24pt bottom curve never reaches content that starts 16pt from the side.
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .animation(.easeInOut(duration: 0.18), value: model.route)
     }
@@ -376,7 +448,8 @@ private struct AgentStatusNookStatusDot: View {
 
 /// Grid `8px 1fr auto`, gap 10, padding `10 16 11` (`10 16 4` when subagent
 /// rows follow). Title `#fff` while the turn runs, `.78` once it has ended —
-/// and the dot steps down with it (`listTone`). The trailing group is the
+/// and the dot steps down with it (`statusTone` resolves a finished turn to
+/// the Completed tier). The trailing group is the
 /// agent label + an `auto 20px` cell: the relative time is auto-width, the
 /// 20pt archive slot is fixed; the two swap in place on hover once the turn
 /// has ended, so the right edges align and nothing shifts.
@@ -390,7 +463,7 @@ private struct AgentStatusNookSessionRow: View {
     var body: some View {
         Button(action: onOpen) {
             HStack(alignment: .center, spacing: NotchMetric.rowGap) {
-                AgentStatusNookStatusDot(tone: session.listTone)
+                AgentStatusNookStatusDot(tone: session.statusTone)
 
                 Text(session.title)
                     .designText(NotchType.listTitle)
@@ -456,7 +529,7 @@ private struct AgentStatusNookSubagentRow: View {
         Button(action: onOpen) {
             HStack(alignment: .center, spacing: NotchMetric.rowGap) {
                 Circle()
-                    .fill(session.listTone.nookColor)
+                    .fill(session.statusTone.nookColor)
                     .frame(width: DS.StatusDot.notchChildSize, height: DS.StatusDot.notchChildSize)
                 Text(session.title)
                     .designText(NotchType.caption)
@@ -825,22 +898,5 @@ private struct AgentStatusNookCompactCount: View {
             .foregroundStyle(model.sessionCount == 0 ? Color.nookQuaternary : Color.nookTitle)
             .frame(width: NotchMetric.compactSlot, height: NotchMetric.compactSlot)
             .accessibilityLabel("\(model.sessionCount) Sessions in Notch")
-    }
-}
-
-private struct AgentStatusNookSettingsButton: View {
-    let action: @MainActor () -> Void
-    @Environment(\.nookResolvedTheme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "gearshape")
-                .font(.system(size: NotchMetric.settingsGlyph, weight: .semibold))
-                .foregroundStyle(theme.headerInactiveIcon)
-                .frame(width: NotchMetric.settingsButton, height: NotchMetric.settingsButton)
-        }
-        .buttonStyle(.plain)
-        .help("Open Agent Status Settings")
-        .accessibilityLabel("Open Agent Status Settings")
     }
 }

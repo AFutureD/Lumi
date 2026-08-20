@@ -119,6 +119,7 @@ public enum IPCOperation: Hashable, Sendable {
     case listSessions
     case getSession
     case deleteSession
+    case markSessionReviewed
     case snapshotSessions
     case subscribe
     case health
@@ -135,6 +136,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .listSessions: "list_sessions"
         case .getSession: "get_session"
         case .deleteSession: "delete_session"
+        case .markSessionReviewed: "mark_session_reviewed"
         case .snapshotSessions: "snapshot_sessions"
         case .subscribe: "subscribe"
         case .health: "health"
@@ -156,6 +158,7 @@ extension IPCOperation: Codable {
         case "list_sessions": .listSessions
         case "get_session": .getSession
         case "delete_session": .deleteSession
+        case "mark_session_reviewed": .markSessionReviewed
         case "snapshot_sessions": .snapshotSessions
         case "subscribe": .subscribe
         case "health": .health

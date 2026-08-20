@@ -38,6 +38,7 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     let workspace: String?
     let lifecycle: SessionLifecycle
     let phase: TurnPhase
+    let needsReview: Bool
     let currentUserMessage: String?
     let lastActivityAt: Date
     let startedAt: Date
@@ -52,21 +53,14 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     let recentRows: [AgentStatusNookActivityRow]
 
     var statusText: String {
-        "\(lifecycle.displayName) · \(phase.displayName)"
+        "\(SessionStatusTone.displayLifecycle(lifecycle: lifecycle, phase: phase).displayName) · \(phase.displayName)"
     }
 
     var statusTone: SessionStatusTone {
-        SessionStatusTone.resolve(lifecycle: lifecycle, phase: phase)
+        SessionStatusTone.resolve(lifecycle: lifecycle, phase: phase, needsReview: needsReview)
     }
 
     var isChild: Bool { parentID != nil }
-
-    /// Tier drawn in the list: once the turn has ended the dot steps down with
-    /// the title (saturated → Completed grey, no halo) so the three attention
-    /// tiers stay distinct. Failed / Aborted keeps its red.
-    var listTone: SessionStatusTone {
-        turnEnded && statusTone != .red ? .gray : statusTone
-    }
 
     /// Archive affordance and "Turn complete" state: the newest turn is closed
     /// or the session itself is no longer running a turn.
@@ -213,6 +207,7 @@ enum AgentStatusNookSnapshot {
                 workspace: summary.workspace,
                 lifecycle: summary.lifecycle,
                 phase: summary.phase,
+                needsReview: summary.needsReview,
                 currentUserMessage: prompt.map(normalized),
                 lastActivityAt: summary.lastActivityAt,
                 startedAt: summary.startedAt,
@@ -349,6 +344,7 @@ final class AgentStatusNookModel: ObservableObject {
     func showDetail(_ id: SessionID) {
         cardDismissTask?.cancel()
         route = .detail(id)
+        store?.markSessionReviewed(id)
     }
 
     /// Turn cards replace the list briefly and fall back to it.
@@ -406,8 +402,14 @@ final class AgentStatusNookModel: ObservableObject {
             if self.sessions != next { self.sessions = next }
             self.compactModel.update(statusTone: next.first?.statusTone ?? .gray)
             self.hasLoaded = true
-            if case let .detail(id) = self.route, next.first(where: { $0.id == id }) == nil {
-                self.route = .list
+            if case let .detail(id) = self.route {
+                if let shown = next.first(where: { $0.id == id }) {
+                    // The detail is on screen, so a turn that just ended is
+                    // being looked at right now.
+                    if shown.needsReview { self.store?.markSessionReviewed(id) }
+                } else {
+                    self.route = .list
+                }
             }
             if initial || previous != next {
                 self.onSnapshot?(previous, next, initial)

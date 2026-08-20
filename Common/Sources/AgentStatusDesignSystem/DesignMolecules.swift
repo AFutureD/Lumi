@@ -81,12 +81,14 @@ public struct SessionStatusToneStyle: Hashable, Sendable {
 }
 
 public extension SessionStatusTone {
-    /// Running → Blue breathing · Waiting for input → Green breathing ·
-    /// Completed / Idle → Neutral solid · Failed / Aborted → Red solid.
-    /// **Only in-progress tiers breathe**; ended tiers are solid, no halo.
+    /// Running → Blue breathing · Waiting for approval → Orange breathing ·
+    /// Turn finished, unreviewed → Green breathing · Completed / Idle →
+    /// Neutral solid · Failed / Aborted → Red solid.
+    /// **Only tiers that want the human breathe**; ended tiers are solid, no halo.
     var hue: DesignHue {
         switch self {
         case .blue: .blue
+        case .orange: .orange
         case .green: .green
         case .gray: .neutral
         case .red: .red
@@ -95,7 +97,7 @@ public extension SessionStatusTone {
 
     var dotForm: DesignStatusDotForm {
         switch self {
-        case .blue, .green: .breathing
+        case .blue, .orange, .green: .breathing
         case .gray, .red: .solid
         }
     }
