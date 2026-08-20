@@ -1215,7 +1215,7 @@ private final class StubDaemonClient: MacDaemonClient, @unchecked Sendable {
         switch request.operation {
         case .health:
             return IPCResponse(status: .ok, health: DaemonHealth(
-                daemonVersion: "test", uptimeSeconds: 1, activeSessionCount: summaries.count,
+                daemonVersion: "test", executableHash: "test-hash", uptimeSeconds: 1, activeSessionCount: summaries.count,
                 retainedSessionCount: summaries.count, socketPath: socketPath, relayConnected: false
             ))
         case .listSessions:

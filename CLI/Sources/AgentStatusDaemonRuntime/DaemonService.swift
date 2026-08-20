@@ -10,12 +10,14 @@ public actor DaemonService {
     private let reingester: SessionReingester
     private let socketPath: String
     private let startedAt: Date
+    private let executableHash: String
     private var relayConnected = false
     public nonisolated let subscriptions: DaemonSubscriptionHub
 
     public init(
         repository: any SessionRepository,
         socketPath: String,
+        executableHash: String,
         startedAt: Date = Date(),
         subscriptions: DaemonSubscriptionHub = DaemonSubscriptionHub(),
         reingester: SessionReingester? = nil
@@ -23,6 +25,7 @@ public actor DaemonService {
         self.repository = repository
         self.reingester = reingester ?? SessionReingester(repository: repository)
         self.socketPath = socketPath
+        self.executableHash = executableHash
         self.startedAt = startedAt
         self.subscriptions = subscriptions
     }
@@ -187,6 +190,7 @@ public actor DaemonService {
             status: .ok,
             health: DaemonHealth(
                 daemonVersion: Self.version,
+                executableHash: executableHash,
                 uptimeSeconds: Int64(max(0, now.timeIntervalSince(startedAt))),
                 activeSessionCount: activeCount,
                 retainedSessionCount: sessions.count,

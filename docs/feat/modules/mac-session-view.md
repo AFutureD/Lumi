@@ -75,7 +75,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 清空全部历史
 
-在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。
+在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。升级 App 后不需要手动 Reinstall：启动时发现运行中的 daemon 版本过期会自动重启它（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
 
 ### 过滤 Session 列表
 
@@ -234,6 +234,13 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 - 行为：向 Codex 询问它当前怎么看待各个处理项，为其中未被信任的 Agent Status 处理项写入信任，然后再问一次以确认结果。整个过程只涉及命令为 Agent Status helper 的处理项，其他工具的 Hook 一律不读取也不改写。
 - 结果：用户不必手动审核就能继续收到 Session 事件；“Settings > Agents”的 Codex 卡片显示“Trusted by Codex”和处理项数量。
 - 限制或例外：Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。本机没有 Codex、或 Codex 版本还没有信任机制时不显示这一行。申请失败时卡片改为提示未信任并提供“Authorize”按钮，按钮仍失败则需要用户在 Codex `/hooks` 中手动信任。
+
+### MAC-R-022 启动时自动更新已安装的 daemon
+
+- 条件：daemon 已安装并在运行，且 Mac App 启动后发现它运行的不是当前 App 自带的版本（按可执行文件指纹比对，无需人工维护版本号）。
+- 行为：自动重启 daemon 服务，让 launchd 换用 App 内的新版本，然后重新同步数据。
+- 结果：升级 App 后 daemon 立即获得新采集能力（如 Codex 标题与 Subagent lineage 同步），无需去 Settings 手动 Reinstall。
+- 限制或例外：从未安装过 daemon 时启动不做任何事（不会擅自注册服务）。每次 App 启动最多自动重启一次；重启后仍不一致（例如开发版 App 对着已注册的正式版 daemon）只记录日志，不再重试。手动“Reinstall daemon”仍可用作兜底。
 
 ## 空状态与故障
 

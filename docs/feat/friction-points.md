@@ -61,14 +61,13 @@
 
 **用户会看到**：Codex 侧已经有可识别标题，但 Agent Status 列表仍显示 `Codex Session`，Subagent 也没有放在 Main Session 下。
 
-**可能原因**：运行中的 daemon 还是升级前版本，尚未从 Codex `state_5.sqlite` 同步标题与 Subagent lineage；只重启 Mac App 不会替换已经注册的 daemon 进程。
+**可能原因**：运行中的 daemon 还是升级前版本，尚未从 Codex `state_5.sqlite` 同步标题与 Subagent lineage。Mac App 启动时会自动检测并重启过期 daemon，因此这个状态通常只出现在自动重启还没完成、或自动重启失败的时候。
 
 **恢复步骤**：
 
-1. 打开“Settings > Daemon”。
-2. 点击“Stop & Uninstall daemon”。
-3. 点击“Install & Start daemon”。
-4. 返回 Sessions，点击刷新图标（Refresh）与 daemon 重新同步。
+1. 重启 Mac App，等待几秒让它自动更新 daemon。
+2. 仍未恢复时打开“Settings > Daemon”，点击“Reinstall daemon”。
+3. 返回 Sessions，点击刷新图标（Refresh）与 daemon 重新同步。
 
 **完成信号**：Main Session 显示与 Codex 一致的标题；有 parent 的 Subagent 显示为可折叠子项，并标记为 `Codex Subagent`。
 

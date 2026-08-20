@@ -12,6 +12,7 @@ public final class ApplicationCoordinator: NSObject {
         return AgentStatusNookController(store: store, actions: actions)
     }()
     private lazy var mainWindow = MainWindowController(store: store, relayHost: relayHost, nook: notch)
+    private lazy var daemonAutoUpdater = DaemonAutoUpdater(store: store)
 
     public override init() {
         super.init()
@@ -22,6 +23,7 @@ public final class ApplicationCoordinator: NSObject {
         refreshInstalledHooks()
         _ = relayHost
         store.start()
+        daemonAutoUpdater.start()
         mainWindow.showWindow(nil)
         notch.start()
         NSApp.activate(ignoringOtherApps: true)

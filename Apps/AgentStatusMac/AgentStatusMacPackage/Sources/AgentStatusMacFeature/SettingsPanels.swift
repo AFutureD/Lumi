@@ -32,7 +32,7 @@ final class SettingsModel: ObservableObject {
 
     private let store: MacSessionStore
     private let loginService = SMAppService.mainApp
-    private let daemonService = SMAppService.agent(plistName: "com.huanan.AgentStatusDaemon.plist")
+    private let daemonService = DaemonServiceManager()
     /// Each probe launches a `codex app-server`, so panel re-appearances reuse
     /// the last answer for a while.
     private var lastCodexTrustProbe: Date?
@@ -87,7 +87,7 @@ final class SettingsModel: ObservableObject {
             }.count
         } else {
             isDaemonConnected = false
-            daemonServiceDescription = "Not connected · \(store.connectionError ?? Self.describe(daemonService.status))"
+            daemonServiceDescription = "Not connected · \(store.connectionError ?? daemonService.describeStatus())"
             daemonUptimeText = nil
             daemonSocketPath = nil
             activeSessionCount = 0
@@ -125,10 +125,7 @@ final class SettingsModel: ObservableObject {
 
     func reinstallDaemon() {
         do {
-            if daemonService.status == .enabled {
-                try daemonService.unregister()
-            }
-            try daemonService.register()
+            try daemonService.reinstall()
             store.refresh()
         } catch {
             presentError(error)
@@ -222,15 +219,6 @@ final class SettingsModel: ObservableObject {
         NSApp.orderFrontStandardAboutPanel(nil)
     }
 
-    private static func describe(_ status: SMAppService.Status) -> String {
-        switch status {
-        case .notRegistered: "daemon is not installed"
-        case .enabled: "daemon is registered but unavailable"
-        case .requiresApproval: "approval is required in System Settings"
-        case .notFound: "embedded daemon service was not found"
-        @unknown default: "daemon status is unknown"
-        }
-    }
 }
 
 // MARK: - Panels

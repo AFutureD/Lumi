@@ -238,6 +238,11 @@ public enum IPCResponseStatus: String, Codable, Hashable, Sendable {
 
 public struct DaemonHealth: Codable, Hashable, Sendable {
     public let daemonVersion: String
+    /// SHA-256 of the daemon's own executable, computed once at daemon startup.
+    /// Optional on purpose: `nil` means the running daemon predates
+    /// fingerprinting and is therefore stale — a required field would make the
+    /// app fail to decode exactly the health message it needs to detect that.
+    public let executableHash: String?
     public let uptimeSeconds: Int64
     public let activeSessionCount: Int
     public let retainedSessionCount: Int
@@ -246,6 +251,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
 
     public init(
         daemonVersion: String,
+        executableHash: String?,
         uptimeSeconds: Int64,
         activeSessionCount: Int,
         retainedSessionCount: Int,
@@ -253,6 +259,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
         relayConnected: Bool
     ) {
         self.daemonVersion = daemonVersion
+        self.executableHash = executableHash
         self.uptimeSeconds = uptimeSeconds
         self.activeSessionCount = activeSessionCount
         self.retainedSessionCount = retainedSessionCount
@@ -262,6 +269,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case daemonVersion
+        case executableHash
         case uptimeSeconds
         case activeSessionCount
         case retainedSessionCount

@@ -10,9 +10,21 @@ enum AgentStatusDaemonMain {
         try configuration.prepareFileSystem()
         let repository = try SQLiteSessionRepository(path: configuration.databasePath)
         let subscriptions = DaemonSubscriptionHub()
+        let executableHash: String
+        do {
+            executableHash = try ExecutableFingerprint.currentExecutable()
+        } catch {
+            // An empty hash never matches the bundled binary, so the Mac app's
+            // auto-update restarts this process — self-healing over crashing.
+            executableHash = ""
+            FileHandle.standardError.write(Data(
+                "agent-status-daemon: executable fingerprint failed: \(error)\n".utf8
+            ))
+        }
         let service = DaemonService(
             repository: repository,
             socketPath: configuration.socketPath,
+            executableHash: executableHash,
             subscriptions: subscriptions,
             reingester: SessionReingester(
                 repository: repository,

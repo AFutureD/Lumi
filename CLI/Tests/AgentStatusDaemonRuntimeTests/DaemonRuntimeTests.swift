@@ -8,7 +8,7 @@ import Testing
 
 @Test func serviceIngestsAndListsSessions() async throws {
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock")
+    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash")
     let event = AgentIngressEvent(
         eventID: EventID("event"),
         sessionID: SessionID("session"),
@@ -31,7 +31,7 @@ import Testing
 
 @Test func serviceDeletesOneSessionAndRejectsItsLateEvents() async throws {
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock")
+    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash")
     let sessionID = SessionID("session-to-delete")
     let event = AgentIngressEvent(
         eventID: EventID("first-event"),
@@ -68,7 +68,7 @@ import Testing
     let capture = EventCapture()
     let subscriptionID = hub.subscribe { event in capture.append(event) }
     defer { hub.unsubscribe(subscriptionID) }
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", subscriptions: hub)
+    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash", subscriptions: hub)
     let ghost = SessionID("ghost")
     let start = AgentIngressEvent(
         eventID: EventID("ghost-start"), sessionID: ghost, agent: .claude,
@@ -124,7 +124,7 @@ import Testing
     let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
     defer { try? FileManager.default.removeItem(atPath: socketPath) }
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: socketPath)
+    let service = DaemonService(repository: repository, socketPath: socketPath, executableHash: "test-hash")
     let server = DaemonServer(socketPath: socketPath, service: service)
     try server.start()
     defer { server.shutdown() }
@@ -138,11 +138,12 @@ import Testing
     )
     #expect(response.status == .ok)
     #expect(response.health?.daemonVersion == DaemonService.version)
+    #expect(response.health?.executableHash == "test-hash")
 }
 
 @Test func listPlusPagedGetSessionReassemblesEverySession() async throws {
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock")
+    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash")
     let date = Date(timeIntervalSince1970: 1_700_000_000)
 
     // Two sessions, one of them wider than a single page.
@@ -201,7 +202,7 @@ import Testing
     let socketPath = "/tmp/as-large-\(UUID().uuidString.prefix(8)).sock"
     defer { try? FileManager.default.removeItem(atPath: socketPath) }
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: socketPath)
+    let service = DaemonService(repository: repository, socketPath: socketPath, executableHash: "test-hash")
     let server = DaemonServer(socketPath: socketPath, service: service)
     try server.start()
     defer { server.shutdown() }
@@ -526,6 +527,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     let service = DaemonService(
         repository: repository,
         socketPath: "/tmp/agent-status.sock",
+        executableHash: "test-hash",
         reingester: SessionReingester(repository: repository, homeDirectory: home)
     )
     // The daemon only knows a stuck summary; the transcript is found by cwd.
