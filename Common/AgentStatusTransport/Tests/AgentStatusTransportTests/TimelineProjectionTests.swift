@@ -165,3 +165,20 @@ private func item(
     #expect(rows.map(\.text) == ["**Planning**", "**Designing**", "**Testing**", "next", "**Planning**"])
     #expect(rows[0].items.map(\.id.rawValue) == ["r1", "r3"])
 }
+
+@Test func emptyReasoningShowsPlaceholderAndNeverCollapses() {
+    let rows = TimelineProjection.rows(from: [
+        // Claude may persist a thinking block with only a signature; each
+        // such block is a thinking step of its own.
+        item("r1", 0, .reasoning(ReasoningTimelinePayload(text: ""))),
+        item("t1", 1, .tool(ToolTimelinePayload(name: "Bash", summary: "ls", status: .started, toolUseID: "tu1"))),
+        item("r2", 2, .reasoning(ReasoningTimelinePayload(text: ""))),
+        item("r3", 3, .reasoning(ReasoningTimelinePayload(text: ""))),
+        item("r4", 4, .reasoning(ReasoningTimelinePayload(text: "**Planning**"))),
+        item("r5", 5, .reasoning(ReasoningTimelinePayload(text: "**Planning**"))),
+    ])
+    #expect(rows.map(\.tag) == [.reasoning, .tool, .reasoning, .reasoning, .reasoning])
+    #expect(rows.map(\.text) == ["Empty", "Bash · ls", "Empty", "Empty", "**Planning**"])
+    #expect(rows.filter { $0.text == "Empty" }.allSatisfy { $0.items.count == 1 })
+    #expect(rows[4].items.map(\.id.rawValue) == ["r4", "r5"])
+}

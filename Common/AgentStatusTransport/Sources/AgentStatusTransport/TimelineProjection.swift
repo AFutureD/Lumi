@@ -203,7 +203,10 @@ public enum TimelineProjection {
 
             switch draft.tag {
             case .reasoning:
-                if let index = reasoningRowIndexByTurn[item.turnID]?[draft.text] {
+                // An empty block (Claude thinking with no recorded text) is a
+                // thinking step of its own: one row per block, never merged.
+                if !isEmptyReasoning(item),
+                   let index = reasoningRowIndexByTurn[item.turnID]?[draft.text] {
                     rows[index] = rows[index].replacing(appending: item)
                     continue
                 }
@@ -252,11 +255,19 @@ public enum TimelineProjection {
             if draft.tag == .assistant {
                 lastAssistantIndexByTurn[item.turnID] = rows.count - 1
             }
-            if draft.tag == .reasoning {
+            if draft.tag == .reasoning, !isEmptyReasoning(item) {
                 reasoningRowIndexByTurn[item.turnID, default: [:]][draft.text] = rows.count - 1
             }
         }
         return rows
+    }
+
+    /// Row text for a reasoning item whose source recorded no text.
+    public static let emptyReasoningText = "Empty"
+
+    private static func isEmptyReasoning(_ item: TimelineItem) -> Bool {
+        if case let .reasoning(payload) = item.payload { return payload.text.isEmpty }
+        return false
     }
 
     /// Whether an item contributes a visible row at all. Model configuration
@@ -299,7 +310,11 @@ public enum TimelineProjection {
             )
 
         case let .reasoning(payload):
-            return Draft(tag: .reasoning, status: .info, text: payload.text)
+            return Draft(
+                tag: .reasoning,
+                status: .info,
+                text: payload.text.isEmpty ? emptyReasoningText : payload.text
+            )
 
         case let .tool(payload):
             // A result produced in a later read may only know its id; borrow

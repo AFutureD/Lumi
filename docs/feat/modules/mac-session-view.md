@@ -61,7 +61,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 刷新 Session
 
-点击工具栏右侧的刷新图标（Refresh Sessions），从 daemon 取得完整当前数据。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。
+点击工具栏右侧的刷新图标（Refresh Sessions）：当前选中的 Session 会先由 daemon 从它的 transcript / rollout 整个重建（Claude 父 Session 连同子 Agent 一起），然后再从 daemon 取得全部 Session 的完整当前数据；没有选中时只做后一步。解析规则更新后，用它回填旧 Session 新增的记录（例如 `Empty` 的 REASONING 行）。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。
 
 ### 删除单个 Session
 
@@ -104,7 +104,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 ### MAC-R-003 展示活动并保留 Session 诊断数据
 
 - 条件：新 Session 产生受支持的 Agent 事件。
-- 行为：Activity 整理消息、系统与上下文、reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Summary 展示 Session 元数据、模型配置和消耗指标。
+- 行为：Activity 整理消息、系统与上下文、reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Summary 展示 Session 元数据、模型配置和消耗指标。模型每开始一次思考就出现一行 REASONING（思考结束不另起一行）；Claude 只落盘签名、没有正文的思考也占一行，内容显示为 `Empty`。
 - 结果：用户能在 Activity 中按发生顺序查看对话与执行上下文，并在 Summary 中查看当前配置和 Token 使用。重复事件不产生重复记录，乱序事件不回退可见状态。
 - 限制或例外：每类最新诊断记录会完整保存来源提供的嵌套内容，其中可能出现路径、凭据、环境信息或工具内容；当前没有内容级脱敏保证。只有 Agent Status 能识别为活动的记录会显示，其他来源事件不会另行保留。
 

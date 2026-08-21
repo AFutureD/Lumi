@@ -84,7 +84,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 | `CONTEXT ×N` | L1 | User | 会话上下文（相邻多条合并，可展开）。设计稿原定横跨三泳道，实现改为只占 User 泳道：任何作用域的上下文都是喂给模型的输入，横跨只留给 SESSION / COMPACT |
 | `USER` | **L3** | User | 用户输入 —— **Turn 起点** |
 | `CONTEXT` | L1 | User | 本轮注入上下文 |
-| `REASONING` | L1 | Model | 思考（灰色，不再紫色）。Codex 每个新的 reasoning item 会把本 turn 已有的 summary 标题再发一遍（`event_msg.agent_reasoning` A、B，然后 A、B、C…），投影按 turn 去重：同一 turn 内同文本只保留首行，后续记录并入该行的 items |
+| `REASONING` | L1 | Model | 思考（灰色，不再紫色）。Codex 每个新的 reasoning item 会把本 turn 已有的 summary 标题再发一遍（`event_msg.agent_reasoning` A、B，然后 A、B、C…），投影按 turn 去重：同一 turn 内同文本只保留首行，后续记录并入该行的 items。空文本（Claude 只写 signature 的 `thinking` block）显示为 `Empty`，每条自成一行、不参与去重 |
 | `ASSISTANT` | L2 | Model | 助手回复（Agent 蓝的 L2 淡色） |
 | `PLAN` | L2 | Model | 计划（PLAN 紫的 L2 淡色） |
 | `SUBAGENT` | L2 | Model | 子代理（同 agentId 原地更新，不加行） |

@@ -558,7 +558,12 @@ public struct ClaudeAdapter: AgentAdapter {
             for block in Self.blocks(message["content"]) {
                 switch block.type {
                 case "thinking":
-                    guard let text = block.raw.string("thinking") ?? block.text, !text.isEmpty else { continue }
+                    // Claude Code may persist a thinking block with only its
+                    // signature and no text. The block still marks a thinking
+                    // step, so it always yields one REASONING row; the
+                    // projection renders empty text as a placeholder.
+                    let text = (block.raw.string("thinking") ?? block.text ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
                     events.append(makeEvent(
                         lifecycle: .running,
                         phase: .thinking,

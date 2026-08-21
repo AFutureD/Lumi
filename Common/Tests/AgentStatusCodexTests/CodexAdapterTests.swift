@@ -471,3 +471,23 @@ struct FixedThreadIdentities: CodexThreadIdentityProviding {
         identities[sessionID]
     }
 }
+
+// Claude Code may write a `thinking` block that carries only its signature.
+// The block still marks a thinking step and must yield a reasoning item;
+// the projection renders the empty text as a placeholder.
+@Test func claudeTranscriptEmptyThinkingBlockStillYieldsReasoning() throws {
+    let adapter = ClaudeAdapter()
+    var state = RolloutReadState()
+    let context = RolloutRecordContext(path: "/tmp/session.jsonl", byteOffset: 0, sessionID: SessionID("session-1"))
+
+    let line = Data("""
+    {"type":"assistant","sessionId":"session-1","timestamp":"2026-08-21T12:51:16Z","message":{"role":"assistant","model":"claude-fable-5","content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"thinking","thinking":"  Real thought  ","signature":"sig2"}]}}
+    """.utf8)
+    let events = try adapter.events(fromRolloutLine: line, context: context, state: &state)
+    let reasoning = events.compactMap { event -> (String, TurnPhase?)? in
+        guard case let .reasoning(payload)? = event.timelineItem?.payload else { return nil }
+        return (payload.text, event.phase)
+    }
+    #expect(reasoning.map(\.0) == ["", "Real thought"])
+    #expect(reasoning.allSatisfy { $0.1 == .thinking })
+}

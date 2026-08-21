@@ -123,7 +123,7 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(turn, system_reminder)`；`<command-name>` 等标签块为 `context(turn, <tag>)` |
 | `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
 | `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)` |
-| `assistant` `thinking` / `text` / `tool_use` | `reasoning` / `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
+| `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
 | `assistant` `stop_reason` ∈ {`end_turn`, `stop_sequence`, `max_tokens`, `refusal`} | Turn 结束：Waiting For Input / Idle + Turn `endedAt/outcome=completed/lastAssistantMessage` + `turnEnd`（ID `turn_end:<s>:<turn>`，与 Stop hook 同一行）。transcript 自己就能收口，Stop hook 丢失或被后到事件覆盖时下一次读增量即自愈；`tool_use` 不结束 Turn |
 | `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |
 | `attachment` / `system` / `summary` | `context(turn|session, …)` |
