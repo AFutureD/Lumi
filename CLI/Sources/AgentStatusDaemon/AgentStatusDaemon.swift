@@ -1,6 +1,7 @@
 import AgentStatusCodex
 import AgentStatusCore
 import AgentStatusDaemonRuntime
+import AgentStatusRemote
 import Foundation
 
 @main
@@ -53,13 +54,34 @@ enum AgentStatusDaemonMain {
             )
             : nil
         let server = DaemonServer(socketPath: configuration.socketPath, service: service)
+        // The Relay host lives here, not in the Mac app: paired iPhones keep
+        // syncing while the app is closed. Credentials are the daemon's own
+        // Keychain item; per-device sequences sit next to the database.
+        let relay: RelayHostService? = configuration.relayEnabled
+            ? RelayHostService(
+                repository: repository,
+                subscriptions: subscriptions,
+                relayURL: configuration.relayURL,
+                credentialStore: KeychainRelayHostCredentialStore(),
+                sequenceStatePath: configuration.relayStatePath,
+                transportFactory: RelayWebSocketTransportFactory(),
+                rest: LiveRelayHostREST(baseURL: configuration.relayURL),
+                healthProvider: { await service.currentHealth() },
+                onConnectionChange: { connected in await service.setRelayConnected(connected) },
+                logger: { message in
+                    FileHandle.standardError.write(Data("agent-status-daemon: \(message)\n".utf8))
+                }
+            )
+            : nil
+        if let relay { await service.attachRelay(relay) }
 
         try await watcher?.prepareInitialBaseline()
         try server.start()
         watcher?.start()
         claudeWatcher?.start()
+        await relay?.start()
         FileHandle.standardError.write(Data(
-            "agent-status-daemon: listening at \(configuration.socketPath) rollout_watcher=\(watcher == nil ? "off" : "on") claude_watcher=\(claudeWatcher == nil ? "off" : "on")\n".utf8
+            "agent-status-daemon: listening at \(configuration.socketPath) rollout_watcher=\(watcher == nil ? "off" : "on") claude_watcher=\(claudeWatcher == nil ? "off" : "on") relay=\(relay == nil ? "off" : configuration.relayURL.absoluteString)\n".utf8
         ))
         defer {
             claudeWatcher?.stop()
@@ -67,5 +89,6 @@ enum AgentStatusDaemonMain {
             server.shutdown()
         }
         try server.wait()
+        await relay?.stop()
     }
 }

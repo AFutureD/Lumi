@@ -26,6 +26,7 @@ let package = Package(
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
@@ -53,6 +54,7 @@ let package = Package(
                 .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]

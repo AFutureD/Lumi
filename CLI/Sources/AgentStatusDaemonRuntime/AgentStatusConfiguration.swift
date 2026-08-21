@@ -14,6 +14,15 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     /// (a user interrupt fires no hook). On by default; disable with
     /// `AGENT_STATUS_CLAUDE_WATCHER=0`.
     public let claudeWatcherEnabled: Bool
+    /// The Relay the daemon registers with as the host; paired iPhones sync
+    /// through it. Override with `AGENT_STATUS_RELAY_URL`; `AGENT_STATUS_RELAY=0`
+    /// keeps the daemon off the network (tests, smoke runs).
+    public let relayURL: URL
+    public let relayEnabled: Bool
+    /// Per-device send sequences (`relay-host-state.json`, 0600).
+    public let relayStatePath: String
+
+    public static let defaultRelayURL = URL(string: "https://agent-status-relay.afuture.workers.dev")!
 
     public init(
         supportDirectory: URL,
@@ -22,7 +31,10 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         codexSessionsDirectory: URL,
         rolloutPollIntervalSeconds: Double = 2,
         rolloutWatcherEnabled: Bool = false,
-        claudeWatcherEnabled: Bool = true
+        claudeWatcherEnabled: Bool = true,
+        relayURL: URL = AgentStatusConfiguration.defaultRelayURL,
+        relayEnabled: Bool = true,
+        relayStatePath: String? = nil
     ) {
         self.supportDirectory = supportDirectory
         self.socketPath = socketPath
@@ -31,6 +43,9 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         self.rolloutPollIntervalSeconds = rolloutPollIntervalSeconds
         self.rolloutWatcherEnabled = rolloutWatcherEnabled
         self.claudeWatcherEnabled = claudeWatcherEnabled
+        self.relayURL = relayURL
+        self.relayEnabled = relayEnabled
+        self.relayStatePath = relayStatePath ?? supportDirectory.appendingPathComponent("relay-host-state.json").path
     }
 
     public static func `default`(
@@ -58,7 +73,12 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
             ),
             claudeWatcherEnabled: !["0", "false", "no"].contains(
                 (environment["AGENT_STATUS_CLAUDE_WATCHER"] ?? "").lowercased()
-            )
+            ),
+            relayURL: environment["AGENT_STATUS_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
+            relayEnabled: !["0", "false", "no"].contains(
+                (environment["AGENT_STATUS_RELAY"] ?? "").lowercased()
+            ),
+            relayStatePath: environment["AGENT_STATUS_RELAY_STATE"]
         )
     }
 

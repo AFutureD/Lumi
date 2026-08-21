@@ -12,6 +12,7 @@ public actor DaemonService {
     private let startedAt: Date
     private let executableHash: String
     private var relayConnected = false
+    private var relay: RelayHostService?
     public nonisolated let subscriptions: DaemonSubscriptionHub
 
     public init(
@@ -32,6 +33,18 @@ public actor DaemonService {
 
     public func setRelayConnected(_ connected: Bool) {
         relayConnected = connected
+    }
+
+    /// The Relay host living in this daemon: summary-only changes and
+    /// removals made through IPC are forwarded to paired iPhones, and the
+    /// `relay_*` operations are served from it.
+    public func attachRelay(_ relay: RelayHostService) {
+        self.relay = relay
+    }
+
+    /// The same health the `health` IPC answers with.
+    public func currentHealth(now: Date = Date()) async -> DaemonHealth? {
+        try? await health(now: now).health
     }
 
     public func handle(
@@ -94,7 +107,8 @@ public actor DaemonService {
                 }
             case .deleteSession:
                 if let id = envelope.payload.sessionID {
-                    _ = try await repository.deleteSession(id: id)
+                    let removed = try await repository.deleteSession(id: id)
+                    await relay?.sessionsRemoved(removed)
                     payload = IPCResponse(status: .ok)
                 } else {
                     payload = failure(code: "missing_session_id", message: "The delete request has no id.")
@@ -102,6 +116,7 @@ public actor DaemonService {
             case .markSessionReviewed:
                 if let id = envelope.payload.sessionID {
                     try await repository.markSessionReviewed(id)
+                    await relay?.summariesChanged([id])
                     payload = IPCResponse(status: .ok)
                 } else {
                     payload = failure(code: "missing_session_id", message: "The review request has no id.")
@@ -109,6 +124,7 @@ public actor DaemonService {
             case .markSessionHiddenInNotch:
                 if let id = envelope.payload.sessionID {
                     try await repository.markSessionHiddenInNotch(id)
+                    await relay?.summariesChanged([id])
                     payload = IPCResponse(status: .ok)
                 } else {
                     payload = failure(code: "missing_session_id", message: "The archive request has no id.")
@@ -119,7 +135,9 @@ public actor DaemonService {
             case .health:
                 payload = try await health(now: now)
             case .clearHistory:
+                let retained = try await repository.listSessions(limit: 10_000).map(\.id)
                 _ = try await repository.deleteAllSessions()
+                await relay?.sessionsRemoved(retained)
                 payload = IPCResponse(status: .ok)
             case .getRolloutCursor:
                 if let path = envelope.payload.path {
@@ -159,6 +177,27 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "missing_session_id", message: "The reingest request has no id.")
                 }
+            case .relayStatus:
+                payload = IPCResponse(status: .ok, relay: await relayStatus())
+            case .relayRefreshDevices:
+                await relay?.refreshDevices()
+                payload = IPCResponse(status: .ok, relay: await relayStatus())
+            case .relayCreatePairingOffer:
+                if let relay {
+                    let offer = try await relay.createPairingOffer()
+                    payload = IPCResponse(status: .ok, relay: await relay.status(), pairingOffer: offer)
+                } else {
+                    payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
+                }
+            case .relayRevokeDevice:
+                if let relay, let deviceID = envelope.payload.deviceID {
+                    try await relay.revoke(deviceID: deviceID)
+                    payload = IPCResponse(status: .ok, relay: await relay.status())
+                } else if relay == nil {
+                    payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
+                } else {
+                    payload = failure(code: "missing_device_id", message: "The revoke request has no device id.")
+                }
             case let .unknown(operation):
                 payload = failure(code: "unknown_operation", message: "Unknown operation: \(operation)")
             }
@@ -173,6 +212,11 @@ public actor DaemonService {
                 )
             )
         }
+    }
+
+    private func relayStatus() async -> RelayHostStatus {
+        if let relay { return await relay.status() }
+        return RelayHostStatus(connected: false, lastError: "The daemon runs without a Relay connection.")
     }
 
     private func health(now: Date) async throws -> IPCResponse {
