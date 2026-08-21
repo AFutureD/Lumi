@@ -12,7 +12,7 @@
 
 ## 前置条件
 
-- Mac App、daemon 和网络可用。
+- Mac 的 daemon 和网络可用（Mac App 只在生成配对码时需要打开）。
 - iPhone 与 Mac 使用同一产品构建所配置的 Relay。
 - 只把配对码交给受信任设备。
 
@@ -24,7 +24,7 @@
    - 系统反馈：配对成功自动返回，Macs 列表出现该 Mac 并显示 Online。
    - 数据变化：为这台 iPhone 建立独立授权（[IOS-R-001](../modules/iphone-live-view.md#ios-r-001-每台设备独立授权)）。
 3. 切到 Sessions Tab。
-   - 系统反馈：收到该 Mac 的当前快照后，它的 Session 出现在列表里，每行标出 Mac 名称（[IOS-R-007](../modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-同步)）。
+   - 系统反馈：对账完成后它的 Session 出现在列表里，每行标出 Mac 名称，之后新活动实时到达（[IOS-R-007](../modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-增量同步)）。
 4. 点目标 Session。
    - 系统反馈：Activity 显示三泳道和时间线，Info 显示指标与 Session 信息。
    - 数据变化：只改变查看位置，不发送控制操作。
@@ -49,7 +49,7 @@
 - 可执行动作：确认网络可用；Relay 地址由构建固定，App 内无法修改。
 - 完成信号：页面恢复 Relay connected。
 
-已有配对时 Relay 中断，Macs 里每台 Mac 分别显示 Unavailable；恢复后各自回到 Online 并重新取得当前快照。
+已有配对时 Relay 中断，Macs 里每台 Mac 分别显示 Unavailable，Sessions 继续显示缓存；恢复后各自回到 Online 并按索引补差异。
 
 ### 相机不可用
 
@@ -64,9 +64,9 @@
 
 ### Mac unavailable
 
-- 用户看到：Macs 里该 Mac 显示 Unavailable 和上次同步时间，Sessions 里不显示它的 Session。
-- 可执行动作：恢复 Mac App、daemon 和网络；等待当前快照重新到达。
-- 数据影响：配对关系保留，其他 Mac 通道继续工作（[IOS-R-006](../modules/iphone-live-view.md#ios-r-006-mac-离线时不显示旧-session)）。
+- 用户看到：Macs 里该 Mac 显示 Unavailable 和上次同步时间，Sessions 里仍能翻看它上次同步的内容。
+- 可执行动作：恢复 Mac 的 daemon 和网络；上线后自动补差异。
+- 数据影响：配对关系和本机缓存保留，其他 Mac 通道继续工作（[IOS-R-006](../modules/iphone-live-view.md#ios-r-006-mac-离线时继续显示缓存)）。
 
 ### 设备被撤销
 
@@ -85,15 +85,15 @@
 
 ## 移除一台 Mac
 
-在 iPhone Macs Tab 左滑该 Mac > Remove。这台 iPhone 上的通道、凭据和内存中的 Session 被删除，其他 Mac 保持连接；Mac 和 Relay 侧的授权记录仍存在。若目标是撤销访问权，还需在 Mac“iPhone”页对该设备执行“Revoke”。
+在 iPhone Macs Tab 左滑该 Mac > Remove。这台 iPhone 上的通道、凭据和本机缓存被删除，其他 Mac 保持连接；Mac 和 Relay 侧的授权记录仍存在。若目标是撤销访问权，还需在 Mac“iPhone”页对该设备执行“Revoke”。
 
 Mac 上删除一个 Session 时，在线 iPhone 会移除对应条目；这不影响其他 Session 或其他 Mac。
 
 ## 持久化结果
 
-- iPhone 为每台 Mac 保存独立凭据；Session 内容只在内存，退出即清除（[IOS-R-010](../modules/iphone-live-view.md#ios-r-010-session-内容只在内存)）。
+- iPhone 为每台 Mac 保存独立凭据和一个本机缓存数据库；重启 App 立即显示上次内容（[IOS-R-010](../modules/iphone-live-view.md#ios-r-010-session-内容缓存在本机)）。
 - Relay 保存授权和运行所需信息，不保存可浏览的 Session 历史。
-- Mac 离线时不展示旧内容；恢复后由当前快照重新确认。
+- Mac 离线时继续显示缓存并标 Unavailable；恢复后按索引补差异。
 
 ## 下一目标
 

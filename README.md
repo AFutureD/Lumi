@@ -17,7 +17,8 @@ Agent Status aggregates multiple Codex Agents and Sessions on one Mac, displays 
 - The Mac App and daemon synchronize over one local event stream, not one connection per Session.
 - Each paired Mac—iPhone relationship is one remote channel carrying all Sessions for that Mac.
 - One iPhone can connect to multiple Macs; one Mac can authorize multiple iPhones.
-- daemon, Mac, and iOS use persistent local stores. Session history does not expire automatically.
+- daemon, Mac, and iOS use persistent local stores with the same SQLite schema; the daemon is the source of truth, the Mac app and iPhones are caches. Session history does not expire automatically.
+- The daemon is the Relay host: paired iPhones keep syncing while the Mac app is closed; the Mac app only drives pairing through daemon IPC.
 - Relay does not persist Session business payloads.
 
 ## Prerequisites

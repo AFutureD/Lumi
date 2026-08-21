@@ -1,6 +1,6 @@
 # App 与运行时设计
 
-macOS App 是本机交互与远程发布中心；iOS App 是按 Mac 分组的只读客户端。两个 App 都从 SQLite 驱动列表和详情，不直接把网络响应当作长期 UI 状态。
+macOS App 是本机交互中心；daemon 同时是 Relay Host；iOS App 是按 Mac 分组的只读客户端。两个 App 都从 SQLite 驱动列表和详情，不直接把网络响应当作长期 UI 状态。
 
 ## macOS App
 
@@ -12,7 +12,7 @@ macOS App 是本机交互与远程发布中心；iOS App 是按 Mac 分组的只
 flowchart TD
     Coordinator["ApplicationCoordinator"]
     Store["MacSessionStore"]
-    Relay["RelayHostController"]
+    Relay["RelayHostStatusClient"]
     Window["MainWindowController"]
     Nook["AgentStatusNookController"]
 
@@ -26,7 +26,7 @@ flowchart TD
 ```
 
 - `MacSessionStore`：daemon 连接、Mac SQLite、Session 选择和观察通知。
-- `RelayHostController`：配对、Host WSS、按设备加密和逐 Session 的远程发布。
+- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态与已配对设备，生成配对码、撤销设备；配对页可见时 5 秒轮询，否则 30 秒，并跟随 `health.relayConnected` 变化立即刷新。App 不持有 Relay 凭据或连接。
 - `MainWindowController`：AppKit 窗口、toolbar 和三栏导航。
 - `AgentStatusNookController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
 
@@ -57,12 +57,12 @@ Mac 外部 Session 内容只有三个入口：
 ### 缓存和性能
 
 - Session 列表先读本地 SQLite，启动不等待 daemon。
-- 详情在选择、Summary 或当前选中 Session 的 Timeline 数据变化时重新加载；其他 Session 的诊断变化只推进数据 revision 和 Relay 发布。
+- 详情在选择、Summary 或当前选中 Session 的 Timeline 数据变化时重新加载；其他 Session 的诊断变化只推进数据 revision。
 - Timeline 每次从 SQLite 以 500 项分页拼接。
 - Agent event 用 Event ID 字典合并，同一短时间批次只触发一次 reload。
 - 对账等待正在写入的事件批次完成，避免整 Session 替换与增量写交错。
 - `dataRevision` 只在业务数据实际变化时增长。
-- Relay 和 Notch 都读缓存，不增加 daemon 请求。
+- Notch 读缓存，不增加 daemon 请求。
 
 ### Notch
 
@@ -96,21 +96,17 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 
 - 一组独立密钥和 Device token。
 - 一条 Device WSS。
-- 一个最后确认 sequence。
-- 一个独立 SQLite 文件。
-- 一组连接、Host 在线、当前快照和错误状态。
+- 一个独立 SQLite 缓存文件（共享 `SQLiteSessionRepository`），启动时整体载入内存。
+- 一组连接、Host 在线、对账完成、pending 请求、最近 health 和错误状态。
 
 增加或移除一台 Mac 不影响其他通道。
 
-### 展示门禁
+### 同步与展示
 
-iOS 即使已经从 SQLite 载入旧 Session，也只有同时满足以下条件才返回给 UI：
-
-1. Device WSS 已连接。
-2. Relay 报告 Host 在线。
-3. 当前连接同步完整：`index` 已到，且其中每个 Session 都已收全。
-
-缺少任一条件，列表显示 `Mac unavailable`，避免把旧缓存误认为实时状态。
+- 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`，收齐后用 `SyncReconcilePlan` 对账（裁剪 / 整取 / 补尾 / 改 summary），pending 到齐写 lastSync。
+- 之后：`session_message` 事件通过与 daemon 相同的 `apply` 归约进缓存与内存；`session_info` / `session_removed` 直接落地；未知 Session 的事件触发一次整取。
+- 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、presence 翻转、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
+- 列表始终显示缓存；Mac 离线只在 Macs 页标 Unavailable + 上次同步；没有缓存且离线时才显示 `Mac unavailable`。
 
 ### UIKit 结构
 
@@ -132,7 +128,7 @@ iOS 即使已经从 SQLite 载入旧 Session，也只有同时满足以下条件
 | rollout watcher | 单个 Task + lock 保护文件尺寸缓存 |
 | Mac/iOS controllers | `@MainActor` |
 | Mac event apply | 主 Actor 管理的 Task，50ms 合并 |
-| Relay publish | 主 Actor Task，100ms 合并 |
+| Relay host | daemon 内 `RelayHostService` actor：单串行发送循环；事件 1s 合并；每设备序号先落盘 |
 | WebSocket client | Swift actor 包装 `URLSessionWebSocketTask` |
 | Durable Object | Cloudflare 单对象串行事件模型 |
 
@@ -149,11 +145,11 @@ stateDiagram-v2
     Cached --> Current: 手动刷新或连接恢复
 ```
 
-Mac 在 Cached 状态仍展示本地内容并标记 daemon 不可用。iOS 的策略更严格：SQLite 只用于快速恢复，未取得当前在线快照时不展示 Session。
+Mac 在 Cached 状态仍展示本地内容并标记 daemon 不可用；iOS 同样先显示缓存，Mac 离线时在 Macs 页标 Unavailable，恢复后自动重新 index。
 
 ## 当前限制
 
-- macOS App 是 Relay Host；App 退出会让 iOS 离线，daemon 独立运行不能维持远程通道。
+- iOS 把每个 Session 的完整 `SessionDetail` 载入内存；超大历史的懒加载待做。
 - iOS 没有后台推送或 APNs 唤醒。
 - iOS 当前只展示，不发送 Agent 操作。
 - Mac 主窗口和 Notch 已做开发运行验证，正式分发行为仍取决于签名、公证和干净机器 LaunchAgent 验收。

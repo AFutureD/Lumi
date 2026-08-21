@@ -145,6 +145,7 @@ pnpm exec wrangler deploy
 - 单事件流多 Session 复用。
 - rollout offset 恢复和首次基线。
 - 单 Session 删除后晚事件不复活。
+- `RelayHostService`（内存 Relay 双端）：序号先落盘且按设备独立；`sync_index` 分片 + health；`fetch_session` 缺失回 `session_removed`；`fetch_timeline_since` 只回 `since` 之后；事件合并成批、只推已同步设备；`session_info`；Worker 回报非单调序号后自愈；Relay 断开后重连并清空已同步集合；配对 offer 与撤销。
 
 ### Relay/Remote
 
@@ -152,14 +153,15 @@ pnpm exec wrangler deploy
 - 一次性配对、列表、撤销和鉴权。
 - 每设备独立 sequence。
 - Host 离线 presence。
-- 60 秒内存重放。
+- 设备只能发密封 `request`，其余 kind 关闭为只读违规；非单调 Host 序号回报当前游标。
 - Swift/TypeScript 共享 routing fixture。
+- `RelayPayloadBatcher`（index 分片 / 事件分批 / 超大事件去 item）、`RelaySessionPartitioner`（turns 只在 part 0、分片重组）、`SyncReconcilePlan`（裁剪 / 整取 / 补尾 / 仅 summary）、仓库新增的 `sessionIndex / updateSummary / mergeSession / timelineSince`。
 
 ### Apps
 
-- Mac Hook merge、Relay 逐 Session 发布计划（RelayPublishPlan / 分片器）和 Notch snapshot/activity 规则。
+- Mac Hook merge、`RelayHostStatusClient`（脚本化 daemon 的 relay_* 应答）和 Notch snapshot/activity 规则。
 - Xcode UI/runtime 验证三栏布局、Notch、配对和删除。
-- iOS Simulator 验证多 Mac 分组、在线门禁和 Timeline。
+- iOS Simulator 验证多 Mac 分组、Timeline，以及 `RelayDeviceChannel`（内存 Relay + 假 host）：冷启动先显示缓存再对账、事件实时应用与未知 Session 整取、info / removed / reviewed 双向、Clear received data 后回填。
 
 ## 边界检查
 

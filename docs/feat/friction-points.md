@@ -111,17 +111,16 @@
 
 ## Mac unavailable
 
-**用户会看到**：iPhone Macs 里某台 Mac 显示 Unavailable 和上次同步时间，Sessions 里不显示它的 Session。
+**用户会看到**：iPhone Macs 里某台 Mac 显示 Unavailable 和上次同步时间；Sessions 里仍能翻看它上次同步的内容（本机没有缓存时才显示 Mac unavailable）。
 
-**可能原因**：Mac App 退出、daemon 不可用、网络断开或实时通道尚未恢复。
+**可能原因**：daemon 不可用、Mac 网络断开或实时通道尚未恢复。退出 Mac App 不会导致这个状态——Relay 连接由 daemon 持有。
 
 **恢复步骤**：
 
-1. 在目标 Mac 启动 Agent Status。
-2. 确认 daemon 与 Relay 均已连接。
-3. 保持 App 在线，等待同步完成。
+1. 确认目标 Mac 开机联网；daemon 由 launchd 常驻，必要时在 Mac 打开 Agent Status 让它自检重装。
+2. 等待 iPhone 自动重新对账（上线后几秒内）。
 
-**完成信号**：该 Mac 显示 Online，并重新出现当前 Session。其他 Mac 通道不受影响。
+**完成信号**：该 Mac 显示 Online，差异补齐后列表回到最新。其他 Mac 通道不受影响。
 
 ## 设备被撤销
 

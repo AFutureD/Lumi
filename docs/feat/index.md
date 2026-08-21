@@ -30,9 +30,9 @@ Notch 紧凑状态显示列表中的 Session 数量，展开后按最近更新�
 
 ### iPhone 实时查看
 
-Mac App 使用产品内置的 Relay，不要求用户输入地址。用户从 Mac 侧边栏进入“iPhone”，生成一次性二维码；iPhone 在 Macs Tab 点 `+` 扫码后建立独立通道。
+Mac 上的 daemon 使用产品内置的 Relay，不要求用户输入地址。用户从 Mac 侧边栏进入“iPhone”，生成一次性二维码；iPhone 在 Macs Tab 点 `+` 扫码后建立独立通道。之后 Mac App 关着也照样同步。
 
-一台 iPhone 可以连接多台 Mac；一台 Mac 也可以授权多台 iPhone。iPhone 的 Sessions Tab 把所有 Mac 的 Session 合并成一条列表（可按 Mac、状态多选过滤，可搜索），子 Agent 折叠成父 Session 下的计数条、点开成标签；详情分 Activity（三泳道时间线）和 Info（指标与 Session 信息）。只读，不提供审批、终止、输入或其他远程控制；收到的内容只在内存，退出即清除。
+一台 iPhone 可以连接多台 Mac；一台 Mac 也可以授权多台 iPhone。iPhone 的 Sessions Tab 把所有 Mac 的 Session 合并成一条列表（可按 Mac、状态多选过滤，可搜索），子 Agent 折叠成父 Session 下的计数条、点开成标签；详情分 Activity（三泳道时间线）和 Info（指标与 Session 信息）。只读，不提供审批、终止、输入或其他远程控制；收到的内容缓存在本机（每台 Mac 一个数据库），启动即显示，Mac 离线也能翻看，只有 Mac 上的 daemon 是数据源。
 
 [查看模块详情](modules/iphone-live-view.md)
 

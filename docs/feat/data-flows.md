@@ -11,9 +11,9 @@ flowchart LR
     A["一台 Mac 上的多个 Agent"] --> B["daemon"]
     B --> C["Mac 同步副本"]
     C --> D["Mac 主窗口与 Notch"]
-    C --> E["每台 iPhone 一条加密通道"]
+    B --> E["每台 iPhone 一条加密通道（daemon 直连 Relay）"]
     E --> F["Relay 只转发"]
-    F --> G["iPhone 按 Mac 在内存中持有"]
+    F --> G["iPhone 按 Mac 的本机缓存"]
 ```
 
 ## Session 状态与时间线
@@ -30,9 +30,9 @@ flowchart LR
 
 1. 新 Agent 事件先进入本机 daemon。
 2. daemon 归并重复或乱序事件，更新该设备的 Session。
-3. Mac 在收到 Agent 事件后更新自己的同步副本和界面。
-4. Mac 把当前结果按目标 iPhone 加密，经 Relay 转发。
-5. iPhone 更新对应 Mac 在内存中的内容和界面。
+3. Mac App 在收到 Agent 事件后更新自己的同步副本和界面。
+4. daemon 把同一条事件按目标 iPhone 加密，经 Relay 转发（Mac App 是否打开无关）。
+5. iPhone 用与 daemon 相同的规则更新本机缓存和界面；对不上的地方用 Session 索引对账补齐。
 
 外部 Session 内容只在三种时机同步：App 启动、用户手动刷新、Agent 事件。删除、清空、标记已查看和 Notch 归档会立即同步操作结果；手动刷新的重算保留这两个人为标记；系统不会周期轮询。规则见 [MAC-R-009](modules/mac-session-view.md#mac-r-009-外部内容只有三种同步入口)。
 
@@ -69,14 +69,14 @@ flowchart LR
 | --- | --- | --- |
 | daemon | 该 Mac 已加入 Agent Status 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
 | Mac App | 与 daemon 同步的完整本地副本 | 快速启动和浏览；断线时仍可查看最近同步内容 |
-| iPhone App | 每台已配对 Mac 的 Session 只在内存；Keychain 只存配对凭据 | 收到在线状态且本轮同步完整后展示；退出 App 即清除，每次连接重新索取 |
+| iPhone App | 每台已配对 Mac 一个本机缓存数据库（与 Mac 同一格式）；Keychain 只存配对凭据 | 启动立即显示缓存；在线后按索引只补差异；Mac 离线仍可翻看 |
 | Relay | 设备授权和运行所需信息 | 不提供 Session 正文或历史查询 |
 
 ## 离线与恢复
 
 - **daemon 离线**：Mac 保留已同步内容供查看，但显示不可用；恢复后可手动刷新。
-- **Mac 或通道离线**：iPhone 将该 Mac 标为 Unavailable，不展示旧 Session；其他 Mac 通道不受影响。
-- **恢复在线**：iPhone 每次连接都向 Mac 索取全部 Session，Mac 按 Session 重新推送，iPhone 收全后再显示当前内容。
+- **Mac 或通道离线**：iPhone 将该 Mac 标为 Unavailable，继续显示缓存；其他 Mac 通道不受影响。退出 Mac App 不算离线（Relay 连接在 daemon）。
+- **恢复在线**：iPhone 向 Mac 索取 Session 索引，只补差异（缺失的整个取、变过的取新增部分），之后继续实时接收。
 
 ## 相关文档
 
