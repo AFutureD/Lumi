@@ -130,9 +130,9 @@ Relay 不持久化 nonce、ciphertext、Session、Timeline 或用户消息。
 
 - Mac 对每台未撤销 iPhone 独立递增 sequence。
 - Durable Object 拒绝同一设备通道非单调 Host sequence。
-- iOS 只接受大于本地 `lastAcknowledgedSequence` 的 frame。
-- iOS 解密并保存成功后发送 ACK，并把 cursor 保存到 Keychain。
-- 重连时 iOS 发送 `hello(acknowledgedSequence)`。
+- iOS 在一条连接内只接受单调递增的 frame sequence（重复或更早的帧丢弃）。
+- iOS 解密并应用成功后发送 ACK。
+- iOS 不落盘 Session 内容，所以每次连接（含重连、下拉刷新）都发送 `hello(acknowledgedSequence: 0)` 向 Mac 索取全量。
 - Relay 只重放 60 秒内仍在对象内存的较新密文帧。
 - Mac 重连后会清除逐 Session 的发送比较值并对所有设备全量重发。
 
@@ -166,14 +166,14 @@ iPhone 本地“Remove Mac”只删除自己的 Keychain 通道、SQLite 内容�
 - 注册 Host：每来源每分钟 10 次。
 - 配对：每来源每分钟 20 次。
 - Pairing offer：最长 10 分钟。
-- Device 只允许发送 `hello` 和 `ack`；其他 frame 会被关闭为只读违规。
+- Device 只允许发送 `hello`、`ack` 和 `attention`（加密的设备→Mac 命令，目前只有 `session_reviewed`：iPhone 打开了某个 Session）；其他 frame 会被关闭为只读违规。
 - 协议 major 不是 1 时拒绝 frame。
 
 ## 安全边界与当前缺口
 
 | 风险 | 当前控制 | 剩余边界 |
 | --- | --- | --- |
-| Relay 读取正文 | 端到端 ChaChaPoly | Relay 仍观察路由元数据和 `attention` kind |
+| Relay 读取正文 | 端到端 ChaChaPoly | Relay 仍观察路由元数据和 frame kind（含设备发出的 `attention`，但读不到其中的 `session_reviewed` 内容） |
 | 凭据泄露 | Relay 只存 hash；端点存 Keychain | 配对 QR 在有效期内需要像 bearer credential 一样保护 |
 | 重放 | per-device sequence + ACK | 短暂重放仅内存，不保证跨对象重启 |
 | 设备被撤销 | 持久 revoked_at + 主动关闭 socket | iPhone 需重新配对才能恢复 |

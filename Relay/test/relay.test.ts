@@ -78,6 +78,62 @@ describe("relay pairing and authorization", () => {
     expect(first.toString()).not.toBe(second.toString());
   });
 
+  it("forwards device attention frames to the host but still rejects device data frames", async () => {
+    await registerHost();
+    const challenge = "pairing-challenge-attn-0000000000001";
+    await SELF.fetch(`https://example.com/v1/hosts/${hostID}/pairing-offers`, {
+      method: "POST",
+      headers: authHeaders(hostSecret),
+      body: JSON.stringify({
+        challenge,
+        hostPublicKey: "host-public-key-attn-000000000000001",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+    const paired = await SELF.fetch(`https://example.com/v1/hosts/${hostID}/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        challenge,
+        deviceID,
+        deviceName: "Attention iPhone",
+        devicePublicKey: "device-public-key-attn-00000000000001",
+      }),
+    });
+    const pairing = await paired.json<{ deviceToken: string }>();
+
+    const host = await openSocket("host", hostSecret);
+    const hostMessages = collectMessages(host);
+    const device = await openSocket("device", pairing.deviceToken, deviceID);
+
+    // A sealed device command ("session reviewed") is forwarded verbatim.
+    device.send(JSON.stringify({
+      version: { major: 1, minor: 0 },
+      hostID,
+      deviceID,
+      sequence: 1,
+      kind: "attention",
+      nonce: "bm9uY2U=",
+      ciphertext: "Y2lwaGVydGV4dA==",
+    }));
+    expect(await hostMessages.nextFrame("attention")).toEqual(
+      expect.objectContaining({ deviceID, sequence: 1, kind: "attention" }),
+    );
+
+    // Devices still cannot publish data frames.
+    const closed = new Promise<number>((resolve) => device.addEventListener("close", (event) => resolve(event.code)));
+    device.send(JSON.stringify({
+      version: { major: 1, minor: 0 },
+      hostID,
+      deviceID,
+      sequence: 2,
+      kind: "data",
+      nonce: "bm9uY2U=",
+      ciphertext: "Y2lwaGVydGV4dA==",
+    }));
+    expect(await closed).toBe(1008);
+  });
+
   it("forwards device hellos to the host and a frame burst to the device in order", async () => {
     await registerHost();
     const resyncChallenge = "pairing-challenge-resync-000000000001";

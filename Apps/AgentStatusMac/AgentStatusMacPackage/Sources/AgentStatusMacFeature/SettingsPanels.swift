@@ -1,3 +1,4 @@
+import AgentStatusCore
 import AgentStatusTransport
 import AppKit
 import ServiceManagement

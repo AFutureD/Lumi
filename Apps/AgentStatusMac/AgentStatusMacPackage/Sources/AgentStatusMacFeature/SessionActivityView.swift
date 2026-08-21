@@ -1,3 +1,4 @@
+import AgentStatusCore
 import AgentStatusDesignSystem
 import AgentStatusTransport
 import AppKit
@@ -206,23 +207,6 @@ struct SessionActivityView: View {
 }
 
 private extension SessionActivityPresentation {
-    /// Rows that earn a lane-strip cell. TOOL calls are list-only (their
-    /// RESULT stands for the call in the Exec lane), and Claude's periodic
-    /// `total_tokens_reminder` context is bookkeeping noise in the strip.
-    var appearsInLaneStrip: Bool {
-        switch tag {
-        case .tool:
-            return false
-        case .context:
-            if case let .context(payload) = rawItem.payload, payload.kind == "total_tokens_reminder" {
-                return false
-            }
-            return true
-        default:
-            return true
-        }
-    }
-
     /// Strip column width: a 13pt cell, or the 4pt bar of a cross-lane marker.
     var laneStripColumnWidth: CGFloat {
         lane == nil ? AgentStatusDesign.Layout.laneMarkerWidth : AgentStatusDesign.Layout.laneCellSize

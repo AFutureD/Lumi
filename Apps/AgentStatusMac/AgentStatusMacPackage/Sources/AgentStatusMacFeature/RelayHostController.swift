@@ -294,15 +294,31 @@ final class RelayHostController {
 
     /// A device's forwarded `hello` behind our channel sequence means it
     /// missed frames: queue a full resend. This is the recovery path — the
-    /// relay keeps no replay buffer.
+    /// relay keeps no replay buffer. An `attention` frame is a sealed
+    /// device → host command (today: the iPhone opened a session, so it
+    /// counts as reviewed everywhere, exactly like opening it on the Mac).
     private func handleDeviceFrame(_ frame: RelayRoutingFrame) {
-        guard frame.kind == .hello,
-              let deviceID = frame.deviceID,
-              let credentials else { return }
-        let current = credentials.channelSequences[deviceID.rawValue] ?? credentials.lastSequence
-        guard (frame.acknowledgedSequence ?? 0) < current else { return }
-        devicesNeedingFullResend.insert(deviceID)
-        if let store { schedulePublish(from: store) }
+        guard let deviceID = frame.deviceID, let credentials else { return }
+        switch frame.kind {
+        case .hello:
+            let current = credentials.channelSequences[deviceID.rawValue] ?? credentials.lastSequence
+            guard (frame.acknowledgedSequence ?? 0) < current else { return }
+            devicesNeedingFullResend.insert(deviceID)
+            if let store { schedulePublish(from: store) }
+        case .attention:
+            guard let device = devices.first(where: { $0.id == deviceID && $0.revokedAt == nil }),
+                  let payload = try? RelayCryptography.open(
+                      frame,
+                      privateKey: credentials.keyPair.privateKey,
+                      peerPublicKey: device.publicKey
+                  ),
+                  payload.kind == .sessionReviewed else { return }
+            for sessionID in payload.sessionIDs ?? [] {
+                store?.markSessionReviewed(sessionID)
+            }
+        default:
+            return
+        }
     }
 
     private func publishCurrentState(from store: MacSessionStore) async {

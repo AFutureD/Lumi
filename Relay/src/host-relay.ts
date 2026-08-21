@@ -333,13 +333,16 @@ export class HostRelay extends DurableObject<Env> {
     raw: string,
     socket: WebSocket,
   ): void {
-    if (frame.deviceID !== attachment.deviceID || (frame.kind !== "ack" && frame.kind !== "hello")) {
+    const allowed = frame.kind === "ack" || frame.kind === "hello" || frame.kind === "attention";
+    if (frame.deviceID !== attachment.deviceID || !allowed) {
       socket.close(1008, "device is read-only");
       return;
     }
-    // The relay keeps no replay buffer: hello and ack frames are forwarded
-    // to the Mac verbatim, and a hello behind the channel sequence makes the
-    // Mac resend every session followed by a fresh index.
+    // The relay keeps no replay buffer: hello, ack and attention frames are
+    // forwarded to the Mac verbatim. A hello behind the channel sequence
+    // makes the Mac resend every session followed by a fresh index; an
+    // attention frame is a sealed device command (e.g. "session reviewed")
+    // the relay cannot read.
     for (const host of this.hostSockets()) host.send(raw);
   }
 

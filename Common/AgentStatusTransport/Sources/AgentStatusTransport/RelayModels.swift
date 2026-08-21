@@ -213,6 +213,9 @@ public enum RemotePayloadKind: Hashable, Sendable {
     case index
     case session
     case unavailable
+    /// Device → host (an `attention` frame): the human looked at the
+    /// sessions in `sessionIDs` on the iPhone; clear their review flag.
+    case sessionReviewed
     case unknown(String)
 
     public var rawValue: String {
@@ -220,6 +223,7 @@ public enum RemotePayloadKind: Hashable, Sendable {
         case .index: "index"
         case .session: "session"
         case .unavailable: "unavailable"
+        case .sessionReviewed: "session_reviewed"
         case let .unknown(value): value
         }
     }
@@ -232,6 +236,7 @@ extension RemotePayloadKind: Codable {
         case "index": .index
         case "session": .session
         case "unavailable": .unavailable
+        case "session_reviewed": .sessionReviewed
         default: .unknown(value)
         }
     }
@@ -250,6 +255,8 @@ extension RemotePayloadKind: Codable {
 /// - `.index` closes a publish batch: the authoritative visible id set the
 ///   device prunes its cache to.
 /// - `.unavailable` reports the Mac daemon being down.
+/// - `.sessionReviewed` travels the other way (device → host, `attention`
+///   frame): the iPhone opened the sessions in `sessionIDs`.
 public struct RemoteSessionPayload: Codable, Hashable, Sendable {
     public let kind: RemotePayloadKind
     public let generatedAt: Date

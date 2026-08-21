@@ -1,6 +1,6 @@
 # Agent Status 功能全景
 
-> 适用版本：v1 开发预览。macOS App 已完成本机编译与运行，iOS App 已完成模拟器编译与实时同步验证，Relay 已部署并通过健康检查。真实 Codex Hook、iPhone 实机、Developer ID 签名、公证和干净机器安装仍待验收。
+> 适用版本：v1 开发预览。macOS App 已完成本机编译与运行，iOS App 已完成模拟器编译、单元测试与预览数据页面走查，Relay 已部署并通过健康检查。真实 Codex Hook、iPhone 实机、Developer ID 签名、公证和干净机器安装仍待验收。
 
 Agent Status 把一台 Mac 上多个 Codex Agent、多个 Session 的状态集中到一个地方。用户可以在 Mac 的三栏主窗口和 Notch 查看状态，也可以把一台或多台 Mac 配对到 iPhone，进行只读查看。
 
@@ -30,9 +30,9 @@ Notch 紧凑状态显示列表中的 Session 数量，展开后按最近更新�
 
 ### iPhone 实时查看
 
-Mac App 使用产品内置的 Relay，不要求用户输入地址。用户从 Mac 侧边栏进入“iPhone”，生成一次性二维码；iPhone 扫码后建立独立通道。
+Mac App 使用产品内置的 Relay，不要求用户输入地址。用户从 Mac 侧边栏进入“iPhone”，生成一次性二维码；iPhone 在 Macs Tab 点 `+` 扫码后建立独立通道。
 
-一台 iPhone 可以连接多台 Mac；一台 Mac 也可以授权多台 iPhone。iPhone 按 Mac 分组显示 Session 与只读时间线，不提供审批、终止、输入或其他远程控制。
+一台 iPhone 可以连接多台 Mac；一台 Mac 也可以授权多台 iPhone。iPhone 的 Sessions Tab 把所有 Mac 的 Session 合并成一条列表（可按 Mac、状态多选过滤，可搜索），子 Agent 折叠成父 Session 下的计数条、点开成标签；详情分 Activity（三泳道时间线）和 Info（指标与 Session 信息）。只读，不提供审批、终止、输入或其他远程控制；收到的内容只在内存，退出即清除。
 
 [查看模块详情](modules/iphone-live-view.md)
 
@@ -70,5 +70,5 @@ Relay 不保存 Session 正文或可浏览的历史。Mac 不在线时，iPhone 
 - v1 只正式支持 Codex。
 - iPhone 仅查看，不控制 Agent。
 - Relay 地址是编译配置，不是 App 内设置项。
-- v1 不提供后台状态通知。
+- v1 不提供后台状态通知；iPhone Settings 里的通知权限行只管理系统授权，Relay 尚未接入推送。
 - 真实 Codex Hook、iPhone 实机和正式发布链路尚未完成验收。

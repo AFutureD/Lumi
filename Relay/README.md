@@ -1,6 +1,6 @@
 # Agent Status Relay
 
-The Relay is a TypeScript Cloudflare Worker backed by one Durable Object per Mac. It provides host registration, one-time pairing, per-device credentials, revocation, hibernating WebSockets, online presence, and a 60-second in-memory ciphertext replay window.
+The Relay is a TypeScript Cloudflare Worker backed by one Durable Object per Mac. It provides host registration, one-time pairing, per-device credentials, revocation, hibernating WebSockets, online presence, and a 60-second in-memory ciphertext replay window. Devices may send `hello`, `ack` and `attention` frames (the last carries a sealed device→host command such as “session reviewed”); anything else closes the socket as a read-only violation.
 
 Session content is opaque to the Worker and is not written to persistent storage. Durable Object storage contains authorization, rate-limit, expiry, and per-channel sequence metadata only.
 

@@ -5,7 +5,7 @@ import { parseRelayRoutingFrame } from "../src/protocol";
 describe("shared transport fixture", () => {
   it("accepts the Swift package routing frame", () => {
     const frame = parseRelayRoutingFrame(fixture);
-    expect(frame.version).toEqual({ major: 1, minor: 0 });
+    expect(frame.version).toEqual({ major: 1, minor: 1 });
     expect(frame.hostID).toBe("host-fixture");
     expect(frame.deviceID).toBe("device-fixture");
     expect(frame.sequence).toBe(42);

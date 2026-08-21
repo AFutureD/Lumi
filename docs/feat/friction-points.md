@@ -104,14 +104,14 @@
 **恢复步骤**：
 
 1. 回到 Mac“iPhone”页生成新二维码。
-2. 在 5 分钟内重新扫描。
-3. 摄像头不可用时，从 Mac 复制配对内容并在 iPhone 点“Paste”。
+2. 在 iPhone Macs Tab 点 `+` > “Scan pairing code”，5 分钟内重新扫描。
+3. 相机不可用时，在 Mac 点 “Copy pairing payload”，iPhone 用 `+` > “Paste pairing code”；没有手动输入配对码的入口。
 
-**完成信号**：iPhone 列表出现该 Mac 分组。
+**完成信号**：iPhone Macs 列表出现该 Mac 并显示 Online。
 
 ## Mac unavailable
 
-**用户会看到**：iPhone 中某台 Mac 显示 Unavailable，并且不显示旧 Session。
+**用户会看到**：iPhone Macs 里某台 Mac 显示 Unavailable 和上次同步时间，Sessions 里不显示它的 Session。
 
 **可能原因**：Mac App 退出、daemon 不可用、网络断开或实时通道尚未恢复。
 

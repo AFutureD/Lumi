@@ -23,7 +23,7 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 | Turn phase | Idle、Thinking、Executing、Responding、Waiting For Approval、unknown |
 | Agent kind | Codex、Codex Subagent、unknown |
 
-未知枚举值会保留原始字符串。旧客户端可以忽略无法展示的 Timeline 类型，而不让整个数据流解码失败。模型配置、内部上下文和消耗指标作为结构化 Timeline payload 持久化并进入完整快照，Mac 的 Session 详情会在独立模块展示这些诊断类 payload，iOS 主活动列表仍会过滤；同一 Session 的同类诊断 payload 只保留最新记录。
+未知枚举值会保留原始字符串。旧客户端可以忽略无法展示的 Timeline 类型，而不让整个数据流解码失败。模型配置、内部上下文和消耗指标作为结构化 Timeline payload 持久化并进入完整快照，Mac 的 Session 详情 Inspector 与 iOS 详情的 Info Tab 展示这些诊断类 payload（两端共用同一份 presentation），活动列表仍会过滤；同一 Session 的同类诊断 payload 只保留最新记录。
 
 ## 数据拥有者
 
@@ -32,9 +32,9 @@ daemon 保存本机权威 Session；Mac 和 iOS 通过完整快照建立一致�
 | Codex state | 外部只读元数据源 | Thread 标题、主 Session / Subagent 类型和 lineage；不复制整张表 | `${CODEX_HOME:-~/.codex}/state_5.sqlite` 的 `threads` |
 | daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记 | `~/Library/Application Support/Agent Status/sessions.sqlite3` |
 | Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Agent Status Mac/sessions.sqlite3` |
-| iOS App | 每 Mac 通道缓存 | 对应 Mac 最近收到的完整快照 | Application Support 下 `Agent Status/Channels/<hostID>.sqlite3` |
+| iOS App | 每 Mac 通道内存副本 | 对应 Mac 本次连接收到的完整快照，退出 App 即清除 | 进程内存（不落盘） |
 | Mac Keychain | 远程身份 | Host ID、Host secret、Host 密钥对、每设备序号 | service `com.huanan.AgentStatusMac.relay` |
-| iOS Keychain | 通道身份 | Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、确认序号 | service `com.huanan.AgentStatusIOS.relay` |
+| iOS Keychain | 通道身份 | Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间、确认序号 | service `com.huanan.AgentStatusIOS.relay`（account `device-channels-v3`） |
 | Durable Object SQLite | 运维元数据 | token hash、设备公钥、配对挑战 hash、过期/撤销、限流、每设备 Host 序号 | 每个 HostID 一个对象 |
 | Durable Object 内存 | 短暂恢复 | 最近密文帧 | 60 秒，最多约 64 帧，重启后可丢失 |
 
@@ -42,7 +42,7 @@ Keychain 项使用 `AfterFirstUnlockThisDeviceOnly`，不会随常规设备备�
 
 ## GRDB Schema
 
-daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration：
+daemon 和 Mac 复用同一个 `SQLiteSessionRepository` migration（iOS 不再落盘）：
 
 | 表 | 用途 | 关键规则 |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 - daemon、Mac 和 iOS 不按天数或最后活动时间自动清理 Session。
 - daemon 的单条删除和清空历史是业务删除入口；Mac/iOS 随后用新快照收敛。
 - 删除 Agent Status 数据不会删除 Codex rollout 或 Codex 自身历史。
-- iOS 用户移除一个 Mac 时，只清空该通道的凭据、连接和本地同步内容。
+- iOS 用户移除一个 Mac 时，只清空该通道的凭据、连接和内存中的 Session；Settings > Clear received data 清空全部通道的内存内容。
 - Relay 不保存业务快照，因此没有 Relay 侧 Session 保留期限。
 - 模型配置、内部上下文和消耗指标遵循 Session 的同一保留与删除规则，不单独过期。
 
@@ -143,7 +143,6 @@ sequenceDiagram
     participant H as RelayHostController
     participant R as Durable Object
     participant I as iOS Channel
-    participant IDB as iOS SQLite
 
     D-->>M: 对账结果或 Agent event
     M->>MDB: 保存同步副本
@@ -155,7 +154,7 @@ sequenceDiagram
         H->>R: 变更 Session 帧（可分片）… 最后一帧 index
         R-->>I: 不透明转发
         I->>I: 校验 sequence 并解密
-        I->>IDB: replaceSession / index 到达后 pruneSessions
+        I->>I: 内存中 upsert Session / index 到达后裁剪并校验完整
         I-->>R: ACK sequence
     end
 ```
@@ -165,9 +164,10 @@ sequenceDiagram
 - `RemoteSessionPayload.session`：一个 Session 的一个分片（压缩后超过预算的 Session 按 timeline 切片，part 0 携带 turns，末片 `nextCursor == nil`）。任何变化（含 flag 翻转）都整 Session 重发，杜绝 summary 与 detail 脱节。
 - `RemoteSessionPayload.index`：本批的提交标记——当前可见 Session id 全集；iOS 收到后裁剪本地缓存,并校验批次完整性。
 - `RemoteSessionPayload.unavailable`：daemon 不可用；iOS 隐藏旧 Session。
+- `RemoteSessionPayload.sessionReviewed`（设备→Mac，`attention` frame，用设备私钥 + Host 公钥加密）：iPhone 打开了 `sessionIDs` 里的 Session，Mac 据此 `markSessionReviewed` 并重新发布。
 - payload 明文在加密前做 zlib 压缩；Mac 为每台 iPhone 使用不同公钥、不同密文和独立 sequence，sequence 区间在发送前写入 Keychain（空洞合法、复用致命）。
-- 一条 Host WSS 发送所有设备的定向 frame；每个 iOS Mac 通道维护自己的 Device WSS、ACK cursor 和 SQLite。
-- 恢复路径：Relay 不再保留重放缓冲。设备的 `hello`（携带最后 ACK）被原样转发给 Mac，落后于通道 sequence 就触发对该设备的全量重发；iOS 在 index 不完整或看到 sequence 空洞时也会主动发 hello。
+- 一条 Host WSS 发送所有设备的定向 frame；每个 iOS Mac 通道维护自己的 Device WSS 和内存副本。
+- 恢复路径：Relay 不保留重放缓冲。设备的 `hello` 被原样转发给 Mac，落后于通道 sequence 就触发对该设备的全量重发；iOS 没有本地缓存，每次连接、下拉刷新、index 不完整或看到 sequence 空洞时都发 `hello(0)` 要全量。
 
 ## 一致性规则
 
@@ -187,7 +187,7 @@ sequenceDiagram
 ### 分页
 
 - 单页 Timeline 最大 500 项；Mac 对账默认按 200 拉取，收到 `response_too_large` 时降到 25 重试该页。
-- Mac 和 iOS 从本地 SQLite 读取详情时同样循环分页。
+- Mac 从本地 SQLite 读取详情时同样循环分页；iOS 直接使用内存中组装好的完整 Session。
 - 单个本地 frame 仍受 8 MiB 上限约束；跨进程不再存在"整库一帧"的载荷。
 
 ### 删除
@@ -208,7 +208,7 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 - Notch 只读取 Mac 已同步缓存，最多加载四个可展示 Session 的详情。
 - Relay 发布也读取 Mac 缓存，不额外触发 daemon snapshot。
 - `dataRevision` 在任意 Session 或 Timeline 数据成功持久化后增加；Relay 发布端按 Session 逐个比较 detail，确保未选中 Session 的诊断变化也能触发发布。仅健康状态通知不增加，避免无数据变化时发布。
-- iOS 可以预读本地 SQLite，但状态门禁要求“WSS 已连接 + Host 在线 + 同步完整（index 已到且其中每个 Session 都已收全）”才暴露 Session 给 UI。
+- iOS 的状态门禁要求“WSS 已连接 + Host 在线 + 同步完整（index 已到且其中每个未被本机删除的 Session 都已收全）”才暴露 Session 给 UI；已打开的详情页保留最后一次收到的内容。
 
 ## 故障与恢复
 
@@ -217,7 +217,7 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 | helper 找不到 daemon | 1 秒内失败、stderr、非零退出 | daemon 恢复后等待下一 Hook；rollout watcher 补充持久事件 |
 | Mac 订阅断开 | health 置空，2 秒后重连 | 重连成功即触发一次对账，补上断线期间的缺口 |
 | Mac daemon 不可用 | 保留 Mac SQLite 供本地查看，远程发送 unavailable | daemon 恢复后重新对账并重新发布 |
-| iOS WSS 断开 | 隐藏旧 Session，2 秒后重连 | hello 携带最后 ACK，转发给 Mac 触发该设备全量重发 |
+| iOS WSS 断开 | 隐藏旧 Session，2 秒后重连 | 重连发 hello(0)，转发给 Mac 触发该设备全量重发 |
 | Relay 对象重启 | 授权/序号元数据保留 | 设备 hello 触发 Mac 全量重发 |
 | SQLite 写失败 | UI/控制器记录可见错误，不把内存状态当作持久成功 | 修复磁盘/权限后重新同步 |
 

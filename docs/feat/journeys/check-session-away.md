@@ -1,13 +1,13 @@
 # 在 iPhone 上查看多台 Mac
 
-> 验证状态：开发预览。内置 Relay 已部署；iOS 模拟器已完成 Mac 在线、Session 到达、时间线打开和跨端删除验证。iPhone 实机扫码与弱网恢复仍待验收。
+> 验证状态：开发预览。iOS 模拟器已通过粘贴配对码与真实 Mac 经 Relay 配对并同步 Session，合并列表、详情、Macs 和 Settings 均已走查；iPhone 实机扫码和弱网恢复仍待验收。
 
-最短路径：Mac 打开“iPhone” > 生成二维码 > iPhone 扫码 > 选择 Mac 下的 Session。
+最短路径：Mac 打开“iPhone”生成二维码 > iPhone 打开 Macs Tab 点 `+` 扫码 > 回到 Sessions Tab 点 Session。
 
 ## 用户目标
 
-- 离开 Mac 屏幕后继续查看 Codex 进度。
-- 在一台 iPhone 中区分多台 Mac 的 Session。
+- 离开 Mac 屏幕后继续查看 Agent 进度。
+- 在一台 iPhone 上看全多台 Mac 的 Session，并能按 Mac 过滤。
 - 只查看状态，不从手机审批、终止或操作 Agent。
 
 ## 前置条件
@@ -18,60 +18,55 @@
 
 ## 第一台 Mac
 
-1. 在 Mac 侧边栏选择“iPhone”。
+1. 在 Mac 侧边栏选择“iPhone”，生成二维码。
    - 系统反馈：显示 Relay connected、二维码和配对记录。
-2. 在 iPhone 点“Pair”，扫描二维码或使用“Paste”。
-   - 系统反馈：配对成功后，列表出现该 Mac 分组。
-   - 数据变化：为这台 iPhone 建立独立授权。
-   - 规则引用：[IOS-R-001](../modules/iphone-live-view.md#ios-r-001-每台设备独立授权)。
-3. 保持 Mac 在线，打开 iPhone App。
-   - 系统反馈：Mac 分组显示 Online；收到当前快照后显示 Session。
-   - 数据变化：该 Mac 的同步内容保存到独立本地副本。
-   - 规则引用：[IOS-R-007](../modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-同步)。
-4. 选择目标 Session。
-   - 系统反馈：显示消息、工具、计划、子 Agent 或错误。
+2. 在 iPhone 打开 Macs Tab，点右上 `+` > “Scan pairing code”，对准二维码。
+   - 系统反馈：配对成功自动返回，Macs 列表出现该 Mac 并显示 Online。
+   - 数据变化：为这台 iPhone 建立独立授权（[IOS-R-001](../modules/iphone-live-view.md#ios-r-001-每台设备独立授权)）。
+3. 切到 Sessions Tab。
+   - 系统反馈：收到该 Mac 的当前快照后，它的 Session 出现在列表里，每行标出 Mac 名称（[IOS-R-007](../modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-同步)）。
+4. 点目标 Session。
+   - 系统反馈：Activity 显示三泳道和时间线，Info 显示指标与 Session 信息。
    - 数据变化：只改变查看位置，不发送控制操作。
 
-完成信号：每台 Mac 形成独立分组，状态可区分，并能打开目标 Session 时间线。
+完成信号：Macs 里该 Mac 显示 Online，Sessions 里能打开它的 Session 时间线。
 
 ## 再添加一台 Mac
 
-1. 在 iPhone 点“Device”。
-2. 选择“Add another Mac”。
-3. 扫描另一台 Mac“iPhone”页生成的二维码。
-4. 返回列表。
-   - 系统反馈：两台 Mac 分别显示自己的 Online 或 Unavailable 状态。
-   - 数据变化：新增一条独立通道，原通道不受影响。
-   - 规则引用：[IOS-R-008](../modules/iphone-live-view.md#ios-r-008-一台-iphone-可连接多台-mac)。
+1. 在 iPhone Macs Tab 点 `+` > “Scan pairing code”。
+2. 扫描另一台 Mac“iPhone”页生成的二维码。
+3. 回到 Sessions Tab。
+   - 系统反馈：两台 Mac 的 Session 合并在一条列表里；搜索栏下方的 `Macs` 下拉里多出这台 Mac。
+   - 数据变化：新增一条独立通道，原通道不受影响（[IOS-R-008](../modules/iphone-live-view.md#ios-r-008-一台-iphone-可连接多台-mac)）。
+
+只想看其中一台：在 `Macs` 下拉里取消其他 Mac，或在 Macs Tab 点那台 Mac 的行；`Status` 下拉可再按 Running / Waiting / Completed 过滤，`Reset` 回全选。
 
 ## 失败路径
 
 ### Relay unavailable
 
 - 用户看到：Mac“iPhone”页显示 Relay unavailable，无法生成有效配对。
-- 可执行动作：确认网络可用；Relay 地址由构建固定，App 内无需也无法手动修改。
+- 可执行动作：确认网络可用；Relay 地址由构建固定，App 内无法修改。
 - 完成信号：页面恢复 Relay connected。
 
-已有配对时 Relay 中断，各 Mac 通道会分别进入 Unavailable；恢复后以每个分组重新显示 Online 并取得当前快照为完成信号。
+已有配对时 Relay 中断，Macs 里每台 Mac 分别显示 Unavailable；恢复后各自回到 Online 并重新取得当前快照。
 
-### 摄像头不可用或粘贴无效
+### 相机不可用
 
-- 用户看到：提示使用 Paste，或显示配对内容无效。
-- 可执行动作：从 Mac 复制新的配对内容，再在 iPhone 点“Paste”。
+- 用户看到：扫码页提示相机不可用。
+- 可执行动作：在 iOS 设置里允许相机后重新扫码；或在 Mac 点 “Copy pairing payload”，iPhone 用 `+` > “Paste pairing code”。
 - 数据影响：成功前不会创建设备授权。
 
 ### 配对码过期或已使用
 
-- 用户看到：配对失败并停留在配对页。
-- 可执行动作：回到 Mac 生成新二维码。
-- 规则引用：[IOS-R-002](../modules/iphone-live-view.md#ios-r-002-配对码短时且一次性)。
+- 用户看到：扫码页停留并提示过期或不兼容。
+- 可执行动作：回到 Mac 生成新二维码（[IOS-R-002](../modules/iphone-live-view.md#ios-r-002-配对码短时且一次性)）。
 
 ### Mac unavailable
 
-- 用户看到：该 Mac 分组显示 Unavailable，不显示旧 Session。
+- 用户看到：Macs 里该 Mac 显示 Unavailable 和上次同步时间，Sessions 里不显示它的 Session。
 - 可执行动作：恢复 Mac App、daemon 和网络；等待当前快照重新到达。
-- 数据影响：配对关系保留，其他 Mac 通道继续工作。
-- 规则引用：[IOS-R-006](../modules/iphone-live-view.md#ios-r-006-mac-离线时不显示旧-session)。
+- 数据影响：配对关系保留，其他 Mac 通道继续工作（[IOS-R-006](../modules/iphone-live-view.md#ios-r-006-mac-离线时不显示旧-session)）。
 
 ### 设备被撤销
 
@@ -82,7 +77,7 @@
 ## 为同一台 Mac 配对第二台 iPhone
 
 1. 在 Mac“iPhone”页生成新的二维码。
-2. 在第二台 iPhone 完成 Pair。
+2. 在第二台 iPhone 完成扫码。
 3. 返回 Mac 查看配对记录。
    - 系统反馈：出现第二条独立记录，两台 iPhone 都可以在线查看。
 4. 在 Mac 对其中一条记录执行“Revoke”。
@@ -90,19 +85,13 @@
 
 ## 移除一台 Mac
 
-在 iPhone 点“Device”，选择“Remove <Mac 名称>”。该 iPhone 上的通道、凭据和同步内容被删除，其他 Mac 保持连接；Mac 和 Relay 侧的授权记录仍存在。若目标是撤销访问权，还需在 Mac“iPhone”页对该设备执行“Revoke”。
+在 iPhone Macs Tab 左滑该 Mac > Remove。这台 iPhone 上的通道、凭据和内存中的 Session 被删除，其他 Mac 保持连接；Mac 和 Relay 侧的授权记录仍存在。若目标是撤销访问权，还需在 Mac“iPhone”页对该设备执行“Revoke”。
 
-Mac 上删除一个 Session 时，在线 iPhone 会移除对应条目；这不影响其他 Session 或其他 Mac 分组。
-
-## 二维码生成失败
-
-- 用户看到：Mac 显示 Unable to generate a pairing code。
-- 可执行动作：确认 Relay connected，再点击“Generate new code”。
-- 完成信号：出现新的二维码和有效期。
+Mac 上删除一个 Session 时，在线 iPhone 会移除对应条目；这不影响其他 Session 或其他 Mac。
 
 ## 持久化结果
 
-- iPhone 为每台 Mac 保存独立凭据和同步内容。
+- iPhone 为每台 Mac 保存独立凭据；Session 内容只在内存，退出即清除（[IOS-R-010](../modules/iphone-live-view.md#ios-r-010-session-内容只在内存)）。
 - Relay 保存授权和运行所需信息，不保存可浏览的 Session 历史。
 - Mac 离线时不展示旧内容；恢复后由当前快照重新确认。
 

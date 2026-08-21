@@ -10,6 +10,8 @@ public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
     public let deviceToken: String
     public let keyPair: RelayKeyPair
     public let hostPublicKey: Data
+    /// When this iPhone paired with the Mac (`RelayPairingResult.pairedAt`).
+    public let pairedAt: Date
     public var lastAcknowledgedSequence: UInt64
 
     public init(
@@ -20,6 +22,7 @@ public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
         deviceToken: String,
         keyPair: RelayKeyPair,
         hostPublicKey: Data,
+        pairedAt: Date = Date(),
         lastAcknowledgedSequence: UInt64 = 0
     ) {
         self.relayURL = relayURL
@@ -29,6 +32,7 @@ public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
         self.deviceToken = deviceToken
         self.keyPair = keyPair
         self.hostPublicKey = hostPublicKey
+        self.pairedAt = pairedAt
         self.lastAcknowledgedSequence = lastAcknowledgedSequence
     }
 

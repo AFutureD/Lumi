@@ -1,3 +1,4 @@
+import AgentStatusCore
 import SwiftUI
 
 /// Inspector: three metric cards (tokens / context / elapsed) then the

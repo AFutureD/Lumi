@@ -219,7 +219,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 - 条件：一条 Session 的 Turn 已结束且还没被打开过（状态为绿色待查看）。
 - 行为：在 Mac 列表点击该行（重复点击已选中的行同样生效），或在 Notch 打开它的详情，都把它标记为已查看；Notch 详情开着期间新结束的 Turn 也立即视为已查看。标记写入 daemon 和 Mac 本地副本，并同步到已连接 iPhone。
 - 结果：绿色降为灰色，三个界面一致；列表里剩下的绿色就是还没看过的 Session。
-- 限制或例外：在 iPhone 上打开 Session 不清除待查看标记（iPhone 只读展示，等 Mac 侧打开后同步降灰）。该 Session 下一个 Turn 结束时会重新变绿。刷新重算不重置此标记（[MAC-R-009](#mac-r-009-外部内容只有三种同步入口)）。
+- 限制或例外：在 iPhone 上打开 Session 同样清除该标记——iPhone 把「已查看」发回 Mac，Mac 写入后同步到所有端（[IOS-R-013](./iphone-live-view.md#ios-r-013-iphone-打开即视为已查看)）。该 Session 下一个 Turn 结束时会重新变绿。刷新重算不重置此标记（[MAC-R-009](#mac-r-009-外部内容只有三种同步入口)）。
 
 ### MAC-R-020 启动时自动更新已安装的 Hook helper
 
