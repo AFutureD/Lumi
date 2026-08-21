@@ -42,23 +42,17 @@ struct SessionListItem: Hashable, Sendable, Identifiable {
     let workspace: String?
     let lastActivityAt: Date
     let latest: SessionListLatest?
-    /// Ordered running → waiting → done (the summary bar's dot order).
+    /// Ordered running → waiting → failed → done (the summary bar's dot order).
     let subagents: [SubagentChipItem]
 
     var hostID: HostID { id.hostID }
     var sessionID: SessionID { id.sessionID }
     var statusGroup: SessionStatusGroup { SessionStatusGroup(tone: tone) }
 
-    /// `3 subagents · 2 running · 1 done` — only the non-zero buckets.
+    /// `3 subagents · 2 running · 1 done` — only the non-zero buckets
+    /// (shared wording with the Notch: `SubagentGroupSummary`).
     var subagentSummary: String {
-        let running = subagents.count { SubagentSummaryBucket(tone: $0.tone) == .running }
-        let waiting = subagents.count { SubagentSummaryBucket(tone: $0.tone) == .waiting }
-        let done = subagents.count - running - waiting
-        var parts = ["\(subagents.count) subagent\(subagents.count == 1 ? "" : "s")"]
-        if running > 0 { parts.append("\(running) running") }
-        if waiting > 0 { parts.append("\(waiting) waiting") }
-        if done > 0 { parts.append("\(done) done") }
-        return parts.joined(separator: " · ")
+        SubagentGroupSummary.label(tones: subagents.map(\.tone))
     }
     func timeText(now: Date) -> String { SessionRelativeTimeFormatter.string(from: lastActivityAt, now: now) }
 }
@@ -134,21 +128,6 @@ enum FilterPanelPlacement {
     }
 }
 
-/// What a subagent counts as in the collapsed summary bar.
-enum SubagentSummaryBucket: Hashable, Sendable {
-    case running
-    case waiting
-    case done
-
-    init(tone: SessionStatusTone) {
-        switch tone {
-        case .blue: self = .running
-        case .orange: self = .waiting
-        case .green, .gray, .red: self = .done
-        }
-    }
-}
-
 enum SessionListPresentation {
     /// Every Mac's visible sessions merged into one list, newest activity
     /// first. Subagents (children by lineage) become chips on their parent's
@@ -171,10 +150,11 @@ enum SessionListPresentation {
             for parent in parents {
                 let children = (childrenByParent[parent.summary.id] ?? [])
                     .sorted { lhs, rhs in
-                        // running → waiting → done, newest first inside a bucket
-                        let l = Self.bucketRank(lhs.summary.statusTone), r = Self.bucketRank(rhs.summary.statusTone)
-                        if l != r { return l < r }
-                        return lhs.summary.lastActivityAt > rhs.summary.lastActivityAt
+                        // running → waiting → failed → done, newest first inside a bucket
+                        SubagentGroupSummary.precedes(
+                            (lhs.summary.statusTone, lhs.summary.lastActivityAt),
+                            (rhs.summary.statusTone, rhs.summary.lastActivityAt)
+                        )
                     }
                 items.append(item(for: parent, children: children, channel: channel))
             }
@@ -281,14 +261,6 @@ enum SessionListPresentation {
                 )
             }
         )
-    }
-
-    private static func bucketRank(_ tone: SessionStatusTone) -> Int {
-        switch SubagentSummaryBucket(tone: tone) {
-        case .running: 0
-        case .waiting: 1
-        case .done: 2
-        }
     }
 
     static func normalizedTitle(_ title: String) -> String {

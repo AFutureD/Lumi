@@ -104,6 +104,8 @@ public extension DesignSystem {
         public static let pillName = DesignColor(white: 1, alpha: 0.82)
         /// Subagent pill duration (White 44 %).
         public static let pillTime = DesignColor(white: 1, alpha: 0.44)
+        /// Subagent count-strip chevron (White 42 %, the idle-dot grey).
+        public static let subagentChevron = DesignColor(white: 1, alpha: 0.42)
     }
 
     /// Dark · 背景与描边. Fills are white at `.10 / .12 / .14 / .16`, one step
@@ -135,7 +137,7 @@ public extension DesignSystem {
         /// opaque near-black fill disappears. White alpha composites above
         /// whatever backdrop the user picked.
         public static let agentTag = DesignColor(white: 1, alpha: 0.14)
-        /// Running-with-subagents card fill (White 7 %).
+        /// Hovered subagent-row card fill (White 7 %).
         public static let listCard = DesignColor(white: 1, alpha: 0.07)
         /// Subagent pill fill (White 13 %).
         public static let subagentPill = DesignColor(white: 1, alpha: 0.13)

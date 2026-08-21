@@ -33,7 +33,7 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 每行从上到下：Mac 名称 + 右侧状态胶囊（`Running` / `Waiting` / `Completed` / `Failed`）；标题（最多两行）+ 相对时间；最新一条活动（类别标签 + 内容）；Subagent 组。四段左边界对齐。
 
 - **状态胶囊**：颜色跟五档状态梯级走（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；已完成的 Session 不再显示“最新活动”一行。
-- **Subagent 组**：子 Agent 不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → done）+ `3 subagents · 2 running · 1 done`（只写非零档）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
+- **Subagent 组**：子 Agent 不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档，与 Mac Notch 文案一致）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
 - **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running / Waiting / Completed），点开在按钮下方落下一张勾选面板（每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
 - **搜索**：导航栏右上的放大镜默认收拢，点开才展开搜索框（系统搜索控件）；按标题、Agent、工作目录和 Subagent 名称即时过滤当前列表。
 - **刷新**：下拉列表，或右上 `···` > “Refresh list”，向每台 Mac 重新索取 Session 索引并只补差异。
@@ -144,7 +144,7 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 
 - 条件：某个 Session 的子 Agent 也在同一台 Mac 的列表里。
 - 行为：子 Agent 不单独占行，折叠成父行下的一条计数条；展开后显示为标签（状态点 + 名字 + 用时），两枚里较窄的一枚不到可用宽一半就并成一行，较宽的一枚封顶三分之二宽、名字末尾省略。
-- 结果：一眼看到父 Session 下有几个子 Agent、各自是否还在跑；点标签直接打开该子 Agent 的 Activity / Info。
+- 结果：一眼看到父 Session 下有几个子 Agent、各自是还在跑、等待、失败还是已完成（计数条按 running → waiting → failed → done 分档计数）；点标签直接打开该子 Agent 的 Activity / Info。
 - 限制或例外：父 Session 不在列表里时，子 Agent 以独立行显示。
 
 ### IOS-R-012 删除只影响这台 iPhone

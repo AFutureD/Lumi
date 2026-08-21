@@ -116,13 +116,62 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     }
 }
 
-/// One row of the session list: a parent session plus the subagents its
-/// card renders as pills (empty for flat rows).
+/// One row of the session list: a parent session plus its subagent group
+/// (empty for flat rows). Children are ordered running → waiting → failed →
+/// done, newest first inside a bucket — the order of the count strip's
+/// stacked dots and of the expanded pills.
 struct AgentStatusNookListItem: Identifiable, Equatable, Sendable {
     let session: AgentStatusNookSession
     var children: [AgentStatusNookSession]
 
     var id: SessionID { session.id }
+
+    var subagentTones: [SessionStatusTone] { children.map(\.statusTone) }
+
+    /// `3 subagents · 2 running · 1 done` — shared wording with iOS.
+    var subagentSummary: String {
+        SubagentGroupSummary.label(tones: subagentTones)
+    }
+}
+
+/// Which rows show their subagent pills. The default follows the parent's
+/// lifecycle — Running (blue tier) expanded, everything else collapsed — and
+/// a row the user toggled keeps that choice until its tier changes, at which
+/// point it falls back to the default again.
+struct AgentStatusNookSubagentDisclosure: Equatable, Sendable {
+    private struct Override: Equatable, Sendable {
+        let expanded: Bool
+        /// The parent's tone when the user toggled; a different tone now
+        /// means the lifecycle moved on and the override is spent.
+        let tone: SessionStatusTone
+    }
+
+    private var overrides: [SessionID: Override] = [:]
+
+    static func defaultExpanded(for tone: SessionStatusTone) -> Bool {
+        tone == .blue
+    }
+
+    func isExpanded(_ item: AgentStatusNookListItem) -> Bool {
+        isExpanded(id: item.id, tone: item.session.statusTone)
+    }
+
+    func isExpanded(id: SessionID, tone: SessionStatusTone) -> Bool {
+        if let override = overrides[id], override.tone == tone {
+            return override.expanded
+        }
+        return Self.defaultExpanded(for: tone)
+    }
+
+    mutating func toggle(id: SessionID, tone: SessionStatusTone) {
+        overrides[id] = Override(expanded: !isExpanded(id: id, tone: tone), tone: tone)
+    }
+
+    /// Drops overrides for rows that left the list or whose tier changed.
+    mutating func prune(keeping items: [AgentStatusNookListItem]) {
+        let tones = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.session.statusTone) })
+        overrides = overrides.filter { id, override in tones[id] == override.tone }
+    }
 }
 
 /// What the expanded Notch is showing.
@@ -165,8 +214,9 @@ enum AgentStatusNookSnapshot {
     }
 
     /// Parents in the store's order (newest activity first), each followed
-    /// by its children. Subagent rows are listed only while the parent's turn
-    /// is running; once the turn ends they disappear.
+    /// by its eligible children. Children stay with their parent through
+    /// every lifecycle: the list folds them into a count strip, so a finished
+    /// session still shows how its subagents ended.
     static func visibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
         let eligible = eligibleSummaries(from: summaries, now: now)
         let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
@@ -176,7 +226,6 @@ enum AgentStatusNookSnapshot {
         for parent in parents {
             guard seen.insert(parent.id).inserted else { continue }
             ordered.append(parent)
-            guard parent.statusTone == .blue else { continue }
             for child in eligible where child.lineage?.parentSessionID == parent.id {
                 if seen.insert(child.id).inserted { ordered.append(child) }
             }
@@ -184,10 +233,11 @@ enum AgentStatusNookSnapshot {
         return ordered
     }
 
-    /// The list renders parents; a parent whose turn is running with
-    /// subagents becomes a card that carries them as pills. Children follow
-    /// their parent in `sessions`; a child whose parent is not listed (the
-    /// store promoted it to top level) gets a flat row of its own.
+    /// The list renders parents; a parent with subagents carries them as a
+    /// collapsible group under its title. Children follow their parent in
+    /// `sessions` and are reordered running → waiting → failed → done; a
+    /// child whose parent is not listed (the store promoted it to top level)
+    /// gets a flat row of its own.
     static func listItems(from sessions: [AgentStatusNookSession]) -> [AgentStatusNookListItem] {
         var items: [AgentStatusNookListItem] = []
         for session in sessions {
@@ -195,6 +245,14 @@ enum AgentStatusNookSnapshot {
                 items[items.count - 1].children.append(session)
             } else {
                 items.append(AgentStatusNookListItem(session: session, children: []))
+            }
+        }
+        for index in items.indices where items[index].children.count > 1 {
+            items[index].children.sort { lhs, rhs in
+                SubagentGroupSummary.precedes(
+                    (lhs.statusTone, lhs.lastActivityAt),
+                    (rhs.statusTone, rhs.lastActivityAt)
+                )
             }
         }
         return items
@@ -277,7 +335,7 @@ enum AgentStatusNookActivityDiff {
         let listedIDs = Set(current.map(\.id))
         var events: [AgentStatusNookTurnEvent] = []
         for session in current {
-            // Subagents render as pills inside their parent's card; their turn
+            // Subagents render inside their parent's subagent group; their turn
             // boundaries are the parent's internal progress, not notifications.
             // An orphan promoted to top level still notifies.
             if let parentID = session.parentID, listedIDs.contains(parentID) { continue }
@@ -329,6 +387,8 @@ final class AgentStatusNookModel: ObservableObject {
     @Published private(set) var listedSessionCount = 0
     @Published private(set) var daemonAvailable = false
     @Published var route: AgentStatusNookRoute = .list
+    /// Per-row subagent group disclosure (lifecycle default + user toggles).
+    @Published private(set) var subagentDisclosure = AgentStatusNookSubagentDisclosure()
     let compactModel = AgentStatusNookCompactModel()
 
     var onSnapshot: ((_ previous: [AgentStatusNookSession], _ current: [AgentStatusNookSession], _ initial: Bool) -> Void)?
@@ -400,6 +460,12 @@ final class AgentStatusNookModel: ObservableObject {
 
     // MARK: - Actions
 
+    /// The count strip was clicked: flip that row's subagent group. The
+    /// choice sticks until the row's lifecycle tier changes.
+    func toggleSubagents(of item: AgentStatusNookListItem) {
+        subagentDisclosure.toggle(id: item.id, tone: item.session.statusTone)
+    }
+
     /// Archive is Notch-only: the session is hidden here but stays in the
     /// Mac window and on iOS. A new prompt or a restart brings it back.
     func archive(_ id: SessionID) {
@@ -440,6 +506,9 @@ final class AgentStatusNookModel: ObservableObject {
             let previous = self.sessions
             let initial = !self.hasLoaded
             if self.sessions != next { self.sessions = next }
+            var disclosure = self.subagentDisclosure
+            disclosure.prune(keeping: AgentStatusNookSnapshot.listItems(from: next))
+            if disclosure != self.subagentDisclosure { self.subagentDisclosure = disclosure }
             self.compactModel.update(statusTone: next.first?.statusTone ?? .gray)
             self.hasLoaded = true
             if case let .detail(id) = self.route {

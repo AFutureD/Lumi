@@ -151,6 +151,11 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
     let items = SessionListPresentation.items(from: [channel("Mac", sessions: [parent] + kids)])
     #expect(items[0].subagentSummary == "3 subagents · 2 running · 1 done")
     #expect(items[0].subagents.map(\.name) == ["a", "b", "c"])
+    // A failed child gets its own bucket, between waiting and done.
+    let failed = session("d", title: "d", lifecycle: .failed, phase: .idle, parent: "p")
+    let mixed = SessionListPresentation.items(from: [channel("Mac", sessions: [parent] + kids + [failed])])
+    #expect(mixed[0].subagentSummary == "4 subagents · 2 running · 1 failed · 1 done")
+    #expect(mixed[0].subagents.map(\.name) == ["a", "b", "d", "c"])
     let single = SessionListPresentation.items(from: [channel("Mac", sessions: [parent, kids[0]])])
     #expect(single[0].subagentSummary == "1 subagent · 1 running")
 }

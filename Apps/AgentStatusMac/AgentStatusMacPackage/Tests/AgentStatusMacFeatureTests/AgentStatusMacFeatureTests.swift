@@ -384,23 +384,78 @@ private let nookNow = Date(timeIntervalSince1970: 100)
     #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [unknown], now: nookNow).isEmpty)
 }
 
-@Test func nookListKeepsStoreOrderAndListsSubagentsOnlyWhileTheTurnRuns() {
+@Test func nookListKeepsStoreOrderAndKeepsSubagentsWithTheirParent() {
     let running = nookSummary(id: "running", lifecycle: .running, phase: .executing, updatedAt: 30)
     let waiting = nookSummary(id: "waiting", lifecycle: .waitingForInput, phase: .idle, updatedAt: 20)
     let failed = nookSummary(id: "failed", lifecycle: .failed, phase: .idle, updatedAt: 25)
     let runningChild = hierarchySummary(id: "running-child", parentID: "running", updatedAt: 29)
     let waitingChild = hierarchySummary(id: "waiting-child", parentID: "waiting", updatedAt: 19)
 
-    // Store order (newest first) is kept; running keeps its children, a
-    // session whose turn is no longer running drops them.
+    // Store order (newest first) is kept; every parent keeps its children
+    // (the list folds them into a count strip), whatever its lifecycle.
     let visible = AgentStatusNookSnapshot.visibleSummaries(
         from: [running, runningChild, failed, waiting, waitingChild],
         now: nookNow
     )
-    #expect(visible.map(\.id.rawValue) == ["running", "running-child", "failed", "waiting"])
+    #expect(visible.map(\.id.rawValue) == ["running", "running-child", "failed", "waiting", "waiting-child"])
 }
 
-@Test func nookListItemsFoldChildrenIntoTheirParentCard() {
+@Test func nookListItemsOrderSubagentsRunningWaitingFailedDone() {
+    let rows = AgentStatusNookSnapshot.make(
+        summaries: [
+            nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30),
+            hierarchySummary(id: "done", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 29),
+            hierarchySummary(id: "failed", parentID: "parent", lifecycle: .failed, phase: .idle, updatedAt: 28),
+            hierarchySummary(id: "waiting", parentID: "parent", lifecycle: .waitingForInput, phase: .waitingForApproval, updatedAt: 27),
+            hierarchySummary(id: "older-running", parentID: "parent", updatedAt: 20),
+            hierarchySummary(id: "running", parentID: "parent", updatedAt: 26),
+        ],
+        details: [:]
+    )
+
+    let items = AgentStatusNookSnapshot.listItems(from: rows)
+    #expect(items.count == 1)
+    #expect(items[0].children.map(\.id.rawValue) == ["running", "older-running", "waiting", "failed", "done"])
+    #expect(items[0].subagentTones == [.blue, .blue, .orange, .red, .gray])
+    #expect(items[0].subagentSummary == "5 subagents · 2 running · 1 waiting · 1 failed · 1 done")
+}
+
+@Test func nookSubagentDisclosureFollowsTheLifecycleUntilToggled() {
+    let parentID = SessionID("parent")
+    func item(_ lifecycle: SessionLifecycle, phase: TurnPhase) -> AgentStatusNookListItem {
+        let rows = AgentStatusNookSnapshot.make(
+            summaries: [
+                nookSummary(id: "parent", lifecycle: lifecycle, phase: phase, updatedAt: 30),
+                hierarchySummary(id: "child", parentID: "parent", updatedAt: 29),
+            ],
+            details: [:]
+        )
+        return AgentStatusNookSnapshot.listItems(from: rows)[0]
+    }
+    let running = item(.running, phase: .executing)
+    let finished = item(.waitingForInput, phase: .idle)
+    var disclosure = AgentStatusNookSubagentDisclosure()
+
+    // Defaults: Running open, everything else collapsed.
+    #expect(disclosure.isExpanded(running))
+    #expect(!disclosure.isExpanded(finished))
+
+    // A toggle sticks for that tier …
+    disclosure.toggle(id: parentID, tone: running.session.statusTone)
+    #expect(!disclosure.isExpanded(running))
+    disclosure.prune(keeping: [running])
+    #expect(!disclosure.isExpanded(running))
+
+    // … and is spent once the lifecycle moves on: back to the default.
+    #expect(!disclosure.isExpanded(finished))
+    disclosure.toggle(id: parentID, tone: finished.session.statusTone)
+    #expect(disclosure.isExpanded(finished))
+    disclosure.prune(keeping: [running])
+    #expect(disclosure.isExpanded(running))
+    #expect(!disclosure.isExpanded(finished))
+}
+
+@Test func nookListItemsFoldChildrenIntoTheirParentRow() {
     let rows = AgentStatusNookSnapshot.make(
         summaries: [
             nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30),

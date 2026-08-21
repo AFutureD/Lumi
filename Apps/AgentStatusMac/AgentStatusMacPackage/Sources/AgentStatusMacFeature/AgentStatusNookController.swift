@@ -306,8 +306,10 @@ private extension Color {
     static let nookSecondaryButton = Color(DS.SurfaceDark.secondaryButton)
     static let nookAgentTag = Color(DS.SurfaceDark.agentTag)
     static let nookAgentTagText = Color(DS.InkDark.agentTagText)
+    static let nookPanel = Color(DS.SurfaceDark.panel)
     static let nookListCard = Color(DS.SurfaceDark.listCard)
     static let nookSubagentPill = Color(DS.SurfaceDark.subagentPill)
+    static let nookSubagentChevron = Color(DS.InkDark.subagentChevron)
     static let nookPillName = Color(DS.InkDark.pillName)
     static let nookPillTime = Color(DS.InkDark.pillTime)
     static let nookArchiveGlyph = Color(DS.InkDark.archiveGlyph)
@@ -451,9 +453,9 @@ private struct AgentStatusNookHomeView: View {
             let items = AgentStatusNookSnapshot.listItems(from: model.sessions)
             VStack(spacing: 0) {
                 // The viewport ends exactly after the sixth session (measured
-                // heights — running rows and cards are taller than flat rows);
-                // everything beyond scrolls. Plain VStack: every row lays out,
-                // so the first six always report a height.
+                // heights — running rows and subagent groups are taller than
+                // flat rows); everything beyond scrolls. Plain VStack: every
+                // row lays out, so the first six always report a height.
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
@@ -465,10 +467,12 @@ private struct AgentStatusNookHomeView: View {
                                         onArchive: { model.archive(item.session.id) }
                                     )
                                 } else {
-                                    AgentStatusNookSessionCard(
+                                    AgentStatusNookSubagentGroupRow(
                                         item: item,
+                                        expanded: model.subagentDisclosure.isExpanded(item),
                                         onOpen: { model.showDetail($0) },
-                                        onArchive: { model.archive(item.session.id) }
+                                        onArchive: { model.archive(item.session.id) },
+                                        onToggle: { model.toggleSubagents(of: item) }
                                     )
                                 }
                             }
@@ -549,8 +553,8 @@ private struct AgentStatusNookStatusDot: View {
 /// latest activity (category tag + summary) spanning the full content width.
 private struct AgentStatusNookSessionRow: View {
     let session: AgentStatusNookSession
-    /// The card provides the insets and a wider line gap.
-    var insideCard = false
+    /// The subagent group row provides the outer insets itself.
+    var bare = false
     let onOpen: () -> Void
     let onArchive: () -> Void
     @State private var hovering = false
@@ -563,10 +567,7 @@ private struct AgentStatusNookSessionRow: View {
 
     var body: some View {
         Button(action: onOpen) {
-            VStack(
-                alignment: .leading,
-                spacing: insideCard ? NotchMetric.cardRowLineGap : NotchMetric.rowLineGap
-            ) {
+            VStack(alignment: .leading, spacing: NotchMetric.rowLineGap) {
                 HStack(spacing: NotchMetric.rowColumnGap) {
                     AgentStatusNookStatusDot(tone: session.statusTone)
 
@@ -617,7 +618,7 @@ private struct AgentStatusNookSessionRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(insideCard ? EdgeInsets() : EdgeInsets(
+            .padding(bare ? EdgeInsets() : EdgeInsets(
                 top: NotchMetric.rowTop, leading: NotchMetric.listSideInset,
                 bottom: NotchMetric.rowBottom, trailing: NotchMetric.listSideInset
             ))
@@ -655,40 +656,126 @@ private struct AgentStatusNookActivityLine: View {
     }
 }
 
-/// A running session with subagents: the row plus its children as pills on
-/// a `.07` card (r10, margin `2 6 3`, padding `6 8 7`). The 6pt margin and
-/// 8pt padding keep the status dot at x = 14, aligned with the flat rows.
-private struct AgentStatusNookSessionCard: View {
+/// A session with subagents (Screen 2 / 2b): the row, then a 22pt count
+/// strip — stacked status dots, `3 subagents · 2 running · 1 done`, a
+/// chevron — that toggles the pill group under it. Padding `4 14 5`, 5pt
+/// gaps; strip and pills are indented 17 so they start under the title text.
+/// Running rows open by default, every other tier starts collapsed, and a
+/// user's toggle sticks until the tier changes (`AgentStatusNookSubagentDisclosure`).
+/// While hovered the row wears the `.07` r10 card inset `2 6 3`, painted
+/// behind the flat geometry so nothing shifts.
+private struct AgentStatusNookSubagentGroupRow: View {
     let item: AgentStatusNookListItem
+    let expanded: Bool
     let onOpen: (SessionID) -> Void
     let onArchive: () -> Void
+    let onToggle: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NotchMetric.cardInnerGap) {
+        VStack(alignment: .leading, spacing: NotchMetric.subagentRowGap) {
             AgentStatusNookSessionRow(
                 session: item.session,
-                insideCard: true,
+                bare: true,
                 onOpen: { onOpen(item.session.id) },
                 onArchive: onArchive
             )
-            AgentStatusNookPillFlow(spacing: NotchMetric.pillFlowGap) {
-                ForEach(item.children) { child in
-                    AgentStatusNookSubagentPill(session: child, onOpen: { onOpen(child.id) })
+            AgentStatusNookSubagentStrip(
+                tones: item.subagentTones,
+                label: item.subagentSummary,
+                expanded: expanded,
+                onToggle: onToggle
+            )
+            .padding(.leading, NotchMetric.subagentIndent)
+            if expanded {
+                AgentStatusNookPillFlow(spacing: NotchMetric.pillFlowGap) {
+                    ForEach(item.children) { child in
+                        AgentStatusNookSubagentPill(session: child, onOpen: { onOpen(child.id) })
+                    }
                 }
+                .padding(.leading, NotchMetric.subagentIndent)
             }
-            // 17 from the dot column lines the pills up with the title text.
-            .padding(.leading, NotchMetric.pillIndent)
         }
         .padding(EdgeInsets(
-            top: NotchMetric.cardPaddingTop, leading: NotchMetric.cardPaddingHorizontal,
-            bottom: NotchMetric.cardPaddingBottom, trailing: NotchMetric.cardPaddingHorizontal
+            top: NotchMetric.subagentRowTop, leading: NotchMetric.listSideInset,
+            bottom: NotchMetric.subagentRowBottom, trailing: NotchMetric.listSideInset
         ))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.nookListCard, in: RoundedRectangle(cornerRadius: DS.Radius.notchCard, style: .continuous))
-        .padding(EdgeInsets(
-            top: NotchMetric.cardMarginTop, leading: NotchMetric.cardMarginHorizontal,
-            bottom: NotchMetric.cardMarginBottom, trailing: NotchMetric.cardMarginHorizontal
-        ))
+        .background {
+            if hovering {
+                RoundedRectangle(cornerRadius: DS.Radius.notchCard, style: .continuous)
+                    .fill(Color.nookListCard)
+                    .padding(EdgeInsets(
+                        top: NotchMetric.cardMarginTop, leading: NotchMetric.cardMarginHorizontal,
+                        bottom: NotchMetric.cardMarginBottom, trailing: NotchMetric.cardMarginHorizontal
+                    ))
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+}
+
+/// The count strip: 22 tall, gap 8 — the group's dots stacked (9px, 1.5px
+/// panel-colour ring, overlapping by 3, running → waiting → failed → done),
+/// the 11 `.58` summary (one line, ellipsis), and a 10 × 6 chevron at the
+/// right edge that turns 180° over .18s while the group is open. The whole
+/// strip is the hit target; only the chevron animates.
+private struct AgentStatusNookSubagentStrip: View {
+    let tones: [SessionStatusTone]
+    let label: String
+    let expanded: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: NotchMetric.subagentStripGap) {
+                AgentStatusNookStackedDots(tones: tones)
+                Text(label)
+                    .designText(NotchType.caption)
+                    .foregroundStyle(Color.nookSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: NotchMetric.subagentChevronSymbolSize, weight: .bold))
+                    .foregroundStyle(Color.nookSubagentChevron)
+                    .frame(width: NotchMetric.subagentChevronWidth, height: NotchMetric.subagentChevronHeight)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+                    .animation(.easeInOut(duration: NotchMetric.subagentChevronAnimation), value: expanded)
+            }
+            .frame(height: NotchMetric.subagentStripHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityHint(expanded ? "Collapse subagents" : "Expand subagents")
+    }
+}
+
+/// One 9px dot per subagent in that subagent's tier colour, each wearing a
+/// 1.5px ring in the panel colour so the stack reads as separate dots;
+/// from the second on they overlap the previous by 3 (later dots on top).
+private struct AgentStatusNookStackedDots: View {
+    let tones: [SessionStatusTone]
+
+    var body: some View {
+        let dot = NotchMetric.subagentStripDot
+        let step = dot - NotchMetric.subagentStripDotOverlap
+        ZStack(alignment: .leading) {
+            ForEach(Array(tones.enumerated()), id: \.offset) { index, tone in
+                Circle()
+                    .fill(tone.nookColor)
+                    .frame(width: dot, height: dot)
+                    .background(Circle().fill(Color.nookPanel).padding(-NotchMetric.subagentStripDotRing))
+                    .offset(x: Double(index) * step)
+            }
+        }
+        .frame(
+            width: tones.isEmpty ? 0 : dot + Double(tones.count - 1) * step,
+            height: dot,
+            alignment: .leading
+        )
+        .accessibilityHidden(true)
     }
 }
 
