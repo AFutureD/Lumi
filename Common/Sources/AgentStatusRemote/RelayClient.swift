@@ -135,9 +135,26 @@ public enum RelayConnectionRole: Sendable {
     case device(DeviceID)
 }
 
+/// A control message from the Relay worker itself (never sealed): the host
+/// reused a channel sequence, or a frame failed validation.
+public struct RelayErrorMessage: Codable, Hashable, Sendable {
+    public let code: String
+    public let sequence: UInt64?
+    public let lastSequence: UInt64?
+    public let deviceID: DeviceID?
+
+    public init(code: String, sequence: UInt64? = nil, lastSequence: UInt64? = nil, deviceID: DeviceID? = nil) {
+        self.code = code
+        self.sequence = sequence
+        self.lastSequence = lastSequence
+        self.deviceID = deviceID
+    }
+}
+
 public enum RelayIncomingMessage: Sendable {
     case frame(RelayRoutingFrame)
     case presence(online: Bool)
+    case error(RelayErrorMessage)
 }
 
 public actor RelayWebSocketClient {
@@ -190,8 +207,20 @@ public actor RelayWebSocketClient {
         case let .data(value): data = value
         @unknown default: throw RelayClientError.unsupportedMessage
         }
-        if let presence = try? JSONDecoder().decode(PresenceMessage.self, from: data), presence.type == "presence" {
-            return .presence(online: presence.online)
+        if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
+            switch control.type {
+            case "presence":
+                if let online = control.online { return .presence(online: online) }
+            case "error":
+                return .error(RelayErrorMessage(
+                    code: control.code ?? "unknown",
+                    sequence: control.sequence,
+                    lastSequence: control.lastSequence,
+                    deviceID: control.deviceID.map(DeviceID.init(rawValue:))
+                ))
+            default:
+                break
+            }
         }
         return .frame(try TransportCoding.makeDecoder().decode(RelayRoutingFrame.self, from: data))
     }
@@ -205,4 +234,13 @@ public actor RelayWebSocketClient {
 private struct EmptyResponse: Codable {}
 private struct PairingOfferResponse: Codable { let hostID: HostID; let expiresAt: Date }
 private struct DeviceListResponse: Codable { let devices: [RelayDeviceRecord] }
-private struct PresenceMessage: Decodable { let type: String; let online: Bool }
+/// `{type:"presence",online}` and `{type:"error",code,sequence,lastSequence,deviceID}`;
+/// routing frames have no `type` key so they never decode as one.
+private struct ControlMessage: Decodable {
+    let type: String
+    let online: Bool?
+    let code: String?
+    let sequence: UInt64?
+    let lastSequence: UInt64?
+    let deviceID: String?
+}

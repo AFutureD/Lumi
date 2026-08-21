@@ -1,19 +1,21 @@
 import Foundation
 
+/// What a routing frame carries. The Relay reads only this and the routing
+/// header; the body is sealed per Mac ↔ iPhone channel.
+/// - `data`: host → device, a sealed `RemoteSessionPayload`.
+/// - `request`: device → host, a sealed `RemoteSessionPayload` asking for
+///   something (`syncIndex`, `fetchSession`, …) or reporting `sessionReviewed`.
+/// - `error`: reserved.
 public enum RelayFrameKind: Hashable, Sendable {
-    case hello
     case data
-    case acknowledgement
-    case attention
+    case request
     case error
     case unknown(String)
 
     public var rawValue: String {
         switch self {
-        case .hello: "hello"
         case .data: "data"
-        case .acknowledgement: "ack"
-        case .attention: "attention"
+        case .request: "request"
         case .error: "error"
         case let .unknown(value): value
         }
@@ -24,10 +26,8 @@ extension RelayFrameKind: Codable {
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         self = switch value {
-        case "hello": .hello
         case "data": .data
-        case "ack": .acknowledgement
-        case "attention": .attention
+        case "request": .request
         case "error": .error
         default: .unknown(value)
         }
@@ -39,6 +39,9 @@ extension RelayFrameKind: Codable {
     }
 }
 
+/// The routing envelope the Relay understands. Host → device sequences are
+/// strictly increasing per device channel (the Relay drops reuse); device →
+/// host sequences are connection-local and only diagnostic.
 public struct RelayRoutingFrame: Codable, Hashable, Sendable {
     public let version: ProtocolVersion
     public let hostID: HostID
@@ -47,7 +50,6 @@ public struct RelayRoutingFrame: Codable, Hashable, Sendable {
     public let kind: RelayFrameKind
     public let nonce: Data?
     public let ciphertext: Data?
-    public let acknowledgedSequence: UInt64?
 
     public init(
         version: ProtocolVersion = .current,
@@ -56,8 +58,7 @@ public struct RelayRoutingFrame: Codable, Hashable, Sendable {
         sequence: UInt64,
         kind: RelayFrameKind,
         nonce: Data? = nil,
-        ciphertext: Data? = nil,
-        acknowledgedSequence: UInt64? = nil
+        ciphertext: Data? = nil
     ) {
         self.version = version
         self.hostID = hostID
@@ -66,7 +67,6 @@ public struct RelayRoutingFrame: Codable, Hashable, Sendable {
         self.kind = kind
         self.nonce = nonce
         self.ciphertext = ciphertext
-        self.acknowledgedSequence = acknowledgedSequence
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -77,7 +77,6 @@ public struct RelayRoutingFrame: Codable, Hashable, Sendable {
         case kind
         case nonce
         case ciphertext
-        case acknowledgedSequence
     }
 }
 
@@ -197,33 +196,95 @@ public struct DeviceRevocation: Codable, Hashable, Sendable {
     }
 }
 
-public struct SyncCursor: Codable, Hashable, Sendable {
-    public let lastAcknowledgedSequence: UInt64
+/// The daemon's view of its Relay host connection, served to the Mac app over
+/// IPC (`relay_status`). Data only — the app renders it.
+public struct RelayHostStatus: Codable, Hashable, Sendable {
+    public let connected: Bool
+    public let hostID: HostID?
+    public let relayURL: URL?
+    public let lastError: String?
+    public let devices: [PairedDevice]
+    public let updatedAt: Date
 
-    public init(lastAcknowledgedSequence: UInt64) {
-        self.lastAcknowledgedSequence = lastAcknowledgedSequence
+    public init(
+        connected: Bool,
+        hostID: HostID? = nil,
+        relayURL: URL? = nil,
+        lastError: String? = nil,
+        devices: [PairedDevice] = [],
+        updatedAt: Date = Date()
+    ) {
+        self.connected = connected
+        self.hostID = hostID
+        self.relayURL = relayURL
+        self.lastError = lastError
+        self.devices = devices
+        self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case lastAcknowledgedSequence
+        case connected
+        case hostID
+        case relayURL
+        case lastError
+        case devices
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        connected = try c.decode(Bool.self, forKey: .connected)
+        hostID = try c.decodeIfPresent(HostID.self, forKey: .hostID)
+        relayURL = try c.decodeIfPresent(URL.self, forKey: .relayURL)
+        lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
+        devices = try c.decodeIfPresent([PairedDevice].self, forKey: .devices) ?? []
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 }
 
+/// What a sealed payload is. Requests travel device → host in `request`
+/// frames; everything else travels host → device in `data` frames.
 public enum RemotePayloadKind: Hashable, Sendable {
-    case index
-    case session
-    case unavailable
-    /// Device → host (an `attention` frame): the human looked at the
-    /// sessions in `sessionIDs` on the iPhone; clear their review flag.
+    // MARK: device → host
+    /// Send me the session index.
+    case syncIndex
+    /// Send me these sessions in full (`sessionIDs`).
+    case fetchSession
+    /// Send me this session's timeline from `since` on (`sessionIDs[0]`, `since`).
+    case fetchTimelineSince
+    /// The human looked at the sessions in `sessionIDs` on the iPhone.
     case sessionReviewed
+
+    // MARK: host → device
+    /// One part of the index (`index`, `part`, `partCount`, `requestID`).
+    case sessionIndex
+    /// Summaries that changed without a timeline event (`summaries`).
+    case sessionInfo
+    /// One part of one whole session (`session`, `part`, `requestID`).
+    case sessionFull
+    /// One part of a session's timeline tail (`session`, `part`, `requestID`).
+    case sessionTimeline
+    /// Live events as the daemon applied them (`events`).
+    case sessionMessage
+    /// Sessions the daemon no longer retains (`sessionIDs`, `requestID?`).
+    case sessionRemoved
+    /// The daemon's health (`health`).
+    case health
     case unknown(String)
 
     public var rawValue: String {
         switch self {
-        case .index: "index"
-        case .session: "session"
-        case .unavailable: "unavailable"
+        case .syncIndex: "sync_index"
+        case .fetchSession: "fetch_session"
+        case .fetchTimelineSince: "fetch_timeline_since"
         case .sessionReviewed: "session_reviewed"
+        case .sessionIndex: "session_index"
+        case .sessionInfo: "session_info"
+        case .sessionFull: "session_full"
+        case .sessionTimeline: "session_timeline"
+        case .sessionMessage: "session_message"
+        case .sessionRemoved: "session_removed"
+        case .health: "health"
         case let .unknown(value): value
         }
     }
@@ -233,10 +294,17 @@ extension RemotePayloadKind: Codable {
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         self = switch value {
-        case "index": .index
-        case "session": .session
-        case "unavailable": .unavailable
+        case "sync_index": .syncIndex
+        case "fetch_session": .fetchSession
+        case "fetch_timeline_since": .fetchTimelineSince
         case "session_reviewed": .sessionReviewed
+        case "session_index": .sessionIndex
+        case "session_info": .sessionInfo
+        case "session_full": .sessionFull
+        case "session_timeline": .sessionTimeline
+        case "session_message": .sessionMessage
+        case "session_removed": .sessionRemoved
+        case "health": .health
         default: .unknown(value)
         }
     }
@@ -247,47 +315,111 @@ extension RemotePayloadKind: Codable {
     }
 }
 
-/// The encrypted application payload sent through Relay. Relay only sees the
-/// routing frame. Full state travels one session at a time:
-/// - `.session` carries one part of one session; `session.nextCursor != nil`
-///   means more parts follow, `part` counts from 0 and part 0 restarts a
-///   transfer (later parts carry empty `turns`).
-/// - `.index` closes a publish batch: the authoritative visible id set the
-///   device prunes its cache to.
-/// - `.unavailable` reports the Mac daemon being down.
-/// - `.sessionReviewed` travels the other way (device → host, `attention`
-///   frame): the iPhone opened the sessions in `sessionIDs`.
+/// One row of the session index: the data-layer summary plus the two raw
+/// timeline facts a mirror needs to decide whether its copy is current.
+public struct SessionIndexEntry: Codable, Hashable, Sendable {
+    public let summary: SessionSummary
+    /// `COUNT(*)` of the session's timeline rows.
+    public let timelineItemCount: Int
+    /// `MAX(occurred_at)` of the session's timeline rows; `nil` when empty.
+    public let lastItemAt: Date?
+
+    public init(summary: SessionSummary, timelineItemCount: Int, lastItemAt: Date?) {
+        self.summary = summary
+        self.timelineItemCount = timelineItemCount
+        self.lastItemAt = lastItemAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary
+        case timelineItemCount
+        case lastItemAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try c.decode(SessionSummary.self, forKey: .summary)
+        timelineItemCount = try c.decode(Int.self, forKey: .timelineItemCount)
+        lastItemAt = try c.decodeIfPresent(Date.self, forKey: .lastItemAt)
+    }
+}
+
+/// The sealed application payload. Only `kind` and `generatedAt` are always
+/// present; the rest is per kind (see `RemotePayloadKind`). Multi-part
+/// payloads (`sessionIndex`, `sessionFull`, `sessionTimeline`) count `part`
+/// from 0; the index says `partCount`, sessions say `session.nextCursor`
+/// (`nil` on the last part). Responses echo the request's `requestID`.
 public struct RemoteSessionPayload: Codable, Hashable, Sendable {
     public let kind: RemotePayloadKind
     public let generatedAt: Date
+    public let requestID: RequestID?
     public let sessionIDs: [SessionID]?
-    public let session: SessionDetail?
+    public let since: Date?
+    public let index: [SessionIndexEntry]?
     public let part: Int?
-    public let message: String?
+    public let partCount: Int?
+    public let summaries: [SessionSummary]?
+    public let session: SessionDetail?
+    public let events: [AgentIngressEvent]?
+    public let health: DaemonHealth?
 
     public init(
         kind: RemotePayloadKind,
         generatedAt: Date = Date(),
+        requestID: RequestID? = nil,
         sessionIDs: [SessionID]? = nil,
-        session: SessionDetail? = nil,
+        since: Date? = nil,
+        index: [SessionIndexEntry]? = nil,
         part: Int? = nil,
-        message: String? = nil
+        partCount: Int? = nil,
+        summaries: [SessionSummary]? = nil,
+        session: SessionDetail? = nil,
+        events: [AgentIngressEvent]? = nil,
+        health: DaemonHealth? = nil
     ) {
         self.kind = kind
         self.generatedAt = generatedAt
+        self.requestID = requestID
         self.sessionIDs = sessionIDs
-        self.session = session
+        self.since = since
+        self.index = index
         self.part = part
-        self.message = message
+        self.partCount = partCount
+        self.summaries = summaries
+        self.session = session
+        self.events = events
+        self.health = health
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind
         case generatedAt
+        case requestID
         case sessionIDs
-        case session
+        case since
+        case index
         case part
-        case message
+        case partCount
+        case summaries
+        case session
+        case events
+        case health
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(RemotePayloadKind.self, forKey: .kind)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        requestID = try c.decodeIfPresent(RequestID.self, forKey: .requestID)
+        sessionIDs = try c.decodeIfPresent([SessionID].self, forKey: .sessionIDs)
+        since = try c.decodeIfPresent(Date.self, forKey: .since)
+        index = try c.decodeIfPresent([SessionIndexEntry].self, forKey: .index)
+        part = try c.decodeIfPresent(Int.self, forKey: .part)
+        partCount = try c.decodeIfPresent(Int.self, forKey: .partCount)
+        summaries = try c.decodeIfPresent([SessionSummary].self, forKey: .summaries)
+        session = try c.decodeIfPresent(SessionDetail.self, forKey: .session)
+        events = try c.decodeIfPresent([AgentIngressEvent].self, forKey: .events)
+        health = try c.decodeIfPresent(DaemonHealth.self, forKey: .health)
     }
 }
 

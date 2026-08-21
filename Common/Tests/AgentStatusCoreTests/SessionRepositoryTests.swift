@@ -334,7 +334,7 @@ import Testing
         )))
     }
 
-    #expect(try await repository.deleteSession(id: deletedID))
+    #expect(try await repository.deleteSession(id: deletedID) == [deletedID])
     #expect(try await repository.listSessions(limit: 100).map(\.id) == [keptID])
     #expect(try await !repository.apply(AgentIngressEvent(
         eventID: EventID("late-deleted-event"),
@@ -351,7 +351,7 @@ import Testing
     let repository = InMemorySessionRepository()
     try await seedLineageFixture(repository)
 
-    #expect(try await repository.deleteSession(id: SessionID("parent")))
+    #expect(try await !repository.deleteSession(id: SessionID("parent")).isEmpty)
 
     let remaining = try await repository.listSessions(limit: 100).map(\.id)
     #expect(remaining == [SessionID("unrelated")])
@@ -375,7 +375,7 @@ import Testing
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
     try await seedLineageFixture(repository)
 
-    #expect(try await repository.deleteSession(id: SessionID("parent")))
+    #expect(try await !repository.deleteSession(id: SessionID("parent")).isEmpty)
 
     let remaining = try await repository.listSessions(limit: 100).map(\.id)
     #expect(remaining == [SessionID("unrelated")])

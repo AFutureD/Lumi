@@ -127,6 +127,10 @@ public enum IPCOperation: Hashable, Sendable {
     case getRolloutCursor
     case saveRolloutCursor
     case reingestSession
+    case relayStatus
+    case relayCreatePairingOffer
+    case relayRevokeDevice
+    case relayRefreshDevices
     case unknown(String)
 
     public var rawValue: String {
@@ -144,6 +148,10 @@ public enum IPCOperation: Hashable, Sendable {
         case .getRolloutCursor: "get_rollout_cursor"
         case .saveRolloutCursor: "save_rollout_cursor"
         case .reingestSession: "reingest_session"
+        case .relayStatus: "relay_status"
+        case .relayCreatePairingOffer: "relay_create_pairing_offer"
+        case .relayRevokeDevice: "relay_revoke_device"
+        case .relayRefreshDevices: "relay_refresh_devices"
         case let .unknown(value): value
         }
     }
@@ -166,6 +174,10 @@ extension IPCOperation: Codable {
         case "get_rollout_cursor": .getRolloutCursor
         case "save_rollout_cursor": .saveRolloutCursor
         case "reingest_session": .reingestSession
+        case "relay_status": .relayStatus
+        case "relay_create_pairing_offer": .relayCreatePairingOffer
+        case "relay_revoke_device": .relayRevokeDevice
+        case "relay_refresh_devices": .relayRefreshDevices
         default: .unknown(value)
         }
     }
@@ -185,6 +197,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     public let limit: Int?
     public let path: String?
     public let rolloutCursor: RolloutCursor?
+    /// `relay_revoke_device`: the paired iPhone to revoke.
+    public let deviceID: DeviceID?
 
     public init(
         operation: IPCOperation,
@@ -194,7 +208,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         cursor: PaginationCursor? = nil,
         limit: Int? = nil,
         path: String? = nil,
-        rolloutCursor: RolloutCursor? = nil
+        rolloutCursor: RolloutCursor? = nil,
+        deviceID: DeviceID? = nil
     ) {
         self.operation = operation
         self.event = event
@@ -204,6 +219,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.limit = limit
         self.path = path
         self.rolloutCursor = rolloutCursor
+        self.deviceID = deviceID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -215,6 +231,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case limit
         case path
         case rolloutCursor
+        case deviceID
     }
 
     public init(from decoder: Decoder) throws {
@@ -227,6 +244,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         limit = try c.decodeIfPresent(Int.self, forKey: .limit)
         path = try c.decodeIfPresent(String.self, forKey: .path)
         rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
+        deviceID = try c.decodeIfPresent(DeviceID.self, forKey: .deviceID)
     }
 }
 
@@ -305,6 +323,10 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let acceptedCount: Int?
     public let rolloutCursor: RolloutCursor?
     public let failure: IPCFailure?
+    /// `relay_status` / `relay_refresh_devices` / `relay_revoke_device`.
+    public let relay: RelayHostStatus?
+    /// `relay_create_pairing_offer`.
+    public let pairingOffer: PairingOffer?
 
     public init(
         status: IPCResponseStatus,
@@ -314,7 +336,9 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         event: AgentIngressEvent? = nil,
         acceptedCount: Int? = nil,
         rolloutCursor: RolloutCursor? = nil,
-        failure: IPCFailure? = nil
+        failure: IPCFailure? = nil,
+        relay: RelayHostStatus? = nil,
+        pairingOffer: PairingOffer? = nil
     ) {
         self.status = status
         self.sessions = sessions
@@ -324,6 +348,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.acceptedCount = acceptedCount
         self.rolloutCursor = rolloutCursor
         self.failure = failure
+        self.relay = relay
+        self.pairingOffer = pairingOffer
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -335,6 +361,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case acceptedCount
         case rolloutCursor
         case failure
+        case relay
+        case pairingOffer
     }
 
     public init(from decoder: Decoder) throws {
@@ -347,5 +375,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         acceptedCount = try c.decodeIfPresent(Int.self, forKey: .acceptedCount)
         rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
         failure = try c.decodeIfPresent(IPCFailure.self, forKey: .failure)
+        relay = try c.decodeIfPresent(RelayHostStatus.self, forKey: .relay)
+        pairingOffer = try c.decodeIfPresent(PairingOffer.self, forKey: .pairingOffer)
     }
 }

@@ -314,8 +314,16 @@ export class HostRelay extends DurableObject<Env> {
     const channelKey = `last_host_sequence:${frame.deviceID ?? "broadcast"}`;
     const lastSequence = Number(this.metadata(channelKey) ?? "-1");
     if (frame.sequence <= lastSequence) {
+      // Tell the host where the channel actually is so it can move its own
+      // cursor past the reused value instead of looping on the error.
       for (const host of this.hostSockets()) {
-        host.send(JSON.stringify({ type: "error", code: "non_monotonic_sequence", sequence: frame.sequence }));
+        host.send(JSON.stringify({
+          type: "error",
+          code: "non_monotonic_sequence",
+          sequence: frame.sequence,
+          lastSequence,
+          ...(frame.deviceID === undefined ? {} : { deviceID: frame.deviceID }),
+        }));
       }
       return;
     }
@@ -333,16 +341,13 @@ export class HostRelay extends DurableObject<Env> {
     raw: string,
     socket: WebSocket,
   ): void {
-    const allowed = frame.kind === "ack" || frame.kind === "hello" || frame.kind === "attention";
-    if (frame.deviceID !== attachment.deviceID || !allowed) {
+    if (frame.deviceID !== attachment.deviceID || frame.kind !== "request") {
       socket.close(1008, "device is read-only");
       return;
     }
-    // The relay keeps no replay buffer: hello, ack and attention frames are
-    // forwarded to the Mac verbatim. A hello behind the channel sequence
-    // makes the Mac resend every session followed by a fresh index; an
-    // attention frame is a sealed device command (e.g. "session reviewed")
-    // the relay cannot read.
+    // The relay keeps no replay buffer and cannot read the body: a device's
+    // sealed `request` (sync index, fetch session, session reviewed, …) is
+    // forwarded to the host verbatim and answered by the host in `data` frames.
     for (const host of this.hostSockets()) host.send(raw);
   }
 

@@ -423,13 +423,9 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
-    public func deleteSession(id: SessionID) async throws -> Bool {
+    @discardableResult
+    public func deleteSession(id: SessionID) async throws -> [SessionID] {
         try await database.write { db in
-            let existed = try Bool.fetchOne(
-                db,
-                sql: "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)",
-                arguments: [id.rawValue]
-            ) ?? false
             // The lineage subtree goes with the root: subagents can spawn
             // subagents, so walk `$.lineage.parentSessionID` transitively.
             let doomed = try String.fetchAll(
@@ -446,10 +442,150 @@ public actor SQLiteSessionRepository: SessionRepository {
                     """,
                 arguments: [id.rawValue]
             )
+            var existed: [SessionID] = []
             for member in doomed {
+                let present = try Bool.fetchOne(
+                    db,
+                    sql: "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)",
+                    arguments: [member]
+                ) ?? false
+                if present { existed.append(SessionID(member)) }
                 try Self.tombstone(db, SessionID(member))
             }
             return existed
+        }
+    }
+
+    public func sessionIndex(limit: Int) async throws -> [SessionIndexEntry] {
+        let decoder = decoder
+        return try await database.read { db in
+            // Both subqueries are answered from `timeline_session_time`
+            // (session_id, occurred_at, id): MAX is one index seek, COUNT an
+            // index-only range scan — no item BLOB is decoded.
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT s.summary AS summary,
+                           (SELECT COUNT(*) FROM timeline t WHERE t.session_id = s.id) AS item_count,
+                           (SELECT MAX(occurred_at) FROM timeline t WHERE t.session_id = s.id) AS last_item_at
+                    FROM sessions s
+                    ORDER BY s.last_activity_at DESC
+                    LIMIT ?
+                    """,
+                arguments: [max(0, min(limit, 10_000))]
+            )
+            return try rows.map { row in
+                let data: Data = row["summary"]
+                let count: Int = row["item_count"]
+                let lastItemAt: Double? = row["last_item_at"]
+                return SessionIndexEntry(
+                    summary: try decoder.decode(SessionSummary.self, from: data),
+                    timelineItemCount: count,
+                    lastItemAt: lastItemAt.map { Date(timeIntervalSince1970: $0) }
+                )
+            }
+        }
+    }
+
+    public func updateSummary(_ summary: SessionSummary) async throws {
+        let encoder = encoder
+        try await database.write { db in
+            try db.execute(
+                sql: "UPDATE sessions SET summary = ?, updated_at = ?, last_activity_at = ? WHERE id = ?",
+                arguments: [
+                    try encoder.encode(summary),
+                    summary.updatedAt.timeIntervalSince1970,
+                    summary.lastActivityAt.timeIntervalSince1970,
+                    summary.id.rawValue,
+                ]
+            )
+        }
+    }
+
+    public func mergeSession(_ detail: SessionDetail) async throws {
+        let encoder = encoder
+        try await database.write { db in
+            let summary = detail.summary
+            try db.execute(
+                sql: "DELETE FROM ignored_sessions WHERE id = ?",
+                arguments: [summary.id.rawValue]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO sessions(id, summary, updated_at, last_activity_at)
+                    VALUES(?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        summary = excluded.summary,
+                        updated_at = excluded.updated_at,
+                        last_activity_at = excluded.last_activity_at
+                    """,
+                arguments: [
+                    summary.id.rawValue,
+                    try encoder.encode(summary),
+                    summary.updatedAt.timeIntervalSince1970,
+                    summary.lastActivityAt.timeIntervalSince1970,
+                ]
+            )
+            for turn in detail.turns {
+                try Self.upsertTurn(db, turn, encoder: encoder)
+            }
+            for item in detail.timeline {
+                try db.execute(
+                    sql: """
+                        INSERT INTO timeline(id, session_id, occurred_at, item)
+                        VALUES(?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            session_id = excluded.session_id,
+                            occurred_at = excluded.occurred_at,
+                            item = excluded.item
+                        WHERE excluded.occurred_at >= timeline.occurred_at
+                        """,
+                    arguments: [
+                        item.id.rawValue,
+                        summary.id.rawValue,
+                        item.occurredAt.timeIntervalSince1970,
+                        try encoder.encode(item),
+                    ]
+                )
+            }
+        }
+    }
+
+    public func timelineSince(
+        id: SessionID,
+        since: Date,
+        cursor: PaginationCursor?,
+        limit: Int
+    ) async throws -> SessionDetail? {
+        let decoder = decoder
+        return try await database.read { db in
+            guard let summaryData = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [id.rawValue]
+            ) else { return nil }
+            let summary = try decoder.decode(SessionSummary.self, from: summaryData)
+            let offset = max(0, Int(cursor?.value ?? "0") ?? 0)
+            let pageSize = max(1, min(limit, 500))
+            let data = try Data.fetchAll(
+                db,
+                sql: """
+                    SELECT item FROM timeline
+                    WHERE session_id = ? AND occurred_at >= ?
+                    ORDER BY occurred_at ASC, id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                arguments: [id.rawValue, since.timeIntervalSince1970, pageSize + 1, offset]
+            )
+            let items = try data.map { try decoder.decode(TimelineItem.self, from: $0) }
+            return SessionDetail(
+                summary: summary,
+                turns: try Self.fetchTurns(db, sessionID: id, decoder: decoder),
+                timeline: Array(items.prefix(pageSize)),
+                nextCursor: items.count > pageSize
+                    ? PaginationCursor(value: String(offset + pageSize))
+                    : nil
+            )
         }
     }
 

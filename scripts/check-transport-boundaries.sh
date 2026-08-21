@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 transport_root="${repo_root}/Common/AgentStatusTransport"
-declarations='^[[:space:]]*(public[[:space:]]+)?(struct|enum|class)[[:space:]]+(ProtocolVersion|TransportEnvelope|RequestID|DeviceID|HostID|SessionID|SessionSummary|SessionDetail|SessionLifecycle|TurnPhase|TimelineItem|RelayRoutingFrame|PairingOffer|PairingRequest|PairedDevice|SyncCursor)([[:space:]:<{]|$)'
+declarations='^[[:space:]]*(public[[:space:]]+)?(struct|enum|class)[[:space:]]+(ProtocolVersion|TransportEnvelope|RequestID|DeviceID|HostID|SessionID|SessionSummary|SessionDetail|SessionLifecycle|TurnPhase|TimelineItem|RelayRoutingFrame|PairingOffer|PairingRequest|PairedDevice|RemoteSessionPayload|SessionIndexEntry|RelayHostStatus)([[:space:]:<{]|$)'
 
 duplicates="$(rg -n --glob '*.swift' "${declarations}" "${repo_root}" --glob '!Common/AgentStatusTransport/**' || true)"
 if [[ -n "${duplicates}" ]]; then

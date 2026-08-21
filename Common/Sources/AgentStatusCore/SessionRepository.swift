@@ -18,10 +18,26 @@ public protocol SessionRepository: Sendable {
     func pruneSessions(keeping ids: Set<SessionID>) async throws -> Int
     /// Deletes the session and, transitively, every session whose lineage
     /// names it as parent — a subagent session is part of its parent's story
-    /// and must not outlive it. Each member is tombstoned. Returns whether
-    /// the root session existed.
-    func deleteSession(id: SessionID) async throws -> Bool
+    /// and must not outlive it. Each member is tombstoned. Returns the ids
+    /// that actually existed (empty when nothing was retained).
+    @discardableResult
+    func deleteSession(id: SessionID) async throws -> [SessionID]
     func deleteAllSessions() async throws -> Int
+    /// The authoritative index a mirror reconciles against: every session in
+    /// latest-activity order with its raw timeline facts (`COUNT`, `MAX(occurred_at)`).
+    func sessionIndex(limit: Int) async throws -> [SessionIndexEntry]
+    /// Writes only the summary of a retained session (no-op when the session
+    /// is not retained). For summary-only changes relayed as `session_info`.
+    func updateSummary(_ summary: SessionSummary) async throws
+    /// Folds a partial copy (summary, turns, a slice of the timeline) into the
+    /// retained session: upserts by id under the same `occurredAt` rule as
+    /// `apply`, never deletes rows, never touches processed events, clears
+    /// the tombstone. For `session_timeline` tails.
+    func mergeSession(_ detail: SessionDetail) async throws
+    /// The session's summary, every turn, and the timeline rows with
+    /// `occurredAt >= since`, paged like `sessionDetail` (`cursor` is the
+    /// offset inside the filtered rows).
+    func timelineSince(id: SessionID, since: Date, cursor: PaginationCursor?, limit: Int) async throws -> SessionDetail?
     func rolloutCursor(path: String) async throws -> RolloutCursor?
     /// Newest cursor recorded for the session, i.e. where its transcript /
     /// rollout lives.
@@ -354,8 +370,8 @@ public actor InMemorySessionRepository: SessionRepository {
         return count
     }
 
-    public func deleteSession(id: SessionID) async throws -> Bool {
-        let existed = sessions[id] != nil
+    @discardableResult
+    public func deleteSession(id: SessionID) async throws -> [SessionID] {
         var doomed: Set<SessionID> = [id]
         var frontier: Set<SessionID> = [id]
         while !frontier.isEmpty {
@@ -367,13 +383,76 @@ public actor InMemorySessionRepository: SessionRepository {
                 .map(\.id))
             doomed.formUnion(frontier)
         }
+        let existed = doomed.filter { sessions[$0] != nil }
         for member in doomed {
             ignoredSessionIDs.insert(member)
             sessions.removeValue(forKey: member)
             timeline.removeValue(forKey: member)
             turns.removeValue(forKey: member)
         }
-        return existed
+        return existed.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    public func sessionIndex(limit: Int) async throws -> [SessionIndexEntry] {
+        try await listSessions(limit: limit).map { summary in
+            let items = timeline[summary.id, default: []]
+            return SessionIndexEntry(
+                summary: summary,
+                timelineItemCount: items.count,
+                lastItemAt: items.map(\.occurredAt).max()
+            )
+        }
+    }
+
+    public func updateSummary(_ summary: SessionSummary) async throws {
+        guard sessions[summary.id] != nil else { return }
+        sessions[summary.id] = summary
+    }
+
+    public func mergeSession(_ detail: SessionDetail) async throws {
+        let id = detail.summary.id
+        ignoredSessionIDs.remove(id)
+        sessions[id] = detail.summary
+        var turnsByID = turns[id, default: [:]]
+        for turn in detail.turns { turnsByID[turn.id] = turn }
+        turns[id] = turnsByID
+        var items = timeline[id, default: []]
+        for item in detail.timeline {
+            if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
+                if item.occurredAt >= items[existingIndex].occurredAt {
+                    items[existingIndex] = item
+                }
+            } else {
+                items.append(item)
+            }
+        }
+        items.sort { lhs, rhs in
+            if lhs.occurredAt == rhs.occurredAt {
+                return lhs.id.rawValue < rhs.id.rawValue
+            }
+            return lhs.occurredAt < rhs.occurredAt
+        }
+        timeline[id] = items
+    }
+
+    public func timelineSince(
+        id: SessionID,
+        since: Date,
+        cursor: PaginationCursor?,
+        limit: Int
+    ) async throws -> SessionDetail? {
+        guard let summary = sessions[id] else { return nil }
+        let offset = max(0, Int(cursor?.value ?? "0") ?? 0)
+        let pageSize = max(1, min(limit, 500))
+        let items = timeline[id, default: []].filter { $0.occurredAt >= since }
+        let page = Array(items.dropFirst(offset).prefix(pageSize))
+        let nextOffset = offset + page.count
+        return SessionDetail(
+            summary: summary,
+            turns: sortedTurns(id),
+            timeline: page,
+            nextCursor: nextOffset < items.count ? PaginationCursor(value: String(nextOffset)) : nil
+        )
     }
 
     public func rolloutCursor(sessionID: SessionID) async throws -> RolloutCursor? {

@@ -1,7 +1,8 @@
 import AgentStatusTransport
 import Foundation
 
-/// Credentials and cursor for one paired Mac-to-iOS channel.
+/// Credentials for one paired Mac-to-iOS channel, as the iPhone keeps them.
+/// Sync state lives in the per-Mac session cache, not here.
 public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
     public let relayURL: URL
     public let hostID: HostID
@@ -12,7 +13,6 @@ public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
     public let hostPublicKey: Data
     /// When this iPhone paired with the Mac (`RelayPairingResult.pairedAt`).
     public let pairedAt: Date
-    public var lastAcknowledgedSequence: UInt64
 
     public init(
         relayURL: URL,
@@ -22,8 +22,7 @@ public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
         deviceToken: String,
         keyPair: RelayKeyPair,
         hostPublicKey: Data,
-        pairedAt: Date = Date(),
-        lastAcknowledgedSequence: UInt64 = 0
+        pairedAt: Date = Date()
     ) {
         self.relayURL = relayURL
         self.hostID = hostID
@@ -33,7 +32,6 @@ public struct RelayDeviceCredentials: Codable, Hashable, Sendable {
         self.keyPair = keyPair
         self.hostPublicKey = hostPublicKey
         self.pairedAt = pairedAt
-        self.lastAcknowledgedSequence = lastAcknowledgedSequence
     }
 
     public var displayName: String {
@@ -57,5 +55,21 @@ public struct RelayDeviceCredentialCollection: Codable, Hashable, Sendable {
 
     public mutating func remove(hostID: HostID) {
         channels.removeAll { $0.hostID == hostID }
+    }
+}
+
+/// The host side of a Relay registration, as the daemon keeps it in the
+/// Keychain. Per-device send sequences live in the daemon's state file.
+public struct RelayHostCredentials: Codable, Hashable, Sendable {
+    public let relayURL: URL
+    public let hostID: HostID
+    public let hostSecret: String
+    public let keyPair: RelayKeyPair
+
+    public init(relayURL: URL, hostID: HostID, hostSecret: String, keyPair: RelayKeyPair) {
+        self.relayURL = relayURL
+        self.hostID = hostID
+        self.hostSecret = hostSecret
+        self.keyPair = keyPair
     }
 }

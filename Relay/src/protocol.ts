@@ -10,7 +10,6 @@ export interface RelayRoutingFrame {
   kind: string;
   nonce?: string;
   ciphertext?: string;
-  acknowledgedSequence?: number;
 }
 
 export interface PairingOfferRequest {
@@ -44,9 +43,6 @@ export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
   const kind = requiredString(value.kind, "kind");
   const nonce = optionalString(value.nonce, "nonce");
   const ciphertext = optionalString(value.ciphertext, "ciphertext");
-  const acknowledgedSequence = value.acknowledgedSequence === undefined
-    ? undefined
-    : finiteInteger(value.acknowledgedSequence);
 
   if (major !== PROTOCOL_MAJOR) {
     throw new RequestValidationError(`Unsupported protocol major: ${major}.`);
@@ -55,10 +51,12 @@ export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
   if (deviceID !== undefined && !isValidIdentifier(deviceID)) {
     throw new RequestValidationError("Invalid deviceID.");
   }
-  if (sequence < 0 || acknowledgedSequence !== undefined && acknowledgedSequence < 0) {
+  if (sequence < 0) {
     throw new RequestValidationError("Sequence values must be non-negative.");
   }
-  if ((kind === "data" || kind === "attention") && (!nonce || !ciphertext)) {
+  // Both payload-bearing kinds are sealed end to end: `data` (host → device)
+  // and `request` (device → host).
+  if ((kind === "data" || kind === "request") && (!nonce || !ciphertext)) {
     throw new RequestValidationError("Encrypted frames require nonce and ciphertext.");
   }
 
@@ -70,7 +68,6 @@ export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
     kind,
     ...(nonce === undefined ? {} : { nonce }),
     ...(ciphertext === undefined ? {} : { ciphertext }),
-    ...(acknowledgedSequence === undefined ? {} : { acknowledgedSequence }),
   };
 }
 
