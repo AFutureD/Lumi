@@ -170,3 +170,11 @@ private func channelCredentials(host: String) -> RelayDeviceCredentials {
         hostPublicKey: RelayCryptography.makeKeyPair().publicKey
     )
 }
+
+@Test func relaySocketCredentialRejectionIsRecognised() {
+    #expect(RelayWebSocketClient.isCredentialRejection(httpStatus: 401, closeCode: 1000))
+    #expect(RelayWebSocketClient.isCredentialRejection(httpStatus: 403, closeCode: 1000))
+    #expect(RelayWebSocketClient.isCredentialRejection(httpStatus: 101, closeCode: RelayWebSocketClient.deviceRevokedCloseCode))
+    #expect(!RelayWebSocketClient.isCredentialRejection(httpStatus: 101, closeCode: 1001))
+    #expect(!RelayWebSocketClient.isCredentialRejection(httpStatus: nil, closeCode: 1006))
+}

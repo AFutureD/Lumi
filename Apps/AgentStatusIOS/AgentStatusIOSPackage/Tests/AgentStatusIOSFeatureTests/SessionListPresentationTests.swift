@@ -37,7 +37,7 @@ private func session(
 private func channel(_ host: String, sessions: [SessionDetail], online: Bool = true) -> MacChannelState {
     MacChannelState(
         hostID: HostID(host), displayName: host, pairedAt: now, isConnected: online, isHostOnline: online,
-        hasCompleteSync: online, sessions: sessions, lastSyncAt: nil, lastError: nil, health: nil, hasLoadedCache: true
+        accessRevoked: false, hasCompleteSync: online, sessions: sessions, lastSyncAt: nil, lastError: nil, health: nil, hasLoadedCache: true
     )
 }
 
@@ -48,6 +48,16 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
     #expect(items.count == 1)
     #expect(items[0].subagents.map(\.name) == ["worker"])
     #expect(items[0].subagents[0].durationText(now: now) == "2m")
+}
+
+@Test func subagentsOfSubagentsFoldIntoTheTopRow() {
+    let parent = session("p", title: "Parent")
+    let child = session("c", title: "worker", lifecycle: .completed, phase: .idle, parent: "p")
+    let grandchild = session("g", title: "helper", parent: "c")
+    let items = SessionListPresentation.items(from: [channel("Mac", sessions: [parent, child, grandchild])])
+    #expect(items.count == 1)
+    // Running before done — the strip order — and nothing dropped.
+    #expect(items[0].subagents.map(\.name) == ["helper", "worker"])
 }
 
 @Test func orphanChildIsARowOfItsOwn() {
@@ -102,7 +112,7 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
 
 @Test func statusOptionsCarryTheirTileHue() {
     let statuses = SessionListPresentation.statusOptions(items: [], deselected: [])
-    #expect(statuses.map(\.glyph) == [.dot(.blue), .dot(.green), .dot(.neutral)])
+    #expect(statuses.map(\.glyph) == [.dot(.blue), .dot(.orange), .dot(.neutral)])
 }
 
 @Test func panelAlignsToItsTriggerButStaysInsideTheRightInset() {

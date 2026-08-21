@@ -129,20 +129,34 @@ export class HostRelay extends DurableObject<Env> {
       return;
     }
 
+    let frame: ReturnType<typeof parseRelayRoutingFrame>;
     try {
-      const frame = parseRelayRoutingFrame(JSON.parse(message) as unknown);
-      if (frame.hostID !== attachment.hostID) {
-        ws.close(1008, "host mismatch");
-        return;
-      }
-      if (attachment.role === "host") {
-        this.handleHostFrame(frame, message);
-      } else {
-        this.handleDeviceFrame(attachment, frame, message, ws);
-      }
+      frame = parseRelayRoutingFrame(JSON.parse(message) as unknown);
     } catch (error) {
       ws.send(JSON.stringify({ type: "error", code: "invalid_frame" }));
       console.warn(JSON.stringify({ event: "invalid_frame", role: attachment.role, error: String(error) }));
+      return;
+    }
+    if (frame.hostID !== attachment.hostID) {
+      ws.close(1008, "host mismatch");
+      return;
+    }
+    // Forwarding failures are the peer socket's problem, not the sender's:
+    // the frame was valid, its sequence stands, and `invalid_frame` would
+    // only mislead the host.
+    if (attachment.role === "host") {
+      this.handleHostFrame(frame, message);
+    } else {
+      this.handleDeviceFrame(attachment, frame, message, ws);
+    }
+  }
+
+  /** Sends to one peer socket; a closed or failing socket is logged, not thrown. */
+  private forward(target: WebSocket, raw: string, role: "host" | "device"): void {
+    try {
+      target.send(raw);
+    } catch (error) {
+      console.warn(JSON.stringify({ event: "forward_failed", to: role, error: String(error) }));
     }
   }
 
@@ -332,7 +346,7 @@ export class HostRelay extends DurableObject<Env> {
     const targets = frame.deviceID
       ? this.ctx.getWebSockets(`device:${frame.deviceID}`)
       : this.deviceSockets();
-    for (const target of targets) target.send(raw);
+    for (const target of targets) this.forward(target, raw, "device");
   }
 
   private handleDeviceFrame(
@@ -348,7 +362,7 @@ export class HostRelay extends DurableObject<Env> {
     // The relay keeps no replay buffer and cannot read the body: a device's
     // sealed `request` (sync index, fetch session, session reviewed, …) is
     // forwarded to the host verbatim and answered by the host in `data` frames.
-    for (const host of this.hostSockets()) host.send(raw);
+    for (const host of this.hostSockets()) this.forward(host, raw, "host");
   }
 
   private async authorizeHost(request: Request): Promise<boolean> {

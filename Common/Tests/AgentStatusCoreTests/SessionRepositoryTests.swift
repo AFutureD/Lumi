@@ -690,3 +690,51 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
     #expect(Set(remaining) == [usedClaude, codex])
     #expect(try await !reopened.apply(endEvent(ghost, "g-late", 110, .claude)))   // tombstoned
 }
+
+@Test func reducerSetsNeedsReviewOnTurnEndAndOnlyTheHumanClearsIt() async throws {
+    let repository = InMemorySessionRepository()
+    let sessionID = SessionID("review")
+    let running = AgentIngressEvent(
+        eventID: EventID("r1"), sessionID: sessionID, agent: .codex,
+        occurredAt: Date(timeIntervalSince1970: 100), lifecycle: .running, phase: .thinking
+    )
+    let turnEnd = AgentIngressEvent(
+        eventID: EventID("r2"), sessionID: sessionID, agent: .codex,
+        occurredAt: Date(timeIntervalSince1970: 200), lifecycle: .waitingForInput, phase: .idle,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("turn_end:1"), sessionID: sessionID,
+            occurredAt: Date(timeIntervalSince1970: 200),
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed))
+        )
+    )
+    let laterContext = AgentIngressEvent(
+        eventID: EventID("r3"), sessionID: sessionID, agent: .codex,
+        occurredAt: Date(timeIntervalSince1970: 300),
+        timelineItem: TimelineItem(
+            id: TimelineItemID("ctx:1"), sessionID: sessionID,
+            occurredAt: Date(timeIntervalSince1970: 300),
+            payload: .usageMetrics(UsageMetricsTimelinePayload(total: TokenUsage(totalTokens: 10)))
+        )
+    )
+    _ = try await repository.apply(running)
+    var summary = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary
+    #expect(summary?.needsReview == false)
+    #expect(summary?.needsAttention == false)
+
+    // A turn end flips it on, and the attention flag follows the green tier…
+    _ = try await repository.apply(turnEnd)
+    summary = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary
+    #expect(summary?.needsReview == true)
+    #expect(summary?.needsAttention == true)
+    #expect(summary?.statusTone == .green)
+
+    // …and it sticks through later events until the human opens the session.
+    _ = try await repository.apply(laterContext)
+    summary = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary
+    #expect(summary?.needsReview == true)
+    try await repository.markSessionReviewed(sessionID)
+    summary = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary
+    #expect(summary?.needsReview == false)
+    #expect(summary?.needsAttention == false)
+    #expect(summary?.statusTone == .gray)
+}

@@ -12,18 +12,18 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 - `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力 / 待查看标记（`needsAttention` / `needsReview`）、Notch 归档标记（`hiddenInNotch`：只把 Session 从 Notch 隐藏，Mac / iOS 照常显示；新 prompt 或会话重启时清除）、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
 - `SessionDetail`：一个 Summary、完整或分页 Timeline、下一页游标。
 - `TimelineItem`：稳定 ID、Session ID、可选 Turn ID、时间和 payload。
-- `TimelinePayload`：消息、工具、计划、子 Agent、错误、模型配置、内部上下文、消耗指标和 unknown。
+- `TimelinePayload`：消息、reasoning、工具、计划、子 Agent、错误、上下文（session / turn）、session marker、turn end、模型配置、内部上下文、消耗指标。
 - `AgentIngressEvent`：Adapter 输出的归一化事件，是 reducer 的唯一输入。可选 `disposition: .discard` 表示 helper 判定该 Session 不应保留（Claude 在第一个 Turn 前结束）：仓库删除 + 写墓碑，事件照常发布让所有镜像收敛。
 
 生命周期和 Turn 阶段分开：
 
 | 维度 | 当前值 |
 | --- | --- |
-| Session lifecycle | Starting、Running、Waiting For Input、Completed、Failed、Interrupted、unknown |
-| Turn phase | Idle、Thinking、Executing、Responding、Waiting For Approval、unknown |
-| Agent kind | Codex、Codex Subagent、unknown |
+| Session lifecycle | Starting、Running、Waiting For Input、Compacting、Completed、Failed、Interrupted |
+| Turn phase | Idle、Thinking、Executing、Responding、Waiting For Approval、Subagent Running、Compacting |
+| Agent kind | Codex、Codex Subagent、Claude、Claude Subagent |
 
-未知枚举值会保留原始字符串。旧客户端可以忽略无法展示的 Timeline 类型，而不让整个数据流解码失败。模型配置、内部上下文和消耗指标作为结构化 Timeline payload 持久化并进入完整快照，Mac 的 Session 详情 Inspector 与 iOS 详情的 Info Tab 展示这些诊断类 payload（两端共用同一份 presentation），活动列表仍会过滤；同一 Session 的同类诊断 payload 只保留最新记录。
+枚举不设未知兜底：helper、daemon、Mac、iOS 一起发布，解码遇到不认识的值是要修的错误，不是要保留的原始字符串。模型配置、内部上下文和消耗指标作为结构化 Timeline payload 持久化并进入完整快照，Mac 的 Session 详情 Inspector 与 iOS 详情的 Info Tab 展示这些诊断类 payload（两端共用同一份 presentation），活动列表仍会过滤；同一 Session 的同类诊断 payload 只保留最新记录。
 
 ## 数据拥有者
 
@@ -56,7 +56,7 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 
 migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下的空 Claude 会话（`completed`、无 Turn、timeline 只有 session marker）并写墓碑——它们按现在的规则本来不会存在。
 
-`summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。Summary 中的 Subagent lineage 包含 Thread source、父 Session ID、深度、昵称、职责、Agent path 和 Subagent kind。日期使用 ISO 8601，键稳定排序。
+`summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。Summary 中的 Subagent lineage 包含 Thread source、父 Session ID、深度、昵称、职责、Agent path 和 Subagent kind。日期使用带毫秒的 RFC 3339 UTC（`2026-08-22T00:27:36.266Z`），helper → daemon、daemon ↔ Mac、daemon → Relay → iPhone 和 BLOB 同一精度，同秒内的记录在三端都按时间而不是 id 排序；键稳定排序。
 
 客户端整 Session 替换（`replaceSession`）在一个 GRDB write transaction 内执行：清该 id 的墓碑，删除现有行，由外键级联删除 Timeline，再插入。镜像还用到 `sessionIndex`（summary + timeline 行数 + 最新行时间）、`updateSummary`（只改 summary）、`mergeSession`（按 id upsert 一段 timeline 尾）和 `timelineSince`（按时间切 timeline）。
 
@@ -94,10 +94,10 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
 | `mark_session_reviewed` | 人打开了 Session：清除 `needsReview` | 短连接请求 |
 | `mark_session_hidden_in_notch` | 人在 Notch 点了 Archive：置 `hiddenInNotch`（仅 Notch 隐藏；新 prompt 或会话重启时由 reducer 清除） | 短连接请求 |
-| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / turns / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；返回重建后的 SessionDetail。不走事件流，调用方把返回的 detail 写入本地缓存并跟一次对账 | 短连接请求（15s） |
+| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / turns / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；Claude 父 Session 连同 sidechain 子 Agent 一起重建，用户已删除（tombstone）的子 Agent 保持删除；返回重建后的 SessionDetail。不走事件流：调用方把返回的 detail 写入本地缓存并跟一次对账，daemon 把重建的每个 Session 作为未请求的 `session_full` 推给已同步 iPhone | 短连接请求（15s） |
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
 | `health` | daemon 状态（含 `relayConnected`） | 短连接请求 |
-| `subscribe` | 全部 Session 共用的事件流 | Mac App 持久连接 |
+| `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
 | `relay_status` | daemon 的 Relay Host 状态：已连接、Host ID、错误、已配对设备 | Mac App 配对页（可见时 5 秒轮询） |
 | `relay_create_pairing_offer` | 让 daemon 生成并登记一次性配对 offer，返回二维码内容 | 短连接请求 |
 | `relay_revoke_device` / `relay_refresh_devices` | 撤销一台 iPhone / 重新拉设备列表，都返回最新状态 | 短连接请求 |
@@ -188,7 +188,8 @@ sequenceDiagram
 iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）：本地有 index 无 → `pruneSessions`（不写墓碑）；index 有本地无、本地 0 行、本地行数多于远端、或差 200 行以上 → `fetch_session`；行数 / 最新行时间不等 → `fetch_timeline_since`；仅 summary 不等 → `updateSummary`。`session_message` 里未知 Session 的事件会触发一次 `fetch_session`。
 
 - payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用不同公钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环保证应答先于其后的推送。
-- 推送（events / info / removed / health）只发给本连接内请求过 index 的设备；Relay 对离线设备丢帧，设备重连、Host 上线、回到前台、序号断档、下拉刷新时都重新 `sync_index`。
+- 推送（events / info / removed / health）只发给本连接内请求过 index 的设备；Relay 对离线设备丢帧，设备重连、Host 上线或重连（Relay 再次广播 `online`，daemon 已忘记谁同步过）、回到前台、序号断档、下拉刷新时都重新 `sync_index`。
+- daemon 收到未知设备、或用缓存公钥解不开的 `request` 时，先按需刷新一次设备列表（最多 2 秒一次）再处理：刚配对或刚换钥匙重配的 iPhone 的第一个请求不会被丢弃。
 - 一条 Host WSS 发送所有设备的定向帧并接收设备请求；每个 iOS Mac 通道维护自己的 Device WSS 和 SQLite 缓存。
 
 ## 一致性规则
@@ -241,7 +242,7 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 | daemon 不可用 | Mac 保留 SQLite 供本地查看；Host WSS 随 daemon 下线，iPhone 收到 presence offline 把该 Mac 标为 Unavailable，但继续显示缓存 | daemon 恢复（launchd 拉起）后 iPhone 收到 presence online 自动 `sync_index` |
 | Mac App 退出 | 不影响 iPhone：Relay Host 在 daemon 里 | — |
 | iOS WSS 断开 | 继续显示缓存，2 秒后重连 | 重连后 Host 在线即 `sync_index` 对账 |
-| Relay 对象重启 | 授权/序号元数据保留 | 设备重连 `sync_index`；daemon 序号落后时 Worker 回 `non_monotonic_sequence{lastSequence}`，daemon 抬序号 |
+| Relay 对象重启 | 授权/序号元数据保留 | 设备重连 `sync_index`；daemon 序号落后时 Worker 回 `non_monotonic_sequence{lastSequence}`，daemon 抬序号并向该设备补发一帧 health，设备据序号断档重新 index |
 | SQLite 写失败 | UI/控制器记录可见错误，不把内存状态当作持久成功 | 修复磁盘/权限后重新同步 |
 
 ## 当前容量边界

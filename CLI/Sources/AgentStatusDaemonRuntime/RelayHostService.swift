@@ -45,6 +45,9 @@ public actor RelayHostService {
     private let reconnectDelay: Duration
     private let deviceRefreshInterval: Duration
     private let healthInterval: Duration
+    /// Floor between two on-demand device refreshes (unknown device, stale key).
+    private let deviceRefreshOnDemandInterval: TimeInterval = 2
+    private var lastOnDemandDeviceRefresh: Date?
 
     private var credentials: RelayHostCredentials?
     private var registeredThisProcess = false
@@ -105,8 +108,8 @@ public actor RelayHostService {
     public func start() async {
         guard !stopped else { return }
         if subscriptionID == nil {
-            subscriptionID = subscriptions.subscribe { [weak self] event in
-                guard let self else { return }
+            subscriptionID = subscriptions.subscribe { [weak self] message in
+                guard let self, case let .event(event) = message else { return }
                 Task { await self.enqueueEvent(event) }
             }
         }
@@ -177,6 +180,17 @@ public actor RelayHostService {
     public func sessionsRemoved(_ ids: [SessionID]) {
         guard !ids.isEmpty, !activeDevices.isEmpty else { return }
         enqueue(.removed(ids, requestID: nil, device: nil))
+    }
+
+    /// Sessions the daemon wiped and rebuilt (`Refresh session`): every
+    /// synced iPhone gets each one whole again (`session_full`, unsolicited),
+    /// the way it would after asking for it — instead of waiting for its next
+    /// index to notice the rows changed.
+    public func sessionsRebuilt(_ ids: [SessionID]) {
+        guard !ids.isEmpty, !activeDevices.isEmpty else { return }
+        for device in activeDevices {
+            enqueue(.fetch(device: device, requestID: nil, ids: ids))
+        }
     }
 
     // MARK: - Connection
@@ -321,10 +335,10 @@ public actor RelayHostService {
 
     // MARK: - Inbound
 
-    private func handle(_ message: RelayIncomingMessage) {
+    private func handle(_ message: RelayIncomingMessage) async {
         switch message {
         case let .frame(frame):
-            handle(frame)
+            await handle(frame)
         case let .error(error):
             handleRelayError(error)
         case .presence:
@@ -332,22 +346,31 @@ public actor RelayHostService {
         }
     }
 
-    private func handle(_ frame: RelayRoutingFrame) {
+    private func handle(_ frame: RelayRoutingFrame) async {
         guard frame.kind == .request, let deviceID = frame.deviceID, let credentials else { return }
-        guard let device = devices.first(where: { $0.id == deviceID && $0.revokedAt == nil }) else {
+        // A just-paired iPhone (or one that re-paired with a new key) sends
+        // its first request before the 10 s device refresh has seen it: look
+        // the device list up again before giving up on the request.
+        var device = activeDevice(deviceID)
+        if device == nil, await refreshDevicesOnDemand() {
+            device = activeDevice(deviceID)
+        }
+        guard let device else {
             log("relay: request from unknown or revoked device \(deviceID.rawValue)")
             return
         }
         let payload: RemoteSessionPayload
         do {
-            payload = try RelayCryptography.open(
-                frame,
-                privateKey: credentials.keyPair.privateKey,
-                peerPublicKey: device.publicKey
-            )
+            payload = try open(frame, from: device, credentials: credentials)
         } catch {
-            log("relay: could not open request from \(deviceID.rawValue): \(error)")
-            return
+            guard await refreshDevicesOnDemand(),
+                  let refreshed = activeDevice(deviceID),
+                  refreshed.publicKey != device.publicKey,
+                  let reopened = try? open(frame, from: refreshed, credentials: credentials) else {
+                log("relay: could not open request from \(deviceID.rawValue): \(error)")
+                return
+            }
+            payload = reopened
         }
         switch payload.kind {
         case .syncIndex:
@@ -358,14 +381,46 @@ public actor RelayHostService {
             guard let id = payload.sessionIDs?.first, let since = payload.since else { return }
             enqueue(.timeline(device: deviceID, requestID: payload.requestID, id: id, since: since))
         case .sessionReviewed:
+            // An iPhone opened the session: the Mac window and the Notch turn
+            // grey through the local stream, other iPhones through `session_info`.
             let ids = payload.sessionIDs ?? []
             Task { [weak self] in
-                for id in ids { try? await self?.repository.markSessionReviewed(id) }
-                await self?.summariesChanged(ids)
+                guard let self else { return }
+                for id in ids {
+                    try? await self.repository.markSessionReviewed(id)
+                    if let summary = try? await self.repository.sessionDetail(id: id, cursor: nil, limit: 1)?.summary {
+                        self.subscriptions.publish(summary: summary)
+                    }
+                }
+                await self.summariesChanged(ids)
             }
         default:
             log("relay: ignoring request kind \(payload.kind.rawValue) from \(deviceID.rawValue)")
         }
+    }
+
+    private func activeDevice(_ id: DeviceID) -> PairedDevice? {
+        devices.first { $0.id == id && $0.revokedAt == nil }
+    }
+
+    private func open(_ frame: RelayRoutingFrame, from device: PairedDevice, credentials: RelayHostCredentials) throws -> RemoteSessionPayload {
+        try RelayCryptography.open(
+            frame,
+            privateKey: credentials.keyPair.privateKey,
+            peerPublicKey: device.publicKey
+        )
+    }
+
+    /// Refreshes the device list outside the timer, at most once per
+    /// `deviceRefreshOnDemandInterval`; false when throttled.
+    private func refreshDevicesOnDemand() async -> Bool {
+        let now = Date()
+        if let last = lastOnDemandDeviceRefresh, now.timeIntervalSince(last) < deviceRefreshOnDemandInterval {
+            return false
+        }
+        lastOnDemandDeviceRefresh = now
+        await refreshDevices()
+        return true
     }
 
     private func handleRelayError(_ error: RelayErrorMessage) {
@@ -379,8 +434,15 @@ public actor RelayHostService {
         } catch {
             log("relay: could not persist sequence state: \(error)")
         }
-        // Whatever that device received is now suspect; it re-indexes itself.
+        // Whatever that device received is now suspect: it must re-index, and
+        // it only notices when a frame arrives with a sequence past the hole.
+        // The Relay forwards nothing about the rejection, so nudge it with a
+        // health frame on the healed cursor; the gap makes the iPhone index.
         activeDevices.remove(deviceID)
+        Task { [weak self] in
+            guard let self, let health = await self.healthProvider() else { return }
+            await self.enqueue(.health(health, device: deviceID))
+        }
     }
 
     // MARK: - Events

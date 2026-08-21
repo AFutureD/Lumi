@@ -291,21 +291,6 @@ public struct UsageMetricsTimelinePayload: Codable, Hashable, Sendable {
     }
 }
 
-public struct UnknownTimelinePayload: Codable, Hashable, Sendable {
-    public let kind: String
-    public let summary: String?
-
-    public init(kind: String, summary: String? = nil) {
-        self.kind = kind
-        self.summary = summary
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case summary
-    }
-}
-
 public enum TimelinePayload: Hashable, Sendable {
     case message(MessageTimelinePayload)
     case reasoning(ReasoningTimelinePayload)
@@ -319,7 +304,6 @@ public enum TimelinePayload: Hashable, Sendable {
     case modelConfiguration(ModelConfigurationTimelinePayload)
     case internalContext(InternalContextTimelinePayload)
     case usageMetrics(UsageMetricsTimelinePayload)
-    case unknown(UnknownTimelinePayload)
 }
 
 extension TimelinePayload: Codable {
@@ -337,48 +321,29 @@ extension TimelinePayload: Codable {
         case modelConfiguration
         case internalContext
         case usageMetrics
-        case unknown
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
-        let unknown = try container.decodeIfPresent(UnknownTimelinePayload.self, forKey: .unknown)
-            ?? UnknownTimelinePayload(kind: type)
         switch type {
         case "message": self = .message(try container.decode(MessageTimelinePayload.self, forKey: .message))
-        case "reasoning":
-            self = try container.decodeIfPresent(ReasoningTimelinePayload.self, forKey: .reasoning)
-                .map(TimelinePayload.reasoning) ?? .unknown(unknown)
+        case "reasoning": self = .reasoning(try container.decode(ReasoningTimelinePayload.self, forKey: .reasoning))
         case "tool": self = .tool(try container.decode(ToolTimelinePayload.self, forKey: .tool))
         case "plan": self = .plan(try container.decode(PlanTimelinePayload.self, forKey: .plan))
         case "subagent": self = .subagent(try container.decode(SubagentTimelinePayload.self, forKey: .subagent))
         case "error": self = .error(try container.decode(ErrorTimelinePayload.self, forKey: .error))
-        case "context":
-            self = try container.decodeIfPresent(ContextTimelinePayload.self, forKey: .context)
-                .map(TimelinePayload.context) ?? .unknown(unknown)
-        case "session_marker":
-            self = try container.decodeIfPresent(SessionMarkerTimelinePayload.self, forKey: .sessionMarker)
-                .map(TimelinePayload.sessionMarker) ?? .unknown(unknown)
-        case "turn_end":
-            self = try container.decodeIfPresent(TurnEndTimelinePayload.self, forKey: .turnEnd)
-                .map(TimelinePayload.turnEnd) ?? .unknown(unknown)
+        case "context": self = .context(try container.decode(ContextTimelinePayload.self, forKey: .context))
+        case "session_marker": self = .sessionMarker(try container.decode(SessionMarkerTimelinePayload.self, forKey: .sessionMarker))
+        case "turn_end": self = .turnEnd(try container.decode(TurnEndTimelinePayload.self, forKey: .turnEnd))
         case "model_configuration":
-            self = try container.decodeIfPresent(
-                ModelConfigurationTimelinePayload.self,
-                forKey: .modelConfiguration
-            ).map(TimelinePayload.modelConfiguration) ?? .unknown(unknown)
+            self = .modelConfiguration(try container.decode(ModelConfigurationTimelinePayload.self, forKey: .modelConfiguration))
         case "internal_context":
-            self = try container.decodeIfPresent(
-                InternalContextTimelinePayload.self,
-                forKey: .internalContext
-            ).map(TimelinePayload.internalContext) ?? .unknown(unknown)
+            self = .internalContext(try container.decode(InternalContextTimelinePayload.self, forKey: .internalContext))
         case "usage_metrics":
-            self = try container.decodeIfPresent(
-                UsageMetricsTimelinePayload.self,
-                forKey: .usageMetrics
-            ).map(TimelinePayload.usageMetrics) ?? .unknown(unknown)
-        default: self = .unknown(unknown)
+            self = .usageMetrics(try container.decode(UsageMetricsTimelinePayload.self, forKey: .usageMetrics))
+        default:
+            throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown timeline payload type: \(type)")
         }
     }
 
@@ -421,9 +386,6 @@ extension TimelinePayload: Codable {
         case let .usageMetrics(payload):
             try container.encode("usage_metrics", forKey: .type)
             try container.encode(payload, forKey: .usageMetrics)
-        case let .unknown(payload):
-            try container.encode(payload.kind, forKey: .type)
-            try container.encode(payload, forKey: .unknown)
         }
     }
 }

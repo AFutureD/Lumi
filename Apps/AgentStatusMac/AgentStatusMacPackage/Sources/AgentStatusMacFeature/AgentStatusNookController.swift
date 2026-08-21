@@ -937,14 +937,26 @@ private struct AgentStatusNookTurnEndedCard: View {
     @ObservedObject var model: AgentStatusNookModel
     let actions: AgentStatusNookActions
 
+    /// Same words as the timeline's TURN END / FAILED / ABORTED rows, and the
+    /// same tier as the session tone: aborted is a failure too.
+    private var outcomeText: String {
+        switch session.currentTurn?.outcome {
+        case .failed: "Turn failed"
+        case .aborted: "Turn aborted"
+        case .completed, nil: "Turn complete"
+        }
+    }
+
+    private var outcomeIsFailure: Bool {
+        session.currentTurn?.outcome == .failed || session.currentTurn?.outcome == .aborted
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: NotchMetric.cardGap) {
             NookCardHeader(title: session.title) {
-                Text(session.currentTurn?.outcome == .failed ? "Turn failed" : "Turn complete")
+                Text(outcomeText)
                     .designText(NotchType.notchLabel)
-                    .foregroundStyle(session.currentTurn?.outcome == .failed
-                        ? SessionStatusTone.red.nookColor
-                        : Color.nookAccentText)
+                    .foregroundStyle(outcomeIsFailure ? SessionStatusTone.red.nookColor : Color.nookAccentText)
                 Text(session.elapsedText(now: .now))
                     .designText(NotchType.monoTimestamp)
                     .foregroundStyle(Color.nookQuaternary)

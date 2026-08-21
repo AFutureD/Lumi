@@ -123,7 +123,9 @@ final class RelayHostStatusClient {
             lastError = relay.lastError
             devices = relay.devices
         } else if let failure = response.failure {
-            isConnected = false
+            // A failed action (revoke, pairing offer) does not mean the
+            // Relay connection dropped; only the daemon saying so does.
+            if failure.code == "relay_unavailable" { isConnected = false }
             lastError = failure.message
         }
         notifyObservers()

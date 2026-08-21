@@ -2,15 +2,29 @@ import Foundation
 import Testing
 @testable import AgentStatusTransport
 
-@Test func unknownProtocolValuesRemainDecodable() throws {
-    let lifecycle = try JSONDecoder().decode(SessionLifecycle.self, from: Data("\"paused_by_provider\"".utf8))
-    #expect(lifecycle == .unknown("paused_by_provider"))
+@Test func unknownProtocolValuesAreDecodingErrors() throws {
+    // Every end ships together: a value this build does not know is a bug
+    // to surface, not something to carry along as a raw string.
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(SessionLifecycle.self, from: Data("\"paused_by_provider\"".utf8))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(TimelinePayload.self, from: Data(#"{"type":"future_event"}"#.utf8))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(IPCOperation.self, from: Data("\"snapshot_sessions\"".utf8))
+    }
+}
 
-    let payloadJSON = Data("""
-    {"type":"future_event","unknown":{"kind":"future_event","summary":"available after upgrade"}}
-    """.utf8)
-    let payload = try JSONDecoder().decode(TimelinePayload.self, from: payloadJSON)
-    #expect(payload == .unknown(UnknownTimelinePayload(kind: "future_event", summary: "available after upgrade")))
+@Test func transportDatesCarryMillisecondsOnEveryHop() throws {
+    let date = Date(timeIntervalSince1970: 1_700_000_000.266)
+    let encoded = try TransportCoding.makeEncoder().encode([date])
+    #expect(String(decoding: encoded, as: UTF8.self) == #"["2023-11-14T22:13:20.266Z"]"#)
+    let decoded = try TransportCoding.makeDecoder().decode([Date].self, from: encoded)
+    #expect(abs(decoded[0].timeIntervalSince(date)) < 0.001)
+    // Whole-second RFC 3339 is still a valid date (the Relay and older rows).
+    let plain = try TransportCoding.makeDecoder().decode([Date].self, from: Data(#"["2023-11-14T22:13:20Z"]"#.utf8))
+    #expect(plain[0] == Date(timeIntervalSince1970: 1_700_000_000))
 }
 
 @Test func frameCodecHandlesPartialAndMultipleFrames() throws {
@@ -126,17 +140,6 @@ import Testing
     let encoded = try TransportCoding.makeEncoder().encode(value)
     let decoded = try TransportCoding.makeDecoder().decode(JSONValue.self, from: encoded)
     #expect(decoded == value)
-}
-
-@Test func newlyKnownTimelineTypeStillDecodesAnOlderUnknownReencoding() throws {
-    let data = Data("""
-    {"type":"model_configuration","unknown":{"kind":"model_configuration","summary":"upgrade required"}}
-    """.utf8)
-    let decoded = try TransportCoding.makeDecoder().decode(TimelinePayload.self, from: data)
-    #expect(decoded == .unknown(UnknownTimelinePayload(
-        kind: "model_configuration",
-        summary: "upgrade required"
-    )))
 }
 
 @Test func deleteSessionRequestRoundTripsWithItsSessionID() throws {

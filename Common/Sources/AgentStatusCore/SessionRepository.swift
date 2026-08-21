@@ -48,6 +48,8 @@ public protocol SessionRepository: Sendable {
     /// tombstone. Returns whether the session existed.
     func resetSession(id: SessionID) async throws -> Bool
     func markSessionIgnored(_ sessionID: SessionID) async throws
+    /// True while the id carries a tombstone (deleted by the user, no row).
+    func isSessionIgnored(_ sessionID: SessionID) async throws -> Bool
     /// The human opened the session: clear `SessionSummary.needsReview`.
     func markSessionReviewed(_ sessionID: SessionID) async throws
     /// The human archived the session from the Notch: set
@@ -238,7 +240,7 @@ private extension AgentIngressEvent {
         guard let payload = timelineItem?.payload else { return false }
         return switch payload {
         case .message, .reasoning, .tool, .plan, .subagent, .error, .sessionMarker, .turnEnd: true
-        case .context, .modelConfiguration, .internalContext, .usageMetrics, .unknown: false
+        case .context, .modelConfiguration, .internalContext, .usageMetrics: false
         }
     }
 }
@@ -470,6 +472,10 @@ public actor InMemorySessionRepository: SessionRepository {
 
     public func markSessionIgnored(_ sessionID: SessionID) async throws {
         ignoredSessionIDs.insert(sessionID)
+    }
+
+    public func isSessionIgnored(_ sessionID: SessionID) async throws -> Bool {
+        ignoredSessionIDs.contains(sessionID)
     }
 
     public func markSessionReviewed(_ sessionID: SessionID) async throws {

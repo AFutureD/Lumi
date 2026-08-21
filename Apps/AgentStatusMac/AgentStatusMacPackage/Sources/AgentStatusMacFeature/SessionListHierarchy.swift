@@ -36,6 +36,16 @@ struct SessionListHierarchy {
                 roots.append(node)
             }
         }
+        // Children in strip order — running → waiting → failed → done, newest
+        // first inside a bucket — the same order the Notch and the iPhone use.
+        for node in nodesByID.values where node.children.count > 1 {
+            node.children.sort { lhs, rhs in
+                SubagentGroupSummary.precedes(
+                    (lhs.summary.statusTone, lhs.summary.lastActivityAt),
+                    (rhs.summary.statusTone, rhs.summary.lastActivityAt)
+                )
+            }
+        }
         return SessionListHierarchy(roots: roots, nodesByID: nodesByID)
     }
 

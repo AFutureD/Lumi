@@ -81,7 +81,7 @@
 2. 再次选择目标 Session。
 3. 点击删除图标（Delete Session），再在确认框点击“Delete”。
 
-**完成信号**：该 Session 从 Mac 和在线 iPhone 中消失且不再回来。Codex 自身 Session 不受影响。
+**完成信号**：该 Session 从 Mac 和在线 iPhone 中消失；之后只有你在同一会话里再次发出请求（或会话重启）它才会回来。Codex 自身 Session 不受影响。
 
 ## Relay unavailable
 
@@ -124,7 +124,7 @@
 
 ## 设备被撤销
 
-**用户会看到**：目标 iPhone 无法重新连接，但其他设备正常。
+**用户会看到**：目标 iPhone 的 Macs 页这台 Mac 显示 `Revoked · 在 Mac 上重新配对`，Sessions 没有内容时提示 Access revoked；缓存仍可翻看；其他设备正常。
 
 **恢复步骤**：
 

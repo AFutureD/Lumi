@@ -81,11 +81,13 @@ enum SessionStatusGroup: String, CaseIterable, Hashable, Sendable {
         }
     }
 
-    /// Tile dot hue in the filter panel: Running blue, Waiting green, Completed neutral.
+    /// Tile dot hue in the filter panel — the same hue as the row pill it
+    /// filters for (`SessionStatusTone`): Running blue, Waiting orange,
+    /// Completed neutral.
     var hue: DesignHue {
         switch self {
         case .running: .blue
-        case .waiting: .green
+        case .waiting: .orange
         case .completed: .neutral
         }
     }
@@ -130,32 +132,18 @@ enum FilterPanelPlacement {
 
 enum SessionListPresentation {
     /// Every Mac's visible sessions merged into one list, newest activity
-    /// first. Subagents (children by lineage) become chips on their parent's
-    /// row; a child whose parent is not visible gets a row of its own.
+    /// first. Subagents (every descendant by lineage, `SessionHierarchy`)
+    /// become chips on their top-level ancestor's row; a child whose parent
+    /// is not visible gets a row of its own.
     static func items(from channels: [MacChannelState]) -> [SessionListItem] {
         var items: [SessionListItem] = []
         for channel in channels {
             let visible = Set(SessionSummary.visible(channel.visibleSessions.map(\.summary)).map(\.id))
             let details = channel.visibleSessions.filter { visible.contains($0.summary.id) }
-            let ids = Set(details.map(\.summary.id))
-            var childrenByParent: [SessionID: [SessionDetail]] = [:]
-            var parents: [SessionDetail] = []
-            for detail in details {
-                if let parentID = detail.summary.lineage?.parentSessionID, ids.contains(parentID), parentID != detail.summary.id {
-                    childrenByParent[parentID, default: []].append(detail)
-                } else {
-                    parents.append(detail)
-                }
-            }
-            for parent in parents {
-                let children = (childrenByParent[parent.summary.id] ?? [])
-                    .sorted { lhs, rhs in
-                        // running → waiting → failed → done, newest first inside a bucket
-                        SubagentGroupSummary.precedes(
-                            (lhs.summary.statusTone, lhs.summary.lastActivityAt),
-                            (rhs.summary.statusTone, rhs.summary.lastActivityAt)
-                        )
-                    }
+            let detailsByID = Dictionary(details.map { ($0.summary.id, $0) }, uniquingKeysWith: { first, _ in first })
+            for group in SessionHierarchy.groups(details.map(\.summary)) {
+                guard let parent = detailsByID[group.parent.id] else { continue }
+                let children = group.descendants.compactMap { detailsByID[$0.id] }
                 items.append(item(for: parent, children: children, channel: channel))
             }
         }

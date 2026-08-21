@@ -26,7 +26,7 @@ flowchart TD
 ```
 
 - `MacSessionStore`：daemon 连接、Mac SQLite、Session 选择和观察通知。
-- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态与已配对设备，生成配对码、撤销设备；配对页可见时 5 秒轮询，否则 30 秒，并跟随 `health.relayConnected` 变化立即刷新。App 不持有 Relay 凭据或连接。
+- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态与已配对设备，生成配对码、撤销设备；配对页可见时 5 秒轮询，否则 30 秒，并跟随 `health.relayConnected` 变化立即刷新。只有 `relay_unavailable` 才把连接状态打成不可用，单个动作失败（撤销、生成配对码）只显示错误。配对码到期时配对页可见则自动生成新码，否则下次出现时生成。App 不持有 Relay 凭据或连接。
 - `MainWindowController`：AppKit 窗口、toolbar 和三栏导航。
 - `AgentStatusNookController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
 
@@ -104,9 +104,11 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 ### 同步与展示
 
 - 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`，收齐后用 `SyncReconcilePlan` 对账（裁剪 / 整取 / 补尾 / 改 summary），pending 到齐写 lastSync。
-- 之后：`session_message` 事件通过与 daemon 相同的 `apply` 归约进缓存与内存；`session_info` / `session_removed` 直接落地；未知 Session 的事件触发一次整取。
-- 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、presence 翻转、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
+- 之后：`session_message` 事件通过与 daemon 相同的 `apply` 归约进缓存与内存（经同一写队列，和整 Session 替换保持顺序）；`session_info` / `session_removed` 直接落地；未知 Session 的事件触发一次整取。
+- 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、任一 presence `online`（含 Host 重连）、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
 - 列表始终显示缓存；Mac 离线只在 Macs 页标 Unavailable + 上次同步；没有缓存且离线时才显示 `Mac unavailable`。
+- 本机隐藏（详情 Delete）的 Session 继续在后台进缓存；事件 / summary / 整取 / index 任一路径带来更新的副本（`updatedAt` 超过隐藏时刻）就重新显示。
+- 凭据被 Relay 拒绝（握手 401 / 403、close `4003`）：通道进入 Revoked 态，不再重连；Macs 页该 Mac 显示 Revoked，列表空态提示重新配对；缓存保留。重新配对同一台 Mac 复用 Device ID。
 
 ### UIKit 结构
 
@@ -115,7 +117,6 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 - Secondary：只读 Timeline。
 - Pair：摄像头 QR scanner；摄像头不可用时允许 Paste。
 - Device：增加另一台 Mac，或删除一个本地通道。
-- Mac Session 详情的 Activity 模块会显示已进入 Timeline 的 unknown 记录；iPhone 当前不显示 unknown，但不会中断其他内容。
 
 ## 并发边界
 

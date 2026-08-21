@@ -169,8 +169,13 @@ private final class ServerRequestHandler: ChannelInboundHandler, @unchecked Send
                 from: body
             )
             if envelope.payload.operation == .subscribe, subscriptionID == nil {
-                subscriptionID = subscriptions.subscribe { event in
-                    writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, event: event)))
+                subscriptionID = subscriptions.subscribe { message in
+                    switch message {
+                    case let .event(event):
+                        writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, event: event)))
+                    case let .summary(summary):
+                        writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, summary: summary)))
+                    }
                 }
             }
             Task { [service] in

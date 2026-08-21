@@ -3,8 +3,10 @@ import AgentStatusDesignSystem
 import AppKit
 import SwiftUI
 
-/// Session lifecycle colours (design system §4.1) on the light macOS window:
-/// Running blue, Waiting for input green, Completed gray, Failed / Aborted red.
+/// Session status colours (design system §4.1) on the light macOS window —
+/// the five tiers of `SessionStatusTone`: Running blue, Waiting (input /
+/// approval) orange, Completed · unreviewed green, Completed gray, Failed /
+/// Aborted red.
 extension SessionStatusTone {
     /// Dot and status-text colour.
     var appKitColor: NSColor { NSColor(lightStyle.color) }

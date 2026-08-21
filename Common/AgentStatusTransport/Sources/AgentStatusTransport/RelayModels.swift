@@ -10,26 +10,25 @@ public enum RelayFrameKind: Hashable, Sendable {
     case data
     case request
     case error
-    case unknown(String)
 
     public var rawValue: String {
         switch self {
         case .data: "data"
         case .request: "request"
         case .error: "error"
-        case let .unknown(value): value
         }
     }
 }
 
 extension RelayFrameKind: Codable {
     public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
         self = switch value {
         case "data": .data
         case "request": .request
         case "error": .error
-        default: .unknown(value)
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown relay frame kind: \(value)")
         }
     }
 
@@ -270,7 +269,6 @@ public enum RemotePayloadKind: Hashable, Sendable {
     case sessionRemoved
     /// The daemon's health (`health`).
     case health
-    case unknown(String)
 
     public var rawValue: String {
         switch self {
@@ -285,14 +283,14 @@ public enum RemotePayloadKind: Hashable, Sendable {
         case .sessionMessage: "session_message"
         case .sessionRemoved: "session_removed"
         case .health: "health"
-        case let .unknown(value): value
         }
     }
 }
 
 extension RemotePayloadKind: Codable {
     public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
         self = switch value {
         case "sync_index": .syncIndex
         case "fetch_session": .fetchSession
@@ -305,7 +303,7 @@ extension RemotePayloadKind: Codable {
         case "session_message": .sessionMessage
         case "session_removed": .sessionRemoved
         case "health": .health
-        default: .unknown(value)
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown remote payload kind: \(value)")
         }
     }
 

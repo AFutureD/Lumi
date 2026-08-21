@@ -10,6 +10,9 @@ struct MacChannelState: Sendable {
     let pairedAt: Date
     let isConnected: Bool
     let isHostOnline: Bool
+    /// The Relay refused this iPhone's credentials (the Mac revoked it):
+    /// reconnecting stopped; the cache stays readable; pair again to resume.
+    let accessRevoked: Bool
     /// The latest index was reconciled and every fetch it needed has landed.
     let hasCompleteSync: Bool
     /// Every session cached for this Mac (loaded from disk at launch, kept
@@ -176,7 +179,7 @@ final class RelayDeviceController {
             throw PairingError.unexpectedRelay
         }
         let keyPair = RelayCryptography.makeKeyPair()
-        let deviceID = DeviceID("device-\(UUID().uuidString.lowercased())")
+        let deviceID = deviceID(forPairingWith: offer.hostID)
         let result = try await RelayRESTClient(baseURL: dependencies.relayURL).pair(PairingRequest(
             hostID: offer.hostID,
             deviceID: deviceID,
@@ -195,6 +198,13 @@ final class RelayDeviceController {
             pairedAt: result.pairedAt
         )
         try await addChannel(credentials)
+    }
+
+    /// Pairing the same Mac again keeps this iPhone's device id, so the Relay
+    /// and the Mac update the one record (new key, new token, revocation
+    /// lifted) instead of listing a second "Active" iPhone.
+    func deviceID(forPairingWith hostID: HostID) -> DeviceID {
+        channels[hostID]?.credentials.deviceID ?? DeviceID("device-\(UUID().uuidString.lowercased())")
     }
 
     /// Installs a paired channel (also the test seam around `pair`).
@@ -324,6 +334,7 @@ extension MacChannelState {
             pairedAt: pairedAt,
             isConnected: isConnected,
             isHostOnline: isHostOnline,
+            accessRevoked: accessRevoked,
             hasCompleteSync: hasCompleteSync,
             sessions: sessions,
             lastSyncAt: lastSyncAt,
@@ -388,6 +399,7 @@ final class RelayDeviceChannel {
     private var cacheLoaded = false
     private var isHostOnline = false
     private var isConnected = false
+    private var accessRevoked = false
     private var hasCompleteSync = false
     private var lastError: String?
     private var health: DaemonHealth?
@@ -400,11 +412,18 @@ final class RelayDeviceChannel {
     private var partBuffers: [SessionID: [RemoteSessionPayload]] = [:]
     /// `generatedAt` of the index whose fetches are still landing.
     private var indexGeneratedAt: Date?
-    /// Sessions hidden on this iPhone, with the `updatedAt` they had when
-    /// hidden; a newer copy from the daemon shows them again.
-    private var dismissed: [SessionID: Date] = [:]
+    /// Sessions hidden on this iPhone (`Delete`), kept out of `sessions` but
+    /// still in the cache and still fed by the daemon; one rule on every
+    /// path — event, summary, whole session, index — shows a hidden session
+    /// again: its `updatedAt` moved past the moment it was hidden.
+    private var hidden: [SessionID: HiddenSession] = [:]
     /// Serialises cache writes against each other (applies, replaces, prunes).
     private var applyQueue: Task<Void, Never>?
+
+    private struct HiddenSession {
+        let hiddenAt: Date
+        var detail: SessionDetail
+    }
 
     init(
         credentials: RelayDeviceCredentials,
@@ -431,6 +450,7 @@ final class RelayDeviceChannel {
             pairedAt: credentials.pairedAt,
             isConnected: isConnected,
             isHostOnline: isHostOnline,
+            accessRevoked: accessRevoked,
             hasCompleteSync: hasCompleteSync,
             sessions: sessions,
             lastSyncAt: settings.lastSync(for: credentials.hostID),
@@ -519,7 +539,7 @@ final class RelayDeviceChannel {
 
     func dismiss(_ id: SessionID) {
         guard let detail = sessions.first(where: { $0.summary.id == id }) else { return }
-        dismissed[id] = detail.summary.updatedAt
+        hidden[id] = HiddenSession(hiddenAt: detail.summary.updatedAt, detail: detail)
         sessions.removeAll { $0.summary.id == id }
         partBuffers[id] = nil
     }
@@ -527,7 +547,7 @@ final class RelayDeviceChannel {
     /// Empties the cache (no tombstones, no dedupe reset) and re-indexes.
     func clear() {
         sessions = []
-        dismissed = [:]
+        hidden = [:]
         partBuffers = [:]
         hasCompleteSync = false
         enqueueCacheWrite { [cache] in _ = try await cache.pruneSessions(keeping: []) }
@@ -582,6 +602,18 @@ final class RelayDeviceChannel {
         }
     }
 
+    /// A cache operation whose result the caller needs, run in queue order
+    /// (after every write enqueued before it, before every write after it).
+    private func cacheWrite<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        let previous = applyQueue
+        let task = Task<T, Error> {
+            await previous?.value
+            return try await body()
+        }
+        applyQueue = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
     // MARK: - Connection
 
     private func connect() async {
@@ -606,6 +638,7 @@ final class RelayDeviceChannel {
                 token: credentials.deviceToken
             )
             isConnected = true
+            accessRevoked = false
             lastError = nil
             receiveTask = Task { [weak self] in
                 while !Task.isCancelled {
@@ -637,7 +670,14 @@ final class RelayDeviceChannel {
         partBuffers = [:]
         tickTask?.cancel()
         tickTask = nil
-        lastError = String(describing: error)
+        if case RelayClientError.unauthorized = error {
+            // The Mac revoked this iPhone (or the pairing record is gone):
+            // no retry loop — the Macs screen says so and offers re-pairing.
+            accessRevoked = true
+            lastError = "This iPhone was revoked on the Mac. Pair again to reconnect."
+        } else {
+            lastError = String(describing: error)
+        }
         onChange()
         scheduleReconnect(after: error)
     }
@@ -762,11 +802,14 @@ final class RelayDeviceChannel {
         case let .presence(online):
             let wasOnline = isHostOnline
             isHostOnline = online
-            if online, !wasOnline {
-                // Whatever happened while the daemon was away is unknown.
-                lastReceivedSequence = 0
+            if online {
+                // First sight of the daemon — or the daemon reconnected behind
+                // the Relay (which repeats `online`) and forgot who had synced,
+                // so its pushes stop until we index again. Either way: index.
+                if !wasOnline { lastReceivedSequence = 0 }
+                hasCompleteSync = false
                 requestIndex()
-            } else if !online {
+            } else {
                 hasCompleteSync = false
                 pending = [:]
                 indexParts = [:]
@@ -830,22 +873,20 @@ final class RelayDeviceChannel {
         case .sessionInfo:
             var missing: [SessionID] = []
             for summary in payload.summaries ?? [] {
-                if let index = sessions.firstIndex(where: { $0.summary.id == summary.id }) {
-                    let detail = sessions[index]
-                    sessions[index] = SessionDetail(summary: summary, turns: detail.turns, timeline: detail.timeline)
+                if updateSummary(summary) {
                     enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
-                } else if dismissed[summary.id] == nil {
+                } else {
                     missing.append(summary.id)
                 }
             }
-            sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+            sortSessions()
             requestMissing(missing)
         case .sessionRemoved:
             let ids = payload.sessionIDs ?? []
             for id in ids {
                 sessions.removeAll { $0.summary.id == id }
                 partBuffers[id] = nil
-                dismissed[id] = nil
+                hidden[id] = nil
                 enqueueCacheWrite { [cache] in _ = try await cache.deleteSession(id: id) }
                 settle(requestID: payload.requestID, sessionID: id)
             }
@@ -854,43 +895,78 @@ final class RelayDeviceChannel {
         case .syncIndex, .fetchSession, .fetchTimelineSince, .sessionReviewed:
             // Device → host only; never expected from the daemon.
             return
-        case .unknown:
-            // A newer daemon build: data we cannot read; keep showing the cache.
-            lastError = "The Mac runs a newer protocol; update Agent Status on iPhone."
         }
     }
 
     private func applyEvents(_ events: [AgentIngressEvent]) async {
         var missing: [SessionID] = []
         for event in events {
-            let known = sessions.contains { $0.summary.id == event.sessionID }
+            let id = event.sessionID
+            let known = hidden[id] != nil || sessions.contains { $0.summary.id == id }
             let inFlight = pending.values.contains {
-                if case let .fetchSession(remaining) = $0.kind { return remaining.contains(event.sessionID) }
+                if case let .fetchSession(remaining) = $0.kind { return remaining.contains(id) }
                 return false
             }
             guard known || inFlight else {
-                if dismissed[event.sessionID] == nil || event.resurrectsHiddenSession { missing.append(event.sessionID) }
+                missing.append(id)
                 continue
             }
             let applied: Bool
             do {
-                applied = try await cache.apply(event)
+                // Through the write queue: a whole-session replace enqueued a
+                // moment ago must land before this event, or it would erase it.
+                applied = try await cacheWrite { [cache] in try await cache.apply(event) }
             } catch {
                 lastError = "Unable to apply an update: \(error)"
                 continue
             }
-            guard applied, let index = sessions.firstIndex(where: { $0.summary.id == event.sessionID }) else { continue }
+            guard applied else { continue }
             if event.disposition == .discard {
-                sessions.remove(at: index)
+                sessions.removeAll { $0.summary.id == id }
+                hidden[id] = nil
                 continue
             }
-            sessions[index] = SessionDetailReduction.applying(event, to: sessions[index])
-            if let hiddenAt = dismissed[event.sessionID], sessions[index].summary.updatedAt > hiddenAt {
-                dismissed[event.sessionID] = nil
+            if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
+                sessions[index] = SessionDetailReduction.applying(event, to: sessions[index])
+            } else if var entry = hidden[id] {
+                entry.detail = SessionDetailReduction.applying(event, to: entry.detail)
+                hidden[id] = entry
+                revealIfNewer(id)
             }
         }
-        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+        sortSessions()
         requestMissing(missing)
+    }
+
+    /// Summary-only change (reviewed, archived, index reconcile): updates the
+    /// visible or hidden copy; false when this Mac's session is not cached.
+    private func updateSummary(_ summary: SessionSummary) -> Bool {
+        let id = summary.id
+        if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
+            let detail = sessions[index]
+            sessions[index] = SessionDetail(summary: summary, turns: detail.turns, timeline: detail.timeline)
+            return true
+        }
+        if var entry = hidden[id] {
+            entry.detail = SessionDetail(summary: summary, turns: entry.detail.turns, timeline: entry.detail.timeline)
+            hidden[id] = entry
+            revealIfNewer(id)
+            return true
+        }
+        return false
+    }
+
+    /// IOS-R-012: a hidden session comes back once the daemon's copy is
+    /// newer than the one the user hid.
+    private func revealIfNewer(_ id: SessionID) {
+        guard let entry = hidden[id], entry.detail.summary.updatedAt > entry.hiddenAt else { return }
+        hidden[id] = nil
+        sessions.removeAll { $0.summary.id == id }
+        sessions.append(entry.detail)
+    }
+
+    private func sortSessions() {
+        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
     }
 
     /// A session the daemon talks about but the cache does not hold: take it whole.
@@ -909,21 +985,21 @@ final class RelayDeviceChannel {
     /// Writes a whole (`replacing`) or partial session into cache and memory.
     private func install(_ detail: SessionDetail, replacing: Bool) {
         let id = detail.summary.id
-        if let hiddenAt = dismissed[id], detail.summary.updatedAt <= hiddenAt { return }
-        dismissed[id] = nil
         if replacing {
             enqueueCacheWrite { [cache] in try await cache.replaceSession(detail) }
-            sessions.removeAll { $0.summary.id == id }
-            sessions.append(detail)
         } else {
             enqueueCacheWrite { [cache] in try await cache.mergeSession(detail) }
-            if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
-                sessions[index] = SessionDetailReduction.merging(detail, into: sessions[index])
-            } else {
-                sessions.append(detail)
-            }
         }
-        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+        if var entry = hidden[id] {
+            entry.detail = replacing ? detail : SessionDetailReduction.merging(detail, into: entry.detail)
+            hidden[id] = entry
+            revealIfNewer(id)
+        } else if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
+            sessions[index] = replacing ? detail : SessionDetailReduction.merging(detail, into: sessions[index])
+        } else {
+            sessions.append(detail)
+        }
+        sortSessions()
     }
 
     /// Marks one session of a pending fetch as answered; completes the sync
@@ -970,23 +1046,21 @@ final class RelayDeviceChannel {
         let remoteIDs = Set(remote.map(\.summary.id))
         if !plan.prune.isEmpty {
             sessions.removeAll { plan.prune.contains($0.summary.id) }
+            hidden = hidden.filter { !plan.prune.contains($0.key) }
             enqueueCacheWrite { [cache] in _ = try await cache.pruneSessions(keeping: remoteIDs) }
         }
-        dismissed = dismissed.filter { remoteIDs.contains($0.key) }
         for summary in plan.infoOnly {
-            if let index = sessions.firstIndex(where: { $0.summary.id == summary.id }) {
-                let detail = sessions[index]
-                sessions[index] = SessionDetail(summary: summary, turns: detail.turns, timeline: detail.timeline)
-            }
+            _ = updateSummary(summary)
             enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
         }
-        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+        sortSessions()
 
         indexGeneratedAt = generatedAt
-        // Dismissed sessions stay hidden until the daemon shows a newer copy.
+        // A hidden session is fetched whole only when the daemon's copy is
+        // newer (then `install` shows it); otherwise it stays as it is.
         let fetchFull = plan.fetchFull.filter { id in
-            guard let hiddenAt = dismissed[id], let entry = remote.first(where: { $0.summary.id == id }) else { return true }
-            return entry.summary.updatedAt > hiddenAt
+            guard let entry = hidden[id], let remoteEntry = remote.first(where: { $0.summary.id == id }) else { return true }
+            return remoteEntry.summary.updatedAt > entry.hiddenAt
         }
         for chunk in stride(from: 0, to: fetchFull.count, by: 20).map({ Array(fetchFull[$0..<min($0 + 20, fetchFull.count)]) }) {
             send(kind: .fetchSession(remaining: Set(chunk)), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: chunk))

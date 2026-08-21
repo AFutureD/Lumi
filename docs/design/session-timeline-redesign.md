@@ -101,7 +101,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 - Session 标记行（SESSION / COMPACT）：横跨三泳道、行高 32、L1 样式；CONTEXT（含 ×N）不横跨，落在 User 泳道。
 - **Lane strip**（列表上方）：三行 User/Model/Exec，每个 item 一个 13×13 r3 单元，gap 4，只在所属泳道填色；格子颜色走同色相三档：L1 中性 `#E7E8EC`、L2 淡色（`#DBECFD` / `#EFE4FC` / `#FCE7D8` / `#FDF3D6`）、L3 满饱和实色。空格留白。TOOL 行不进 lane strip（只在列表里），Exec 泳道由 RESULT / FAILED 代表一次工具调用。
 - 升级规则：`RESULT.isError` → `FAILED`（L2→L3，推 Notch）；`turnStopped` → 追加 `TURN END`，末条 ASSISTANT 状态点标深蓝 `#0A5FBF`；同屏最多 3 条 L3（先降级已 seen）；L1 不升级；仅 L3 触发 Notch。
-- **Session 生命周期三档**（`SessionStatusTone`，设计系统 §4.1）：Running 蓝 `rgb(0,120,240)`（starting / running / compacting；唯一带 halo 并呼吸的点）、Waiting for input 绿 `#1DA84C`（waitingForInput，不分等输入或等审批；推 Notch 的一档。设计稿写“排到列表最前”，实现保持纯 `updatedAt` 倒序，不按档位分层）、Completed 灰 `rgb(110,113,120)`、Failed / Aborted 红 `#E5352F`（failed / interrupted，排序跟 Completed）。phase 只换状态点与副标题，不换这一档颜色。深色（Notch）对应 `#4C9BFF` / `#34C759` / `.34` / `#EE4038`。
+- **Session 状态五档**（`SessionStatusTone.resolve`，唯一解析器，三端同源；设计系统 §4.1）：Running 蓝 `rgb(0,120,240)`（starting / running / compacting；带 halo 并呼吸）、Waiting 橙（waitingForInput 且 phase 不是 idle：等输入或等审批，人不处理就不会继续）、Completed · unreviewed 绿 `#1DA84C`（Turn 已结束且 `needsReview`，任一端打开即降灰）、Completed 灰 `rgb(110,113,120)`（含 waitingForInput · idle，显示为 Completed）、Failed / Aborted 红 `#E5352F`（failed / interrupted）。设计稿写“等待排到列表最前”，实现保持纯活动时间倒序，不按档位分层。phase 只换状态点与副标题，不换这一档颜色。深色（Notch）对应 `#4C9BFF` / 橙 / `#34C759` / `.34` / `#EE4038`。（原稿写三档、Waiting 绿；2026-08-22 修订为与代码一致的五档。）
 
 ---
 
@@ -130,7 +130,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 
 ## D. Notch（设计稿 5B–5E，OpenNook）
 
-- **5B 列表**：520pt；行 grid `8px 1fr auto`，padding `10 16 11`（下挂子代理时底 4）；状态点 8px + 3px halo（running `#4C9BFF` / waiting `#34C759` / failed `#EE4038` / idle `.34` 无 halo）；标题 `#fff`，turn 结束后 `.72`；右侧 agent chip（h20 r6 `.09`/`.6`，结束后 `.07`/`.45`）+ 20px 时间/归档共用槽（chip→槽 gap 10），hover 时间原地换成归档按钮（仅 `turnEnded` 行）；子代理行 6px 点 + 11/510 `.72` + 肘形导线，**只在父 Turn 运行时列出**；排序与主窗口一致（`updatedAt` 倒序）；页脚 `9 16 12` 顶部 hairline "N of M sessions"。
+- **5B 列表**：520pt；行 grid `8px 1fr auto`，padding `10 16 11`（下挂子代理时底 4）；状态点 8px + 3px halo（running `#4C9BFF` / waiting `#34C759` / failed `#EE4038` / idle `.34` 无 halo）；标题 `#fff`，turn 结束后 `.72`；右侧 agent chip（h20 r6 `.09`/`.6`，结束后 `.07`/`.45`）+ 20px 时间/归档共用槽（chip→槽 gap 10），hover 时间原地换成归档按钮（仅 `turnEnded` 行）；子代理行 6px 点 + 11/510 `.72` + 肘形导线，**只在父 Turn 运行时列出**；子代理按 running → waiting → failed → done、再按活动时间排序（`SubagentGroupSummary.precedes`，Mac 主窗口、Notch、iPhone 同一顺序；分组用 `SessionHierarchy`，子代理的子代理并入同一组）；页脚 `9 16 12` 顶部 hairline "N of M sessions"。
 - **5C Turn 结束卡**：标题 + "Turn complete" `#9DC7FF`（失败 `#EE4038`）+ 耗时；指标 pill（tokens / context / still running）；摘要 11/510 6 行；"Jump to Agent" 白底 13/590 按钮。
 - **5D Turn 开始卡**：`Turn started` `#9DC7FF` + 计时；副标题 `Codex · model · cwd`；USER 消息块。
 - **5E 会话详情**：返回 pill + 15/700 标题、生命周期 pill（档位色 `.18` 底 + `.32` 环，文字 `#9DC7FF` 等）、胶囊 agent chip、三指标 tile、**Recent activity**（22 高行，60px compact tag chip 用 dark 色值与短标签 ASSIST / SUBAG）、"Show in App"/"Jump to Agent"。
@@ -192,5 +192,5 @@ Notch 模型补充：`AgentStatusNookSession` 增 `turnEnded`、`agentKind`；�
 | Claude hook 安装器 | `AgentHookConfigInstaller`（通用 merge/uninstall/命令刷新）+ `CodexHookInstaller`（`~/.codex/hooks.json`, `--agent codex`）+ `ClaudeHookInstaller`（`~/.claude/settings.json` 的 `hooks` 键，`--agent claude`，19 个事件，timeout 5s）；Settings > Agents 增加 Claude Code 卡片 | 只移除含 `agent-status-helper` 的 handler；其他 settings 键与他人 hook 保留 |
 | daemon watcher | 保留代码，`AGENT_STATUS_ROLLOUT_WATCHER=1` 开启，默认关 | 未安装 hook 的 Agent 不再被自动发现 |
 | 临时会话（2026-08-19 追加） | `SessionSummary.firstTurnAt` / `isProvisional`；Mac 列表、Relay 快照、daemon health 过滤临时会话；Claude `SessionEnd` 时 helper 判定 `never used` → `AgentIngressEvent.disposition = .discard`，仓库删除 + 墓碑并照常发布 | 有效性边界 = 第一个 Turn。桌面 App 的 `withTemporaryQuery` 探测进程（SessionStart→SessionEnd 2 s、无 turn/transcript）从不可见、结束即丢弃；env 签名不作判据（探测进程同样带 `CLAUDE_CODE_ENTRYPOINT=claude-desktop`，见 research）。同时：`apply` 先去重再判墓碑复活（重放的 SessionStart 不再解除墓碑）；客户端 `replaceSnapshot` 清空本地墓碑；Mac 事件队列有序；migration v3 清掉历史空会话 |
-
+| 三端一致性修订（2026-08-22 追加） | `SessionHierarchy`（Core）统一父子分组：任意深度的子 Agent 并入最上层被列出的祖先，Mac 主窗口 / Notch / iPhone 子项都按 running → waiting → failed → done；`TransportCoding` 日期带毫秒；删除 `AgentKind` / `SessionLifecycle` / `TurnPhase` / `IPCOperation` / `RelayFrameKind` / `RemotePayloadKind` / `TimelinePayload` 的 `.unknown` 兜底（未知值 = 解码错误）；daemon 本地流新增 `summary` 帧，iPhone 的已查看经它到达 Mac 窗口与 Notch；`reingest_session` 跳过已删除子 Agent并把重建结果推给 iPhone；iOS 隐藏会话规则统一为“daemon 的副本更新（`updatedAt` 更新）才回来”，并继续写入缓存；iOS `cache.apply` 进入写队列 | 之前 iOS / Notch 丢孙级子 Agent、同秒记录按 id 排序、iPhone 已查看不回 Mac、隐藏会话三条路径规则不一 |
 验证：Transport 16 / Common 25 / CLI 10 / Mac 21 项测试通过；`xcodebuild` AgentStatusMac 与 AgentStatusIOSFeature 构建成功；用真实 Claude transcript 走 daemon+helper 端到端得到 2 个 Turn、11 对 TOOL/RESULT、标题来自 `custom-title`。

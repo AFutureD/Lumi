@@ -20,7 +20,6 @@ import Testing
     #expect(summary(lifecycle: .failed, phase: .idle).statusTone == .red)
     #expect(summary(lifecycle: .failed, phase: .idle, needsReview: true).statusTone == .red)
     #expect(summary(lifecycle: .interrupted, phase: .idle).statusTone == .red)
-    #expect(summary(lifecycle: .unknown("future"), phase: .unknown("future")).statusTone == .gray)
 }
 
 @Test func reviewingClearsTheFlagAndTheDerivedAttentionBit() {

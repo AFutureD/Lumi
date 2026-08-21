@@ -15,7 +15,6 @@ public extension AgentKind {
         case .codexSubagent: "Codex Subagent"
         case .claude: "Claude"
         case .claudeSubagent: "Claude Subagent"
-        case let .unknown(value): value.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 
@@ -24,7 +23,6 @@ public extension AgentKind {
         switch provider {
         case .codex: "Codex"
         case .claude: "Claude"
-        case .unknown: displayName
         }
     }
 }

@@ -247,7 +247,7 @@ public extension TurnPhase {
         case .thinking, .responding, .executing: .blue
         case .waitingForApproval: .green
         case .subagentRunning: .orange
-        case .compacting, .idle, .unknown: .neutral
+        case .compacting, .idle: .neutral
         }
     }
 
@@ -255,7 +255,6 @@ public extension TurnPhase {
         switch self {
         case .thinking, .responding, .executing, .waitingForApproval, .subagentRunning, .compacting: .breathing
         case .idle: .solid
-        case .unknown: .hollow
         }
     }
 

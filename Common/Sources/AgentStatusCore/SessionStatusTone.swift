@@ -35,8 +35,6 @@ public enum SessionStatusTone: Equatable, Sendable {
             needsReview ? .green : .gray
         case .failed, .interrupted:
             .red
-        case .unknown:
-            .gray
         }
     }
 

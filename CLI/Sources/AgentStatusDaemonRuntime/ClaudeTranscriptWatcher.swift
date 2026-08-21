@@ -86,7 +86,7 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
             return true
         case .waitingForInput:
             return summary.phase != .idle
-        case .completed, .failed, .interrupted, .unknown:
+        case .completed, .failed, .interrupted:
             return false
         }
     }

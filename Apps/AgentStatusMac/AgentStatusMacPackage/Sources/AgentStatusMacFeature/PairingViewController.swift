@@ -32,6 +32,9 @@ final class PairingViewController: NSViewController {
     private var usesCompactLayout: Bool?
     private var pairingPayload: String?
     private var isGenerating = false
+    /// When the shown code stops being accepted; a fresh one replaces it then.
+    private var offerExpiresAt: Date?
+    private var expiryTask: Task<Void, Never>?
 
     /// Fires whenever `canGenerateCode` may have changed; the toolbar re-validates.
     var onStateChange: (() -> Void)?
@@ -65,12 +68,30 @@ final class PairingViewController: NSViewController {
         super.viewDidAppear()
         relayHost.setPairingViewVisible(true)
         Task { await relayHost.refreshDevices() }
-        if relayHost.isConnected, pairingPayload == nil { generatePairingCode() }
+        if relayHost.isConnected, pairingPayload == nil || offerIsExpired { generatePairingCode() }
     }
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
         relayHost.setPairingViewVisible(false)
+        expiryTask?.cancel()
+        expiryTask = nil
+    }
+
+    private var offerIsExpired: Bool {
+        guard let offerExpiresAt else { return false }
+        return offerExpiresAt <= Date()
+    }
+
+    /// A code that expires while the screen is up is replaced on the spot;
+    /// off screen, the next `viewDidAppear` does it.
+    private func scheduleExpiryRefresh(at expiresAt: Date) {
+        expiryTask?.cancel()
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, expiresAt.timeIntervalSinceNow)))
+            guard !Task.isCancelled, let self, self.view.window != nil else { return }
+            self.generatePairingCode()
+        }
     }
 
     override func viewDidLayout() {
@@ -268,12 +289,15 @@ final class PairingViewController: NSViewController {
                 }
                 qrImageView.image = image
                 pairingPayload = payload
+                offerExpiresAt = offer.expiresAt
+                scheduleExpiryRefresh(at: offer.expiresAt)
                 copyButton.isEnabled = true
                 qrHelpLabel.stringValue = "Scan with Agent Status on iPhone"
                 expiryLabel.stringValue = "Expires \(Self.dateFormatter.string(from: offer.expiresAt))"
             } catch {
                 qrImageView.image = nil
                 pairingPayload = nil
+                offerExpiresAt = nil
                 copyButton.isEnabled = false
                 qrHelpLabel.stringValue = "Unable to generate a pairing code."
                 expiryLabel.stringValue = ""

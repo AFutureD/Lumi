@@ -43,6 +43,12 @@ public actor DaemonService {
     }
 
     /// The same health the `health` IPC answers with.
+    /// Streams a summary-only change (reviewed, archived) to local subscribers.
+    private func publishSummary(_ id: SessionID) async {
+        guard let summary = try? await repository.sessionDetail(id: id, cursor: nil, limit: 1)?.summary else { return }
+        subscriptions.publish(summary: summary)
+    }
+
     public func currentHealth(now: Date = Date()) async -> DaemonHealth? {
         try? await health(now: now).health
     }
@@ -116,6 +122,7 @@ public actor DaemonService {
             case .markSessionReviewed:
                 if let id = envelope.payload.sessionID {
                     try await repository.markSessionReviewed(id)
+                    await publishSummary(id)
                     await relay?.summariesChanged([id])
                     payload = IPCResponse(status: .ok)
                 } else {
@@ -124,6 +131,7 @@ public actor DaemonService {
             case .markSessionHiddenInNotch:
                 if let id = envelope.payload.sessionID {
                     try await repository.markSessionHiddenInNotch(id)
+                    await publishSummary(id)
                     await relay?.summariesChanged([id])
                     payload = IPCResponse(status: .ok)
                 } else {
@@ -165,6 +173,9 @@ public actor DaemonService {
                             sessionID: id,
                             generation: String(Int64(now.timeIntervalSince1970 * 1000))
                         )
+                        // Synced iPhones get the rebuilt sessions whole; the
+                        // Mac that asked takes `report.detail` from this reply.
+                        await relay?.sessionsRebuilt(report.rebuiltSessionIDs)
                         payload = IPCResponse(status: .ok, session: report.detail)
                     } catch SessionReingestError.sessionNotFound {
                         payload = failure(code: "session_not_found", message: "The session is no longer retained.")
@@ -198,8 +209,6 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "missing_device_id", message: "The revoke request has no device id.")
                 }
-            case let .unknown(operation):
-                payload = failure(code: "unknown_operation", message: "Unknown operation: \(operation)")
             }
             return response(requestID: envelope.requestID, payload: payload)
         } catch {

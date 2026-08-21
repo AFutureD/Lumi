@@ -693,6 +693,16 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
+    public func isSessionIgnored(_ sessionID: SessionID) async throws -> Bool {
+        try await database.read { db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM ignored_sessions WHERE id = ?)",
+                arguments: [sessionID.rawValue]
+            ) ?? false
+        }
+    }
+
     public func markSessionReviewed(_ sessionID: SessionID) async throws {
         let encoder = encoder
         let decoder = decoder

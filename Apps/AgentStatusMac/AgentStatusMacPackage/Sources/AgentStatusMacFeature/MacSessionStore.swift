@@ -407,6 +407,27 @@ public final class MacSessionStore {
         scheduleEventApply()
     }
 
+    /// A summary-only change streamed by the daemon (reviewed on an iPhone,
+    /// archived from another window): written to the local cache and shown
+    /// at once, so the window and the Notch turn grey together with the
+    /// iPhone that opened the session.
+    func applyStreamedSummary(_ summary: SessionSummary) {
+        guard let cache else { return }
+        Task {
+            do {
+                try await cache.updateSummary(summary)
+                cachedSnapshotDetails = nil
+                await reloadFromCache(
+                    reloadSelected: selectedSession?.summary.id == summary.id,
+                    persistedDataChanged: true
+                )
+            } catch {
+                connectionError = "Unable to apply the daemon summary: \(error)"
+                notifyObservers()
+            }
+        }
+    }
+
     /// Test hook: waits until every queued daemon event has been applied and
     /// the visible session list reloaded.
     func flushPendingEventsForTesting() async {
@@ -520,6 +541,9 @@ public final class MacSessionStore {
                     onEvent: { event in
                         Task { @MainActor in storeReference.value?.enqueueAgentEvent(event) }
                     },
+                    onSummary: { summary in
+                        Task { @MainActor in storeReference.value?.applyStreamedSummary(summary) }
+                    },
                     onHealth: { health in
                         Task { @MainActor in
                             guard let store = storeReference.value else { return }
@@ -622,6 +646,7 @@ public final class MacSessionStore {
         }
         return SessionDetail(
             summary: summary,
+            turns: detail.turns,
             timeline: timeline,
             nextCursor: detail.nextCursor
         )

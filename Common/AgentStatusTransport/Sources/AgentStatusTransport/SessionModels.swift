@@ -5,7 +5,6 @@ public enum AgentKind: Hashable, Sendable {
     case codexSubagent
     case claude
     case claudeSubagent
-    case unknown(String)
 
     public var rawValue: String {
         switch self {
@@ -13,7 +12,6 @@ public enum AgentKind: Hashable, Sendable {
         case .codexSubagent: "codex_subagent"
         case .claude: "claude"
         case .claudeSubagent: "claude_subagent"
-        case let .unknown(value): value
         }
     }
 
@@ -22,14 +20,13 @@ public enum AgentKind: Hashable, Sendable {
         switch self {
         case .codex, .codexSubagent: .codex
         case .claude, .claudeSubagent: .claude
-        case .unknown: .unknown
         }
     }
 
     public var isSubagent: Bool {
         switch self {
         case .codexSubagent, .claudeSubagent: true
-        case .codex, .claude, .unknown: false
+        case .codex, .claude: false
         }
     }
 }
@@ -37,18 +34,18 @@ public enum AgentKind: Hashable, Sendable {
 public enum AgentProvider: String, Codable, Hashable, Sendable {
     case codex
     case claude
-    case unknown
 }
 
 extension AgentKind: Codable {
     public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
         self = switch value {
         case "codex": .codex
         case "codex_subagent": .codexSubagent
         case "claude": .claude
         case "claude_subagent": .claudeSubagent
-        default: .unknown(value)
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown agent kind: \(value)")
         }
     }
 
@@ -68,7 +65,6 @@ public enum SessionLifecycle: Hashable, Sendable {
     case completed
     case failed
     case interrupted
-    case unknown(String)
 
     public var rawValue: String {
         switch self {
@@ -79,7 +75,6 @@ public enum SessionLifecycle: Hashable, Sendable {
         case .completed: "completed"
         case .failed: "failed"
         case .interrupted: "interrupted"
-        case let .unknown(value): value
         }
     }
 
@@ -87,14 +82,15 @@ public enum SessionLifecycle: Hashable, Sendable {
     public var isLive: Bool {
         switch self {
         case .starting, .running, .waitingForInput, .compacting: true
-        case .completed, .failed, .interrupted, .unknown: false
+        case .completed, .failed, .interrupted: false
         }
     }
 }
 
 extension SessionLifecycle: Codable {
     public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
         self = switch value {
         case "starting": .starting
         case "running": .running
@@ -103,7 +99,7 @@ extension SessionLifecycle: Codable {
         case "completed": .completed
         case "failed": .failed
         case "interrupted": .interrupted
-        default: .unknown(value)
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown session lifecycle: \(value)")
         }
     }
 
@@ -122,7 +118,6 @@ public enum TurnPhase: Hashable, Sendable {
     case waitingForApproval
     case subagentRunning
     case compacting
-    case unknown(String)
 
     public var rawValue: String {
         switch self {
@@ -133,14 +128,14 @@ public enum TurnPhase: Hashable, Sendable {
         case .waitingForApproval: "waiting_for_approval"
         case .subagentRunning: "subagent_running"
         case .compacting: "compacting"
-        case let .unknown(value): value
         }
     }
 }
 
 extension TurnPhase: Codable {
     public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
         self = switch value {
         case "idle": .idle
         case "thinking": .thinking
@@ -149,7 +144,7 @@ extension TurnPhase: Codable {
         case "waiting_for_approval": .waitingForApproval
         case "subagent_running": .subagentRunning
         case "compacting": .compacting
-        default: .unknown(value)
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown turn phase: \(value)")
         }
     }
 

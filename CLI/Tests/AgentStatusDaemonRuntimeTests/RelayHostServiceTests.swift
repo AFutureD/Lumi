@@ -20,12 +20,12 @@ private struct RelayHarness {
     let relayURL = URL(string: "https://relay.example.test")!
     let connections = ConnectionLog()
 
-    init(healthProvider: @escaping RelayHostService.HealthProvider = { nil }) {
+    init(healthProvider: @escaping RelayHostService.HealthProvider = { nil }, preregisterDevice: Bool = true) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         statePath = directory.appendingPathComponent("relay-host-state.json").path
-        rest = InMemoryRelayHostREST(devices: [
+        rest = InMemoryRelayHostREST(devices: preregisterDevice ? [
             PairedDevice(id: deviceID, name: "Test iPhone", publicKey: deviceKeys.publicKey, pairedAt: Date()),
-        ])
+        ] : [])
         let connections = connections
         service = RelayHostService(
             repository: repository,
@@ -96,6 +96,13 @@ private struct RelayHarness {
         Issue.record("ran out of frames")
         return seen
     }
+}
+
+private final class StreamedSummaries: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [SessionSummary] = []
+    func append(_ value: SessionSummary) { lock.lock(); values.append(value); lock.unlock() }
+    var snapshot: [SessionSummary] { lock.lock(); defer { lock.unlock() }; return values }
 }
 
 private final class ConnectionLog: @unchecked Sendable {
@@ -251,6 +258,68 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device, sequence: 2)
     let second = try await harness.collect(from: device) { $0.kind == .sessionIndex }
     #expect(second.last?.frame.sequence == 41)
+    await harness.service.stop()
+}
+
+@Test func anIPhoneReviewReachesTheMacThroughTheLocalStream() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    let needsReview = sampleDetail("a", items: 1, at: base)
+    try await harness.repository.replaceSession(SessionDetail(
+        summary: needsReview.summary.withReviewState(needsAttention: true, needsReview: true),
+        turns: needsReview.turns, timeline: needsReview.timeline
+    ))
+    let streamed = StreamedSummaries()
+    let subscription = harness.hub.subscribe { message in
+        if case let .summary(summary) = message { streamed.append(summary) }
+    }
+    defer { harness.hub.unsubscribe(subscription) }
+    let device = try await harness.connect()
+    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
+    _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+
+    try await harness.request(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [SessionID("a")]), via: device, sequence: 2)
+    // Other iPhones get `session_info`; the Mac window and the Notch get the
+    // same summary on the daemon's local stream.
+    let info = try await harness.collect(from: device) { $0.kind == .sessionInfo }
+    #expect(info.last?.payload.summaries?.first?.needsReview == false)
+    for _ in 0..<300 where streamed.snapshot.isEmpty {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(streamed.snapshot.map(\.id) == [SessionID("a")])
+    #expect(streamed.snapshot.first?.needsReview == false)
+    await harness.service.stop()
+}
+
+@Test func hostNudgesADeviceAfterTheRelayRejectsItsSequence() async throws {
+    let health = DaemonHealth(daemonVersion: "t", executableHash: "h", uptimeSeconds: 1, activeSessionCount: 0, retainedSessionCount: 0, socketPath: "/s", relayConnected: true)
+    let harness = RelayHarness(healthProvider: { health })
+    let device = try await harness.connect()
+    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
+    _ = try await harness.collect(from: device) { $0.kind == .health }
+
+    // The Relay tells only the host; the device would never notice on its
+    // own. The host heals its cursor and sends one frame past the hole so the
+    // device sees a gap and re-indexes.
+    await harness.link.sendErrorToHost(RelayErrorMessage(code: "non_monotonic_sequence", sequence: 2, lastSequence: 40, deviceID: harness.deviceID))
+    let nudge = try await harness.collect(from: device) { $0.kind == .health }
+    #expect(nudge.last?.frame.sequence == 41)
+    await harness.service.stop()
+}
+
+@Test func hostLooksUpAJustPairedDeviceBeforeDroppingItsFirstRequest() async throws {
+    let harness = RelayHarness(preregisterDevice: false)
+    await harness.service.start()
+    let device = harness.link.makeDeviceTransport(harness.deviceID)
+    try await device.connect(hostID: try harness.hostCredentials.hostID, role: .device(harness.deviceID), token: "token")
+    _ = try await device.next() // presence
+
+    // Paired after the host's last device refresh (the 10 s timer has not
+    // fired): the first request must still be answered, not logged and dropped.
+    await harness.rest.pair(PairedDevice(id: harness.deviceID, name: "New iPhone", publicKey: harness.deviceKeys.publicKey, pairedAt: Date()))
+    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("first")), via: device)
+    let seen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    #expect(seen.last?.payload.requestID == RequestID("first"))
     await harness.service.stop()
 }
 

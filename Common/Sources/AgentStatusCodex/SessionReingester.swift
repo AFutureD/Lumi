@@ -13,6 +13,8 @@ public struct SessionReingestReport: Sendable {
     public var linesRead: Int
     public var eventsApplied: Int
     public var detail: SessionDetail
+    /// The session and every subagent session rebuilt with it.
+    public var rebuiltSessionIDs: [SessionID]
 }
 
 /// Rebuilds one session from its rich source alone.
@@ -84,33 +86,38 @@ public struct SessionReingester: Sendable {
         // A Claude parent also rebuilds its subagents' child sessions from the
         // sidechain transcripts next to it — the way to backfill children for
         // sessions recorded before subagents became sessions of their own.
+        var rebuilt = [sessionID]
         if !isCodex, !ClaudeSubagentIdentity.isSubagentSession(sessionID) {
-            applied += try await reingestClaudeSubagents(
+            let children = try await reingestClaudeSubagents(
                 parent: sessionID,
                 parentTranscriptPath: path,
                 workspace: previous.summary.workspace,
                 generation: generation
             )
+            applied += children.applied
+            rebuilt += children.ids
         }
 
         guard let detail = try await fullDetail(sessionID) else {
             throw SessionReingestError.sessionNotFound
         }
-        return SessionReingestReport(path: path, linesRead: read.lines, eventsApplied: applied, detail: detail)
+        return SessionReingestReport(path: path, linesRead: read.lines, eventsApplied: applied, detail: detail, rebuiltSessionIDs: rebuilt)
     }
 
     /// `<project>/<session>/subagents/agent-*.jsonl` → one child session each
     /// (`ClaudeSubagentIdentity`), reduced from byte 0 and titled from `.meta.json`.
+    /// A child the user deleted (tombstoned, no row) stays deleted.
     private func reingestClaudeSubagents(
         parent: SessionID,
         parentTranscriptPath: String,
         workspace: String?,
         generation: String
-    ) async throws -> Int {
+    ) async throws -> (applied: Int, ids: [SessionID]) {
         let directory = (parentTranscriptPath as NSString).deletingLastPathComponent
             + "/\(parent.rawValue)/subagents"
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return 0 }
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return (0, []) }
         var applied = 0
+        var ids: [SessionID] = []
         for file in files.sorted() where file.hasPrefix("agent-") && file.hasSuffix(".jsonl") {
             let agentID = String(file.dropFirst("agent-".count).dropLast(".jsonl".count))
             guard !agentID.isEmpty else { continue }
@@ -119,6 +126,8 @@ public struct SessionReingester: Sendable {
             let read = try RichSourceReader.read(path: path, sessionID: childID, adapter: claudeAdapter, fromOffset: 0)
             guard !read.events.isEmpty else { continue }
             let previousChild = try await repository.sessionDetail(id: childID, cursor: nil, limit: 1)?.summary
+            if previousChild == nil, try await repository.isSessionIgnored(childID) { continue }
+            ids.append(childID)
             _ = try await repository.resetSession(id: childID)
             for event in read.events {
                 if try await repository.apply(event.salted(generation)) { applied += 1 }
@@ -139,7 +148,7 @@ public struct SessionReingester: Sendable {
             }
             try await repository.saveRolloutCursor(read.cursor)
         }
-        return applied
+        return (applied, ids)
     }
 
     /// Human-set summary flags live outside the event stream, so the replay

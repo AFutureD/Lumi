@@ -184,8 +184,12 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         return dataSource
     }
 
-    /// `Online · 4 sessions · 已配对 Aug 14` / `Unavailable · 上次同步 2h 前`.
+    /// `Online · 4 sessions · 已配对 Aug 14` / `Unavailable · 上次同步 2h 前` /
+    /// `Revoked · 在 Mac 上重新配对`.
     static func meta(for state: MacChannelState, now: Date) -> String {
+        if state.accessRevoked {
+            return "Revoked · 在 Mac 上重新配对"
+        }
         if state.isOnline {
             // Top-level sessions only — subagents fold into their parent's row.
             let visible = SessionSummary.visible(state.visibleSessions.map(\.summary))

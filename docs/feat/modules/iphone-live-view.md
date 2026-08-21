@@ -33,8 +33,8 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 每行从上到下：Mac 名称 + 右侧状态胶囊（`Running` / `Waiting` / `Completed` / `Failed`）；标题（最多两行）+ 相对时间；最新一条活动（类别标签 + 内容）；Subagent 组。四段左边界对齐。
 
 - **状态胶囊**：颜色跟五档状态梯级走（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；已完成的 Session 不再显示“最新活动”一行。
-- **Subagent 组**：子 Agent 不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档，与 Mac Notch 文案一致）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
-- **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running / Waiting / Completed），点开在按钮下方落下一张勾选面板（每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
+- **Subagent 组**：子 Agent（包括子 Agent 的子 Agent）不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档，与 Mac Notch 文案一致）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
+- **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running 蓝 / Waiting 橙 / Completed 灰，与行上的状态胶囊同色），点开在按钮下方落下一张勾选面板（每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
 - **搜索**：导航栏右上的放大镜默认收拢，点开才展开搜索框（系统搜索控件）；按标题、Agent、工作目录和 Subagent 名称即时过滤当前列表。
 - **刷新**：下拉列表，或右上 `···` > “Refresh list”，向每台 Mac 重新索取 Session 索引并只补差异。
 - **空状态**：未配对时提示去 Macs 扫码；Mac 在线但没有 Session 时显示 No live sessions；Mac 不在线且本机没有缓存时显示 Mac unavailable；有缓存就照常显示（[IOS-R-006](#ios-r-006-mac-离线时继续显示缓存)）。
@@ -61,7 +61,7 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 
 ## Macs
 
-- 每行：Mac 名称、状态（`Online · 3 sessions · 已配对 Aug 14` 或 `Unavailable · 上次同步 2h 前`）、在线绿点 / 离线灰点。离线时 Sessions 里仍显示这台 Mac 的缓存内容，这一行是判断新鲜度的地方。
+- 每行：Mac 名称、状态（`Online · 3 sessions · 已配对 Aug 14`、`Unavailable · 上次同步 2h 前`，或被撤销后的 `Revoked · 在 Mac 上重新配对`）、在线绿点 / 离线灰点。离线时 Sessions 里仍显示这台 Mac 的缓存内容，这一行是判断新鲜度的地方。
 - 点一行：切到 Sessions Tab 并只显示这台 Mac。
 - 左滑 > Remove：移除这一条通道、凭据和本机缓存，其他 Mac 不受影响；Mac 侧的配对记录仍在，撤销访问要回到 Mac 操作。
 - `+` 菜单：Scan pairing code；Paste pairing code（用 Mac 复制的配对内容，首次会弹系统“允许粘贴”）；Rename this iPhone —— 改的是下次配对时 Mac 看到的名字，已配对的记录不变。
@@ -94,9 +94,9 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 ### IOS-R-004 撤销按设备生效
 
 - 条件：用户在 Mac 上撤销某台 iPhone。
-- 行为：该设备授权失效，现有连接关闭。
-- 结果：目标 iPhone 无法继续接收数据，其他设备不受影响。
-- 限制或例外：恢复访问需要重新配对。
+- 行为：该设备授权失效，现有连接关闭；这台 iPhone 识别出凭据被拒后停止重连，Macs 页该 Mac 显示 `Revoked · 在 Mac 上重新配对`，Sessions 没有内容时提示 Access revoked。
+- 结果：目标 iPhone 无法继续接收数据，已缓存的内容仍可翻看，其他设备不受影响。
+- 限制或例外：恢复访问需要重新配对；重新配对同一台 Mac 沿用原来的设备身份，Mac 的 Paired devices 里不会多出第二条记录。
 
 ### IOS-R-005 Relay 不持久化 Session 历史
 
@@ -151,8 +151,8 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 
 - 条件：用户在详情页 `···` > Delete 并确认。
 - 行为：该 Session 从这台 iPhone 的列表隐藏。
-- 结果：Mac、其他 iPhone 不受影响；Mac 发来该 Session 的更新版本时它会重新出现。
-- 限制或例外：隐藏只在本次运行有效；重启 App、Clear received data 或下一次对账都会让它回来。
+- 结果：Mac、其他 iPhone 不受影响；隐藏期间它仍在后台更新本机缓存，Mac 发来更新的版本（新的活动或状态变化）时它会重新出现；内容没变的对账不会把它带回来。
+- 限制或例外：隐藏只在本次运行有效；重启 App 或 Clear received data 会让它回来。
 
 ### IOS-R-013 iPhone 打开即视为已查看
 

@@ -66,7 +66,9 @@ import Testing
     let repository = InMemorySessionRepository()
     let hub = DaemonSubscriptionHub()
     let capture = EventCapture()
-    let subscriptionID = hub.subscribe { event in capture.append(event) }
+    let subscriptionID = hub.subscribe { message in
+        if case let .event(event) = message { capture.append(event) }
+    }
     defer { hub.unsubscribe(subscriptionID) }
     let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash", subscriptions: hub)
     let ghost = SessionID("ghost")
@@ -101,7 +103,9 @@ import Testing
 @Test func subscriptionHubMultiplexesEventsWithoutSessionChannels() {
     let hub = DaemonSubscriptionHub()
     let capture = EventCapture()
-    let subscriptionID = hub.subscribe { event in capture.append(event) }
+    let subscriptionID = hub.subscribe { message in
+        if case let .event(event) = message { capture.append(event) }
+    }
     defer { hub.unsubscribe(subscriptionID) }
 
     for index in 1...3 {
@@ -191,11 +195,13 @@ import Testing
         #expect(pages == (summary.id.rawValue == "session-2" ? 3 : 1))
     }
 
-    // The removed whole-snapshot operation now reads as unknown.
-    let removed = await service.handle(TransportEnvelope(
-        payload: IPCRequest(operation: .unknown("snapshot_sessions"))
-    ))
-    #expect(removed.payload.failure?.code == "unknown_operation")
+    // The removed whole-snapshot operation no longer decodes at all.
+    #expect(throws: DecodingError.self) {
+        try TransportCoding.makeDecoder().decode(
+            TransportEnvelope<IPCRequest>.self,
+            from: Data(#"{"version":"1.2","requestID":"r","sentAt":"2026-01-01T00:00:00Z","payload":{"operation":"snapshot_sessions"}}"#.utf8)
+        )
+    }
 }
 
 @Test func oversizedResponseBecomesACleanFailureFrame() async throws {

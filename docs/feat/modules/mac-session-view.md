@@ -17,7 +17,7 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 ### Sessions：标准三栏
 
 1. 左栏是固定 224 pt 的全高侧边栏，分为 Monitor / Connections / Application 三组：Sessions 行右侧显示会话数量，iPhone 行右侧在 Relay 连接时显示绿点。工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
-2. 中栏是 Session 列表，按最后更新时间倒序，不分组、不按状态分档；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级。每行是固定网格：`[Agent 图标][标题][相对时间]` 加第二行 `[状态色点 + 生命周期 · Turn 阶段][折叠数量]`，状态色点与标题左对齐。Codex 使用 OpenAI 标记的圆角图标；Subagent 不缩进、不显示图标，标题与父级共用同一左边线，层级只画成沿图标轴的引导线（折角 + 竖线）。Subagent 默认收起；点击有 Subagent 的 Main Session 行任意位置即可展开/收起，收起时第二行右侧显示子项数量的圆角标记，点击它也可展开。右侧相对时间只用单一单位（now / 12s / 4m / 1h / 3d，不出现 yesterday 之类文字）每 30 秒刷新。选中行使用中性灰底、文字颜色不变。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；工具栏标题遵循相同规则。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变，窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
+2. 中栏是 Session 列表，按最后更新时间倒序，不分组、不按状态分档；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级。每行是固定网格：`[Agent 图标][标题][相对时间]` 加第二行 `[状态色点 + 生命周期 · Turn 阶段][折叠数量]`，状态色点与标题左对齐。Codex 使用 OpenAI 标记的圆角图标；Subagent 不缩进、不显示图标，标题与父级共用同一左边线，层级只画成沿图标轴的引导线（折角 + 竖线）。Subagent 默认收起；点击有 Subagent 的 Main Session 行任意位置即可展开/收起，收起时第二行右侧显示子项数量的圆角标记，点击它也可展开。展开后的 Subagent 按 running → waiting → failed → done、同档内最新活动在前排列，与 Notch 和 iPhone 的顺序一致。右侧相对时间只用单一单位（now / 12s / 4m / 1h / 3d，不出现 yesterday 之类文字）每 30 秒刷新。选中行使用中性灰底、文字颜色不变。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；工具栏标题遵循相同规则。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变，窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
 3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh Sessions、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量和一个密度切换按钮：默认 Input、Tools、Model 三行横向时间轴，切换后压成一行“Timeline”，每条记录一个按类别着色的方格；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON。密度偏好在重启后保留。
 4. 窗口缩放只改变右栏宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
@@ -25,7 +25,7 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 
 ### Notch：活动摘要
 
-Notch 紧凑时显示列表中的 Session 数量和最近一个 Session 的状态色；展开后按最近更新时间列出最近七天内活动过的全部主 Session（包括已关闭的会话），视口一次最多显示六条，更多内容向下滚动，底部一行显示列表中的 Session 总数。正在工作的 Session 在标题下多一行最近活动（类别标签 + 摘要）。带 Subagent 的 Session 在标题下多一条计数条：叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档）+ 箭头；Session 运行中时默认展开成“状态点 + 名称 + 已运行时长”的胶囊，等待输入 / 已完成 / 失败时默认折叠只留计数条；点整条展开或收起，该行记住你的选择直到它的状态档变化；点击胶囊直接打开该 Subagent。鼠标悬停在带 Subagent 的行上时，这一行显示为一张卡片。Notch 顶部的设置按钮打开主 App 的 Notch 设置，不在 Notch 内维护第二套设置页。完整展示规则和可用选项见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态) 和 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
+Notch 紧凑时显示列表中的 Session 数量和最近一个 Session 的状态色；展开后按最近更新时间列出最近七天内活动过的全部主 Session（包括已关闭的会话），视口一次最多显示六条，更多内容向下滚动，底部一行显示列表中的 Session 总数。正在工作的 Session 在标题下多一行最近活动（类别标签 + 摘要）。带 Subagent 的 Session 在标题下多一条计数条（子 Agent 的子 Agent 也算在同一条里）：叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档）+ 箭头；Session 运行中时默认展开成“状态点 + 名称 + 已运行时长”的胶囊，等待输入 / 已完成 / 失败时默认折叠只留计数条；点整条展开或收起，该行记住你的选择直到它的状态档变化；点击胶囊直接打开该 Subagent。鼠标悬停在带 Subagent 的行上时，这一行显示为一张卡片。Notch 顶部的设置按钮打开主 App 的 Notch 设置，不在 Notch 内维护第二套设置页。完整展示规则和可用选项见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态) 和 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
 
 ### Session 状态颜色
 
@@ -61,11 +61,11 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 刷新 Session
 
-点击工具栏右侧的刷新图标（Refresh Sessions）：当前选中的 Session 会先由 daemon 从它的 transcript / rollout 整个重建（Claude 父 Session 连同子 Agent 一起），然后再从 daemon 取得全部 Session 的完整当前数据；没有选中时只做后一步。解析规则更新后，用它回填旧 Session 新增的记录（例如 `Empty` 的 REASONING 行）。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。
+点击工具栏右侧的刷新图标（Refresh Sessions）：当前选中的 Session 会先由 daemon 从它的 transcript / rollout 整个重建（Claude 父 Session 连同子 Agent 一起；你已删除的子 Agent 不会被重建回来），已同步的 iPhone 同时拿到重建结果，然后再从 daemon 取得全部 Session 的完整当前数据；没有选中时只做后一步。解析规则更新后，用它回填旧 Session 新增的记录（例如 `Empty` 的 REASONING 行）。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。
 
 ### 删除单个 Session
 
-选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 立即从列表消失，并从 daemon、Mac 和已连接 iPhone 中删除。删除不影响 Codex 自身 Session；之后到达的同一 Session 活动也不会让它重新出现在 Agent Status 中。
+选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 立即从列表消失，并从 daemon、Mac 和已连接 iPhone 中删除。删除不影响 Codex 自身 Session；之后被动到达的旧活动不会让它重新出现，只有你在同一会话里再次发出请求（或会话重启）它才会回来。
 
 ### 从 Notch 归档 Session
 
@@ -183,7 +183,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 - 条件：Mac 本地同步数据中存在最近七天内活动过、未被 Notch 归档且状态已知的 Session——正在启动、工作、压缩上下文、等待审批、Turn 已结束停在提示符（待查看与已查看都算）、已关闭（Completed），或以失败 / 中断收尾。
 - 行为：紧凑状态显示列表中的主 Session 数量；展开后按最近更新时间全量列出这些主 Session，视口一次最多显示六条（按各行实际高度截到第六条为止），更多内容向下滚动，底部一行显示列表中的 Session 总数。正在工作（蓝色档）的行在标题下显示最近一条活动（类别标签 + 摘要）。带 Subagent 的 Session 不论处于哪一档都在标题下保留一条 Subagent 计数条（叠放的状态点按 running → waiting → failed → done 排列，文案为 `N subagents` 加各非零档的数量，单数写 `1 subagent`）；蓝色档默认展开成胶囊（状态点 + 名称 + 已运行时长，按同样顺序自由换行），其他档默认折叠；点计数条切换展开 / 折叠，这一行的选择在它的状态档变化前一直保留，状态档变化后回到默认；点击胶囊打开该 Subagent 的详情。悬停在带 Subagent 的行上时该行以卡片底色高亮，位置与尺寸不变。Turn 结束时 Notch 自动展开、短暂显示回合完成卡片后自动收回；回合级失败 / 中断时自动展开并短暂显示错误提示后收回。用户正在悬停或自己打开着 Notch 时不会被这些提示抢占或收回。新用户消息（回合开始）不改变 Notch 显示，列表行自然反映新状态；子代理的回合边界属于父级的内部进度，单个工具调用的失败属于常规噪音，都不触发提示。正在查看某条详情时，卡片不会打断当前页面。
 - 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么；已结束的 Turn 和已关闭的会话留在列表里，直到被归档或超过七天没有新活动。
-- 限制或例外：状态未知的 Session 不进入列表。超过七天没有活动的 Session 自动移出列表和计数，没有单独入口找回（主窗口照常显示）；跨过七天边界的移出要等下一次数据变化才生效，不是即时的。用户在 Notch 归档的 Session 不进入列表和计数，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
+- 限制或例外：超过七天没有活动的 Session 自动移出列表和计数，没有单独入口找回（主窗口照常显示）；跨过七天边界的移出要等下一次数据变化才生效，不是即时的。用户在 Notch 归档的 Session 不进入列表和计数，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。没有可显示的用户消息时显示等待首条用户消息。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
 
 ### MAC-R-015 Notch 设置集中在主 App
 

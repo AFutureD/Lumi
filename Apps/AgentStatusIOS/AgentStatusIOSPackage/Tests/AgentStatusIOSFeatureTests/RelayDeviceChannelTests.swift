@@ -259,15 +259,23 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     try await harness.controller.addChannel(harness.credentials)
     await harness.waitUntil { harness.state?.hasCompleteSync == true }
 
-    // session_info: summary-only change lands without refetching.
+    // session_info: summary-only change lands without refetching — in memory
+    // at once, in the cache as soon as the queued write lands.
     let idle = detail("A", items: 1, at: base, phase: .idle).summary
     try await harness.host.push(summaries: [idle])
     await harness.waitUntil { harness.session("A")?.summary.phase == .idle }
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 10)?.summary.phase != .idle {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
     #expect(try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 10)?.summary.phase == .idle)
 
-    // session_removed: gone from memory and cache.
+    // session_removed: gone from memory at once, from the cache as soon as
+    // the queued write lands.
     try await harness.host.pushRemoved([SessionID("B")])
     await harness.waitUntil { harness.session("B") == nil }
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10) != nil {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
     #expect(try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10) == nil)
 
     // Reviewing on the iPhone tells the daemon.
@@ -297,4 +305,126 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     await harness.waitUntil { harness.session("A") != nil && harness.state?.hasCompleteSync == true }
     #expect(harness.session("A")?.timeline.count == 2)
     await harness.host.stop()
+}
+
+/// A Relay that refuses the device's credentials on every connect.
+private final class RevokingTransportFactory: RelayFrameTransportFactory, @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts = 0
+    var connectAttempts: Int { lock.lock(); defer { lock.unlock() }; return attempts }
+
+    func makeTransport(baseURL: URL) -> any RelayFrameTransport {
+        lock.lock(); attempts += 1; lock.unlock()
+        return RevokedTransport()
+    }
+
+    private struct RevokedTransport: RelayFrameTransport {
+        func connect(hostID: HostID, role: RelayConnectionRole, token: String) async throws {}
+        func send(_ frame: RelayRoutingFrame) async throws { throw RelayClientError.notConnected }
+        func next() async throws -> RelayIncomingMessage { throw RelayClientError.unauthorized }
+        func disconnect() async {}
+    }
+}
+
+@Test @MainActor func revokedCredentialsStopReconnectingAndFlagTheMac() async throws {
+    let settings = LocalSettings(defaults: UserDefaults(suiteName: "relay-tests-\(UUID().uuidString)")!)
+    let factory = RevokingTransportFactory()
+    let cache = InMemorySessionRepository()
+    let dependencies = RelayDeviceDependencies(
+        relayURL: URL(string: "https://relay.example.test")!,
+        transportFactory: factory,
+        makeRepository: { _ in cache },
+        removeRepository: { _ in },
+        requestTimeouts: .init(index: .seconds(2), fetch: .seconds(2), tick: .milliseconds(100), retryDelay: .milliseconds(200)),
+        persistsCredentials: false
+    )
+    let controller = RelayDeviceController(settings: settings, dependencies: dependencies, loadStoredCredentials: false)
+    let keys = RelayCryptography.makeKeyPair()
+    try await controller.addChannel(RelayDeviceCredentials(
+        relayURL: dependencies.relayURL, hostID: HostID("host-revoked"), hostName: "Old Mac",
+        deviceID: DeviceID("device-revoked"), deviceToken: "stale", keyPair: keys, hostPublicKey: keys.publicKey
+    ))
+    for _ in 0..<300 where controller.channelStates.first?.accessRevoked != true {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    let state = try #require(controller.channelStates.first)
+    #expect(state.accessRevoked)
+    #expect(!state.isConnected)
+    #expect(state.lastError?.contains("revoked") == true)
+    // No 2 s retry loop: one attempt, then the Macs screen asks to pair again.
+    try await Task.sleep(for: .milliseconds(2_500))
+    #expect(factory.connectAttempts == 1)
+    #expect(MacsViewController.meta(for: state, now: Date()).hasPrefix("Revoked"))
+}
+
+@Test @MainActor func aRepeatedOnlinePresenceMakesTheDeviceIndexAgain() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 1, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+    let before = await harness.host.requests.count(where: { $0.kind == .syncIndex })
+
+    // The daemon reconnected behind the Relay: devices get `online` again
+    // without an `offline` first, and the daemon forgot who had synced.
+    try await harness.host.start()
+    for _ in 0..<300 where await harness.host.requests.count(where: { $0.kind == .syncIndex }) == before {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == before + 1)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+    #expect(harness.state?.hasCompleteSync == true)
+    await harness.host.stop()
+}
+
+@Test @MainActor func aHiddenSessionReturnsOnlyWhenTheDaemonSendsANewerCopy() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 1, at: base))
+    try await harness.host.repository.replaceSession(detail("B", items: 1, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    harness.controller.dismissSession(hostID: harness.hostID, id: SessionID("A"))
+    harness.controller.dismissSession(hostID: harness.hostID, id: SessionID("B"))
+    #expect(harness.session("A") == nil)
+    #expect(harness.session("B") == nil)
+
+    // The same summary again (a reconcile with nothing new): stays hidden…
+    try await harness.host.push(summaries: [detail("A", items: 1, at: base).summary])
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(harness.session("A") == nil)
+
+    // …a newer summary shows it, and the cache carried the change meanwhile.
+    try await harness.host.push(summaries: [detail("A", items: 1, at: base.addingTimeInterval(60), phase: .idle).summary])
+    await harness.waitUntil { harness.session("A") != nil }
+    #expect(harness.session("A")?.summary.phase == .idle)
+    #expect(try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 10)?.summary.phase == .idle)
+
+    // An event (any activity) is a newer copy too, and it was written to the
+    // cache while hidden, so nothing is lost.
+    let grow = AgentIngressEvent(
+        eventID: EventID("e1"), sessionID: SessionID("B"), turnID: TurnID("B-turn"), agent: .codex,
+        occurredAt: base.addingTimeInterval(10), phase: .executing,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("B-item-9"), sessionID: SessionID("B"), turnID: TurnID("B-turn"),
+            occurredAt: base.addingTimeInterval(10),
+            payload: .tool(ToolTimelinePayload(name: "swift build", status: .started))
+        )
+    )
+    try await harness.host.push(events: [grow])
+    await harness.waitUntil { harness.session("B") != nil }
+    #expect(harness.session("B")?.timeline.count == 2)
+    #expect(try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.timeline.count == 2)
+    await harness.host.stop()
+}
+
+@Test @MainActor func pairingTheSameMacAgainKeepsTheDeviceID() async throws {
+    let harness = Harness()
+    #expect(harness.controller.deviceID(forPairingWith: harness.hostID) != harness.deviceID)
+    try await harness.controller.addChannel(harness.credentials)
+    #expect(harness.controller.deviceID(forPairingWith: harness.hostID) == harness.deviceID)
+    #expect(harness.controller.deviceID(forPairingWith: HostID("host-other")) != harness.deviceID)
 }

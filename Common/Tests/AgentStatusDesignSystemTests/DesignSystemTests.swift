@@ -152,7 +152,6 @@ typealias DS = DesignSystem
 }
 
 @Test func turnPhasesOnlyChangeTheDot() {
-    #expect(TurnPhase.unknown("submitted").dotForm == .hollow)
     #expect(TurnPhase.thinking.dotStyle().breathes && TurnPhase.thinking.dotHue == .blue)
     #expect(TurnPhase.waitingForApproval.dotHue == .green)
     #expect(TurnPhase.subagentRunning.dotHue == .orange)

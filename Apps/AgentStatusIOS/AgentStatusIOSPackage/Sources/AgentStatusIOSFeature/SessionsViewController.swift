@@ -181,6 +181,8 @@ final class SessionsViewController: UIViewController, UICollectionViewDelegate, 
             emptyLabel.text = "No live sessions"
         } else if channels.contains(where: \.isOnline) {
             emptyLabel.text = "Syncing…\nWaiting for \(channels.filter(\.isOnline).map(\.displayName).joined(separator: ", ")) to send its sessions."
+        } else if channels.allSatisfy(\.accessRevoked) {
+            emptyLabel.text = "Access revoked\nThis iPhone was revoked on the Mac. Open Macs and pair again."
         } else {
             emptyLabel.text = "Mac unavailable\nSessions appear once a paired Mac is online."
         }

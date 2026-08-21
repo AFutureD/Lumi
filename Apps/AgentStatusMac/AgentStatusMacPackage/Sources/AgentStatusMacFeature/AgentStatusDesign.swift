@@ -213,8 +213,6 @@ enum AgentIcons {
                 stroke.stroke()
                 return true
             }
-        case .unknown:
-            return placeholder(pointSize: pointSize)
         }
     }
 

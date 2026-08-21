@@ -379,9 +379,6 @@ private let nookNow = Date(timeIntervalSince1970: 100)
             == ["fresh"]
     )
 
-    // Unknown lifecycles stay out.
-    let unknown = nookSummary(id: "mystery", lifecycle: .unknown("mystery"), phase: .idle, updatedAt: 20)
-    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [unknown], now: nookNow).isEmpty)
 }
 
 @Test func nookListKeepsStoreOrderAndKeepsSubagentsWithTheirParent() {
@@ -398,6 +395,19 @@ private let nookNow = Date(timeIntervalSince1970: 100)
         now: nookNow
     )
     #expect(visible.map(\.id.rawValue) == ["running", "running-child", "failed", "waiting", "waiting-child"])
+}
+
+@Test func nookListFoldsSubagentsOfSubagentsIntoTheSameGroup() {
+    let parent = nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30)
+    let child = hierarchySummary(id: "child", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 28)
+    let grandchild = hierarchySummary(id: "grandchild", parentID: "child", depth: 2, updatedAt: 29)
+    let visible = AgentStatusNookSnapshot.visibleSummaries(from: [parent, grandchild, child], now: nookNow)
+    // The grandchild is not dropped: it folds into the parent's strip, in
+    // strip order (running before done), as on the iPhone.
+    #expect(visible.map(\.id.rawValue) == ["parent", "grandchild", "child"])
+    let items = AgentStatusNookSnapshot.listItems(from: AgentStatusNookSnapshot.make(summaries: visible, details: [:]))
+    #expect(items.count == 1)
+    #expect(items[0].children.map(\.id.rawValue) == ["grandchild", "child"])
 }
 
 @Test func nookListItemsOrderSubagentsRunningWaitingFailedDone() {
@@ -585,7 +595,7 @@ private func nookSession(
         currentUserMessage: "Build it",
         lastActivityAt: Date(timeIntervalSince1970: 0),
         startedAt: Date(timeIntervalSince1970: 0),
-        parentID: parentID,
+        groupID: parentID,
         depth: parentID == nil ? 0 : 1,
         currentTurn: nil,
         model: nil,
@@ -682,7 +692,7 @@ private func nookSession(
     let date = Date(timeIntervalSince1970: 100)
     let summary = SessionSummary(
         id: SessionID("claude-session"),
-        agent: .unknown("claude"),
+        agent: .claude,
         title: "Rewrite Session\n  module",
         lifecycle: .running,
         phase: .thinking,
@@ -729,6 +739,18 @@ private func nookSession(
     let childNode = try #require(hierarchy.nodesByID[child.id])
     #expect(mainNode.children.map { $0.summary.id } == [child.id])
     #expect(childNode.children.map { $0.summary.id } == [grandchild.id])
+}
+
+@Test func sessionListHierarchyOrdersChildrenRunningWaitingFailedDone() throws {
+    let hierarchy = SessionListHierarchy.build(from: [
+        hierarchySummary(id: "parent", updatedAt: 100),
+        hierarchySummary(id: "done", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 99),
+        hierarchySummary(id: "failed", parentID: "parent", lifecycle: .failed, phase: .idle, updatedAt: 98),
+        hierarchySummary(id: "waiting", parentID: "parent", lifecycle: .waitingForInput, phase: .waitingForApproval, updatedAt: 97),
+        hierarchySummary(id: "running", parentID: "parent", updatedAt: 96),
+    ])
+    // The same strip order the Notch and the iPhone use, not newest first.
+    #expect(hierarchy.roots.first?.children.map(\.summary.id.rawValue) == ["running", "waiting", "failed", "done"])
 }
 
 @Test func sessionListHierarchyReusesNodesAndReloadsOnlyVisibleChanges() throws {

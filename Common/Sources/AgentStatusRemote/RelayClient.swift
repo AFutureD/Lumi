@@ -200,7 +200,20 @@ public actor RelayWebSocketClient {
 
     public func next() async throws -> RelayIncomingMessage {
         guard let task else { throw RelayClientError.notConnected }
-        let message = try await task.receive()
+        let message: URLSessionWebSocketTask.Message
+        do {
+            message = try await task.receive()
+        } catch {
+            // A refused upgrade (401/403) or the worker closing with
+            // `4003 device revoked` means the credentials are no longer
+            // accepted: surface that instead of a generic socket error, so
+            // callers stop reconnecting and ask the user to pair again.
+            let httpStatus = (task.response as? HTTPURLResponse)?.statusCode
+            if Self.isCredentialRejection(httpStatus: httpStatus, closeCode: task.closeCode.rawValue) {
+                throw RelayClientError.unauthorized
+            }
+            throw error
+        }
         let data: Data
         switch message {
         case let .string(text): data = Data(text.utf8)
@@ -228,6 +241,16 @@ public actor RelayWebSocketClient {
     public func disconnect() {
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+    }
+
+    /// The worker's close code for a device the Mac revoked (`host-relay.ts`).
+    public static let deviceRevokedCloseCode = 4003
+
+    /// True when the Relay refused the credentials: the upgrade came back
+    /// 401/403, or the socket was closed with the revoked-device code.
+    public static func isCredentialRejection(httpStatus: Int?, closeCode: Int) -> Bool {
+        if let httpStatus, httpStatus == 401 || httpStatus == 403 { return true }
+        return closeCode == deviceRevokedCloseCode
     }
 }
 

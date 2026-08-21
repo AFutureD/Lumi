@@ -244,8 +244,6 @@ public struct HelperIngestPipeline: Sendable {
             let codexHome = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
                 ?? homeDirectory.appendingPathComponent(".codex", isDirectory: true)
             return RichSourceLocator.codexRollout(for: sessionID, sessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true))
-        case .unknown:
-            return nil
         }
     }
 

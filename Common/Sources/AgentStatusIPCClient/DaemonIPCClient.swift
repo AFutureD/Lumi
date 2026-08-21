@@ -82,6 +82,7 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
     public func start(
         socketPath: String,
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void,
+        onSummary: @escaping @Sendable (SessionSummary) -> Void,
         onHealth: @escaping @Sendable (DaemonHealth) -> Void,
         onDisconnect: @escaping @Sendable () -> Void
     ) throws {
@@ -97,6 +98,7 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
             let group = MultiThreadedEventLoopGroup.singleton
             let handler = ClientSubscriptionHandler(
                 onEvent: onEvent,
+                onSummary: onSummary,
                 onHealth: onHealth,
                 onDisconnect: { [weak self] in
                     self?.markDisconnected()
@@ -240,15 +242,18 @@ private final class ClientSubscriptionHandler: ChannelInboundHandler, @unchecked
     typealias InboundIn = ByteBuffer
 
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
+    private let onSummary: @Sendable (SessionSummary) -> Void
     private let onHealth: @Sendable (DaemonHealth) -> Void
     private let onDisconnect: @Sendable () -> Void
 
     init(
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void,
+        onSummary: @escaping @Sendable (SessionSummary) -> Void,
         onHealth: @escaping @Sendable (DaemonHealth) -> Void,
         onDisconnect: @escaping @Sendable () -> Void
     ) {
         self.onEvent = onEvent
+        self.onSummary = onSummary
         self.onHealth = onHealth
         self.onDisconnect = onDisconnect
     }
@@ -263,6 +268,7 @@ private final class ClientSubscriptionHandler: ChannelInboundHandler, @unchecked
               envelope.version.isCompatible(with: .current) else { return }
         if let health = envelope.payload.health { onHealth(health) }
         if let event = envelope.payload.event { onEvent(event) }
+        if let summary = envelope.payload.summary { onSummary(summary) }
     }
 
     func channelInactive(context: ChannelHandlerContext) {

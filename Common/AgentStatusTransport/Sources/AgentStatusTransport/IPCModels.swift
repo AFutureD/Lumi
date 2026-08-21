@@ -131,7 +131,6 @@ public enum IPCOperation: Hashable, Sendable {
     case relayCreatePairingOffer
     case relayRevokeDevice
     case relayRefreshDevices
-    case unknown(String)
 
     public var rawValue: String {
         switch self {
@@ -152,14 +151,14 @@ public enum IPCOperation: Hashable, Sendable {
         case .relayCreatePairingOffer: "relay_create_pairing_offer"
         case .relayRevokeDevice: "relay_revoke_device"
         case .relayRefreshDevices: "relay_refresh_devices"
-        case let .unknown(value): value
         }
     }
 }
 
 extension IPCOperation: Codable {
     public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
         self = switch value {
         case "ingest": .ingest
         case "ingest_batch": .ingestBatch
@@ -178,7 +177,7 @@ extension IPCOperation: Codable {
         case "relay_create_pairing_offer": .relayCreatePairingOffer
         case "relay_revoke_device": .relayRevokeDevice
         case "relay_refresh_devices": .relayRefreshDevices
-        default: .unknown(value)
+        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown IPC operation: \(value)")
         }
     }
 
@@ -320,6 +319,9 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let session: SessionDetail?
     public let health: DaemonHealth?
     public let event: AgentIngressEvent?
+    /// Stream frame: a summary-only change (reviewed, archived) on the
+    /// daemon's side, possibly made from another end (an iPhone).
+    public let summary: SessionSummary?
     public let acceptedCount: Int?
     public let rolloutCursor: RolloutCursor?
     public let failure: IPCFailure?
@@ -334,6 +336,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         session: SessionDetail? = nil,
         health: DaemonHealth? = nil,
         event: AgentIngressEvent? = nil,
+        summary: SessionSummary? = nil,
         acceptedCount: Int? = nil,
         rolloutCursor: RolloutCursor? = nil,
         failure: IPCFailure? = nil,
@@ -345,6 +348,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.session = session
         self.health = health
         self.event = event
+        self.summary = summary
         self.acceptedCount = acceptedCount
         self.rolloutCursor = rolloutCursor
         self.failure = failure
@@ -358,6 +362,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case session
         case health
         case event
+        case summary
         case acceptedCount
         case rolloutCursor
         case failure
@@ -372,6 +377,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         session = try c.decodeIfPresent(SessionDetail.self, forKey: .session)
         health = try c.decodeIfPresent(DaemonHealth.self, forKey: .health)
         event = try c.decodeIfPresent(AgentIngressEvent.self, forKey: .event)
+        summary = try c.decodeIfPresent(SessionSummary.self, forKey: .summary)
         acceptedCount = try c.decodeIfPresent(Int.self, forKey: .acceptedCount)
         rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
         failure = try c.decodeIfPresent(IPCFailure.self, forKey: .failure)

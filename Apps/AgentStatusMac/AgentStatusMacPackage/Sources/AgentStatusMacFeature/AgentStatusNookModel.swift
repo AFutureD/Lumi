@@ -42,7 +42,9 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     let currentUserMessage: String?
     let lastActivityAt: Date
     let startedAt: Date
-    let parentID: SessionID?
+    /// The top-level session this one folds under as a subagent (any depth,
+    /// `SessionHierarchy`); nil for a top-level row.
+    let groupID: SessionID?
     let depth: Int
     /// The newest turn (open or just closed).
     let currentTurn: TurnSummary?
@@ -60,7 +62,7 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
         SessionStatusTone.resolve(lifecycle: lifecycle, phase: phase, needsReview: needsReview)
     }
 
-    var isChild: Bool { parentID != nil }
+    var isChild: Bool { groupID != nil }
 
     /// Archive affordance and "Turn complete" state: the newest turn is closed
     /// or the session itself is no longer running a turn.
@@ -200,48 +202,36 @@ enum AgentStatusNookSnapshot {
     static let recentRowLimit = 8
     static let maximumSessionAge: TimeInterval = 7 * 86_400
 
-    /// Notch-worthy sessions: not archived from the Notch, a known lifecycle,
-    /// and active within the last seven days. A session crossing the age
-    /// boundary drops out on the next data change, not the moment it turns
-    /// seven days old.
+    /// Notch-worthy sessions: not archived from the Notch and active within
+    /// the last seven days. A session crossing the age boundary drops out on
+    /// the next data change, not the moment it turns seven days old.
     static func eligibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
         summaries.filter { summary in
             guard !summary.hiddenInNotch else { return false }
-            guard summary.lastActivityAt > now.addingTimeInterval(-maximumSessionAge) else { return false }
-            if case .unknown = summary.lifecycle { return false }
-            return true
+            return summary.lastActivityAt > now.addingTimeInterval(-maximumSessionAge)
         }
     }
 
     /// Parents in the store's order (newest activity first), each followed
-    /// by its eligible children. Children stay with their parent through
-    /// every lifecycle: the list folds them into a count strip, so a finished
-    /// session still shows how its subagents ended.
+    /// by its eligible subagents — every descendant, already in strip order
+    /// (`SessionHierarchy`, the same grouping as the iPhone list). Children
+    /// stay with their parent through every lifecycle: the list folds them
+    /// into a count strip, so a finished session still shows how its
+    /// subagents ended.
     static func visibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
-        let eligible = eligibleSummaries(from: summaries, now: now)
-        let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
-        var ordered: [SessionSummary] = []
-        var seen: Set<SessionID> = []
-        let parents = eligible.filter { $0.lineage?.parentSessionID.flatMap { byID[$0] } == nil }
-        for parent in parents {
-            guard seen.insert(parent.id).inserted else { continue }
-            ordered.append(parent)
-            for child in eligible where child.lineage?.parentSessionID == parent.id {
-                if seen.insert(child.id).inserted { ordered.append(child) }
-            }
-        }
-        return ordered
+        SessionHierarchy.groups(eligibleSummaries(from: summaries, now: now))
+            .flatMap { [$0.parent] + $0.descendants }
     }
 
-    /// The list renders parents; a parent with subagents carries them as a
-    /// collapsible group under its title. Children follow their parent in
-    /// `sessions` and are reordered running → waiting → failed → done; a
-    /// child whose parent is not listed (the store promoted it to top level)
-    /// gets a flat row of its own.
+    /// The list renders top-level sessions; one with subagents carries them
+    /// as a collapsible group under its title. Subagents follow their group's
+    /// session in `sessions` (running → waiting → failed → done); a child
+    /// whose parent is not listed (the store promoted it to top level) gets
+    /// a flat row of its own.
     static func listItems(from sessions: [AgentStatusNookSession]) -> [AgentStatusNookListItem] {
         var items: [AgentStatusNookListItem] = []
         for session in sessions {
-            if let parentID = session.parentID, parentID == items.last?.session.id {
+            if let groupID = session.groupID, groupID == items.last?.session.id {
                 items[items.count - 1].children.append(session)
             } else {
                 items.append(AgentStatusNookListItem(session: session, children: []))
@@ -262,7 +252,9 @@ enum AgentStatusNookSnapshot {
         summaries: [SessionSummary],
         details: [SessionID: SessionDetail]
     ) -> [AgentStatusNookSession] {
-        summaries.map { summary in
+        let byID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return summaries.map { summary in
+            let rootID = SessionHierarchy.rootID(of: summary, in: byID)
             let detail = details[summary.id]
             let turns = detail?.turns ?? []
             let currentTurn = turns.last(where: { $0.isOpen }) ?? turns.last
@@ -295,7 +287,7 @@ enum AgentStatusNookSnapshot {
                 currentUserMessage: prompt.map(normalized),
                 lastActivityAt: summary.lastActivityAt,
                 startedAt: summary.startedAt,
-                parentID: summary.lineage?.parentSessionID,
+                groupID: rootID == summary.id ? nil : rootID,
                 depth: summary.lineage?.subagentDepth ?? (summary.lineage?.parentSessionID == nil ? 0 : 1),
                 currentTurn: currentTurn,
                 model: configuredWindow?.model,
@@ -335,10 +327,10 @@ enum AgentStatusNookActivityDiff {
         let listedIDs = Set(current.map(\.id))
         var events: [AgentStatusNookTurnEvent] = []
         for session in current {
-            // Subagents render inside their parent's subagent group; their turn
+            // Subagents render inside their group's count strip; their turn
             // boundaries are the parent's internal progress, not notifications.
             // An orphan promoted to top level still notifies.
-            if let parentID = session.parentID, listedIDs.contains(parentID) { continue }
+            if let groupID = session.groupID, listedIDs.contains(groupID) { continue }
             // A session whose rows appear in bulk — its detail cache just
             // loaded — is a backfill: diffing against the empty window would
             // replay old turn ends as fresh notifications.
@@ -533,11 +525,7 @@ final class AgentStatusNookModel: ObservableObject {
     /// Top-level rows among the visible summaries — a child only counts as
     /// nested while its parent is in the list.
     private static func parentCount(of summaries: [SessionSummary]) -> Int {
-        let ids = Set(summaries.map(\.id))
-        return summaries.count { summary in
-            guard let parentID = summary.lineage?.parentSessionID else { return true }
-            return !ids.contains(parentID)
-        }
+        SessionHierarchy.groups(summaries).count
     }
 
     private func requiresImmediateRefresh(from store: MacSessionStore) -> Bool {

@@ -125,7 +125,7 @@ pnpm exec wrangler deploy
 ### 传输
 
 - Session/Timeline Codable round trip。
-- unknown enum 兼容。
+- 未知枚举值是解码错误（不做兼容兜底）；日期带毫秒往返。
 - 4-byte framing 的半包和多包。
 - delete request 和 Relay golden fixture。
 
@@ -144,8 +144,8 @@ pnpm exec wrangler deploy
 - `list_sessions` 索引 + 分页 `get_session` 重组出与仓库一致的 Session；超限响应变成 `response_too_large` 失败帧。
 - 单事件流多 Session 复用。
 - rollout offset 恢复和首次基线。
-- 单 Session 删除后晚事件不复活。
-- `RelayHostService`（内存 Relay 双端）：序号先落盘且按设备独立；`sync_index` 分片 + health；`fetch_session` 缺失回 `session_removed`；`fetch_timeline_since` 只回 `since` 之后；事件合并成批、只推已同步设备；`session_info`；Worker 回报非单调序号后自愈；Relay 断开后重连并清空已同步集合；配对 offer 与撤销。
+- 单 Session 删除后被动晚事件不复活；新 prompt / SessionStart 复活。`needsReview` 在 turn end 置位并粘滞，只有已查看清除。
+- `RelayHostService`（内存 Relay 双端）：序号先落盘且按设备独立；`sync_index` 分片 + health；`fetch_session` 缺失回 `session_removed`；`fetch_timeline_since` 只回 `since` 之后；事件合并成批、只推已同步设备；`session_info`；Worker 回报非单调序号后自愈并向该设备补发 health；未知设备的首个请求先刷新设备列表再应答；iPhone 的 `session_reviewed` 经本地流（`summary` 帧）到达 Mac；Relay 断开后重连并清空已同步集合；配对 offer 与撤销。
 
 ### Relay/Remote
 
@@ -161,7 +161,7 @@ pnpm exec wrangler deploy
 
 - Mac Hook merge、`RelayHostStatusClient`（脚本化 daemon 的 relay_* 应答）和 Notch snapshot/activity 规则。
 - Xcode UI/runtime 验证三栏布局、Notch、配对和删除。
-- iOS Simulator 验证多 Mac 分组、Timeline，以及 `RelayDeviceChannel`（内存 Relay + 假 host）：冷启动先显示缓存再对账、事件实时应用与未知 Session 整取、info / removed / reviewed 双向、Clear received data 后回填。
+- iOS Simulator 验证多 Mac 分组、Timeline，以及 `RelayDeviceChannel`（内存 Relay + 假 host）：冷启动先显示缓存再对账、事件实时应用与未知 Session 整取、info / removed / reviewed 双向、Clear received data 后回填、凭据被拒后停止重连并标 Revoked、Host 重复 `online` 再次 index、隐藏会话只在更新副本到达时回来、重配同一 Mac 复用 Device ID、孙级子 Agent 并入顶层行。
 
 ## 边界检查
 

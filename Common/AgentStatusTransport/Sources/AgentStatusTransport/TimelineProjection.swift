@@ -413,7 +413,8 @@ public enum TimelineProjection {
         case .modelConfiguration:
             return nil
 
-        // Legacy payload still present in stored data.
+        // Diagnostic payload kept as metadata (design record §G); the Codex
+        // rollout reader still emits it for raw context it does not classify.
         case let .internalContext(payload):
             let kind = payload.kind.lowercased()
             if kind.contains("reasoning") {
@@ -428,9 +429,6 @@ public enum TimelineProjection {
 
         case .usageMetrics:
             return nil
-
-        case let .unknown(payload):
-            return Draft(tag: .context, status: .info, text: payload.summary ?? humanized(payload.kind))
         }
     }
 

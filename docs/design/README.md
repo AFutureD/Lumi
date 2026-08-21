@@ -17,7 +17,7 @@
 
 | 范围 | 当前状态 | 关键边界 |
 | --- | --- | --- |
-| Agent | v1 仅实现 Codex | `AgentAdapter` 允许以后增加其他 Agent |
+| Agent | 已实现 Codex 与 Claude Code（含各自的 Subagent） | `AgentAdapter` 允许以后增加其他 Agent |
 | 本地服务 | 已实现 | 每台 Mac 一个 daemon、一个 Unix socket、一个 NIO event loop |
 | macOS | 已实现开发预览 | AppKit 主界面；OpenNook/SwiftUI 只负责 Notch 和 Notch 设置内容 |
 | iOS | 已实现开发预览 | UIKit，只读；每台 Mac 一个独立通道和 SQLite 文件 |
@@ -40,7 +40,7 @@
 
 | 术语 | 含义 |
 | --- | --- |
-| Agent | 产生 Session 事件的工具；v1 为 Codex |
+| Agent | 产生 Session 事件的工具；当前为 Codex 与 Claude Code |
 | Session | 一次可持续多个 Turn 的 Agent 会话 |
 | Turn | Session 内的一轮用户请求与 Agent 响应 |
 | Timeline | 用户活动以及保留的模型配置、内部上下文和消耗指标的有序集合；Mac 详情分模块展示，iPhone 主界面只展示用户活动 |
