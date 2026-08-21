@@ -37,7 +37,7 @@ private func session(
 private func channel(_ host: String, sessions: [SessionDetail], online: Bool = true) -> MacChannelState {
     MacChannelState(
         hostID: HostID(host), displayName: host, pairedAt: now, isConnected: online, isHostOnline: online,
-        hasCompleteSync: online, sessions: sessions, lastSyncAt: nil, lastError: nil
+        hasCompleteSync: online, sessions: sessions, lastSyncAt: nil, lastError: nil, health: nil, hasLoadedCache: true
     )
 }
 
@@ -65,9 +65,10 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
     #expect(items[0].timeText(now: now) == "10s")
 }
 
-@Test func offlineMacContributesNoRows() {
+@Test func offlineMacStillShowsItsCachedRows() {
+    // The cache is what the list shows; staleness is the Macs tab's business.
     let items = SessionListPresentation.items(from: [channel("A", sessions: [session("a1")], online: false)])
-    #expect(items.isEmpty)
+    #expect(items.map(\.title) == ["Session"])
 }
 
 @Test func completedSessionsHideTheLatestLine() {

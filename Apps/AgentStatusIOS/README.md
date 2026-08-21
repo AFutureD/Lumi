@@ -10,7 +10,7 @@ Design source: `/DESIGN SYSTEM.html` at the repo root; every product value goes 
 
 ## Data
 
-Pairing credentials live in the Keychain. Received session content is held in memory only — every connection asks the Mac for a full resend (`hello` with sequence 0); quitting the app clears it. Opening a session sends the Mac a sealed `attention` frame (`session_reviewed`) so the green unreviewed state clears everywhere. `UserDefaults` keeps the device name used for pairing, the device-filter selection and each Mac's last sync time.
+Pairing credentials live in the Keychain. Each paired Mac gets its own SQLite cache (`Application Support/Agent Status/Channels/<hostID>.sqlite3`, the shared `SQLiteSessionRepository` schema) that is shown immediately at launch; the Mac's daemon is the source of truth. On connect the iPhone sends a sealed `request` (`sync_index`), reconciles the returned index against the cache (`SyncReconcilePlan`: prune / fetch whole / fetch timeline tail / update summary) and then applies the daemon's live `session_message` events through the same reducer the daemon runs. Opening a session sends `session_reviewed` so the green unreviewed state clears everywhere. `UserDefaults` keeps the device name used for pairing, the filter selections and each Mac's last sync time.
 
 ## Running without a Mac
 

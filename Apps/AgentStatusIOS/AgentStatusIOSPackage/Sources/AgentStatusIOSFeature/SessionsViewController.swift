@@ -172,6 +172,9 @@ final class SessionsViewController: UIViewController, UICollectionViewDelegate, 
         }
         if channels.isEmpty {
             emptyLabel.text = "No Macs paired\nOpen Macs and scan the pairing code shown by Agent Status on your Mac."
+        } else if channels.contains(where: { !$0.hasLoadedCache }) {
+            // The caches are still being read; nothing to say yet.
+            emptyLabel.text = nil
         } else if !allItems.isEmpty {
             emptyLabel.text = "No matching sessions"
         } else if channels.contains(where: { $0.isOnline && $0.hasCompleteSync }) {

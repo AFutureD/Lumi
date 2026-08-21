@@ -10,38 +10,94 @@ struct MacChannelState: Sendable {
     let pairedAt: Date
     let isConnected: Bool
     let isHostOnline: Bool
-    /// The latest index arrived and every session it names was received.
+    /// The latest index was reconciled and every fetch it needed has landed.
     let hasCompleteSync: Bool
-    /// Every session held in memory for this Mac, online or not.
+    /// Every session cached for this Mac (loaded from disk at launch, kept
+    /// current by the sync), online or not.
     let sessions: [SessionDetail]
     /// When the last complete sync landed (persists across launches).
     let lastSyncAt: Date?
     let lastError: String?
+    /// The daemon's last reported health, while connected.
+    let health: DaemonHealth?
+    /// The cache file has been read into memory (false only during launch).
+    let hasLoadedCache: Bool
 
     var isOnline: Bool { isConnected && isHostOnline }
-    /// Sessions the lists show: only while the Mac is online and the current
-    /// sync is complete, so stale data never reads as live state.
-    var visibleSessions: [SessionDetail] { isOnline && hasCompleteSync ? sessions : [] }
+    /// Sessions the lists show: the cache, always — staleness is shown per
+    /// Mac (online dot, "last sync"), never by hiding content.
+    var visibleSessions: [SessionDetail] { sessions }
 }
 
-/// All paired Macs. Credentials live in the Keychain; session content lives
-/// only in memory and is re-fetched from each Mac on every connect.
+/// How a controller builds a channel's cache and Relay socket; tests inject
+/// in-memory doubles.
+struct RelayDeviceDependencies: Sendable {
+    var relayURL: URL
+    var transportFactory: any RelayFrameTransportFactory
+    var makeRepository: @Sendable (HostID) throws -> any SessionRepository
+    var removeRepository: @Sendable (HostID) throws -> Void
+    /// Drops cache files of Macs that are no longer paired (launch housekeeping).
+    var pruneRepositories: @Sendable (Set<HostID>) throws -> Void = { _ in }
+    var requestTimeouts: RelayDeviceChannel.Timeouts
+    /// Tests keep credentials out of the Keychain.
+    var persistsCredentials = true
+
+    /// Production: `RelayWebSocketClient`, one SQLite file per Mac under
+    /// `Application Support/Agent Status/Channels/<hostID>.sqlite3`.
+    static func live(relayURL: URL = RelayBuildConfiguration.url) -> RelayDeviceDependencies {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Agent Status", isDirectory: true)
+            .appendingPathComponent("Channels", isDirectory: true)
+        return RelayDeviceDependencies(
+            relayURL: relayURL,
+            transportFactory: RelayWebSocketTransportFactory(),
+            makeRepository: { hostID in
+                try SQLiteSessionRepository(path: directory.appendingPathComponent("\(hostID.rawValue).sqlite3").path)
+            },
+            removeRepository: { hostID in
+                let base = directory.appendingPathComponent("\(hostID.rawValue).sqlite3").path
+                for suffix in ["", "-wal", "-shm"] where FileManager.default.fileExists(atPath: base + suffix) {
+                    try FileManager.default.removeItem(atPath: base + suffix)
+                }
+            },
+            pruneRepositories: { keep in
+                let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+                for file in files {
+                    guard let stem = file.components(separatedBy: ".sqlite3").first, stem != file else { continue }
+                    if !keep.contains(HostID(stem)) {
+                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(file))
+                    }
+                }
+            },
+            requestTimeouts: .init()
+        )
+    }
+}
+
+/// All paired Macs. Credentials live in the Keychain; each Mac's sessions
+/// live in that Mac's SQLite cache (the shared repository) and are loaded
+/// into memory at launch, then kept current by index reconciles and the
+/// daemon's event stream.
 @MainActor
 final class RelayDeviceController {
     private let secureStore = SecureStore(service: "com.huanan.AgentStatusIOS.relay")
-    private let credentialsAccount = "device-channels-v3"
+    private let credentialsAccount = "device-channels-v4"
     private let settings: LocalSettings
+    private let dependencies: RelayDeviceDependencies
     private var channelOrder: [HostID] = []
     private var channels: [HostID: RelayDeviceChannel] = [:]
     private var observers: [UUID: () -> Void] = [:]
     /// Developer preview (`-AgentStatusPreviewData`): fixed states instead of Relay.
     private var previewStates: [MacChannelState]?
 
-    init(settings: LocalSettings = .shared) {
+    init(settings: LocalSettings = .shared, dependencies: RelayDeviceDependencies = .live(), loadStoredCredentials: Bool = true) {
         self.settings = settings
+        self.dependencies = dependencies
+        guard loadStoredCredentials else { return }
         let stored = (try? secureStore.load(RelayDeviceCredentialCollection.self, account: credentialsAccount))?.channels ?? []
+        try? dependencies.pruneRepositories(Set(stored.map(\.hostID)))
         for credentials in stored {
-            let channel = makeChannel(credentials)
+            guard let channel = makeChannel(credentials) else { continue }
             channelOrder.append(credentials.hostID)
             channels[credentials.hostID] = channel
         }
@@ -87,7 +143,7 @@ final class RelayDeviceController {
         for channel in channels.values { channel.start() }
     }
 
-    /// Ask every Mac for its current state again (pull-to-refresh, `Refresh list`).
+    /// Ask every Mac for its index again (pull-to-refresh, `Refresh list`).
     func refreshAll() {
         for channel in channels.values { channel.refresh() }
         notify()
@@ -95,6 +151,12 @@ final class RelayDeviceController {
 
     func refresh(hostID: HostID) {
         channels[hostID]?.refresh()
+        notify()
+    }
+
+    /// Take one session whole again (`Refresh session` in the detail).
+    func refreshSession(hostID: HostID, id: SessionID) {
+        channels[hostID]?.refreshSession(id)
         notify()
     }
 
@@ -110,13 +172,12 @@ final class RelayDeviceController {
         guard offer.version.isCompatible(with: .current), offer.expiresAt > Date() else {
             throw PairingError.expiredOrIncompatible
         }
-        guard offer.relayURL == RelayBuildConfiguration.url else {
+        guard offer.relayURL == dependencies.relayURL else {
             throw PairingError.unexpectedRelay
         }
         let keyPair = RelayCryptography.makeKeyPair()
         let deviceID = DeviceID("device-\(UUID().uuidString.lowercased())")
-        let relayURL = RelayBuildConfiguration.url
-        let result = try await RelayRESTClient(baseURL: relayURL).pair(PairingRequest(
+        let result = try await RelayRESTClient(baseURL: dependencies.relayURL).pair(PairingRequest(
             hostID: offer.hostID,
             deviceID: deviceID,
             challenge: offer.challenge,
@@ -124,7 +185,7 @@ final class RelayDeviceController {
             devicePublicKey: keyPair.publicKey
         ))
         let credentials = RelayDeviceCredentials(
-            relayURL: relayURL,
+            relayURL: dependencies.relayURL,
             hostID: offer.hostID,
             hostName: offer.hostName,
             deviceID: deviceID,
@@ -133,20 +194,24 @@ final class RelayDeviceController {
             hostPublicKey: result.hostPublicKey,
             pairedAt: result.pairedAt
         )
+        try await addChannel(credentials)
+    }
 
-        if let existing = channels[offer.hostID] { await existing.stop() }
-        channelOrder.removeAll { $0 == offer.hostID }
-        channelOrder.append(offer.hostID)
-        let channel = makeChannel(credentials)
-        channels[offer.hostID] = channel
-        settings.setLastSync(nil, for: offer.hostID)
+    /// Installs a paired channel (also the test seam around `pair`).
+    func addChannel(_ credentials: RelayDeviceCredentials) async throws {
+        if let existing = channels[credentials.hostID] { await existing.stop(removeLocalData: false) }
+        channelOrder.removeAll { $0 == credentials.hostID }
+        channelOrder.append(credentials.hostID)
+        guard let channel = makeChannel(credentials) else { throw PairingError.cacheUnavailable }
+        channels[credentials.hostID] = channel
+        settings.setLastSync(nil, for: credentials.hostID)
         try saveCredentials()
-        await channel.connect()
+        channel.start()
         notify()
     }
 
-    /// Removes one Mac: its channel, credentials and in-memory sessions. The
-    /// Mac's own pairing record stays until revoked there.
+    /// Removes one Mac: its channel, credentials and cache file. The Mac's
+    /// own pairing record stays until revoked there.
     func unpair(hostID: HostID) {
         if previewStates != nil {
             previewStates?.removeAll { $0.hostID == hostID }
@@ -156,7 +221,7 @@ final class RelayDeviceController {
         guard let channel = channels.removeValue(forKey: hostID) else { return }
         channelOrder.removeAll { $0 == hostID }
         channel.cancelTasks()
-        Task { await channel.stop() }
+        Task { await channel.stop(removeLocalData: true) }
         settings.setLastSync(nil, for: hostID)
         try? saveCredentials()
         notify()
@@ -165,8 +230,8 @@ final class RelayDeviceController {
     // MARK: - Review
 
     /// Opening a session on the iPhone counts as reviewing it everywhere:
-    /// the row turns grey here at once, and the Mac is told so it, the Notch
-    /// and other iPhones follow (the Mac republishes the summary).
+    /// the row turns grey here at once, and the daemon is told so the Mac,
+    /// the Notch and other iPhones follow.
     func markReviewed(hostID: HostID, id: SessionID) {
         if previewStates != nil {
             previewStates = previewStates?.map { state in
@@ -185,8 +250,8 @@ final class RelayDeviceController {
 
     // MARK: - Local data
 
-    /// Hides one session on this iPhone until the Mac sends a newer version
-    /// of it. The Mac keeps the session; the iPhone is read-only.
+    /// Hides one session on this iPhone until the daemon sends a newer
+    /// version of it. The Mac keeps the session; the iPhone is read-only.
     func dismissSession(hostID: HostID, id: SessionID) {
         if previewStates != nil {
             previewStates = previewStates?.map { state in
@@ -200,8 +265,8 @@ final class RelayDeviceController {
         notify()
     }
 
-    /// Drops every received session from memory. Nothing is fetched back
-    /// until the next refresh or the next update from a Mac.
+    /// Drops every cached session; each Mac is asked for its index again so
+    /// the caches refill from the daemons.
     func clearReceivedData() {
         if previewStates != nil {
             previewStates = previewStates?.map { $0.replacingSessions([]) }
@@ -214,26 +279,32 @@ final class RelayDeviceController {
 
     // MARK: - Private
 
-    private func makeChannel(_ credentials: RelayDeviceCredentials) -> RelayDeviceChannel {
+    private func makeChannel(_ credentials: RelayDeviceCredentials) -> RelayDeviceChannel? {
         let credentials = RelayDeviceCredentials(
-            relayURL: RelayBuildConfiguration.url,
+            relayURL: dependencies.relayURL,
             hostID: credentials.hostID,
             hostName: credentials.hostName,
             deviceID: credentials.deviceID,
             deviceToken: credentials.deviceToken,
             keyPair: credentials.keyPair,
             hostPublicKey: credentials.hostPublicKey,
-            pairedAt: credentials.pairedAt,
-            lastAcknowledgedSequence: credentials.lastAcknowledgedSequence
+            pairedAt: credentials.pairedAt
         )
-        return RelayDeviceChannel(credentials: credentials, settings: settings) { [weak self] in
-            guard let self else { return }
-            try? self.saveCredentials()
-            self.notify()
+        guard let cache = try? dependencies.makeRepository(credentials.hostID) else { return nil }
+        return RelayDeviceChannel(
+            credentials: credentials,
+            cache: cache,
+            removeCache: dependencies.removeRepository,
+            transportFactory: dependencies.transportFactory,
+            timeouts: dependencies.requestTimeouts,
+            settings: settings
+        ) { [weak self] in
+            self?.notify()
         }
     }
 
     private func saveCredentials() throws {
+        guard dependencies.persistsCredentials else { return }
         let collection = RelayDeviceCredentialCollection(
             channels: channelOrder.compactMap { channels[$0]?.credentials }
         )
@@ -256,50 +327,99 @@ extension MacChannelState {
             hasCompleteSync: hasCompleteSync,
             sessions: sessions,
             lastSyncAt: lastSyncAt,
-            lastError: lastError
+            lastError: lastError,
+            health: health,
+            hasLoadedCache: hasLoadedCache
         )
     }
 }
 
-/// One Mac-to-iPhone channel. Every session for that Mac is multiplexed
-/// through this single WebSocket; no session creates a connection.
+/// One Mac-to-iPhone channel: this Mac's SQLite cache, the in-memory copy
+/// the screens read, and the one Relay socket every session of that Mac is
+/// multiplexed through.
+///
+/// Sync is index-first: every connect (and pull-to-refresh, and any sequence
+/// gap) asks the daemon for `session_index`; `SyncReconcilePlan` turns the
+/// difference against `cache.sessionIndex()` into prunes, summary writes,
+/// whole-session fetches and timeline-tail fetches; afterwards the daemon's
+/// event stream (`session_message`) is applied through the same
+/// `SessionRepository.apply` reducer the daemon and the Mac run.
 @MainActor
-private final class RelayDeviceChannel {
-    private let onChange: () -> Void
-    private let settings: LocalSettings
-    private var socket: RelayWebSocketClient?
-    private var connectTask: Task<Void, Never>?
-    private var receiveTask: Task<Void, Never>?
-    private var reconnectTask: Task<Void, Never>?
+final class RelayDeviceChannel {
+    /// As many sessions as the daemon's `list_sessions` serves.
+    static let indexLimit = 10_000
 
-    private(set) var credentials: RelayDeviceCredentials
-    private var sessions: [SessionDetail] = []
-    private var isHostOnline = false
-    private var isConnected = false
-    /// The visible id set promised by the latest `.index` frame; `nil` until
-    /// one arrives on this connection.
-    private var indexIDs: Set<SessionID>?
-    /// Parts of sessions still in flight, keyed by session.
-    private var partBuffers: [SessionID: [RemoteSessionPayload]] = [:]
-    /// Highest frame sequence seen on this connection, for gap detection.
-    private var lastReceivedSequence: UInt64 = 0
-    private var needsResync = false
-    private var lastError: String?
-    /// Sessions hidden on this iPhone, with the `updatedAt` they had when
-    /// hidden; a newer copy from the Mac shows them again.
-    private var dismissed: [SessionID: Date] = [:]
-    /// Sequence of device → host `attention` frames on this connection.
-    private var commandSequence: UInt64 = 0
-
-    /// The sync is current when the latest index has arrived and every
-    /// session it references (that is not dismissed) was fully received.
-    private var hasCompleteSync: Bool {
-        guard let indexIDs else { return false }
-        return RelayFrameReduction.missingIDs(index: indexIDs.subtracting(dismissed.keys), sessions: sessions).isEmpty
+    struct Timeouts: Sendable {
+        var index: Duration = .seconds(20)
+        var fetch: Duration = .seconds(30)
+        var tick: Duration = .seconds(1)
+        var retryDelay: Duration = .seconds(10)
     }
 
-    init(credentials: RelayDeviceCredentials, settings: LocalSettings, onChange: @escaping () -> Void) {
+    private enum PendingKind {
+        case index
+        case fetchSession(remaining: Set<SessionID>)
+        case fetchTimeline(SessionID)
+    }
+
+    private struct PendingRequest {
+        var kind: PendingKind
+        var payload: RemoteSessionPayload
+        var sentAt: Date
+        var attempts: Int
+    }
+
+    private let onChange: () -> Void
+    private let settings: LocalSettings
+    private let cache: any SessionRepository
+    private let removeCache: @Sendable (HostID) throws -> Void
+    private let transportFactory: any RelayFrameTransportFactory
+    private let timeouts: Timeouts
+    private var transport: (any RelayFrameTransport)?
+    private var startTask: Task<Void, Never>?
+    private var receiveTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
+    private var tickTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
+
+    private(set) var credentials: RelayDeviceCredentials
+    /// Latest activity first, mirroring `cache.listSessions`.
+    private var sessions: [SessionDetail] = []
+    private var cacheLoaded = false
+    private var isHostOnline = false
+    private var isConnected = false
+    private var hasCompleteSync = false
+    private var lastError: String?
+    private var health: DaemonHealth?
+    /// Highest frame sequence seen on this connection, for gap detection.
+    private var lastReceivedSequence: UInt64 = 0
+    /// Sequence of device → host `request` frames on this connection.
+    private var requestSequence: UInt64 = 0
+    private var pending: [RequestID: PendingRequest] = [:]
+    private var indexParts: [RequestID: [RemoteSessionPayload]] = [:]
+    private var partBuffers: [SessionID: [RemoteSessionPayload]] = [:]
+    /// `generatedAt` of the index whose fetches are still landing.
+    private var indexGeneratedAt: Date?
+    /// Sessions hidden on this iPhone, with the `updatedAt` they had when
+    /// hidden; a newer copy from the daemon shows them again.
+    private var dismissed: [SessionID: Date] = [:]
+    /// Serialises cache writes against each other (applies, replaces, prunes).
+    private var applyQueue: Task<Void, Never>?
+
+    init(
+        credentials: RelayDeviceCredentials,
+        cache: any SessionRepository,
+        removeCache: @escaping @Sendable (HostID) throws -> Void,
+        transportFactory: any RelayFrameTransportFactory,
+        timeouts: Timeouts,
+        settings: LocalSettings,
+        onChange: @escaping () -> Void
+    ) {
         self.credentials = credentials
+        self.cache = cache
+        self.removeCache = removeCache
+        self.transportFactory = transportFactory
+        self.timeouts = timeouts
         self.settings = settings
         self.onChange = onChange
     }
@@ -314,116 +434,85 @@ private final class RelayDeviceChannel {
             hasCompleteSync: hasCompleteSync,
             sessions: sessions,
             lastSyncAt: settings.lastSync(for: credentials.hostID),
-            lastError: lastError
+            lastError: lastError,
+            health: health,
+            hasLoadedCache: cacheLoaded
         )
     }
 
+    // MARK: - Lifecycle
+
+    /// Loads the cache (first run only), then connects. Idempotent.
     func start() {
-        guard !isConnected, connectTask == nil else { return }
-        connectTask = Task { [weak self] in
+        guard startTask == nil else { return }
+        if isConnected {
+            // Foreground again: the socket may have been suspended; ask for
+            // the index so whatever was dropped meanwhile is healed.
+            requestIndex()
+            return
+        }
+        startTask = Task { [weak self] in
             guard let self else { return }
+            if !self.cacheLoaded { await self.loadCache() }
             await self.connect()
-            self.connectTask = nil
+            self.startTask = nil
         }
     }
 
-    /// Connected: ask the Mac for a full resend. Otherwise: connect (which asks).
+    /// Connected: ask for the index. Otherwise: connect (which asks).
     func refresh() {
-        if isConnected, let socket {
-            Task { try? await self.requestFullResend(socket) }
+        if isConnected {
+            requestIndex()
         } else {
             start()
         }
     }
 
-    func connect() async {
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        receiveTask?.cancel()
-        await socket?.disconnect()
-        let socket = RelayWebSocketClient(baseURL: credentials.relayURL)
-        self.socket = socket
+    func refreshSession(_ id: SessionID) {
+        guard isConnected else { return }
+        send(kind: .fetchSession(remaining: [id]), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: [id]))
+    }
+
+    func stop(removeLocalData: Bool) async {
+        cancelTasks()
+        let transport = self.transport
+        self.transport = nil
+        await transport?.disconnect()
         isConnected = false
         isHostOnline = false
-        indexIDs = nil
+        pending = [:]
+        indexParts = [:]
         partBuffers = [:]
-        lastReceivedSequence = 0
-        needsResync = false
-        do {
-            try await socket.connect(
-                hostID: credentials.hostID,
-                role: .device(credentials.deviceID),
-                token: credentials.deviceToken
-            )
-            isConnected = true
-            lastError = nil
-            // Nothing is cached on the iPhone, so every connection starts by
-            // asking the Mac for everything it has.
-            try await requestFullResend(socket)
-            receiveTask = Task { [weak self] in
-                do {
-                    while !Task.isCancelled {
-                        let message = try await socket.next()
-                        await self?.handle(message, socket: socket)
-                    }
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    self?.connectionFailed(error)
-                }
-            }
-        } catch {
-            connectionFailed(error)
+        if removeLocalData {
+            sessions = []
+            try? removeCache(credentials.hostID)
         }
         onChange()
     }
 
-    func stop() async {
-        cancelTasks()
-        await socket?.disconnect()
-        socket = nil
-        sessions = []
-        isConnected = false
-        isHostOnline = false
-        indexIDs = nil
-        partBuffers = [:]
-        onChange()
-    }
-
     func cancelTasks() {
-        connectTask?.cancel()
+        startTask?.cancel()
         receiveTask?.cancel()
         reconnectTask?.cancel()
-        connectTask = nil
+        tickTask?.cancel()
+        retryTask?.cancel()
+        startTask = nil
         receiveTask = nil
         reconnectTask = nil
+        tickTask = nil
+        retryTask = nil
     }
 
-    /// Clears the review flag locally and tells the Mac. Returns false when
-    /// the session is unknown or already reviewed.
+    /// Clears the review flag locally and tells the daemon. Returns false
+    /// when the session is unknown or already reviewed.
     func markReviewed(_ id: SessionID) -> Bool {
         guard let index = sessions.firstIndex(where: { $0.summary.id == id }),
               sessions[index].summary.needsReview else { return false }
         let detail = sessions[index]
         sessions[index] = SessionDetail(summary: detail.summary.reviewed, turns: detail.turns, timeline: detail.timeline)
-        guard isConnected, let socket else { return true }
-        let credentials = self.credentials
-        commandSequence &+= 1
-        let sequence = commandSequence
-        Task {
-            do {
-                let frame = try RelayCryptography.seal(
-                    RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [id]),
-                    hostID: credentials.hostID,
-                    deviceID: credentials.deviceID,
-                    sequence: sequence,
-                    kind: .attention,
-                    privateKey: credentials.keyPair.privateKey,
-                    peerPublicKey: credentials.hostPublicKey
-                )
-                try await socket.send(frame)
-            } catch {
-                self.lastError = "Unable to send review state: \(error)"
-            }
+        enqueueCacheWrite { [cache] in try await cache.markSessionReviewed(id) }
+        if isConnected {
+            sendRequest(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [id]))
         }
         return true
     }
@@ -435,32 +524,119 @@ private final class RelayDeviceChannel {
         partBuffers[id] = nil
     }
 
+    /// Empties the cache (no tombstones, no dedupe reset) and re-indexes.
     func clear() {
         sessions = []
-        indexIDs = nil
-        partBuffers = [:]
         dismissed = [:]
+        partBuffers = [:]
+        hasCompleteSync = false
+        enqueueCacheWrite { [cache] in _ = try await cache.pruneSessions(keeping: []) }
+        if isConnected { requestIndex() }
+        onChange()
     }
 
-    // MARK: - Private
+    // MARK: - Cache
 
-    /// A `hello` behind the Mac's channel sequence makes it resend every
-    /// session plus the index.
-    private func requestFullResend(_ socket: RelayWebSocketClient) async throws {
-        try await socket.send(RelayRoutingFrame(
-            hostID: credentials.hostID,
-            deviceID: credentials.deviceID,
-            sequence: 0,
-            kind: .hello,
-            acknowledgedSequence: 0
-        ))
+    private func loadCache() async {
+        do {
+            var loaded: [SessionDetail] = []
+            for summary in try await cache.listSessions(limit: Self.indexLimit) {
+                if let detail = try await Self.loadFullDetail(cache, id: summary.id) {
+                    loaded.append(detail)
+                }
+            }
+            sessions = loaded
+            cacheLoaded = true
+        } catch {
+            lastError = "Unable to read the session cache: \(error)"
+        }
+        onChange()
+    }
+
+    private static func loadFullDetail(_ cache: any SessionRepository, id: SessionID) async throws -> SessionDetail? {
+        var cursor: PaginationCursor?
+        var turns: [TurnSummary] = []
+        var timeline: [TimelineItem] = []
+        var summary: SessionSummary?
+        repeat {
+            guard let page = try await cache.sessionDetail(id: id, cursor: cursor, limit: 500) else { return nil }
+            summary = page.summary
+            if !page.turns.isEmpty { turns = page.turns }
+            timeline += page.timeline
+            cursor = page.nextCursor
+        } while cursor != nil
+        guard let summary else { return nil }
+        return SessionDetail(summary: summary, turns: turns, timeline: timeline)
+    }
+
+    /// Cache writes run one after another, in order, off the frame handler.
+    private func enqueueCacheWrite(_ body: @escaping @Sendable () async throws -> Void) {
+        let previous = applyQueue
+        applyQueue = Task { [weak self] in
+            await previous?.value
+            do {
+                try await body()
+            } catch {
+                self?.lastError = "Unable to write the session cache: \(error)"
+            }
+        }
+    }
+
+    // MARK: - Connection
+
+    private func connect() async {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        receiveTask?.cancel()
+        await transport?.disconnect()
+        let transport = transportFactory.makeTransport(baseURL: credentials.relayURL)
+        self.transport = transport
+        isConnected = false
+        isHostOnline = false
+        hasCompleteSync = false
+        lastReceivedSequence = 0
+        requestSequence = 0
+        pending = [:]
+        indexParts = [:]
+        partBuffers = [:]
+        do {
+            try await transport.connect(
+                hostID: credentials.hostID,
+                role: .device(credentials.deviceID),
+                token: credentials.deviceToken
+            )
+            isConnected = true
+            lastError = nil
+            receiveTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do {
+                        let message = try await transport.next()
+                        await self?.handle(message)
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        self?.connectionFailed(error)
+                        return
+                    }
+                }
+            }
+            startTicker()
+            // The worker answers the connect with presence; the index request
+            // goes out as soon as the host is known to be online (`handle`).
+        } catch {
+            connectionFailed(error)
+        }
+        onChange()
     }
 
     private func connectionFailed(_ error: Error) {
         isConnected = false
         isHostOnline = false
-        indexIDs = nil
+        hasCompleteSync = false
+        pending = [:]
+        indexParts = [:]
         partBuffers = [:]
+        tickTask?.cancel()
+        tickTask = nil
         lastError = String(describing: error)
         onChange()
         scheduleReconnect(after: error)
@@ -487,47 +663,155 @@ private final class RelayDeviceChannel {
         }
     }
 
-    private func handle(_ message: RelayIncomingMessage, socket: RelayWebSocketClient) async {
+    // MARK: - Requests
+
+    private func requestIndex() {
+        guard isConnected, isHostOnline else { return }
+        // One index request in flight at a time.
+        guard !pending.values.contains(where: { if case .index = $0.kind { true } else { false } }) else { return }
+        send(kind: .index, payload: RemoteSessionPayload(kind: .syncIndex))
+    }
+
+    private func send(kind: PendingKind, payload: RemoteSessionPayload, attempts: Int = 1) {
+        let requestID = RequestID()
+        let stamped = RemoteSessionPayload(
+            kind: payload.kind,
+            generatedAt: Date(),
+            requestID: requestID,
+            sessionIDs: payload.sessionIDs,
+            since: payload.since
+        )
+        pending[requestID] = PendingRequest(kind: kind, payload: stamped, sentAt: Date(), attempts: attempts)
+        sendRequest(stamped)
+    }
+
+    private func sendRequest(_ payload: RemoteSessionPayload) {
+        guard let transport else { return }
+        requestSequence &+= 1
+        let credentials = self.credentials
+        let sequence = requestSequence
+        Task { [weak self] in
+            do {
+                let frame = try RelayCryptography.seal(
+                    payload,
+                    hostID: credentials.hostID,
+                    deviceID: credentials.deviceID,
+                    sequence: sequence,
+                    kind: .request,
+                    privateKey: credentials.keyPair.privateKey,
+                    peerPublicKey: credentials.hostPublicKey
+                )
+                try await transport.send(frame)
+            } catch {
+                self?.lastError = "Unable to send request: \(error)"
+                self?.onChange()
+            }
+        }
+    }
+
+    private func startTicker() {
+        tickTask?.cancel()
+        tickTask = Task { [weak self, timeouts] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: timeouts.tick)
+                guard !Task.isCancelled else { return }
+                self?.expirePendingRequests()
+            }
+        }
+    }
+
+    /// A request that got no complete answer is re-sent once; a second
+    /// miss drops everything in flight and re-indexes after a pause.
+    private func expirePendingRequests() {
+        let now = Date()
+        var expired: [(RequestID, PendingRequest)] = []
+        for (id, request) in pending {
+            let limit: Duration = if case .index = request.kind { timeouts.index } else { timeouts.fetch }
+            if Duration.seconds(now.timeIntervalSince(request.sentAt)) > limit { expired.append((id, request)) }
+        }
+        guard !expired.isEmpty else { return }
+        var giveUp = false
+        for (id, request) in expired {
+            pending[id] = nil
+            indexParts[id] = nil
+            if request.attempts < 2 {
+                send(kind: request.kind, payload: request.payload, attempts: request.attempts + 1)
+            } else {
+                giveUp = true
+            }
+        }
+        if giveUp {
+            pending = [:]
+            indexParts = [:]
+            partBuffers = [:]
+            lastError = "The Mac did not answer; retrying."
+            onChange()
+            retryTask?.cancel()
+            retryTask = Task { [weak self, timeouts] in
+                try? await Task.sleep(for: timeouts.retryDelay)
+                guard !Task.isCancelled else { return }
+                self?.requestIndex()
+            }
+        }
+    }
+
+    // MARK: - Inbound
+
+    private func handle(_ message: RelayIncomingMessage) async {
         switch message {
         case let .presence(online):
+            let wasOnline = isHostOnline
             isHostOnline = online
-            if !online { indexIDs = nil }
+            if online, !wasOnline {
+                // Whatever happened while the daemon was away is unknown.
+                lastReceivedSequence = 0
+                requestIndex()
+            } else if !online {
+                hasCompleteSync = false
+                pending = [:]
+                indexParts = [:]
+                partBuffers = [:]
+            }
         case let .frame(frame):
             guard frame.hostID == credentials.hostID,
                   frame.deviceID == credentials.deviceID,
+                  frame.kind == .data,
                   frame.sequence > lastReceivedSequence else { return }
+            let gap = lastReceivedSequence != 0 && frame.sequence > lastReceivedSequence + 1
+            lastReceivedSequence = frame.sequence
+            isHostOnline = true
             do {
                 let payload = try RelayCryptography.open(
                     frame,
                     privateKey: credentials.keyPair.privateKey,
                     peerPublicKey: credentials.hostPublicKey
                 )
-                // A hole in the sequence means dropped frames: finish this
-                // batch, then ask the Mac for a full resend at the index.
-                if lastReceivedSequence != 0, frame.sequence > lastReceivedSequence + 1 {
-                    needsResync = true
-                }
-                lastReceivedSequence = frame.sequence
-                try await apply(payload, socket: socket)
-                credentials.lastAcknowledgedSequence = frame.sequence
-                try await socket.send(RelayRoutingFrame(
-                    hostID: credentials.hostID,
-                    deviceID: credentials.deviceID,
-                    sequence: frame.sequence,
-                    kind: .acknowledgement,
-                    acknowledgedSequence: frame.sequence
-                ))
+                await apply(payload)
                 lastError = nil
             } catch {
                 lastError = "Unable to decrypt relay update: \(error)"
             }
+            if gap {
+                // Dropped frames: whatever they carried is healed by the index.
+                hasCompleteSync = false
+                requestIndex()
+            }
+        case let .error(error):
+            lastError = "Relay: \(error.code)"
         }
         onChange()
     }
 
-    private func apply(_ payload: RemoteSessionPayload, socket: RelayWebSocketClient) async throws {
+    private func apply(_ payload: RemoteSessionPayload) async {
         switch payload.kind {
-        case .session:
+        case .sessionIndex:
+            guard let requestID = payload.requestID, pending[requestID] != nil else { return }
+            indexParts[requestID, default: []].append(payload)
+            guard let entries = RelayFrameReduction.assembleIndex(parts: indexParts[requestID] ?? []) else { return }
+            indexParts[requestID] = nil
+            pending[requestID] = nil
+            await reconcile(entries, generatedAt: payload.generatedAt)
+        case .sessionFull, .sessionTimeline:
             guard let page = payload.session else { return }
             let id = page.summary.id
             if (payload.part ?? 0) == 0 { partBuffers[id] = [] }
@@ -535,42 +819,192 @@ private final class RelayDeviceChannel {
             guard page.nextCursor == nil,
                   let detail = RelayFrameReduction.assemble(parts: partBuffers[id] ?? []) else { return }
             partBuffers[id] = nil
-            if let hiddenAt = dismissed[id], detail.summary.updatedAt <= hiddenAt { return }
-            dismissed[id] = nil
-            sessions = RelayFrameReduction.upsert(detail, into: sessions)
-            isHostOnline = true
-        case .index:
-            let ids = Set(payload.sessionIDs ?? [])
-            sessions = RelayFrameReduction.prune(sessions, keeping: ids)
-            partBuffers = partBuffers.filter { ids.contains($0.key) }
-            dismissed = dismissed.filter { ids.contains($0.key) }
-            indexIDs = ids
-            isHostOnline = true
-            // The index closes a batch. Anything still missing (partial
-            // delivery, dropped frames) is healed by a full resend.
-            if needsResync || !hasCompleteSync {
-                needsResync = false
-                try await requestFullResend(socket)
+            if payload.kind == .sessionFull {
+                install(detail, replacing: true)
             } else {
-                settings.setLastSync(payload.generatedAt, for: credentials.hostID)
+                install(detail, replacing: false)
             }
-        case .unavailable:
-            isHostOnline = false
-            indexIDs = nil
-        case .sessionReviewed:
-            // Device → host only; never expected from the Mac.
+            settle(requestID: payload.requestID, sessionID: id)
+        case .sessionMessage:
+            await applyEvents(payload.events ?? [])
+        case .sessionInfo:
+            var missing: [SessionID] = []
+            for summary in payload.summaries ?? [] {
+                if let index = sessions.firstIndex(where: { $0.summary.id == summary.id }) {
+                    let detail = sessions[index]
+                    sessions[index] = SessionDetail(summary: summary, turns: detail.turns, timeline: detail.timeline)
+                    enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
+                } else if dismissed[summary.id] == nil {
+                    missing.append(summary.id)
+                }
+            }
+            sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+            requestMissing(missing)
+        case .sessionRemoved:
+            let ids = payload.sessionIDs ?? []
+            for id in ids {
+                sessions.removeAll { $0.summary.id == id }
+                partBuffers[id] = nil
+                dismissed[id] = nil
+                enqueueCacheWrite { [cache] in _ = try await cache.deleteSession(id: id) }
+                settle(requestID: payload.requestID, sessionID: id)
+            }
+        case .health:
+            health = payload.health
+        case .syncIndex, .fetchSession, .fetchTimelineSince, .sessionReviewed:
+            // Device → host only; never expected from the daemon.
             return
         case .unknown:
-            // A newer host build; fail safe into the syncing state.
-            isHostOnline = false
-            indexIDs = nil
+            // A newer daemon build: data we cannot read; keep showing the cache.
+            lastError = "The Mac runs a newer protocol; update Agent Status on iPhone."
         }
+    }
+
+    private func applyEvents(_ events: [AgentIngressEvent]) async {
+        var missing: [SessionID] = []
+        for event in events {
+            let known = sessions.contains { $0.summary.id == event.sessionID }
+            let inFlight = pending.values.contains {
+                if case let .fetchSession(remaining) = $0.kind { return remaining.contains(event.sessionID) }
+                return false
+            }
+            guard known || inFlight else {
+                if dismissed[event.sessionID] == nil || event.resurrectsHiddenSession { missing.append(event.sessionID) }
+                continue
+            }
+            let applied: Bool
+            do {
+                applied = try await cache.apply(event)
+            } catch {
+                lastError = "Unable to apply an update: \(error)"
+                continue
+            }
+            guard applied, let index = sessions.firstIndex(where: { $0.summary.id == event.sessionID }) else { continue }
+            if event.disposition == .discard {
+                sessions.remove(at: index)
+                continue
+            }
+            sessions[index] = SessionDetailReduction.applying(event, to: sessions[index])
+            if let hiddenAt = dismissed[event.sessionID], sessions[index].summary.updatedAt > hiddenAt {
+                dismissed[event.sessionID] = nil
+            }
+        }
+        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+        requestMissing(missing)
+    }
+
+    /// A session the daemon talks about but the cache does not hold: take it whole.
+    private func requestMissing(_ ids: [SessionID]) {
+        let inFlight = Set(pending.values.flatMap { request -> [SessionID] in
+            if case let .fetchSession(remaining) = request.kind { return Array(remaining) }
+            return []
+        })
+        let wanted = Array(Set(ids).subtracting(inFlight))
+        guard !wanted.isEmpty, isConnected else { return }
+        for chunk in stride(from: 0, to: wanted.count, by: 20).map({ Array(wanted[$0..<min($0 + 20, wanted.count)]) }) {
+            send(kind: .fetchSession(remaining: Set(chunk)), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: chunk))
+        }
+    }
+
+    /// Writes a whole (`replacing`) or partial session into cache and memory.
+    private func install(_ detail: SessionDetail, replacing: Bool) {
+        let id = detail.summary.id
+        if let hiddenAt = dismissed[id], detail.summary.updatedAt <= hiddenAt { return }
+        dismissed[id] = nil
+        if replacing {
+            enqueueCacheWrite { [cache] in try await cache.replaceSession(detail) }
+            sessions.removeAll { $0.summary.id == id }
+            sessions.append(detail)
+        } else {
+            enqueueCacheWrite { [cache] in try await cache.mergeSession(detail) }
+            if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
+                sessions[index] = SessionDetailReduction.merging(detail, into: sessions[index])
+            } else {
+                sessions.append(detail)
+            }
+        }
+        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+    }
+
+    /// Marks one session of a pending fetch as answered; completes the sync
+    /// when nothing is left in flight.
+    private func settle(requestID: RequestID?, sessionID: SessionID) {
+        guard let requestID, var request = pending[requestID] else { return }
+        switch request.kind {
+        case var .fetchSession(remaining):
+            remaining.remove(sessionID)
+            if remaining.isEmpty {
+                pending[requestID] = nil
+            } else {
+                request.kind = .fetchSession(remaining: remaining)
+                pending[requestID] = request
+            }
+        case .fetchTimeline:
+            pending[requestID] = nil
+        case .index:
+            break
+        }
+        completeSyncIfSettled()
+    }
+
+    private func completeSyncIfSettled() {
+        guard pending.isEmpty, let generatedAt = indexGeneratedAt else { return }
+        indexGeneratedAt = nil
+        hasCompleteSync = true
+        settings.setLastSync(generatedAt, for: credentials.hostID)
+    }
+
+    // MARK: - Reconcile
+
+    private func reconcile(_ remote: [SessionIndexEntry], generatedAt: Date) async {
+        let local: [SessionIndexEntry]
+        do {
+            // Let queued writes land first so the local index is current.
+            await applyQueue?.value
+            local = try await cache.sessionIndex(limit: Self.indexLimit)
+        } catch {
+            lastError = "Unable to read the session cache: \(error)"
+            return
+        }
+        let plan = SyncReconcilePlan.make(local: local, remote: remote)
+        let remoteIDs = Set(remote.map(\.summary.id))
+        if !plan.prune.isEmpty {
+            sessions.removeAll { plan.prune.contains($0.summary.id) }
+            enqueueCacheWrite { [cache] in _ = try await cache.pruneSessions(keeping: remoteIDs) }
+        }
+        dismissed = dismissed.filter { remoteIDs.contains($0.key) }
+        for summary in plan.infoOnly {
+            if let index = sessions.firstIndex(where: { $0.summary.id == summary.id }) {
+                let detail = sessions[index]
+                sessions[index] = SessionDetail(summary: summary, turns: detail.turns, timeline: detail.timeline)
+            }
+            enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
+        }
+        sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
+
+        indexGeneratedAt = generatedAt
+        // Dismissed sessions stay hidden until the daemon shows a newer copy.
+        let fetchFull = plan.fetchFull.filter { id in
+            guard let hiddenAt = dismissed[id], let entry = remote.first(where: { $0.summary.id == id }) else { return true }
+            return entry.summary.updatedAt > hiddenAt
+        }
+        for chunk in stride(from: 0, to: fetchFull.count, by: 20).map({ Array(fetchFull[$0..<min($0 + 20, fetchFull.count)]) }) {
+            send(kind: .fetchSession(remaining: Set(chunk)), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: chunk))
+        }
+        for request in plan.fetchSince {
+            send(
+                kind: .fetchTimeline(request.sessionID),
+                payload: RemoteSessionPayload(kind: .fetchTimelineSince, sessionIDs: [request.sessionID], since: request.since)
+            )
+        }
+        completeSyncIfSettled()
     }
 }
 
 enum PairingError: LocalizedError {
     case expiredOrIncompatible
     case unexpectedRelay
+    case cacheUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -578,6 +1012,8 @@ enum PairingError: LocalizedError {
             "The pairing code has expired or uses an incompatible protocol."
         case .unexpectedRelay:
             "The pairing code was created for a different Relay build configuration."
+        case .cacheUnavailable:
+            "The session cache for this Mac could not be created."
         }
     }
 }

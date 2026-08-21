@@ -18,7 +18,9 @@ enum PreviewFixture {
                 hasCompleteSync: true,
                 sessions: macBookProSessions(now: now),
                 lastSyncAt: now,
-                lastError: nil
+                lastError: nil,
+                health: nil,
+                hasLoadedCache: true
             ),
             MacChannelState(
                 hostID: mini,
@@ -29,7 +31,9 @@ enum PreviewFixture {
                 hasCompleteSync: true,
                 sessions: macMiniSessions(now: now),
                 lastSyncAt: now.addingTimeInterval(-7_200),
-                lastError: nil
+                lastError: nil,
+                health: nil,
+                hasLoadedCache: true
             ),
         ]
     }

@@ -30,6 +30,9 @@ let package = Package(
             name: "AgentStatusIOSFeatureTests",
             dependencies: [
                 "AgentStatusIOSFeature",
+                .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

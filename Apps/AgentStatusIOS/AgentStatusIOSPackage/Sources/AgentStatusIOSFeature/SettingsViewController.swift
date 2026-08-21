@@ -195,7 +195,7 @@ final class SettingsViewController: UIViewController, UICollectionViewDelegate {
     private func confirmClear() {
         let alert = UIAlertController(
             title: "Clear received data?",
-            message: "Every session held in memory is dropped. Pull to refresh in Sessions to fetch them again.",
+            message: "Every session cached on this iPhone is dropped and fetched again from each Mac.",
             preferredStyle: .actionSheet
         )
         alert.addAction(UIAlertAction(title: "Clear", style: .destructive) { [weak self] _ in

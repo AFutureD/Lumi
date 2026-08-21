@@ -41,9 +41,9 @@ final class SessionDetailViewController: UIViewController {
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "ellipsis.circle"),
             menu: UIMenu(children: [
-                UIAction(title: "Refresh", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in
+                UIAction(title: "Refresh session", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in
                     guard let self else { return }
-                    relay.refresh(hostID: hostID)
+                    relay.refreshSession(hostID: hostID, id: sessionID)
                 },
                 UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
                     self?.confirmDelete()
