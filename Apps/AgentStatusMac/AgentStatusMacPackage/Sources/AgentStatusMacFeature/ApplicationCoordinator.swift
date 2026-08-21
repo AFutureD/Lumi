@@ -1,10 +1,11 @@
+import AgentStatusRemote
 import AgentStatusTransport
 import AppKit
 
 @MainActor
 public final class ApplicationCoordinator: NSObject {
     private let store = MacSessionStore()
-    private lazy var relayHost = RelayHostController(store: store)
+    private lazy var relayHost = RelayHostStatusClient(store: store)
     private lazy var notch: AgentStatusNookController = {
         var actions = AgentStatusNookActions()
         actions.openMainSettings = { [weak self] in self?.showNotchSettings() }
@@ -21,6 +22,9 @@ public final class ApplicationCoordinator: NSObject {
     public func start() {
         installMenu()
         refreshInstalledHooks()
+        // The Relay host moved into the daemon; the app's own registration
+        // (pre-daemon builds) is retired rather than migrated.
+        try? SecureStore(service: "com.huanan.AgentStatusMac.relay").delete(account: "host-credentials-v1")
         _ = relayHost
         store.start()
         daemonAutoUpdater.start()
@@ -32,7 +36,7 @@ public final class ApplicationCoordinator: NSObject {
 
     public func stop() async {
         store.stop()
-        await relayHost.stop()
+        relayHost.stop()
         await notch.stop()
     }
 

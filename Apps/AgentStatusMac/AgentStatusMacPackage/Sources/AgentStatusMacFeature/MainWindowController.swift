@@ -11,7 +11,7 @@ final class MainWindowController: NSWindowController {
     private let rootController: RootSplitViewController
     private let toolbarController: MainWindowToolbarController
 
-    init(store: MacSessionStore, relayHost: RelayHostController, nook: AgentStatusNookController) {
+    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: AgentStatusNookController) {
         rootController = RootSplitViewController(store: store, relayHost: relayHost, nook: nook)
         toolbarController = MainWindowToolbarController(
             store: store,
@@ -127,7 +127,7 @@ final class RootSplitViewController: NSSplitViewController {
     var onSelection: ((MainWindowController.Tab) -> Void)?
     var onToolbarStateChange: (() -> Void)?
 
-    init(store: MacSessionStore, relayHost: RelayHostController, nook: AgentStatusNookController) {
+    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: AgentStatusNookController) {
         navigation = NavigationSidebarViewController(store: store, relayHost: relayHost)
         sessionList = SessionListViewController(store: store)
         sessionDetail = SessionDetailViewController(store: store)

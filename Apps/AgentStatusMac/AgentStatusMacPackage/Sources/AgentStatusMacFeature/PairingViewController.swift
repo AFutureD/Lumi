@@ -9,7 +9,7 @@ import CoreImage
 final class PairingViewController: NSViewController {
     static let minimumHorizontalContentWidth: CGFloat = 708
 
-    private let relayHost: RelayHostController
+    private let relayHost: RelayHostStatusClient
     let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: AgentStatusDetailLayout.horizontalInset)
     private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
     private let relayPill = StatusPillView()
@@ -40,7 +40,7 @@ final class PairingViewController: NSViewController {
         relayHost.isConnected && !isGenerating
     }
 
-    init(relayHost: RelayHostController) {
+    init(relayHost: RelayHostStatusClient) {
         self.relayHost = relayHost
         super.init(nibName: nil, bundle: nil)
         relayHost.observe { [weak self] in
@@ -63,8 +63,14 @@ final class PairingViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
+        relayHost.setPairingViewVisible(true)
         Task { await relayHost.refreshDevices() }
         if relayHost.isConnected, pairingPayload == nil { generatePairingCode() }
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        relayHost.setPairingViewVisible(false)
     }
 
     override func viewDidLayout() {
@@ -338,7 +344,7 @@ final class PairingViewController: NSViewController {
         }
     }
 
-    private func makeDeviceRow(_ device: RelayDeviceRecord) -> NSView {
+    private func makeDeviceRow(_ device: PairedDevice) -> NSView {
         let isActive = device.revokedAt == nil
         let icon = NSImageView(image: NSImage(systemSymbolName: "iphone", accessibilityDescription: "iPhone") ?? NSImage())
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)

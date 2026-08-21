@@ -21,7 +21,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
         .destination(.settings, title: "Settings", symbol: "gearshape"),
     ]
     private let store: MacSessionStore
-    private let relayHost: RelayHostController
+    private let relayHost: RelayHostStatusClient
     private let table = NSTableView()
     private var isSelecting = false
     private var selectedTab: MainWindowController.Tab = .sessions
@@ -29,7 +29,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
     private var displayedRelayConnected = false
     var onSelection: ((MainWindowController.Tab) -> Void)?
 
-    init(store: MacSessionStore, relayHost: RelayHostController) {
+    init(store: MacSessionStore, relayHost: RelayHostStatusClient) {
         self.store = store
         self.relayHost = relayHost
         super.init(nibName: nil, bundle: nil)

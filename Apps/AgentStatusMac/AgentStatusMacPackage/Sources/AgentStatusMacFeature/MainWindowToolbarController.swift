@@ -29,7 +29,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     var actions = MainWindowToolbarActions()
 
     private let store: MacSessionStore
-    private let relayHost: RelayHostController
+    private let relayHost: RelayHostStatusClient
     private let splitView: NSSplitView
     private var selectedTab: MainWindowController.Tab = .sessions
     private weak var titleLabel: NSTextField?
@@ -37,7 +37,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     private weak var generateButton: NSButton?
     private weak var searchField: NSSearchField?
 
-    init(store: MacSessionStore, relayHost: RelayHostController, splitView: NSSplitView) {
+    init(store: MacSessionStore, relayHost: RelayHostStatusClient, splitView: NSSplitView) {
         self.store = store
         self.relayHost = relayHost
         self.splitView = splitView

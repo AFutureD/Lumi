@@ -604,52 +604,6 @@ private func nookSession(
     ).map(\.kind) == [.failed])
 }
 
-@Test func relayPublishPlanSendsOnlyChangedSessions() {
-    #expect(RelayPublishDecision.shouldSchedule(
-        previousRevision: 10,
-        currentRevision: 10,
-        wasDaemonAvailable: true,
-        isDaemonAvailable: false
-    ))
-    #expect(!RelayPublishDecision.shouldSchedule(
-        previousRevision: 10,
-        currentRevision: 10,
-        wasDaemonAvailable: true,
-        isDaemonAvailable: true
-    ))
-
-    let stable = nookSummary(id: "stable", lifecycle: .running, phase: .thinking, updatedAt: 10)
-    let diagnosticSummary = nookSummary(id: "diagnostic", lifecycle: .running, phase: .thinking, updatedAt: 10)
-    let previousDetail = SessionDetail(summary: diagnosticSummary, timeline: [])
-    let currentDetail = SessionDetail(summary: diagnosticSummary, timeline: [
-        TimelineItem(
-            id: TimelineItemID("usage"),
-            sessionID: diagnosticSummary.id,
-            occurredAt: diagnosticSummary.updatedAt,
-            payload: .usageMetrics(UsageMetricsTimelinePayload(
-                total: TokenUsage(totalTokens: 100)
-            ))
-        ),
-    ])
-    let stableDetail = SessionDetail(summary: stable, timeline: [])
-
-    // nil previous ⇒ everything goes out again.
-    #expect(Set(RelayPublishPlan.changedSessions(
-        previous: nil,
-        current: [stable.id: stableDetail]
-    )) == [stable.id])
-    // A diagnostic-only timeline delta still counts as a change worth sending.
-    #expect(RelayPublishPlan.changedSessions(
-        previous: [stable.id: stableDetail, diagnosticSummary.id: previousDetail],
-        current: [stable.id: stableDetail, diagnosticSummary.id: currentDetail]
-    ) == [diagnosticSummary.id])
-    // Deletions never ride as session frames; the trailing index prunes them.
-    #expect(RelayPublishPlan.changedSessions(
-        previous: [stable.id: stableDetail, diagnosticSummary.id: previousDetail],
-        current: [stable.id: stableDetail]
-    ).isEmpty)
-}
-
 @Test func sessionReconcilePlanFetchesChangedAndPrunesAbsent() {
     let unchanged = nookSummary(id: "unchanged", lifecycle: .running, phase: .thinking, updatedAt: 10)
     let stale = nookSummary(id: "stale", lifecycle: .running, phase: .thinking, updatedAt: 10)
@@ -667,47 +621,6 @@ private func nookSession(
     let idle = SessionReconcilePlan.make(local: [unchanged], daemon: [unchanged])
     #expect(idle.fetch.isEmpty)
     #expect(idle.prune.isEmpty)
-}
-
-@Test func relaySessionPartitionerSplitsOversizedSessions() throws {
-    let date = Date(timeIntervalSince1970: 100)
-    let small = SessionDetail(
-        summary: nookSummary(id: "small", lifecycle: .running, phase: .thinking, updatedAt: 100),
-        turns: [TurnSummary(id: TurnID("t"), sessionID: SessionID("small"), phase: .thinking, startedAt: date)],
-        timeline: [TimelineItem(
-            id: TimelineItemID("one"), sessionID: SessionID("small"), occurredAt: date,
-            payload: .message(MessageTimelinePayload(role: .user, text: "hi"))
-        )]
-    )
-    let singleParts = try RelaySessionPartitioner.parts(for: small, generatedAt: date)
-    #expect(singleParts.count == 1)
-    #expect(singleParts[0].payload.session?.nextCursor == nil)
-    #expect(singleParts[0].payload.part == 0)
-
-    // Random payloads defeat compression, so many 64 KiB items force a split.
-    let bigTimeline = (0..<64).map { index in
-        TimelineItem(
-            id: TimelineItemID("big-\(index)"), sessionID: SessionID("big"), occurredAt: date,
-            payload: .message(MessageTimelinePayload(
-                role: .assistant,
-                text: Data((0..<65_536).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
-            ))
-        )
-    }
-    let big = SessionDetail(
-        summary: nookSummary(id: "big", lifecycle: .running, phase: .thinking, updatedAt: 100),
-        turns: [TurnSummary(id: TurnID("t"), sessionID: SessionID("big"), phase: .thinking, startedAt: date)],
-        timeline: bigTimeline
-    )
-    let parts = try RelaySessionPartitioner.parts(for: big, generatedAt: date)
-    #expect(parts.count > 1)
-    #expect(parts.dropLast().allSatisfy { $0.payload.session?.nextCursor != nil })
-    #expect(parts.last?.payload.session?.nextCursor == nil)
-    #expect(parts.allSatisfy { $0.prepared.byteCount <= RelaySessionPartitioner.maxCompressedBytes })
-    #expect(parts.first?.payload.session?.turns.isEmpty == false)
-    #expect(parts.dropFirst().allSatisfy { $0.payload.session?.turns.isEmpty == true })
-    let reassembled = parts.flatMap { $0.payload.session?.timeline ?? [] }
-    #expect(reassembled == bigTimeline)
 }
 
 @Test func sessionListPresentationShowsTitleAgentAndStatus() {
