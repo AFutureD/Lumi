@@ -34,7 +34,7 @@ iPhone 通过产品内置 Relay 与一台或多台 Mac 建立独立通道，只�
 
 - **状态胶囊**：颜色跟五档状态梯级走（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；已完成的 Session 不再显示“最新活动”一行。
 - **Subagent 组**：子 Agent 不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → done）+ `3 subagents · 2 running · 1 done`（只写非零档）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
-- **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running / Waiting / Completed），点开是带计数的多选勾选菜单，勾选即时生效，一组至少留一项；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
+- **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running / Waiting / Completed），点开在按钮下方落下一张勾选面板（每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
 - **搜索**：导航栏右上的放大镜默认收拢，点开才展开搜索框（系统搜索控件）；按标题、Agent、工作目录和 Subagent 名称即时过滤当前列表。
 - **刷新**：下拉列表，或右上 `···` > “Refresh list”，向每台 Mac 重新索取当前全部 Session。
 - **空状态**：未配对时提示去 Macs 扫码；Mac 在线但没有 Session 时显示 No live sessions；Mac 不在线时显示 Mac unavailable，不展示旧 Session（[IOS-R-006](#ios-r-006-mac-离线时不显示旧-session)）。

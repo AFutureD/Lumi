@@ -22,7 +22,8 @@ final class SessionsViewController: UIViewController, UICollectionViewDelegate, 
     private var subagentToggles: [SessionListItemID: Bool] = [:]
     nonisolated(unsafe) private var ticker: Timer?
     private var header: SessionsHeaderView?
-
+    /// The Dropdown panel on screen, if any (one group at a time).
+    private var dropdown: FilterDropdownViewController?
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private lazy var dataSource = makeDataSource()
@@ -118,8 +119,14 @@ final class SessionsViewController: UIViewController, UICollectionViewDelegate, 
         tickVisibleCells()
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        dismissDropdown()
+    }
+
     override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
         super.viewWillTransition(to: size, with: coordinator)
+        dismissDropdown()
         coordinator.animate(alongsideTransition: nil) { [weak self] _ in
             self?.reload(reconfigureAll: true)
         }
@@ -181,52 +188,81 @@ final class SessionsViewController: UIViewController, UICollectionViewDelegate, 
     }
 
     private func configureFilterBar() {
-        let macs = SessionListPresentation.macOptions(channels: relay.channelStates, items: allItems, deselected: settings.deselectedHosts)
-        let statuses = SessionListPresentation.statusOptions(items: allItems, deselected: settings.deselectedStatuses)
-        header?.filterBar.configure(
-            macsSelected: macs.count(where: \.isSelected),
-            macsTotal: macs.count,
-            statusSelected: statuses.count(where: \.isSelected),
-            statusTotal: statuses.count
-        )
+        guard let filterBar = header?.filterBar else { return }
+        var counts: [FilterGroup: FilterGroupCount] = [:]
+        for group in FilterGroup.allCases {
+            let options = filterOptions(for: group)
+            counts[group] = FilterGroupCount(selected: options.count(where: \.isSelected), total: options.count)
+        }
+        filterBar.configure(counts: counts)
+        filterBar.openGroup = dropdown?.group
+        if let dropdown { dropdown.configure(options: filterOptions(for: dropdown.group)) }
     }
 
-    /// One `UIMenu` per group: checkmarked multi-select that keeps the menu
-    /// open, the count after each name; a group never empties.
-    private func macsMenu() -> UIMenu {
-        let options = SessionListPresentation.macOptions(channels: relay.channelStates, items: allItems, deselected: settings.deselectedHosts)
-        let all = relay.channelStates.map(\.hostID)
-        return UIMenu(options: .displayInline, children: options.map { option in
-            UIAction(
-                title: option.name,
-                subtitle: "\(option.count)",
-                image: UIImage(systemName: "laptopcomputer"),
-                attributes: .keepsMenuPresented,
-                state: option.isSelected ? .on : .off
-            ) { [weak self] _ in
-                guard let self else { return }
-                settings.deselectedHosts = SessionListPresentation.toggling(HostID(option.id), in: settings.deselectedHosts, all: all)
-                reload()
-            }
-        })
+    private func filterOptions(for group: FilterGroup) -> [FilterOption] {
+        switch group {
+        case .macs: SessionListPresentation.macOptions(channels: relay.channelStates, items: allItems, deselected: settings.deselectedHosts)
+        case .status: SessionListPresentation.statusOptions(items: allItems, deselected: settings.deselectedStatuses)
+        }
     }
 
-    private func statusMenu() -> UIMenu {
-        let options = SessionListPresentation.statusOptions(items: allItems, deselected: settings.deselectedStatuses)
-        return UIMenu(options: .displayInline, children: options.map { option in
-            let group = SessionStatusGroup(rawValue: option.id)!
-            return UIAction(
-                title: option.name,
-                subtitle: "\(option.count)",
-                image: UIImage(systemName: "circle.fill")?.withTintColor(UIColor(hue: group.hue), renderingMode: .alwaysOriginal),
-                attributes: .keepsMenuPresented,
-                state: option.isSelected ? .on : .off
-            ) { [weak self] _ in
-                guard let self else { return }
-                settings.deselectedStatuses = SessionListPresentation.toggling(group, in: settings.deselectedStatuses, all: SessionStatusGroup.allCases)
-                reload()
-            }
-        })
+    // MARK: - Dropdown filters
+
+    /// Tapping a trigger drops its panel; tapping it again (or outside)
+    /// folds it; tapping the other trigger switches groups.
+    private func toggleFilterGroup(_ group: FilterGroup) {
+        guard let filterBar = header?.filterBar else { return }
+        let wasOpen = dropdown?.group
+        dismissDropdown()
+        guard wasOpen != group else { return }
+
+        let panel = FilterDropdownViewController(group: group)
+        panel.configure(options: filterOptions(for: group))
+        panel.onToggle = { [weak self] option in self?.toggleFilterOption(option, in: group) }
+        panel.onDismiss = { [weak self] in
+            self?.dropdown = nil
+            self?.header?.filterBar.openGroup = nil
+        }
+        let trigger = filterBar.trigger(for: group)
+        if let popover = panel.popoverPresentationController {
+            // Left-aligned to the trigger (never past the right inset): the
+            // popover centres on the source rect, so point it at where the
+            // panel's centre should be, just under the trigger (+8).
+            let p = IOSDS.FilterPanel.self
+            let triggerFrame = trigger.convert(trigger.bounds, to: view)
+            let left = FilterPanelPlacement.left(
+                triggerMinX: triggerFrame.minX, containerWidth: view.bounds.width, panelWidth: p.width, edgeInset: p.edgeInset
+            )
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: left + p.width / 2, y: triggerFrame.maxY + p.offset, width: 0, height: 0)
+            popover.passthroughViews = [filterBar]
+        }
+        dropdown = panel
+        filterBar.openGroup = group
+        present(panel, animated: true)
+    }
+
+    private func dismissDropdown() {
+        guard let dropdown else { return }
+        self.dropdown = nil
+        header?.filterBar.openGroup = nil
+        dropdown.dismiss(animated: true)
+    }
+
+    /// Checking / unchecking one option; a group never empties.
+    private func toggleFilterOption(_ option: FilterOption, in group: FilterGroup) {
+        switch group {
+        case .macs:
+            settings.deselectedHosts = SessionListPresentation.toggling(
+                HostID(option.id), in: settings.deselectedHosts, all: relay.channelStates.map(\.hostID)
+            )
+        case .status:
+            guard let status = SessionStatusGroup(rawValue: option.id) else { return }
+            settings.deselectedStatuses = SessionListPresentation.toggling(
+                status, in: settings.deselectedStatuses, all: SessionStatusGroup.allCases
+            )
+        }
+        reload()
     }
 
     private func tickVisibleCells() {
@@ -278,8 +314,7 @@ final class SessionsViewController: UIViewController, UICollectionViewDelegate, 
         ) { [weak self] view, _, _ in
             guard let self else { return }
             header = view.header
-            view.header.filterBar.macsMenuProvider = { [weak self] in self?.macsMenu() ?? UIMenu() }
-            view.header.filterBar.statusMenuProvider = { [weak self] in self?.statusMenu() ?? UIMenu() }
+            view.header.filterBar.onToggleGroup = { [weak self] group in self?.toggleFilterGroup(group) }
             view.header.filterBar.onReset = { [weak self] in self?.resetFilters() }
             configureFilterBar()
         }

@@ -96,6 +96,19 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
     #expect(macs.map(\.name) == ["A", "B"])
     #expect(macs.map(\.isSelected) == [false, true])
     #expect(macs.map(\.count) == [1, 2])
+    #expect(macs.allSatisfy { $0.glyph == .laptop })
+}
+
+@Test func statusOptionsCarryTheirTileHue() {
+    let statuses = SessionListPresentation.statusOptions(items: [], deselected: [])
+    #expect(statuses.map(\.glyph) == [.dot(.blue), .dot(.green), .dot(.neutral)])
+}
+
+@Test func panelAlignsToItsTriggerButStaysInsideTheRightInset() {
+    // Macs trigger at 20 → 20; Status trigger at 132 on a 393 screen → 393 − 268 − 20 = 105.
+    #expect(FilterPanelPlacement.left(triggerMinX: 20, containerWidth: 393, panelWidth: 268, edgeInset: 20) == 20)
+    #expect(FilterPanelPlacement.left(triggerMinX: 132, containerWidth: 393, panelWidth: 268, edgeInset: 20) == 105)
+    #expect(FilterPanelPlacement.left(triggerMinX: 90, containerWidth: 393, panelWidth: 268, edgeInset: 20) == 90)
 }
 
 @Test func statusGroupsFoldTheFiveTonesIntoThree() {

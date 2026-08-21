@@ -30,34 +30,41 @@ final class SessionsHeaderView: UIView {
 }
 
 /// L3 §3.4 Dropdown multi-select filters: one trigger per group (`Macs`,
-/// `Status`), each opening a multi-select `UIMenu`; `Reset` appears at the
-/// right end while any group is filtered.
+/// `Status`); tapping a trigger asks the owner to drop (or fold) that
+/// group's `FilterDropdownPanel`. `Reset` appears at the right end while any
+/// group is filtered.
 final class FilterBarView: UIView {
-    /// Menu for a group, rebuilt on every open so counts and checks are current.
-    var macsMenuProvider: (() -> UIMenu)?
-    var statusMenuProvider: (() -> UIMenu)?
+    var onToggleGroup: ((FilterGroup) -> Void)?
     var onReset: (() -> Void)?
 
-    let macsTrigger = FilterTriggerButton(title: "Macs")
-    let statusTrigger = FilterTriggerButton(title: "Status")
+    /// The group whose panel is open: its chevron points up.
+    var openGroup: FilterGroup? {
+        didSet {
+            guard openGroup != oldValue else { return }
+            for (group, trigger) in triggers {
+                trigger.setOpen(group == openGroup, animated: window != nil)
+            }
+        }
+    }
+
+    private let triggers: [FilterGroup: FilterTriggerButton] = Dictionary(
+        uniqueKeysWithValues: FilterGroup.allCases.map { ($0, FilterTriggerButton(title: $0.title)) }
+    )
     private let reset = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         let t = IOSDS.FilterTrigger.self
-        macsTrigger.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            completion(self?.macsMenuProvider?().children ?? [])
-        }])
-        statusTrigger.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            completion(self?.statusMenuProvider?().children ?? [])
-        }])
+        for group in FilterGroup.allCases {
+            triggers[group]!.addAction(UIAction { [weak self] _ in self?.onToggleGroup?(group) }, for: .touchUpInside)
+        }
         reset.setTitle("Reset", for: .normal)
         reset.titleLabel?.font = .design(IOSDS.Typography.action)
         reset.addAction(UIAction { [weak self] _ in self?.onReset?() }, for: .touchUpInside)
         reset.setContentHuggingPriority(.required, for: .horizontal)
         let spacer = UIView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let stack = UIStackView(arrangedSubviews: [macsTrigger, statusTrigger, spacer, reset])
+        let stack = UIStackView(arrangedSubviews: FilterGroup.allCases.map { triggers[$0]! } + [spacer, reset])
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = t.gap
@@ -74,28 +81,42 @@ final class FilterBarView: UIView {
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
-    /// `selected`/`total` per group drive the filtered look and the badge.
-    func configure(macsSelected: Int, macsTotal: Int, statusSelected: Int, statusTotal: Int) {
-        macsTrigger.configure(selected: macsSelected, total: macsTotal)
-        statusTrigger.configure(selected: statusSelected, total: statusTotal)
-        reset.isHidden = macsSelected == macsTotal && statusSelected == statusTotal
+    /// The trigger of a group — the panel drops under it.
+    func trigger(for group: FilterGroup) -> UIView {
+        triggers[group]!
     }
+
+    /// `selected`/`total` per group drive the filtered look and the badge.
+    func configure(counts: [FilterGroup: FilterGroupCount]) {
+        for (group, trigger) in triggers {
+            let count = counts[group] ?? FilterGroupCount(selected: 0, total: 0)
+            trigger.configure(selected: count.selected, total: count.total)
+        }
+        reset.isHidden = counts.values.allSatisfy { $0.selected == $0.total }
+    }
+}
+
+/// How many options of a group are selected, out of how many.
+struct FilterGroupCount: Hashable {
+    let selected: Int
+    let total: Int
 }
 
 /// Trigger: 30 tall, radius 9, `padding 0 10`; label 14 / Regular; a 16pt
 /// count badge when the group is filtered; a 10 × 6 chevron that flips
-/// while the menu is open.
+/// while the panel is open.
 final class FilterTriggerButton: UIButton {
     private let label = UILabel()
     private let badge = UILabel()
     private let chevron = UIImageView(image: UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)))
     private let stack = UIStackView()
+    /// `min-width 16`, else the count plus `4` each side.
+    private lazy var badgeWidth = badge.widthAnchor.constraint(equalToConstant: IOSDS.FilterTrigger.badgeHeight)
     private var isFiltered = false
 
     init(title: String) {
         super.init(frame: .zero)
         let t = IOSDS.FilterTrigger.self
-        showsMenuAsPrimaryAction = true
         layer.cornerRadius = t.radius
         layer.cornerCurve = .continuous
         layer.borderWidth = t.ring
@@ -110,7 +131,7 @@ final class FilterTriggerButton: UIButton {
         badge.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             badge.heightAnchor.constraint(equalToConstant: t.badgeHeight),
-            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: t.badgeHeight),
+            badgeWidth,
         ])
         chevron.contentMode = .scaleAspectFit
         chevron.setContentHuggingPriority(.required, for: .horizontal)
@@ -129,6 +150,7 @@ final class FilterTriggerButton: UIButton {
             chevron.widthAnchor.constraint(equalToConstant: t.chevronWidth),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
+        accessibilityLabel = title
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: FilterTriggerButton, _) in
             self.applyColors()
         }
@@ -140,9 +162,25 @@ final class FilterTriggerButton: UIButton {
     func configure(selected: Int, total: Int) {
         isFiltered = total > 0 && selected < total
         badge.isHidden = !isFiltered
-        badge.text = " \(selected) "
+        badge.text = "\(selected)"
+        let t = IOSDS.FilterTrigger.self
+        badgeWidth.constant = max(t.badgeHeight, ceil(badge.intrinsicContentSize.width) + t.badgeHorizontalPadding * 2)
+        accessibilityValue = isFiltered ? "\(selected) of \(total)" : "All"
         applyColors()
         invalidateIntrinsicContentSize()
+    }
+
+    /// Flips the chevron (`rotate(180deg)`, `.18s ease`) while the panel is open.
+    func setOpen(_ isOpen: Bool, animated: Bool) {
+        let transform = isOpen ? CGAffineTransform(rotationAngle: .pi) : .identity
+        accessibilityTraits = isOpen ? [.button, .selected] : .button
+        guard animated else {
+            chevron.transform = transform
+            return
+        }
+        UIView.animate(withDuration: IOSDS.FilterTrigger.animationDuration, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
+            self.chevron.transform = transform
+        }
     }
 
     /// UIButton sizes itself from its own title; ours comes from the stack.
@@ -168,15 +206,5 @@ final class FilterTriggerButton: UIButton {
 
     override var isHighlighted: Bool {
         didSet { alpha = isHighlighted ? 0.6 : 1 }
-    }
-
-    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
-        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
-        UIView.animate(withDuration: 0.18) { self.chevron.transform = CGAffineTransform(rotationAngle: .pi) }
-    }
-
-    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
-        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
-        UIView.animate(withDuration: 0.18) { self.chevron.transform = .identity }
     }
 }

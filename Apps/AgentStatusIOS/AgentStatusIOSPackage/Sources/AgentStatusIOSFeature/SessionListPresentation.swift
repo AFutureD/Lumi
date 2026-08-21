@@ -97,12 +97,41 @@ enum SessionStatusGroup: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+/// The two Dropdown filter groups (L3 §3.4); at most one panel is open.
+enum FilterGroup: Hashable, Sendable, CaseIterable {
+    case macs
+    case status
+
+    var title: String {
+        switch self {
+        case .macs: "Macs"
+        case .status: "Status"
+        }
+    }
+}
+
+/// What an option's icon tile shows: the laptop glyph on a neutral tile, or
+/// a status dot on the hue's tint.
+enum FilterOptionGlyph: Hashable, Sendable {
+    case laptop
+    case dot(DesignHue)
+}
+
 /// One option of a filter group (a Mac, or a status), with its session count.
 struct FilterOption: Hashable, Sendable, Identifiable {
     let id: String
     let name: String
     let count: Int
     let isSelected: Bool
+    let glyph: FilterOptionGlyph
+}
+
+enum FilterPanelPlacement {
+    /// Panel left edge: aligned to its trigger, pulled back so the panel never
+    /// crosses the right edge inset (393 − 268 − 20 = 105 for `Status`).
+    static func left(triggerMinX: Double, containerWidth: Double, panelWidth: Double, edgeInset: Double) -> Double {
+        max(edgeInset, min(triggerMinX, containerWidth - edgeInset - panelWidth))
+    }
 }
 
 /// What a subagent counts as in the collapsed summary bar.
@@ -188,7 +217,8 @@ enum SessionListPresentation {
                 id: channel.hostID.rawValue,
                 name: channel.displayName,
                 count: items.count { $0.hostID == channel.hostID },
-                isSelected: !deselected.contains(channel.hostID)
+                isSelected: !deselected.contains(channel.hostID),
+                glyph: .laptop
             )
         }
     }
@@ -200,7 +230,8 @@ enum SessionListPresentation {
                 id: group.rawValue,
                 name: group.title,
                 count: items.count { $0.statusGroup == group },
-                isSelected: !deselected.contains(group)
+                isSelected: !deselected.contains(group),
+                glyph: .dot(group.hue)
             )
         }
     }
