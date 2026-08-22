@@ -85,7 +85,7 @@
 
 ## Relay unavailable
 
-**用户会看到**：Mac“iPhone”页显示 Relay unavailable，不能完成配对或同步。
+**用户会看到**：Mac“iPhone”页显示 Relay unavailable，没有配对码，不能完成配对或同步。
 
 **恢复步骤**：
 
@@ -93,25 +93,47 @@
 2. 稍后重新打开“iPhone”页。
 3. 如果持续失败，检查当前产品构建对应的 Relay 服务状态。
 
-**完成信号**：页面显示 Relay connected。Relay 地址由编译配置固定，App 内没有可编辑地址。
+**完成信号**：页面显示 Relay connected 并出现配对码。Mac 侧 Relay 地址由编译配置固定，App 内没有可编辑地址；iPhone 侧的地址只在添加 Mac 时填（Advanced），之后跟着那台 Mac 走。
 
-已有多个 Mac 通道时，每个受影响的分组都会显示 Unavailable；恢复后逐个确认分组回到 Online。
+已有多个 Mac 通道时，每台受影响的 Mac 都会显示 Offline；恢复后逐个确认回到 Online。
 
 ## 配对失败
 
-**用户会看到**：iPhone 停留在配对页，并提示内容无效、过期或不兼容。
+**用户会看到**：iPhone 停在 Add Mac 流程里，提示四种之一：
+
+| 提示 | 意思 | 下一步 |
+| --- | --- | --- |
+| 配对码不对或已过期（六格变红） | 输错，或 Mac 上的码已换新 / 被用过 | 回 Mac 看一眼当前的码，改好后 Try again |
+| Mac 不在线 | 码是对的，但这台 Mac 没连上 Relay | 确认 Mac 上 Agent Status 在运行、显示 Relay connected，Try again（接着这一次继续） |
+| Mac 拒绝了这次配对 | Mac 点了 Don't match，或 60 秒没点 | 如果只是没来得及点，Start over 重来；数字确实不一样就别配 |
+| 校验失败（红色） | Relay 返回的数据不一致——可能有人在中间换钥匙 | 换个网络 Try again；仍失败停止配对，检查这台 Mac 用的 Relay |
+
+Mac 上的码在中途换掉或过期，也按 ① 处理——回到输码屏重输。任何一种失败都没有保存凭据（[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
 
 **恢复步骤**：
 
-1. 回到 Mac“iPhone”页生成新二维码。
-2. 在 iPhone Macs Tab 点 `+` > “Scan pairing code”，5 分钟内重新扫描。
-3. 相机不可用时，在 Mac 点 “Copy pairing payload”，iPhone 用 `+` > “Paste pairing code”；没有手动输入配对码的入口。
+1. 在 Mac“iPhone”页确认 Relay connected，看当前的 6 位码（到点自动换新，也可点 New code）。
+2. 在 iPhone Macs Tab 点 `+` > “Add Device”，输入这 6 位或扫二维码；自托管 Relay 时展开 Advanced 核对 Relay URL。
+3. 两边出现同一组 6 位数字后，在 Mac 上点 Match。
 
-**完成信号**：iPhone Macs 列表出现该 Mac 并显示 Online。
+**完成信号**：iPhone Macs 列表出现该 Mac 并显示 `Online · <Relay 地址>`；Mac 的 Paired iPhones 里这台 iPhone 显示 Active。
+
+**例外**：两边数字不一样、或换了网络仍提示校验失败，说明 Mac 与 iPhone 之间的中转服务不可信，停止配对，检查这台 Mac 用的 Relay 部署。
+
+## iPhone 在 Mac 上显示 Unverified
+
+**用户会看到**：Mac“iPhone”页 Paired iPhones 里这台 iPhone 的状态是 Unverified，下方提示 `Key not verified · pair this iPhone again`；这台 iPhone 的 Macs 页该 Mac 仍显示 Online，但 Session 不再更新。这台 iPhone 的身份不是这台 Mac 点 Match 批准过的：此版本之前配对的 iPhone 升级后都会这样，中转服务换过钥匙也会这样。
+
+**恢复步骤**：
+
+1. 在 Mac“iPhone”页看当前的 6 位码。
+2. 在这台 iPhone 的 Macs Tab 点 `+` > “Add Device” 重新配对，两边对数字，在 Mac 上点 Match（沿用原设备身份，不会多出第二条记录）。
+
+**完成信号**：Mac 上该记录变为 Active，iPhone 上该 Mac 开始同步。
 
 ## Mac unavailable
 
-**用户会看到**：iPhone Macs 里某台 Mac 显示 Unavailable 和上次同步时间；Sessions 里仍能翻看它上次同步的内容（本机没有缓存时才显示 Mac unavailable）。
+**用户会看到**：iPhone Macs 里某台 Mac 显示 `Offline · <多久前> · <Relay 地址>`；Sessions 里仍能翻看它上次同步的内容（本机没有缓存时才显示 Mac unavailable）。
 
 **可能原因**：daemon 不可用、Mac 网络断开或实时通道尚未恢复。退出 Mac App 不会导致这个状态——Relay 连接由 daemon 持有。
 
@@ -124,12 +146,12 @@
 
 ## 设备被撤销
 
-**用户会看到**：目标 iPhone 的 Macs 页这台 Mac 显示 `Revoked · 在 Mac 上重新配对`，Sessions 没有内容时提示 Access revoked；缓存仍可翻看；其他设备正常。
+**用户会看到**：目标 iPhone 的 Macs 页这台 Mac 显示 `Revoked · <Relay 地址>`，Sessions 没有内容时提示 Access revoked；缓存仍可翻看；其他设备正常。
 
 **恢复步骤**：
 
-1. 在 Mac“iPhone”页生成新二维码。
-2. 在目标 iPhone 重新配对。
+1. 在 Mac“iPhone”页看当前的 6 位码。
+2. 在目标 iPhone 点 `+` > “Add Device” 重新配对，两边对数字，在 Mac 上点 Match。
 
 **完成信号**：Mac 配对记录出现新的有效设备，iPhone 恢复 Online。
 

@@ -19,4 +19,13 @@ final class AgentStatusIOSApp: UIResponder, UIApplicationDelegate {
     func applicationDidBecomeActive(_ application: UIApplication) {
         coordinator.resume()
     }
+
+    /// `agentstatus://pair?relay=…&code=…` from the system camera or a link.
+    func application(
+        _ app: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        coordinator.open(url)
+    }
 }

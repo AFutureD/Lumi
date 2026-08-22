@@ -55,13 +55,13 @@ flowchart LR
 
 ## 配对授权
 
-- **用户相关数据**：设备名称、配对时间、当前授权状态。
-- **创建来源**：iPhone 成功使用 Mac 生成的一次性配对码。
-- **更新入口**：Mac 撤销某台 iPhone，或 iPhone 移除某台 Mac。
+- **用户相关数据**：设备名称、配对时间、当前授权状态（Active / Unverified / Revoked）；iPhone 侧还有每台 Mac 的 Relay 地址。
+- **创建来源**：iPhone 用 Mac“iPhone”页显示的 6 位配对码（手输或扫码）提交自己，两端各显示一组 6 位数字，Mac 上点 Match 才生效。
+- **更新入口**：Mac 撤销某台 iPhone；iPhone 移除某台 Mac；iPhone 重新配对（Unverified 或 Revoked 变回 Active）。
 - **主要用途**：确定哪台 iPhone 可以接收哪台 Mac 的加密更新。
 - **删除影响**：只关闭目标通道，不影响其他设备。
 
-规则引用：[IOS-R-001](modules/iphone-live-view.md#ios-r-001-每台设备独立授权)、[IOS-R-004](modules/iphone-live-view.md#ios-r-004-撤销按设备生效)、[IOS-R-008](modules/iphone-live-view.md#ios-r-008-一台-iphone-可连接多台-mac)。
+规则引用：[IOS-R-001](modules/iphone-live-view.md#ios-r-001-每台设备独立授权)、[IOS-R-002](modules/iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-004](modules/iphone-live-view.md#ios-r-004-撤销按设备生效)、[IOS-R-008](modules/iphone-live-view.md#ios-r-008-一台-iphone-可连接多台-mac)、[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)、[IOS-R-015](modules/iphone-live-view.md#ios-r-015-relay-地址跟着每台-mac-走)。
 
 ## 三端保存范围
 
@@ -69,13 +69,13 @@ flowchart LR
 | --- | --- | --- |
 | daemon | 该 Mac 已加入 Agent Status 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
 | Mac App | 与 daemon 同步的完整本地副本 | 快速启动和浏览；断线时仍可查看最近同步内容 |
-| iPhone App | 每台已配对 Mac 一个本机缓存数据库（与 Mac 同一格式）；Keychain 只存配对凭据 | 启动立即显示缓存；在线后按索引只补差异；Mac 离线仍可翻看 |
-| Relay | 设备授权和运行所需信息 | 不提供 Session 正文或历史查询 |
+| iPhone App | 每台已配对 Mac 一个本机缓存数据库（与 Mac 同一格式）；Keychain 只存配对凭据（含每台 Mac 的 Relay 地址） | 启动立即显示缓存；在线后按索引只补差异；Mac 离线仍可翻看 |
+| Relay | 设备授权、进行中的配对会话和运行所需信息 | 不提供 Session 正文或历史查询 |
 
 ## 离线与恢复
 
 - **daemon 离线**：Mac 保留已同步内容供查看，但显示不可用；恢复后可手动刷新。
-- **Mac 或通道离线**：iPhone 将该 Mac 标为 Unavailable，继续显示缓存；其他 Mac 通道不受影响。退出 Mac App 不算离线（Relay 连接在 daemon）。
+- **Mac 或通道离线**：iPhone 在 Macs 页将该 Mac 标为 Offline，继续显示缓存；其他 Mac 通道不受影响。退出 Mac App 不算离线（Relay 连接在 daemon）。
 - **恢复在线**：iPhone 向 Mac 索取 Session 索引，只补差异（缺失的整个取、变过的取新增部分），之后继续实时接收。
 
 ## 相关文档

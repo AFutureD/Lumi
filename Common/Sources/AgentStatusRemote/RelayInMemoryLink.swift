@@ -75,6 +75,17 @@ public actor RelayInMemoryLink {
         await hostEnd?.deliver(.error(error))
     }
 
+    /// The worker telling the host an iPhone submitted itself to the live
+    /// pairing session (`pairing_device`).
+    public func sendPairingDeviceToHost(_ notice: RelayPairingDeviceNotice) async {
+        await hostEnd?.deliver(.pairingDevice(notice))
+    }
+
+    /// The worker telling the host the iPhone cancelled (`pairing_closed`).
+    public func sendPairingClosedToHost(sessionID: String, reason: String = "cancelled") async {
+        await hostEnd?.deliver(.pairingClosed(sessionID: sessionID, reason: reason))
+    }
+
     /// Drops the host socket from the relay side (as a worker restart would).
     public func dropHost() async {
         await detach(.host)

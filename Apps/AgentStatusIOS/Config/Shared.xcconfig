@@ -27,7 +27,7 @@ GENERATE_INFOPLIST_FILE = YES
 AGENT_STATUS_RELAY_URL = https:/$()/agent-status-relay.afuture.workers.dev
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
-INFOPLIST_KEY_NSCameraUsageDescription = Scan a one-time Agent Status pairing code shown on your Mac.
+INFOPLIST_KEY_NSCameraUsageDescription = Scan the pairing code shown in Agent Status on your Mac.
 SUPPORTS_MACCATALYST = NO
 
 // ==========================================

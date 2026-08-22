@@ -1,27 +1,38 @@
+import AgentStatusRemote
 import AgentStatusTransport
 import Foundation
 
-/// Per-device host → device send sequences, persisted before anything hits
-/// the wire: a crash mid-publish leaves a legal gap, never a fatal reuse.
-/// Lives in `relay-host-state.json` (0600) next to the daemon's database —
-/// a hot path the Keychain is not meant for.
-public struct RelayHostSequenceStore: Sendable {
+/// The daemon's Relay host state that is not a credential but must survive a
+/// restart — `relay-host-state.json` (0600) next to the daemon's database, a
+/// hot path the Keychain is not meant for:
+/// - per-device host → device send sequences, persisted before anything hits
+///   the wire: a crash mid-publish leaves a legal gap, never a fatal reuse;
+/// - the device public keys the daemon pinned when the Mac pressed Match (the
+///   key the Numeric Comparison covered): the Relay's device list is only
+///   believed where it matches one of these.
+public struct RelayHostStateStore: Sendable {
     private struct State: Codable {
         var channelSequences: [String: UInt64]
+        var verifiedDeviceKeys: [String: Data]
     }
 
     public let path: String
     private var sequences: [String: UInt64]
+    private var verifiedKeys: [String: Data]
 
     public init(path: String) {
         self.path = path
         if let data = FileManager.default.contents(atPath: path),
            let state = try? JSONDecoder().decode(State.self, from: data) {
             sequences = state.channelSequences
+            verifiedKeys = state.verifiedDeviceKeys
         } else {
             sequences = [:]
+            verifiedKeys = [:]
         }
     }
+
+    // MARK: - Sequences
 
     public func current(for device: DeviceID) -> UInt64 {
         sequences[device.rawValue] ?? 0
@@ -45,8 +56,29 @@ public struct RelayHostSequenceStore: Sendable {
         try persist()
     }
 
+    // MARK: - Device keys
+
+    /// The public key this daemon pinned for the device, if any.
+    public func verifiedKey(for device: DeviceID) -> Data? {
+        verifiedKeys[device.rawValue]
+    }
+
+    /// Pins the device's public key (the Mac approved it after comparing the SAS).
+    public mutating func setVerifiedKey(_ key: Data, for device: DeviceID) throws {
+        guard verifiedKeys[device.rawValue] != key else { return }
+        verifiedKeys[device.rawValue] = key
+        try persist()
+    }
+
+    /// Forgets a removed device's pin (a re-pair pins a fresh key anyway).
+    public mutating func clearVerifiedKey(for device: DeviceID) throws {
+        guard verifiedKeys.removeValue(forKey: device.rawValue) != nil else { return }
+        try persist()
+    }
+
     private func persist() throws {
-        let data = try JSONEncoder().encode(State(channelSequences: sequences))
+        let state = State(channelSequences: sequences, verifiedDeviceKeys: verifiedKeys)
+        let data = try JSONEncoder().encode(state)
         let url = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),

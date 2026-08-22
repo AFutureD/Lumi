@@ -4,17 +4,12 @@ import Foundation
 public enum RelayClientError: Error, Sendable {
     case invalidResponse
     case unauthorized
+    /// The Relay answered with one of its own error codes
+    /// (`invalid_or_expired_code`, `host_offline`, `invalid_state`, `rate_limited`, …).
+    case relay(status: Int, code: String)
     case server(status: Int, message: String)
     case notConnected
     case unsupportedMessage
-}
-
-public struct RelayPairingResult: Codable, Hashable, Sendable {
-    public let hostID: HostID
-    public let deviceID: DeviceID
-    public let deviceToken: String
-    public let hostPublicKey: Data
-    public let pairedAt: Date
 }
 
 public struct RelayDeviceRecord: Codable, Hashable, Sendable {
@@ -23,6 +18,88 @@ public struct RelayDeviceRecord: Codable, Hashable, Sendable {
     public let publicKey: Data
     public let pairedAt: Date
     public let revokedAt: Date?
+
+    public init(id: DeviceID, name: String, publicKey: Data, pairedAt: Date, revokedAt: Date?) {
+        self.id = id
+        self.name = name
+        self.publicKey = publicKey
+        self.pairedAt = pairedAt
+        self.revokedAt = revokedAt
+    }
+}
+
+// MARK: - Pairing v2 wire shapes
+
+/// `POST /v1/hosts/:h/pairing-sessions` → what the Mac shows.
+public struct RelayPairingSessionCreated: Codable, Hashable, Sendable {
+    public let sessionID: String
+    public let code: String
+    public let expiresAt: Date
+
+    public init(sessionID: String, code: String, expiresAt: Date) {
+        self.sessionID = sessionID
+        self.code = code
+        self.expiresAt = expiresAt
+    }
+}
+
+/// `POST /v1/pairing/claim` → what the iPhone learns from the code: which
+/// Mac, and the Mac's commitment (no key, no nonce yet).
+public struct RelayPairingClaim: Codable, Hashable, Sendable {
+    public let sessionID: String
+    public let hostID: HostID
+    public let hostName: String?
+    public let commit: Data
+
+    public init(sessionID: String, hostID: HostID, hostName: String?, commit: Data) {
+        self.sessionID = sessionID
+        self.hostID = hostID
+        self.hostName = hostName
+        self.commit = commit
+    }
+}
+
+/// `GET /v1/hosts/:h/pairing-sessions/:s` — fields appear as the session
+/// advances: key + nonce from `revealed`, token only when `approved`.
+public struct RelayPairingSessionStatus: Codable, Hashable, Sendable {
+    public let state: PairingSessionState
+    public let hostName: String?
+    public let hostPublicKey: Data?
+    public let hostNonce: Data?
+    public let deviceToken: String?
+    public let pairedAt: Date?
+
+    public init(
+        state: PairingSessionState,
+        hostName: String? = nil,
+        hostPublicKey: Data? = nil,
+        hostNonce: Data? = nil,
+        deviceToken: String? = nil,
+        pairedAt: Date? = nil
+    ) {
+        self.state = state
+        self.hostName = hostName
+        self.hostPublicKey = hostPublicKey
+        self.hostNonce = hostNonce
+        self.deviceToken = deviceToken
+        self.pairedAt = pairedAt
+    }
+}
+
+/// Host WSS control message `pairing_device`: an iPhone submitted itself to
+/// the Mac's live session. The daemon derives the SAS from this, then reveals.
+public struct RelayPairingDeviceNotice: Hashable, Sendable {
+    public let sessionID: String
+    public let deviceID: DeviceID
+    public let deviceName: String
+    public let devicePublicKey: Data
+
+    public init(sessionID: String, deviceID: DeviceID, deviceName: String, devicePublicKey: Data) {
+        self.sessionID = sessionID
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.devicePublicKey = devicePublicKey
+    }
 }
 
 public struct RelayRESTClient: Sendable {
@@ -43,29 +120,91 @@ public struct RelayRESTClient: Sendable {
         ) as EmptyResponse
     }
 
-    public func createPairingOffer(_ offer: PairingOffer, hostSecret: String) async throws {
+    // MARK: Pairing v2 — host side
+
+    public func createPairingSession(
+        hostID: HostID,
+        commit: Data,
+        hostPublicKey: Data,
+        hostName: String?,
+        expiresAt: Date,
+        hostSecret: String
+    ) async throws -> RelayPairingSessionCreated {
         struct Body: Encodable {
-            let challenge: String
+            let commit: Data
             let hostPublicKey: Data
+            let hostName: String?
             let expiresAt: Date
         }
-        _ = try await send(
-            path: "/v1/hosts/\(offer.hostID.rawValue)/pairing-offers",
+        return try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/pairing-sessions",
             method: "POST",
             bearerToken: hostSecret,
-            body: Body(
-                challenge: offer.challenge,
-                hostPublicKey: offer.hostPublicKey,
-                expiresAt: offer.expiresAt
-            )
-        ) as PairingOfferResponse
+            body: Body(commit: commit, hostPublicKey: hostPublicKey, hostName: hostName, expiresAt: expiresAt)
+        )
     }
 
-    public func pair(_ request: PairingRequest) async throws -> RelayPairingResult {
-        try await send(
-            path: "/v1/hosts/\(request.hostID.rawValue)/pair",
+    public func revealPairing(hostID: HostID, sessionID: String, hostNonce: Data, hostSecret: String) async throws {
+        struct Body: Encodable { let hostNonce: Data }
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/pairing-sessions/\(sessionID)/reveal",
             method: "POST",
-            body: request
+            bearerToken: hostSecret,
+            body: Body(hostNonce: hostNonce)
+        ) as StateResponse
+    }
+
+    public func decidePairing(hostID: HostID, sessionID: String, approved: Bool, hostSecret: String) async throws {
+        struct Body: Encodable { let approved: Bool }
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/pairing-sessions/\(sessionID)/decision",
+            method: "POST",
+            bearerToken: hostSecret,
+            body: Body(approved: approved)
+        ) as StateResponse
+    }
+
+    /// Either end cancels with its own credential (Host secret or sessionID).
+    public func cancelPairing(hostID: HostID, sessionID: String, bearerToken: String) async throws {
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/pairing-sessions/\(sessionID)",
+            method: "DELETE",
+            bearerToken: bearerToken
+        ) as EmptyResponse
+    }
+
+    // MARK: Pairing v2 — device side
+
+    public func claimPairing(code: String) async throws -> RelayPairingClaim {
+        struct Body: Encodable { let code: String }
+        return try await send(path: "/v1/pairing/claim", method: "POST", body: Body(code: code))
+    }
+
+    public func submitPairingDevice(
+        hostID: HostID,
+        sessionID: String,
+        deviceID: DeviceID,
+        deviceName: String,
+        devicePublicKey: Data
+    ) async throws {
+        struct Body: Encodable {
+            let deviceID: DeviceID
+            let deviceName: String
+            let devicePublicKey: Data
+        }
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/pairing-sessions/\(sessionID)/device",
+            method: "POST",
+            bearerToken: sessionID,
+            body: Body(deviceID: deviceID, deviceName: deviceName, devicePublicKey: devicePublicKey)
+        ) as StateResponse
+    }
+
+    public func pairingSession(hostID: HostID, sessionID: String) async throws -> RelayPairingSessionStatus {
+        try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/pairing-sessions/\(sessionID)",
+            method: "GET",
+            bearerToken: sessionID
         )
     }
 
@@ -81,6 +220,15 @@ public struct RelayRESTClient: Sendable {
     public func revoke(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws {
         _ = try await send(
             path: "/v1/hosts/\(hostID.rawValue)/devices/\(deviceID.rawValue)",
+            method: "DELETE",
+            bearerToken: hostSecret
+        ) as EmptyResponse
+    }
+
+    /// Deletes the device record (a revoked row the Mac no longer wants to see).
+    public func removeDevice(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws {
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/devices/\(deviceID.rawValue)?purge=1",
             method: "DELETE",
             bearerToken: hostSecret
         ) as EmptyResponse
@@ -118,6 +266,9 @@ public struct RelayRESTClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw RelayClientError.invalidResponse }
         if http.statusCode == 401 { throw RelayClientError.unauthorized }
         guard (200..<300).contains(http.statusCode) else {
+            if let body = try? JSONDecoder().decode(RelayErrorBody.self, from: data) {
+                throw RelayClientError.relay(status: http.statusCode, code: body.error)
+            }
             throw RelayClientError.server(
                 status: http.statusCode,
                 message: String(data: data, encoding: .utf8) ?? "Relay request failed"
@@ -155,6 +306,10 @@ public enum RelayIncomingMessage: Sendable {
     case frame(RelayRoutingFrame)
     case presence(online: Bool)
     case error(RelayErrorMessage)
+    /// Host socket only: an iPhone submitted itself to the live pairing session.
+    case pairingDevice(RelayPairingDeviceNotice)
+    /// Host socket only: the iPhone cancelled the live pairing session.
+    case pairingClosed(sessionID: String, reason: String)
 }
 
 public actor RelayWebSocketClient {
@@ -231,6 +386,21 @@ public actor RelayWebSocketClient {
                     lastSequence: control.lastSequence,
                     deviceID: control.deviceID.map(DeviceID.init(rawValue:))
                 ))
+            case "pairing_device":
+                if let sessionID = control.sessionID, let deviceID = control.deviceID,
+                   let deviceName = control.deviceName, let key = control.devicePublicKey,
+                   let devicePublicKey = Data(base64Encoded: key) {
+                    return .pairingDevice(RelayPairingDeviceNotice(
+                        sessionID: sessionID,
+                        deviceID: DeviceID(rawValue: deviceID),
+                        deviceName: deviceName,
+                        devicePublicKey: devicePublicKey
+                    ))
+                }
+            case "pairing_closed":
+                if let sessionID = control.sessionID {
+                    return .pairingClosed(sessionID: sessionID, reason: control.reason ?? "cancelled")
+                }
             default:
                 break
             }
@@ -255,10 +425,13 @@ public actor RelayWebSocketClient {
 }
 
 private struct EmptyResponse: Codable {}
-private struct PairingOfferResponse: Codable { let hostID: HostID; let expiresAt: Date }
+private struct StateResponse: Codable { let state: PairingSessionState }
 private struct DeviceListResponse: Codable { let devices: [RelayDeviceRecord] }
-/// `{type:"presence",online}` and `{type:"error",code,sequence,lastSequence,deviceID}`;
-/// routing frames have no `type` key so they never decode as one.
+private struct RelayErrorBody: Decodable { let error: String }
+/// `{type:"presence",online}`, `{type:"error",code,sequence,lastSequence,deviceID}`,
+/// `{type:"pairing_device",sessionID,deviceID,deviceName,devicePublicKey}` and
+/// `{type:"pairing_closed",sessionID,reason}`; routing frames have no `type`
+/// key so they never decode as one.
 private struct ControlMessage: Decodable {
     let type: String
     let online: Bool?
@@ -266,4 +439,8 @@ private struct ControlMessage: Decodable {
     let sequence: UInt64?
     let lastSequence: UInt64?
     let deviceID: String?
+    let sessionID: String?
+    let deviceName: String?
+    let devicePublicKey: String?
+    let reason: String?
 }

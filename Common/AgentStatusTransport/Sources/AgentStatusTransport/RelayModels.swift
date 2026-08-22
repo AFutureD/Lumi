@@ -79,78 +79,16 @@ public struct RelayRoutingFrame: Codable, Hashable, Sendable {
     }
 }
 
-public struct PairingOffer: Codable, Hashable, Sendable {
-    public let version: ProtocolVersion
-    public let relayURL: URL
-    public let hostID: HostID
-    public let hostName: String?
-    public let challenge: String
-    public let hostPublicKey: Data
-    public let expiresAt: Date
-
-    public init(
-        version: ProtocolVersion = .current,
-        relayURL: URL,
-        hostID: HostID,
-        hostName: String? = nil,
-        challenge: String,
-        hostPublicKey: Data,
-        expiresAt: Date
-    ) {
-        self.version = version
-        self.relayURL = relayURL
-        self.hostID = hostID
-        self.hostName = hostName
-        self.challenge = challenge
-        self.hostPublicKey = hostPublicKey
-        self.expiresAt = expiresAt
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case version
-        case relayURL
-        case hostID
-        case hostName
-        case challenge
-        case hostPublicKey
-        case expiresAt
-    }
-}
-
-public struct PairingRequest: Codable, Hashable, Sendable {
-    public let hostID: HostID
-    public let deviceID: DeviceID
-    public let challenge: String
-    public let deviceName: String
-    public let devicePublicKey: Data
-
-    public init(
-        hostID: HostID,
-        deviceID: DeviceID,
-        challenge: String,
-        deviceName: String,
-        devicePublicKey: Data
-    ) {
-        self.hostID = hostID
-        self.deviceID = deviceID
-        self.challenge = challenge
-        self.deviceName = deviceName
-        self.devicePublicKey = devicePublicKey
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case hostID
-        case deviceID
-        case challenge
-        case deviceName
-        case devicePublicKey
-    }
-}
-
+/// A paired iPhone as the Relay lists it, plus the daemon's verdict on its
+/// key. `keyVerified` is set by the daemon once the key the Relay reports is
+/// the one the daemon pinned when the Mac approved the pairing (the key the
+/// Numeric Comparison covered). Unverified devices get no frames; the Mac
+/// shows them as such.
 public struct PairedDevice: Codable, Hashable, Sendable {
     public let id: DeviceID
     public let name: String
     public let publicKey: Data
+    public let keyVerified: Bool
     public let pairedAt: Date
     public let revokedAt: Date?
 
@@ -158,22 +96,158 @@ public struct PairedDevice: Codable, Hashable, Sendable {
         id: DeviceID,
         name: String,
         publicKey: Data,
+        keyVerified: Bool = false,
         pairedAt: Date,
         revokedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
         self.publicKey = publicKey
+        self.keyVerified = keyVerified
         self.pairedAt = pairedAt
         self.revokedAt = revokedAt
+    }
+
+    public func withKeyVerified(_ verified: Bool) -> PairedDevice {
+        PairedDevice(id: id, name: name, publicKey: publicKey, keyVerified: verified, pairedAt: pairedAt, revokedAt: revokedAt)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id
         case name
         case publicKey
+        case keyVerified
         case pairedAt
         case revokedAt
+    }
+}
+
+// MARK: - Pairing v2 (code + Numeric Comparison)
+
+/// Where one pairing session is, as the Relay reports it.
+public enum PairingSessionState: String, Codable, Hashable, Sendable {
+    /// The Mac created it; the code is on screen and unclaimed.
+    case offered
+    /// An iPhone spent the code and knows the session.
+    case claimed
+    /// The iPhone submitted its identity and public key.
+    case submitted
+    /// The Mac revealed its nonce; both ends can show the SAS.
+    case revealed
+    /// The Mac pressed Match: the device is paired and has a token.
+    case approved
+    /// The Mac pressed Don't match (or did nothing for 60 s).
+    case rejected
+    /// Either end cancelled.
+    case cancelled
+    /// Nobody finished in time.
+    case expired
+
+    public var isTerminal: Bool {
+        switch self {
+        case .approved, .rejected, .cancelled, .expired: true
+        case .offered, .claimed, .submitted, .revealed: false
+        }
+    }
+}
+
+/// An iPhone that submitted itself to the Mac's live pairing session: what
+/// the Mac shows above the Match / Don't match buttons.
+public struct RelayPairingPending: Codable, Hashable, Sendable {
+    public let deviceID: DeviceID
+    public let deviceName: String
+    /// Six decimal digits, zero-padded (`"482913"`); the Mac shows `482 913`.
+    public let sas: String
+    public let receivedAt: Date
+
+    public init(deviceID: DeviceID, deviceName: String, sas: String, receivedAt: Date) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.sas = sas
+        self.receivedAt = receivedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceID
+        case deviceName
+        case sas
+        case receivedAt
+    }
+}
+
+/// How the last pairing attempt on this session ended: the Mac pressed Match
+/// or Don't match (or let the 60 s pass). An iPhone cancelling leaves no
+/// outcome — the session is simply gone and a fresh code starts.
+public enum RelayPairingOutcomeKind: String, Codable, Hashable, Sendable {
+    case approved
+    case rejected
+}
+
+/// How the last pairing attempt on this session ended (the Mac shows the
+/// result in place of the pending card for a moment).
+public struct RelayPairingOutcome: Codable, Hashable, Sendable {
+    public let kind: RelayPairingOutcomeKind
+    public let deviceName: String
+    public let at: Date
+
+    public init(kind: RelayPairingOutcomeKind, deviceName: String, at: Date) {
+        self.kind = kind
+        self.deviceName = deviceName
+        self.at = at
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case deviceName
+        case at
+    }
+}
+
+/// The daemon's live pairing session as the Mac app shows it
+/// (`relay_pairing_start` / `relay_pairing_state`). The code is the only
+/// thing a person types; the Relay URL is what the Mac's daemon is on.
+public struct RelayPairingSession: Codable, Hashable, Sendable {
+    public let sessionID: String
+    /// Six Crockford Base32 characters (`"7KF3QP"`); shown as `7KF 3QP`.
+    public let code: String
+    public let relayURL: URL
+    public let expiresAt: Date
+    public let pending: RelayPairingPending?
+    public let outcome: RelayPairingOutcome?
+
+    public init(
+        sessionID: String,
+        code: String,
+        relayURL: URL,
+        expiresAt: Date,
+        pending: RelayPairingPending? = nil,
+        outcome: RelayPairingOutcome? = nil
+    ) {
+        self.sessionID = sessionID
+        self.code = code
+        self.relayURL = relayURL
+        self.expiresAt = expiresAt
+        self.pending = pending
+        self.outcome = outcome
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID
+        case code
+        case relayURL
+        case expiresAt
+        case pending
+        case outcome
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try c.decode(String.self, forKey: .sessionID)
+        code = try c.decode(String.self, forKey: .code)
+        relayURL = try c.decode(URL.self, forKey: .relayURL)
+        expiresAt = try c.decode(Date.self, forKey: .expiresAt)
+        pending = try c.decodeIfPresent(RelayPairingPending.self, forKey: .pending)
+        outcome = try c.decodeIfPresent(RelayPairingOutcome.self, forKey: .outcome)
     }
 }
 

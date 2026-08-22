@@ -193,13 +193,51 @@ public actor DaemonService {
             case .relayRefreshDevices:
                 await relay?.refreshDevices()
                 payload = IPCResponse(status: .ok, relay: await relayStatus())
-            case .relayCreatePairingOffer:
+            case .relayPairingStart:
                 if let relay {
-                    let offer = try await relay.createPairingOffer()
-                    payload = IPCResponse(status: .ok, relay: await relay.status(), pairingOffer: offer)
+                    do {
+                        let pairing = try await relay.startPairing()
+                        payload = IPCResponse(status: .ok, relay: await relay.status(), pairing: pairing)
+                    } catch {
+                        // Most commonly: the Relay this daemon points at does
+                        // not serve the pairing endpoints (not deployed yet).
+                        payload = failure(
+                            code: "pairing_start_failed",
+                            message: "The Relay could not create a pairing session: \(error)",
+                            retryable: true
+                        )
+                    }
                 } else {
                     payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
                 }
+            case .relayPairingState:
+                if let relay {
+                    payload = IPCResponse(status: .ok, relay: await relay.status(), pairing: await relay.pairingSession())
+                } else {
+                    payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
+                }
+            case .relayPairingDecide:
+                if let relay, let approved = envelope.payload.approved {
+                    do {
+                        let pairing = try await relay.decidePairing(approved: approved)
+                        payload = IPCResponse(status: .ok, relay: await relay.status(), pairing: pairing)
+                    } catch RelayPairingError.noPendingDevice {
+                        payload = failure(code: "no_pending_device", message: "No iPhone is waiting on the pairing session.")
+                    } catch {
+                        payload = failure(
+                            code: "pairing_decision_failed",
+                            message: "The Relay did not accept the decision: \(error)",
+                            retryable: true
+                        )
+                    }
+                } else if relay == nil {
+                    payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
+                } else {
+                    payload = failure(code: "missing_decision", message: "The pairing decision has no `approved` value.")
+                }
+            case .relayPairingCancel:
+                await relay?.cancelPairing()
+                payload = IPCResponse(status: .ok, relay: await relayStatus())
             case .relayRevokeDevice:
                 if let relay, let deviceID = envelope.payload.deviceID {
                     try await relay.revoke(deviceID: deviceID)
@@ -208,6 +246,15 @@ public actor DaemonService {
                     payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
                 } else {
                     payload = failure(code: "missing_device_id", message: "The revoke request has no device id.")
+                }
+            case .relayRemoveDevice:
+                if let relay, let deviceID = envelope.payload.deviceID {
+                    try await relay.remove(deviceID: deviceID)
+                    payload = IPCResponse(status: .ok, relay: await relay.status())
+                } else if relay == nil {
+                    payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
+                } else {
+                    payload = failure(code: "missing_device_id", message: "The remove request has no device id.")
                 }
             }
             return response(requestID: envelope.requestID, payload: payload)

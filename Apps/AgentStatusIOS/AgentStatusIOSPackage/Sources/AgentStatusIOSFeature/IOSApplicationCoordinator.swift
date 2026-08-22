@@ -1,3 +1,4 @@
+import AgentStatusRemote
 import AgentStatusTransport
 import Foundation
 import UIKit
@@ -14,8 +15,7 @@ public final class IOSApplicationCoordinator: NSObject {
         relay: relay,
         settings: settings,
         onShowSessions: { [weak self] hostID in self?.showSessions(onlyFor: hostID) },
-        onScan: { [weak self] in self?.presentScanner() },
-        onPaste: { [weak self] in self?.pairFromPasteboard() }
+        onAddDevice: { [weak self] in self?.presentAddMac(prefill: nil) }
     )
     private lazy var settingsScreen = SettingsViewController(relay: relay, notifications: notifications)
 
@@ -51,49 +51,36 @@ public final class IOSApplicationCoordinator: NSObject {
         tabs.selectedIndex = 0
     }
 
-    /// "Paste pairing code": the Mac's *Copy pairing payload* puts the same
-    /// JSON the QR carries on the clipboard (Universal Clipboard or a
-    /// simulator). Pairs straight away and reports the result.
-    private func pairFromPasteboard() {
-        guard let text = UIPasteboard.general.string,
-              let offer = try? TransportCoding.makeDecoder().decode(PairingOffer.self, from: Data(text.utf8)) else {
-            presentAlert(title: "Nothing to pair", message: "The clipboard does not contain an Agent Status pairing code. On the Mac, open Pair iPhone and use Copy pairing payload.")
-            return
+    /// `agentstatus://pair?relay=…&code=…` from the system camera or a link:
+    /// opens Add Mac with both fields filled (or hands the link to the sheet
+    /// already up) and pairs straight away.
+    @discardableResult
+    public func open(_ url: URL) -> Bool {
+        guard let link = PairingLink(url: url, allowInsecureLocalhost: AddMacViewController.allowsInsecureLocalhost) else { return false }
+        if let addMac {
+            addMac.apply(link)
+        } else {
+            presentAddMac(prefill: link)
         }
-        Task {
-            do {
-                try await relay.pair(using: offer)
-                presentAlert(title: "Paired", message: "\(offer.hostName ?? "This Mac") is connected.")
-            } catch {
-                presentAlert(title: "Pairing failed", message: error.localizedDescription)
-            }
-        }
+        return true
     }
 
-    private func presentAlert(title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        (tabs.presentedViewController ?? tabs).present(alert, animated: true)
-    }
+    private weak var addMac: AddMacViewController?
 
-    private func presentScanner() {
-        let scanner = PairingScannerViewController()
-        scanner.onOffer = { [weak self, weak scanner] offer in
-            guard let self else { return }
-            scanner?.setBusy(true)
-            Task {
-                do {
-                    try await relay.pair(using: offer)
-                    scanner?.dismiss(animated: true)
-                } catch {
-                    scanner?.setBusy(false)
-                    scanner?.show(error: error)
-                }
-            }
+    private func presentAddMac(prefill: PairingLink?) {
+        guard addMac == nil else { return }
+        tabs.selectedIndex = 1
+        let screen = AddMacViewController(relay: relay, settings: settings, prefill: prefill) { [weak self] in
+            self?.tabs.presentedViewController?.dismiss(animated: true)
         }
-        let navigation = UINavigationController(rootViewController: scanner)
-        navigation.modalPresentationStyle = .fullScreen
-        navigation.overrideUserInterfaceStyle = .dark
-        tabs.present(navigation, animated: true)
+        addMac = screen
+        let navigation = UINavigationController(rootViewController: screen)
+        navigation.modalPresentationStyle = .pageSheet
+        if let sheet = navigation.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.preferredCornerRadius = IOSDS.Layout.cardRadius
+            sheet.prefersGrabberVisible = true
+        }
+        (tabs.presentedViewController ?? tabs).present(navigation, animated: true)
     }
 }

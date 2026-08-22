@@ -1,11 +1,12 @@
 import AgentStatusCore
 import AgentStatusDesignSystem
+import AgentStatusRemote
 import AgentStatusTransport
 import UIKit
 
-/// Macs tab: the paired Macs, each with its online state, session count and
-/// pairing date. Swipe to remove a channel; `+` scans a new pairing code or
-/// renames this iPhone.
+/// Macs tab (design 1g): the paired Macs, each with its online state and the
+/// Relay it is reached through. Swipe to remove a channel; `+` adds a Mac
+/// (code or scan, in one sheet) or renames this iPhone.
 @MainActor
 final class MacsViewController: UIViewController, UICollectionViewDelegate {
     private enum Section { case paired }
@@ -13,8 +14,7 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
     private let relay: RelayDeviceController
     private let settings: LocalSettings
     private let onShowSessions: (HostID) -> Void
-    private let onScan: () -> Void
-    private let onPaste: () -> Void
+    private let onAddDevice: () -> Void
     private var observer: UUID?
     private var states: [MacChannelState] = []
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
@@ -25,14 +25,12 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         relay: RelayDeviceController,
         settings: LocalSettings,
         onShowSessions: @escaping (HostID) -> Void,
-        onScan: @escaping () -> Void,
-        onPaste: @escaping () -> Void
+        onAddDevice: @escaping () -> Void
     ) {
         self.relay = relay
         self.settings = settings
         self.onShowSessions = onShowSessions
-        self.onScan = onScan
-        self.onPaste = onPaste
+        self.onAddDevice = onAddDevice
         super.init(nibName: nil, bundle: nil)
         title = "Macs"
         tabBarItem = UITabBarItem(title: "Macs", image: UIImage(systemName: "laptopcomputer"), tag: 1)
@@ -47,11 +45,8 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "plus"),
             menu: UIMenu(children: [
-                UIAction(title: "Scan pairing code", image: UIImage(systemName: "qrcode.viewfinder")) { [weak self] _ in
-                    self?.onScan()
-                },
-                UIAction(title: "Paste pairing code", image: UIImage(systemName: "doc.on.clipboard")) { [weak self] _ in
-                    self?.onPaste()
+                UIAction(title: "Add Device", image: UIImage(systemName: "laptopcomputer")) { [weak self] _ in
+                    self?.onAddDevice()
                 },
                 UIAction(title: "Rename this iPhone", image: UIImage(systemName: "pencil")) { [weak self] _ in
                     self?.rename()
@@ -72,7 +67,7 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         emptyLabel.textAlignment = .center
         emptyLabel.textColor = .secondaryLabel
         emptyLabel.font = .design(IOSDS.Typography.body)
-        emptyLabel.text = "No Macs paired\nTap + and scan the pairing code from Agent Status › Pair iPhone on your Mac."
+        emptyLabel.text = "No Macs paired\nTap + › Add Device and enter the 6-character code from Agent Status › Pair an iPhone on your Mac."
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         let background = UIView()
         background.addSubview(emptyLabel)
@@ -128,8 +123,10 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
             content.text = state.displayName
             content.textProperties.font = .design(IOSDS.Typography.listTitle)
             content.secondaryText = Self.meta(for: state, now: Date())
-            content.secondaryTextProperties.font = .design(IOSDS.Typography.caption)
+            content.secondaryTextProperties.font = .design(DesignSystem.Pairing.IOS.macRowSubtitle)
             content.secondaryTextProperties.color = .inkTertiary
+            content.secondaryTextProperties.numberOfLines = 1
+            content.secondaryTextProperties.lineBreakMode = .byTruncatingTail
             content.textToSecondaryTextVerticalPadding = IOSDS.MacRow.lineGap
             content.image = UIImage(systemName: "laptopcomputer")
             content.imageProperties.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
@@ -162,7 +159,7 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
             elementKind: UICollectionView.elementKindSectionFooter
         ) { view, _, _ in
             var content = UIListContentConfiguration.plainFooter()
-            content.text = "左滑移除某台 Mac 只关闭这一条通道，其他设备不受影响。配对码一次有效，凭据保存在 Keychain。"
+            content.text = "左滑移除某台 Mac 只关闭这一条通道，其他设备不受影响。凭据保存在 Keychain，每台 Mac 各自记着自己的 Relay。"
             content.textProperties.font = .design(IOSDS.Typography.caption)
             content.textProperties.color = .inkTertiary
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(
@@ -184,27 +181,21 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         return dataSource
     }
 
-    /// `Online · 4 sessions · 已配对 Aug 14` / `Unavailable · 上次同步 2h 前` /
-    /// `Revoked · 在 Mac 上重新配对`.
+    /// `Online · afuture.workers.dev` / `Offline · 2h ago · afuture.workers.dev`
+    /// / `Revoked · afuture.workers.dev`: the state, then which Relay this Mac
+    /// is reached through (each Mac remembers its own).
     static func meta(for state: MacChannelState, now: Date) -> String {
+        let relayHost = RelayURLValidation.displayHost(state.relayURL)
         if state.accessRevoked {
-            return "Revoked · 在 Mac 上重新配对"
+            return "Revoked · \(relayHost)"
         }
         if state.isOnline {
-            // Top-level sessions only — subagents fold into their parent's row.
-            let visible = SessionSummary.visible(state.visibleSessions.map(\.summary))
-            let ids = Set(visible.map(\.id))
-            let count = visible.count { summary in
-                guard let parent = summary.lineage?.parentSessionID else { return true }
-                return !ids.contains(parent)
-            }
-            let paired = state.pairedAt.formatted(.dateTime.month(.abbreviated).day())
-            return "Online · \(count) session\(count == 1 ? "" : "s") · 已配对 \(paired)"
+            return "Online · \(relayHost)"
         }
         if let lastSync = state.lastSyncAt {
-            return "Unavailable · 上次同步 \(SessionRelativeTimeFormatter.string(from: lastSync, now: now)) 前"
+            return "Offline · \(SessionRelativeTimeFormatter.string(from: lastSync, now: now)) ago · \(relayHost)"
         }
-        return "Unavailable · 尚未同步"
+        return "Offline · \(relayHost)"
     }
 
     // MARK: - Actions

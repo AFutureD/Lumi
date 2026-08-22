@@ -128,15 +128,19 @@ private struct Harness {
     let cache = InMemorySessionRepository()
     let settings: LocalSettings
     let host: FakeHost
+    let pairingAPI: ScriptedPairingAPI
     let controller: RelayDeviceController
 
     init() {
         settings = LocalSettings(defaults: UserDefaults(suiteName: "relay-tests-\(UUID().uuidString)")!)
         host = FakeHost(link: link, hostID: hostID, deviceID: deviceID, devicePublicKey: deviceKeys.publicKey)
+        pairingAPI = ScriptedPairingAPI(hostID: hostID, hostKeys: host.keys)
         let cache = cache
         let dependencies = RelayDeviceDependencies(
-            relayURL: URL(string: "https://relay.example.test")!,
+            defaultRelayURL: URL(string: "https://relay.example.test")!,
             transportFactory: DeviceTransportFactory(link: link, deviceID: deviceID),
+            pairingAPI: pairingAPI,
+            pairingPollInterval: .milliseconds(20),
             makeRepository: { _ in cache },
             removeRepository: { _ in },
             requestTimeouts: .init(index: .seconds(2), fetch: .seconds(2), tick: .milliseconds(100), retryDelay: .milliseconds(200)),
@@ -331,7 +335,7 @@ private final class RevokingTransportFactory: RelayFrameTransportFactory, @unche
     let factory = RevokingTransportFactory()
     let cache = InMemorySessionRepository()
     let dependencies = RelayDeviceDependencies(
-        relayURL: URL(string: "https://relay.example.test")!,
+        defaultRelayURL: URL(string: "https://relay.example.test")!,
         transportFactory: factory,
         makeRepository: { _ in cache },
         removeRepository: { _ in },
@@ -341,7 +345,7 @@ private final class RevokingTransportFactory: RelayFrameTransportFactory, @unche
     let controller = RelayDeviceController(settings: settings, dependencies: dependencies, loadStoredCredentials: false)
     let keys = RelayCryptography.makeKeyPair()
     try await controller.addChannel(RelayDeviceCredentials(
-        relayURL: dependencies.relayURL, hostID: HostID("host-revoked"), hostName: "Old Mac",
+        relayURL: dependencies.defaultRelayURL, hostID: HostID("host-revoked"), hostName: "Old Mac",
         deviceID: DeviceID("device-revoked"), deviceToken: "stale", keyPair: keys, hostPublicKey: keys.publicKey
     ))
     for _ in 0..<300 where controller.channelStates.first?.accessRevoked != true {
@@ -427,4 +431,133 @@ private final class RevokingTransportFactory: RelayFrameTransportFactory, @unche
     try await harness.controller.addChannel(harness.credentials)
     #expect(harness.controller.deviceID(forPairingWith: harness.hostID) == harness.deviceID)
     #expect(harness.controller.deviceID(forPairingWith: HostID("host-other")) != harness.deviceID)
+}
+
+
+/// A Relay stand-in for the pairing calls: one session, scripted by the test
+/// (which nonce / key it reveals, whether the Mac approves).
+private actor ScriptedPairingAPI: RelayPairingAPI {
+    let hostID: HostID
+    let hostKeys: RelayKeyPair
+    let nonce = RelayCryptography.makePairingNonce()
+    let sessionID = "session-0001"
+    var code = "7KF3QP"
+    /// What `status` reveals as the host key (a MITM would swap it).
+    var revealedHostKey: Data
+    var decision: PairingSessionState = .approved
+    var hostOffline = false
+    private(set) var submitted: (deviceID: DeviceID, deviceName: String, devicePublicKey: Data)?
+    private(set) var cancelled = false
+    private(set) var polls = 0
+
+    init(hostID: HostID, hostKeys: RelayKeyPair) {
+        self.hostID = hostID
+        self.hostKeys = hostKeys
+        revealedHostKey = hostKeys.publicKey
+    }
+
+    func set(revealedHostKey: Data) { self.revealedHostKey = revealedHostKey }
+    func set(decision: PairingSessionState) { self.decision = decision }
+    func set(hostOffline: Bool) { self.hostOffline = hostOffline }
+
+    func claim(relayURL: URL, code: String) async throws -> RelayPairingClaim {
+        guard code == self.code else { throw RelayClientError.relay(status: 404, code: "invalid_or_expired_code") }
+        return RelayPairingClaim(
+            sessionID: sessionID, hostID: hostID, hostName: "Test Mac",
+            commit: RelayCryptography.pairingCommitment(hostPublicKey: hostKeys.publicKey, hostNonce: nonce)
+        )
+    }
+
+    func submit(relayURL: URL, hostID: HostID, sessionID: String, deviceID: DeviceID, deviceName: String, devicePublicKey: Data) async throws {
+        if hostOffline { throw RelayClientError.relay(status: 409, code: "host_offline") }
+        submitted = (deviceID, deviceName, devicePublicKey)
+    }
+
+    func status(relayURL: URL, hostID: HostID, sessionID: String) async throws -> RelayPairingSessionStatus {
+        polls += 1
+        guard submitted != nil else { return RelayPairingSessionStatus(state: .claimed, hostName: "Test Mac") }
+        // Submitted → revealed on the first poll → the decision on the second.
+        if polls <= 1 {
+            return RelayPairingSessionStatus(state: .revealed, hostName: "Test Mac", hostPublicKey: revealedHostKey, hostNonce: nonce)
+        }
+        return RelayPairingSessionStatus(
+            state: decision, hostName: "Test Mac", hostPublicKey: revealedHostKey, hostNonce: nonce,
+            deviceToken: decision == .approved ? "device-token-0001" : nil,
+            pairedAt: decision == .approved ? Date(timeIntervalSince1970: 1_700_000_000) : nil
+        )
+    }
+
+    func cancel(relayURL: URL, hostID: HostID, sessionID: String) async throws {
+        cancelled = true
+    }
+}
+
+@Test @MainActor func pairingAttemptVerifiesTheCommitmentShowsTheSASAndInstallsTheChannel() async throws {
+    let harness = Harness()
+    try await harness.host.start()
+    let attempt = harness.controller.makePairingAttempt(relayURL: URL(string: "https://relay.example.test")!, code: "7KF3QP")
+    var seen: [PairingProgress] = []
+    attempt.onChange = { if let progress = attempt.progress, seen.last != progress { seen.append(progress) } }
+    attempt.start()
+    await harness.waitUntil { attempt.progress.map { if case .paired = $0 { true } else { false } } ?? false || attempt.failure != nil }
+    #expect(attempt.failure == nil)
+
+    // Claim → waiting → SAS → paired, in that order.
+    #expect(seen.first == .claiming)
+    #expect(seen.contains(.waitingForMac(hostName: "Test Mac", relayHost: "relay.example.test")))
+    let submitted = try #require(await harness.pairingAPI.submitted)
+    let expectedSAS = RelayCryptography.pairingSAS(
+        hostID: harness.hostID, deviceID: submitted.deviceID,
+        hostPublicKey: harness.host.keys.publicKey, devicePublicKey: submitted.devicePublicKey, hostNonce: await harness.pairingAPI.nonce
+    )
+    #expect(seen.contains(.comparing(sas: expectedSAS, hostName: "Test Mac", relayHost: "relay.example.test")))
+    #expect(seen.last == .paired(hostID: harness.hostID, hostName: "Test Mac", relayHost: "relay.example.test"))
+    #expect(submitted.deviceName == harness.settings.deviceName)
+
+    // The channel is installed with the Relay the code came from and the
+    // Mac's key; it connects and indexes like any other.
+    let state = try #require(harness.state)
+    #expect(state.hostID == harness.hostID)
+    #expect(state.relayURL == URL(string: "https://relay.example.test")!)
+    #expect(state.displayName == "Test Mac")
+    #expect(harness.controller.deviceID(forPairingWith: harness.hostID) == submitted.deviceID)
+    #expect(MacsViewController.meta(for: state, now: Date()).hasSuffix("relay.example.test"))
+}
+
+@Test @MainActor func pairingAttemptRefusesASwappedHostKeyAndReportsTheMacsDecision() async throws {
+    let harness = Harness()
+    try await harness.host.start()
+
+    // The Relay reveals a key that does not open the commitment: stop, tell
+    // the Relay, keep nothing.
+    let impostor = RelayCryptography.makeKeyPair()
+    await harness.pairingAPI.set(revealedHostKey: impostor.publicKey)
+    let mitm = harness.controller.makePairingAttempt(relayURL: URL(string: "https://relay.example.test")!, code: "7KF3QP")
+    mitm.start()
+    await harness.waitUntil { mitm.failure != nil }
+    #expect(mitm.failure == .commitMismatch)
+    #expect(harness.controller.channelStates.isEmpty)
+    await harness.waitUntil { false }  // let the fire-and-forget cancel land
+    #expect(await harness.pairingAPI.cancelled)
+
+    // Wrong code: refused at claim, nothing submitted.
+    let wrong = harness.controller.makePairingAttempt(relayURL: URL(string: "https://relay.example.test")!, code: "AAAAAA")
+    wrong.start()
+    await harness.waitUntil { wrong.failure != nil }
+    #expect(wrong.failure == .badCode)
+
+    // Mac offline at submit: resumable — `start()` again submits without a new claim.
+    await harness.pairingAPI.set(revealedHostKey: harness.host.keys.publicKey)
+    await harness.pairingAPI.set(hostOffline: true)
+    await harness.pairingAPI.set(decision: .rejected)
+    let offline = harness.controller.makePairingAttempt(relayURL: URL(string: "https://relay.example.test")!, code: "7KF3QP")
+    offline.start()
+    await harness.waitUntil { offline.failure != nil }
+    #expect(offline.failure == .hostOffline)
+    await harness.pairingAPI.set(hostOffline: false)
+    offline.start()
+    await harness.waitUntil { offline.failure != nil && offline.failure != .hostOffline }
+    // …and the Mac pressed Don't match.
+    #expect(offline.failure == .rejected)
+    #expect(harness.controller.channelStates.isEmpty)
 }

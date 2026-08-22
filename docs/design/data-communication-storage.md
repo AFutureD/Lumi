@@ -34,9 +34,10 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 | Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Agent Status Mac/sessions.sqlite3` |
 | iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session、Turn、Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Agent Status/Channels/<hostID>.sqlite3`（App 容器内） |
 | daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `com.huanan.AgentStatusDaemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
-| daemon 状态文件 | 发送序号 | 每个 Device ID 的 Host 发送序号（发送前先落盘） | `~/Library/Application Support/Agent Status/relay-host-state.json`（0600） |
-| iOS Keychain | 通道身份 | Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `com.huanan.AgentStatusIOS.relay`（account `device-channels-v4`） |
-| Durable Object SQLite | 运维元数据 | token hash、设备公钥、配对挑战 hash、过期/撤销、限流、每设备 Host 序号 | 每个 HostID 一个对象 |
+| daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、Mac 点 Match 时钉住的设备公钥 | `~/Library/Application Support/Agent Status/relay-host-state.json`（0600） |
+| iOS Keychain | 通道身份 | 每台 Mac 各自的 Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `com.huanan.AgentStatusIOS.relay`（account `device-channels-v4`） |
+| Durable Object SQLite（`HostRelay`） | 运维元数据 | Host token hash、设备（公钥、token hash、配对 / 撤销时间）、配对会话（state、承诺、双方公钥与名称、揭示后的 nonce、签发的 Device token）、限流、每设备 Host 序号 | 每个 HostID 一个对象 |
+| Durable Object SQLite（`PairingDirectory`） | 配对码目录 | SHA-256(配对码) → Host / 会话、到期与消费时间、claim 限流 | 全局一个对象 |
 
 Keychain 项使用 `AfterFirstUnlockThisDeviceOnly`，不会随常规设备备份迁移。
 
@@ -98,9 +99,13 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
 | `health` | daemon 状态（含 `relayConnected`） | 短连接请求 |
 | `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
-| `relay_status` | daemon 的 Relay Host 状态：已连接、Host ID、错误、已配对设备 | Mac App 配对页（可见时 5 秒轮询） |
-| `relay_create_pairing_offer` | 让 daemon 生成并登记一次性配对 offer，返回二维码内容 | 短连接请求 |
+| `relay_status` | daemon 的 Relay Host 状态：已连接、Host ID、Relay URL、错误、已配对设备（含是否已钉住公钥） | Mac App 侧栏 / 工具栏（30 秒轮询；配对页可见时由 `relay_pairing_state` 代替） |
+| `relay_pairing_start` | 开始 / 续一个配对会话：daemon 生成 nonce 与承诺，向 Relay 建会话、领 6 位配对码；返回 `{sessionID, code, relayURL, expiresAt}`（上一个会话随之取消） | 短连接请求（进入配对页、码到期、New code） |
+| `relay_pairing_state` | 当前配对会话：code、relayURL、expiresAt、`pending {deviceName, sas}`（iPhone 已提交）、`outcome`（Paired / declined / cancelled）；没有会话时为空 | Mac App 配对页（可见时 1 秒轮询） |
+| `relay_pairing_decide {approved}` | Match / Don't match：daemon 向 Relay 提交决定；Match 同时钉住设备公钥并刷新设备列表 | 短连接请求 |
+| `relay_pairing_cancel` | 离开配对页：取消会话，码立刻作废 | 短连接请求 |
 | `relay_revoke_device` / `relay_refresh_devices` | 撤销一台 iPhone / 重新拉设备列表，都返回最新状态 | 短连接请求 |
+| `relay_remove_device` | 删除一台已撤销 iPhone 的记录（Relay 记录 + daemon 钉住的钥匙一起删），返回最新状态 | 短连接请求 |
 
 daemon 使用一个 NIO event loop。Session 在协议内多路复用，不为 Session 创建 event loop 或 channel。响应在发送前检查 8 MiB frame 上限：超限时改发 `response_too_large` 失败帧（不重试、提示缩小分页），而不是发出一个客户端注定拒收的帧。
 
@@ -189,7 +194,7 @@ iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）：本�
 
 - payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用不同公钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环保证应答先于其后的推送。
 - 推送（events / info / removed / health）只发给本连接内请求过 index 的设备；Relay 对离线设备丢帧，设备重连、Host 上线或重连（Relay 再次广播 `online`，daemon 已忘记谁同步过）、回到前台、序号断档、下拉刷新时都重新 `sync_index`。
-- daemon 收到未知设备、或用缓存公钥解不开的 `request` 时，先按需刷新一次设备列表（最多 2 秒一次）再处理：刚配对或刚换钥匙重配的 iPhone 的第一个请求不会被丢弃。
+- daemon 收到未知设备、或用缓存公钥解不开的 `request` 时，先按需刷新一次设备列表（最多 2 秒一次）再处理：刚配对或刚换钥匙重配的 iPhone 的第一个请求不会被丢弃。刷新时只承认与本机在 Match 时钉住的公钥相同的设备；其余（Mac 没批准过的行、Relay 换过的钥匙）Unverified，不发帧、请求丢弃（见 [Relay、配对与安全设计](relay-pairing-security.md)）。
 - 一条 Host WSS 发送所有设备的定向帧并接收设备请求；每个 iOS Mac 通道维护自己的 Device WSS 和 SQLite 缓存。
 
 ## 一致性规则
@@ -239,7 +244,7 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 | --- | --- | --- |
 | helper 找不到 daemon | 1 秒内失败、stderr、非零退出 | daemon 恢复后等待下一 Hook；rollout watcher 补充持久事件 |
 | Mac 订阅断开 | health 置空，2 秒后重连 | 重连成功即触发一次对账，补上断线期间的缺口 |
-| daemon 不可用 | Mac 保留 SQLite 供本地查看；Host WSS 随 daemon 下线，iPhone 收到 presence offline 把该 Mac 标为 Unavailable，但继续显示缓存 | daemon 恢复（launchd 拉起）后 iPhone 收到 presence online 自动 `sync_index` |
+| daemon 不可用 | Mac 保留 SQLite 供本地查看；Host WSS 随 daemon 下线，iPhone 收到 presence offline 在 Macs 页把该 Mac 标为 Offline，但继续显示缓存 | daemon 恢复（launchd 拉起）后 iPhone 收到 presence online 自动 `sync_index` |
 | Mac App 退出 | 不影响 iPhone：Relay Host 在 daemon 里 | — |
 | iOS WSS 断开 | 继续显示缓存，2 秒后重连 | 重连后 Host 在线即 `sync_index` 对账 |
 | Relay 对象重启 | 授权/序号元数据保留 | 设备重连 `sync_index`；daemon 序号落后时 Worker 回 `non_monotonic_sequence{lastSequence}`，daemon 抬序号并向该设备补发一帧 health，设备据序号断档重新 index |

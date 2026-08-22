@@ -12,6 +12,7 @@ enum PreviewFixture {
             MacChannelState(
                 hostID: pro,
                 displayName: "MacBook Pro",
+                relayURL: URL(string: "https://agent-status-relay.afuture.workers.dev")!,
                 pairedAt: now.addingTimeInterval(-7 * 86_400),
                 isConnected: true,
                 isHostOnline: true,
@@ -26,6 +27,7 @@ enum PreviewFixture {
             MacChannelState(
                 hostID: mini,
                 displayName: "Mac mini",
+                relayURL: URL(string: "https://relay.huanan.dev")!,
                 pairedAt: now.addingTimeInterval(-30 * 86_400),
                 isConnected: true,
                 isHostOnline: true,

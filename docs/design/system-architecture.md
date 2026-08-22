@@ -95,7 +95,7 @@ flowchart LR
 | 组件 | 负责 | 不负责 |
 | --- | --- | --- |
 | helper | 读取 Hook stdin、归一化、发送事件、报告失败 | 保存状态、扫描日志、重试队列 |
-| daemon | 建立基线、归并事件、SQLite 权威存储、本地查询与事件扇出、Relay Host（注册、配对 offer、设备列表、应答 iPhone 请求、推送增量） | UI、QR 渲染 |
+| daemon | 建立基线、归并事件、SQLite 权威存储、本地查询与事件扇出、Relay Host（注册、配对会话与 SAS / Match 状态机、设备列表与公钥钉住、应答 iPhone 请求、推送增量） | UI、QR 渲染 |
 | Mac App | SQLite 客户端缓存、AppKit UI、Notch、daemon 管理、Hook 安装、配对页（经 IPC 驱动 daemon 的 Relay Host） | 解析原始 rollout、成为业务权威、持有 Relay 凭据或连接 |
 | iOS App | 多 Mac 配对、每通道 SQLite 缓存、index-first 对账 + 事件流、始终显示缓存 | Agent 控制、Relay 历史查询、成为数据源 |
 | Relay | Host/Device 鉴权、配对、撤销、在线状态、密文转发 | 解密 Session、保存业务数据、重放历史 |
@@ -169,7 +169,7 @@ flowchart TD
 1. 打开 Mac SQLite 缓存并先渲染已保存内容。
 2. 与 daemon 对账：索引 diff 后逐 Session 拉取替换、裁剪多余项。
 3. 建立一个持久事件订阅 channel。
-4. 启动主窗口和 OpenNook；配对页经 IPC（`relay_status` / `relay_create_pairing_offer` / `relay_revoke_device`）读写 daemon 的 Relay Host。
+4. 启动主窗口和 OpenNook；配对页经 IPC（`relay_status` / `relay_pairing_start` / `relay_pairing_state` / `relay_pairing_decide` / `relay_pairing_cancel` / `relay_revoke_device`）读写 daemon 的 Relay Host。
 
 ### iOS App
 

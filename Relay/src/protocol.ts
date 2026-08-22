@@ -12,17 +12,30 @@ export interface RelayRoutingFrame {
   ciphertext?: string;
 }
 
-export interface PairingOfferRequest {
-  challenge: string;
+export interface PairingSessionCreate {
+  /** The host's commitment to its public key and nonce; opaque to the relay. */
+  commit: string;
   hostPublicKey: string;
+  hostName?: string;
   expiresAt: string;
 }
 
-export interface PairingRequest {
-  challenge: string;
+export interface PairingDeviceSubmission {
   deviceID: string;
   deviceName: string;
   devicePublicKey: string;
+}
+
+export interface PairingReveal {
+  hostNonce: string;
+}
+
+export interface PairingDecision {
+  approved: boolean;
+}
+
+export interface PairingClaim {
+  code: string;
 }
 
 export class RequestValidationError extends Error {}
@@ -105,25 +118,45 @@ export async function readLimitedJSON(request: Request, limit = MAX_HTTP_BODY_BY
   }
 }
 
-export function parsePairingOffer(value: unknown): PairingOfferRequest {
-  if (!isRecord(value)) throw new RequestValidationError("Pairing offer must be an object.");
+export function parsePairingSessionCreate(value: unknown): PairingSessionCreate {
+  if (!isRecord(value)) throw new RequestValidationError("Pairing session must be an object.");
+  const hostName = optionalString(value.hostName, "hostName")?.slice(0, 100);
   return {
-    challenge: credentialString(value.challenge, "challenge"),
+    commit: credentialString(value.commit, "commit"),
     hostPublicKey: credentialString(value.hostPublicKey, "hostPublicKey"),
+    ...(hostName === undefined ? {} : { hostName }),
     expiresAt: requiredString(value.expiresAt, "expiresAt"),
   };
 }
 
-export function parsePairingRequest(value: unknown): PairingRequest {
-  if (!isRecord(value)) throw new RequestValidationError("Pairing request must be an object.");
+export function parsePairingDeviceSubmission(value: unknown): PairingDeviceSubmission {
+  if (!isRecord(value)) throw new RequestValidationError("Device submission must be an object.");
   const deviceID = requiredString(value.deviceID, "deviceID");
   if (!isValidIdentifier(deviceID)) throw new RequestValidationError("Invalid deviceID.");
   return {
-    challenge: credentialString(value.challenge, "challenge"),
     deviceID,
     deviceName: requiredString(value.deviceName, "deviceName").slice(0, 100),
     devicePublicKey: credentialString(value.devicePublicKey, "devicePublicKey"),
   };
+}
+
+export function parsePairingReveal(value: unknown): PairingReveal {
+  if (!isRecord(value)) throw new RequestValidationError("Reveal must be an object.");
+  return { hostNonce: credentialString(value.hostNonce, "hostNonce") };
+}
+
+export function parsePairingDecision(value: unknown): PairingDecision {
+  if (!isRecord(value) || typeof value.approved !== "boolean") {
+    throw new RequestValidationError("Decision requires a boolean approved.");
+  }
+  return { approved: value.approved };
+}
+
+export function parsePairingClaim(value: unknown): PairingClaim {
+  if (!isRecord(value)) throw new RequestValidationError("Claim must be an object.");
+  const code = requiredString(value.code, "code");
+  if (code.length > 32) throw new RequestValidationError("Invalid code length.");
+  return { code };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

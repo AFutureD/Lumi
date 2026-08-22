@@ -9,6 +9,10 @@
       {
         "name": "HOST_RELAY",
         "class_name": "HostRelay"
+      },
+      {
+        "name": "PAIRING_DIRECTORY",
+        "class_name": "PairingDirectory"
       }
     ]
   },
@@ -16,6 +20,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["HostRelay"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["PairingDirectory"]
     }
   ],
   "observability": {

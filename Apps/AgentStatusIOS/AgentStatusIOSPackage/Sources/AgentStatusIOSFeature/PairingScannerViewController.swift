@@ -1,13 +1,14 @@
 @preconcurrency import AVFoundation
 import AgentStatusDesignSystem
-import AgentStatusTransport
+import AgentStatusRemote
 import UIKit
 
 /// Scan Code: full-screen camera with a 252pt viewfinder, caption and a
-/// torch toggle. The first valid pairing QR is handed to `onOffer`.
+/// torch toggle. The first `agentstatus://pair?relay=…&code=…` QR is handed
+/// to `onLink`; the Add Mac screen fills its two fields from it.
 @MainActor
 final class PairingScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
-    var onOffer: ((PairingOffer) -> Void)?
+    var onLink: ((PairingLink) -> Void)?
 
     private let captureSession = AVCaptureSession()
     private lazy var previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
@@ -22,7 +23,7 @@ final class PairingScannerViewController: UIViewController, AVCaptureMetadataOut
     private var camera: AVCaptureDevice?
     private var consumed = false
 
-    private let defaultCaption = "在 macOS 的 Agent Status 里打开 Pair iPhone，把二维码放进取景框。"
+    private let defaultCaption = "在 macOS 的 Agent Status 里打开 Pair an iPhone，把二维码放进取景框。"
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -206,13 +207,13 @@ final class PairingScannerViewController: UIViewController, AVCaptureMetadataOut
 
     private func consume(_ value: String) {
         guard !consumed else { return }
-        do {
-            let offer = try TransportCoding.makeDecoder().decode(PairingOffer.self, from: Data(value.utf8))
-            consumed = true
-            onOffer?(offer)
-        } catch {
+        guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let link = PairingLink(url: url, allowInsecureLocalhost: AddMacViewController.allowsInsecureLocalhost) else {
             setCaption("这不是 Agent Status 的配对码。")
+            return
         }
+        consumed = true
+        onLink?(link)
     }
 
     private func showCameraDenied() {

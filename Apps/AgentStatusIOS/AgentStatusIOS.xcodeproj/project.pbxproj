@@ -384,7 +384,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentStatusIOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Agent Status";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Scan a one-time Agent Status pairing code shown on your Mac.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Agent Status on your Mac.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait";
@@ -412,7 +412,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentStatusIOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Agent Status";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Scan a one-time Agent Status pairing code shown on your Mac.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Agent Status on your Mac.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait";

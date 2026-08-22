@@ -86,7 +86,11 @@ public enum RelayCryptography {
             hostID: hostID,
             deviceID: deviceID
         )
-        let sealed = try ChaChaPoly.seal(payload.plaintext, using: key)
+        let sealed = try ChaChaPoly.seal(
+            payload.plaintext,
+            using: key,
+            authenticating: routingHeader(hostID: hostID, deviceID: deviceID, sequence: sequence, kind: kind)
+        )
         var ciphertext = sealed.ciphertext
         ciphertext.append(sealed.tag)
         return RelayRoutingFrame(
@@ -126,9 +130,73 @@ public enum RelayCryptography {
             ciphertext: ciphertext,
             tag: tag
         )
-        let plaintext = try ChaChaPoly.open(box, using: key)
+        let plaintext = try ChaChaPoly.open(
+            box,
+            using: key,
+            authenticating: routingHeader(hostID: frame.hostID, deviceID: deviceID, sequence: frame.sequence, kind: frame.kind)
+        )
         let inflated = try (plaintext as NSData).decompressed(using: .zlib)
         return try TransportCoding.makeDecoder().decode(RemoteSessionPayload.self, from: inflated as Data)
+    }
+
+    /// The routing header as additional authenticated data: the Relay (or
+    /// anyone on the path) can still read these fields, but cannot change
+    /// them, swap a frame's direction, or replay a sealed body under another
+    /// sequence without the tag failing.
+    static func routingHeader(hostID: HostID, deviceID: DeviceID, sequence: UInt64, kind: RelayFrameKind) -> Data {
+        Data("Agent Status Relay/v1/frame/\(hostID.rawValue)/\(deviceID.rawValue)/\(sequence)/\(kind.rawValue)".utf8)
+    }
+
+    // MARK: - Pairing (code + Numeric Comparison)
+
+    /// A fresh 32-byte nonce for one pairing session (`hostNonce`).
+    public static func makePairingNonce() -> Data {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        for index in bytes.indices { bytes[index] = UInt8.random(in: 0...255) }
+        return Data(bytes)
+    }
+
+    /// The Mac's commitment, published to the Relay before any iPhone shows
+    /// up: `SHA256("Agent Status Relay/pair-commit/v1" ‖ hostPub ‖ nonce)`.
+    /// The nonce is revealed only after the daemon has the device's key, so
+    /// nobody in the middle can pick a key to match a known SAS.
+    public static func pairingCommitment(hostPublicKey: Data, hostNonce: Data) -> Data {
+        var message = Data("Agent Status Relay/pair-commit/v1".utf8)
+        message.append(hostPublicKey)
+        message.append(hostNonce)
+        return Data(SHA256.hash(data: message))
+    }
+
+    /// Constant-time check of a revealed (key, nonce) against the commitment
+    /// the iPhone got at claim time.
+    public static func verifyPairingCommitment(_ commit: Data, hostPublicKey: Data, hostNonce: Data) -> Bool {
+        let expected = pairingCommitment(hostPublicKey: hostPublicKey, hostNonce: hostNonce)
+        guard expected.count == commit.count else { return false }
+        var difference: UInt8 = 0
+        for (lhs, rhs) in zip(expected, commit) { difference |= lhs ^ rhs }
+        return difference == 0
+    }
+
+    /// The six-digit Numeric Comparison string both ends show:
+    /// first four bytes of `SHA256("Agent Status Relay/pair-sas/v1" ‖ hostID ‖
+    /// deviceID ‖ hostPub ‖ devicePub ‖ nonce)` big-endian, mod 1 000 000,
+    /// zero-padded. Display it as `XXX XXX`.
+    public static func pairingSAS(
+        hostID: HostID,
+        deviceID: DeviceID,
+        hostPublicKey: Data,
+        devicePublicKey: Data,
+        hostNonce: Data
+    ) -> String {
+        var message = Data("Agent Status Relay/pair-sas/v1".utf8)
+        message.append(Data(hostID.rawValue.utf8))
+        message.append(Data(deviceID.rawValue.utf8))
+        message.append(hostPublicKey)
+        message.append(devicePublicKey)
+        message.append(hostNonce)
+        let digest = Array(SHA256.hash(data: message))
+        let value = (UInt32(digest[0]) << 24) | (UInt32(digest[1]) << 16) | (UInt32(digest[2]) << 8) | UInt32(digest[3])
+        return String(format: "%06d", Int(value % 1_000_000))
     }
 
     private static func symmetricKey(

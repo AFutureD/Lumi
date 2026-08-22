@@ -20,19 +20,28 @@ private struct RelayHarness {
     let relayURL = URL(string: "https://relay.example.test")!
     let connections = ConnectionLog()
 
-    init(healthProvider: @escaping RelayHostService.HealthProvider = { nil }, preregisterDevice: Bool = true) {
+    init(
+        healthProvider: @escaping RelayHostService.HealthProvider = { nil },
+        preregisterDevice: Bool = true,
+        pairingDecisionTimeout: Duration = .seconds(60)
+    ) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         statePath = directory.appendingPathComponent("relay-host-state.json").path
         rest = InMemoryRelayHostREST(devices: preregisterDevice ? [
             PairedDevice(id: deviceID, name: "Test iPhone", publicKey: deviceKeys.publicKey, pairedAt: Date()),
         ] : [])
+        if preregisterDevice {
+            // A device this daemon verified in an earlier life: its key is pinned.
+            var state = RelayHostStateStore(path: statePath)
+            try? state.setVerifiedKey(deviceKeys.publicKey, for: deviceID)
+        }
         let connections = connections
         service = RelayHostService(
             repository: repository,
             subscriptions: hub,
             relayURL: relayURL,
             credentialStore: credentialStore,
-            sequenceStatePath: statePath,
+            statePath: statePath,
             transportFactory: link,
             rest: rest,
             hostName: { "Test Mac" },
@@ -42,12 +51,32 @@ private struct RelayHarness {
             eventCoalesceInterval: .milliseconds(20),
             reconnectDelay: .milliseconds(50),
             deviceRefreshInterval: .seconds(60),
-            healthInterval: .seconds(60)
+            healthInterval: .seconds(60),
+            pairingDecisionTimeout: pairingDecisionTimeout
         )
     }
 
     var hostCredentials: RelayHostCredentials {
         get throws { try #require(try credentialStore.load()) }
+    }
+
+    /// The harness device as the Relay lists it once a pairing approved it.
+    var pairedDevice: PairedDevice {
+        PairedDevice(id: deviceID, name: "Test iPhone", publicKey: deviceKeys.publicKey, pairedAt: Date())
+    }
+
+    /// Plays the iPhone against the live pairing session: submits the device
+    /// to the Relay stand-in and has the Relay push `pairing_device` to the
+    /// host. Returns once the daemon shows an SAS (or gives up).
+    func submitDevice() async throws {
+        let sessionID = try #require(await rest.latestSession?.sessionID)
+        await rest.submit(sessionID: sessionID, device: pairedDevice)
+        await link.sendPairingDeviceToHost(RelayPairingDeviceNotice(
+            sessionID: sessionID, deviceID: deviceID, deviceName: "Test iPhone", devicePublicKey: deviceKeys.publicKey
+        ))
+        for _ in 0..<300 where await service.pairingSession()?.pending == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     /// Starts the host and opens the device end.
@@ -171,7 +200,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(seen.last?.payload.health == health)
     // Sequences are per device, start at 1, and are persisted before send.
     #expect(seen.map(\.frame.sequence) == [1, 2])
-    let persisted = RelayHostSequenceStore(path: harness.statePath)
+    let persisted = RelayHostStateStore(path: harness.statePath)
     #expect(persisted.current(for: harness.deviceID) == 2)
     await harness.service.stop()
 }
@@ -307,19 +336,119 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.service.stop()
 }
 
-@Test func hostLooksUpAJustPairedDeviceBeforeDroppingItsFirstRequest() async throws {
+@Test func hostPairsAnIPhoneThroughCodeSASAndMatch() async throws {
     let harness = RelayHarness(preregisterDevice: false)
     await harness.service.start()
     let device = harness.link.makeDeviceTransport(harness.deviceID)
     try await device.connect(hostID: try harness.hostCredentials.hostID, role: .device(harness.deviceID), token: "token")
     _ = try await device.next() // presence
 
-    // Paired after the host's last device refresh (the 10 s timer has not
-    // fired): the first request must still be answered, not logged and dropped.
-    await harness.rest.pair(PairedDevice(id: harness.deviceID, name: "New iPhone", publicKey: harness.deviceKeys.publicKey, pairedAt: Date()))
+    // A code on the Mac: six Base32 characters, a commitment at the Relay,
+    // no nonce anywhere yet.
+    let started = try await harness.service.startPairing()
+    #expect(started.code.count == PairingCode.length)
+    #expect(started.code.allSatisfy { PairingCode.alphabet.contains($0) })
+    #expect(started.relayURL == harness.relayURL)
+    #expect(started.pending == nil)
+    let session = try #require(await harness.rest.latestSession)
+    #expect(session.state == .offered)
+    #expect(session.hostNonce == nil)
+    #expect(session.hostName == "Test Mac")
+    #expect(await harness.service.pairingSession() == started)
+
+    // The iPhone submits itself: the daemon shows the SAS and only then
+    // reveals the nonce — which must open the commitment it published.
+    try await harness.submitDevice()
+    let pending = try #require(await harness.service.pairingSession()?.pending)
+    #expect(pending.deviceID == harness.deviceID)
+    #expect(pending.deviceName == "Test iPhone")
+    let revealed = try #require(await harness.rest.latestSession)
+    #expect(revealed.state == .revealed)
+    let nonce = try #require(revealed.hostNonce)
+    let hostKey = try harness.hostCredentials.keyPair.publicKey
+    #expect(RelayCryptography.verifyPairingCommitment(revealed.commit, hostPublicKey: hostKey, hostNonce: nonce))
+    #expect(pending.sas == RelayCryptography.pairingSAS(
+        hostID: try harness.hostCredentials.hostID, deviceID: harness.deviceID,
+        hostPublicKey: hostKey, devicePublicKey: harness.deviceKeys.publicKey, hostNonce: nonce
+    ))
+    #expect(pending.sas.count == 6)
+    // Nothing is trusted before Match: the device is not listed / verified.
+    #expect(await harness.service.status().devices.isEmpty)
+
+    // Match: the Relay lists the device, the daemon pins its key and talks to it.
+    let decided = try await harness.service.decidePairing(approved: true)
+    #expect(decided.pending == nil)
+    #expect(decided.outcome?.kind == .approved)
+    #expect(decided.outcome?.deviceName == "Test iPhone")
+    #expect(await harness.rest.latestSession?.state == .approved)
+    #expect(await harness.service.status().devices.map(\.keyVerified) == [true])
+    #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == harness.deviceKeys.publicKey)
     try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("first")), via: device)
     let seen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
     #expect(seen.last?.payload.requestID == RequestID("first"))
+    await harness.service.stop()
+}
+
+@Test func hostDeclinesAnUnansweredPairingAndIgnoresUnpinnedKeys() async throws {
+    let harness = RelayHarness(preregisterDevice: false, pairingDecisionTimeout: .milliseconds(150))
+    await harness.service.start()
+    let device = harness.link.makeDeviceTransport(harness.deviceID)
+    try await device.connect(hostID: try harness.hostCredentials.hostID, role: .device(harness.deviceID), token: "token")
+    _ = try await device.next() // presence
+
+    // Nobody presses Match: the daemon declines for the Mac.
+    _ = try await harness.service.startPairing()
+    try await harness.submitDevice()
+    for _ in 0..<300 where await harness.service.pairingSession()?.outcome == nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.service.pairingSession()?.outcome?.kind == .rejected)
+    #expect(await harness.rest.latestSession?.state == .rejected)
+    await #expect(throws: RelayPairingError.self) { try await harness.service.decidePairing(approved: true) }
+
+    // A device the Relay lists that this Mac never approved (or whose key the
+    // Relay swapped) stays unverified: its request goes unanswered.
+    await harness.rest.pair(harness.pairedDevice)
+    await harness.service.refreshDevices()
+    #expect(await harness.service.status().devices.map(\.keyVerified) == [false])
+    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("untrusted")), via: device)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(await harness.link.hostSent.isEmpty)
+
+    // Don't match after a proper submit: rejected, nothing pinned.
+    _ = try await harness.service.startPairing()
+    try await harness.submitDevice()
+    let declined = try await harness.service.decidePairing(approved: false)
+    #expect(declined.outcome?.kind == .rejected)
+    #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
+    await harness.service.stop()
+}
+
+@Test func hostKeepsOneLivePairingSessionAndFollowsCancellations() async throws {
+    let harness = RelayHarness()
+    _ = try await harness.connect()
+
+    let first = try await harness.service.startPairing()
+    let second = try await harness.service.startPairing()
+    #expect(first.sessionID != second.sessionID)
+    // Starting again cancels the earlier code at the Relay.
+    #expect(await harness.rest.sessions[first.sessionID]?.state == .cancelled)
+    #expect(await harness.rest.sessions[second.sessionID]?.state == .offered)
+
+    // The iPhone cancels mid-way: no pending card, no outcome — the session
+    // is gone and the Mac app starts a fresh code.
+    try await harness.submitDevice()
+    await harness.link.sendPairingClosedToHost(sessionID: second.sessionID)
+    for _ in 0..<300 where await harness.service.pairingSession() != nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.service.pairingSession() == nil)
+
+    // Leaving the page cancels whatever is live; a new start works from scratch.
+    let third = try await harness.service.startPairing()
+    await harness.service.cancelPairing()
+    #expect(await harness.service.pairingSession() == nil)
+    #expect(await harness.rest.sessions[third.sessionID]?.state == .cancelled)
     await harness.service.stop()
 }
 
@@ -347,17 +476,16 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.service.stop()
 }
 
-@Test func hostCreatesPairingOffersAndRevokesDevices() async throws {
+@Test func hostRevokesAndRemovesDevices() async throws {
     let harness = RelayHarness()
     _ = try await harness.connect()
-    let offer = try await harness.service.createPairingOffer()
-    #expect(offer.hostID == (try harness.hostCredentials.hostID))
-    #expect(offer.hostName == "Test Mac")
-    #expect(offer.relayURL == harness.relayURL)
-    #expect(await harness.rest.offers.count == 1)
-
+    #expect(await harness.service.status().devices.first?.keyVerified == true)
     try await harness.service.revoke(deviceID: harness.deviceID)
     let status = await harness.service.status()
     #expect(status.devices.first?.revokedAt != nil)
+    // Remove deletes the record and forgets the pinned key.
+    try await harness.service.remove(deviceID: harness.deviceID)
+    #expect(await harness.service.status().devices.isEmpty)
+    #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
     await harness.service.stop()
 }

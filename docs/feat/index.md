@@ -30,7 +30,7 @@ Notch 紧凑状态显示列表中的 Session 数量，展开后按最近更新�
 
 ### iPhone 实时查看
 
-Mac 上的 daemon 使用产品内置的 Relay，不要求用户输入地址。用户从 Mac 侧边栏进入“iPhone”，生成一次性二维码；iPhone 在 Macs Tab 点 `+` 扫码后建立独立通道。之后 Mac App 关着也照样同步。
+Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“iPhone”，看到 6 位配对码和二维码；iPhone 在 Macs Tab 点 `+` > Add Device 输码或扫码，两边各显示同一组 6 位数字，在 Mac 上点 Match 才建立独立通道（自托管 Relay 在 iPhone 的 Advanced 里填，每台 Mac 各自记住）。之后 Mac App 关着也照样同步。
 
 一台 iPhone 可以连接多台 Mac；一台 Mac 也可以授权多台 iPhone。iPhone 的 Sessions Tab 把所有 Mac 的 Session 合并成一条列表（可按 Mac、状态多选过滤，可搜索），子 Agent 折叠成父 Session 下的计数条、点开成标签；详情分 Activity（三泳道时间线）和 Info（指标与 Session 信息）。只读，不提供审批、终止、输入或其他远程控制；收到的内容缓存在本机（每台 Mac 一个数据库），启动即显示，Mac 离线也能翻看，只有 Mac 上的 daemon 是数据源。
 
@@ -69,6 +69,6 @@ Relay 不保存 Session 正文或可浏览的历史。Mac 不在线时，iPhone 
 
 - v1 只正式支持 Codex。
 - iPhone 仅查看，不控制 Agent。
-- Relay 地址是编译配置，不是 App 内设置项。
+- Mac 侧 Relay 地址是编译配置，不是 App 内设置项；iPhone 只在添加 Mac 时可填自托管地址，之后跟着那台 Mac 走。
 - v1 不提供后台状态通知；iPhone Settings 里的通知权限行只管理系统授权，Relay 尚未接入推送。
 - 真实 Codex Hook、iPhone 实机和正式发布链路尚未完成验收。

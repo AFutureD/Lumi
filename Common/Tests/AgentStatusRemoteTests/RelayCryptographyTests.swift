@@ -141,6 +141,71 @@ import Testing
     #expect(opened == request)
 }
 
+@Test func routingHeaderIsAuthenticated() throws {
+    let host = RelayCryptography.makeKeyPair()
+    let device = RelayCryptography.makeKeyPair()
+    let hostID = HostID("host-test-000001")
+    let deviceID = DeviceID("device-test-0001")
+    let frame = try RelayCryptography.seal(
+        RemoteSessionPayload(kind: .health, generatedAt: Date(timeIntervalSince1970: 1_700_000_000)),
+        hostID: hostID, deviceID: deviceID, sequence: 5,
+        privateKey: host.privateKey, peerPublicKey: device.publicKey
+    )
+    #expect(throws: Never.self) {
+        try RelayCryptography.open(frame, privateKey: device.privateKey, peerPublicKey: host.publicKey)
+    }
+    // A relay that re-stamps the sequence (replay under a fresh number) or
+    // flips the direction cannot keep the tag valid.
+    let resequenced = RelayRoutingFrame(
+        hostID: hostID, deviceID: deviceID, sequence: 6, kind: frame.kind,
+        nonce: frame.nonce, ciphertext: frame.ciphertext
+    )
+    #expect(throws: (any Error).self) {
+        try RelayCryptography.open(resequenced, privateKey: device.privateKey, peerPublicKey: host.publicKey)
+    }
+    let redirected = RelayRoutingFrame(
+        hostID: hostID, deviceID: deviceID, sequence: 5, kind: .request,
+        nonce: frame.nonce, ciphertext: frame.ciphertext
+    )
+    #expect(throws: (any Error).self) {
+        try RelayCryptography.open(redirected, privateKey: device.privateKey, peerPublicKey: host.publicKey)
+    }
+}
+
+@Test func pairingCommitmentAndSASMatchTheGoldenVectors() {
+    // Fixed inputs; expected values computed independently (SHA-256 over the
+    // labelled concatenations in the design doc).
+    let hostID = HostID("host-test-000001")
+    let deviceID = DeviceID("device-test-0001")
+    let hostPublicKey = Data((1...32).map { UInt8($0) })
+    let devicePublicKey = Data((101...132).map { UInt8($0) })
+    let nonce = Data(repeating: 0xAB, count: 32)
+
+    let commit = RelayCryptography.pairingCommitment(hostPublicKey: hostPublicKey, hostNonce: nonce)
+    #expect(commit.base64EncodedString() == "4k1hMg9lS8UO0Qh6H6ZQwQa1hHgx1Dp1M1csccHYig0=")
+    #expect(RelayCryptography.verifyPairingCommitment(commit, hostPublicKey: hostPublicKey, hostNonce: nonce))
+    // A different key or nonce does not open the commitment; neither does a truncated one.
+    #expect(!RelayCryptography.verifyPairingCommitment(commit, hostPublicKey: devicePublicKey, hostNonce: nonce))
+    #expect(!RelayCryptography.verifyPairingCommitment(commit, hostPublicKey: hostPublicKey, hostNonce: Data(repeating: 0xAC, count: 32)))
+    #expect(!RelayCryptography.verifyPairingCommitment(commit.dropLast(), hostPublicKey: hostPublicKey, hostNonce: nonce))
+
+    let sas = RelayCryptography.pairingSAS(
+        hostID: hostID, deviceID: deviceID,
+        hostPublicKey: hostPublicKey, devicePublicKey: devicePublicKey, hostNonce: nonce
+    )
+    #expect(sas == "440253")
+    #expect(PairingCode.displaySAS(sas) == "440 253")
+    // Every input is bound: swapping the device key changes the digits.
+    let swapped = RelayCryptography.pairingSAS(
+        hostID: hostID, deviceID: deviceID,
+        hostPublicKey: hostPublicKey, devicePublicKey: hostPublicKey, hostNonce: nonce
+    )
+    #expect(swapped != sas)
+    #expect(swapped.count == 6)
+    #expect(RelayCryptography.makePairingNonce().count == 32)
+    #expect(RelayCryptography.makePairingNonce() != RelayCryptography.makePairingNonce())
+}
+
 @Test func credentialCollectionKeepsMacChannelsIndependent() throws {
     let first = channelCredentials(host: "host-first-0001")
     let second = channelCredentials(host: "host-second-0002")

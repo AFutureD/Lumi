@@ -36,7 +36,7 @@ private func session(
 
 private func channel(_ host: String, sessions: [SessionDetail], online: Bool = true) -> MacChannelState {
     MacChannelState(
-        hostID: HostID(host), displayName: host, pairedAt: now, isConnected: online, isHostOnline: online,
+        hostID: HostID(host), displayName: host, relayURL: URL(string: "https://relay.example.test")!, pairedAt: now, isConnected: online, isHostOnline: online,
         accessRevoked: false, hasCompleteSync: online, sessions: sessions, lastSyncAt: nil, lastError: nil, health: nil, hasLoadedCache: true
     )
 }

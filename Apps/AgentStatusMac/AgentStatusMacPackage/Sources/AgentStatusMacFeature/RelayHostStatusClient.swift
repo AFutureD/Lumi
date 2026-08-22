@@ -3,9 +3,10 @@ import AgentStatusTransport
 import Foundation
 
 /// The Mac app's read-mostly view of the daemon's Relay host: connection
-/// state, last error and the paired iPhones, plus the three actions the
-/// Pairing screen needs (generate a code, refresh, revoke). Everything goes
-/// over daemon IPC — the app holds no Relay credentials and no socket.
+/// state, last error, the paired iPhones and the live pairing session, plus
+/// the actions the Pairing screen needs (start a code, Match / Don't match,
+/// cancel, refresh, revoke). Everything goes over daemon IPC — the app holds
+/// no Relay credentials and no socket.
 @MainActor
 final class RelayHostStatusClient {
     private let store: MacSessionStore
@@ -17,6 +18,9 @@ final class RelayHostStatusClient {
     private(set) var isConnected = false
     private(set) var lastError: String?
     private(set) var devices: [PairedDevice] = []
+    /// The daemon's live pairing session (code, pending iPhone, outcome);
+    /// `nil` when none. Refreshed every second while the Pairing page is up.
+    private(set) var pairing: RelayPairingSession?
     private var observers: [UUID: () -> Void] = [:]
     private var pollTask: Task<Void, Never>?
     private var pairingVisible = false
@@ -27,7 +31,7 @@ final class RelayHostStatusClient {
         store: MacSessionStore,
         client: any MacDaemonClient = DaemonIPCClient(),
         socketPath: String = DaemonEndpoint.defaultSocketPath(),
-        visibleInterval: Duration = .seconds(5),
+        visibleInterval: Duration = .seconds(1),
         hiddenInterval: Duration = .seconds(30)
     ) {
         self.store = store
@@ -59,15 +63,36 @@ final class RelayHostStatusClient {
         await perform(IPCRequest(operation: .relayRefreshDevices))
     }
 
-    func createPairingOffer() async throws -> PairingOffer {
-        let response = try await request(IPCRequest(operation: .relayCreatePairingOffer))
-        apply(response)
-        if let offer = response.pairingOffer { return offer }
+    /// A fresh code (any earlier one is cancelled at the Relay).
+    func startPairing() async throws -> RelayPairingSession {
+        let response = try await request(IPCRequest(operation: .relayPairingStart))
+        apply(response, pairingAuthoritative: true)
+        if let pairing = response.pairing { return pairing }
         throw response.failure ?? IPCFailure(code: "relay_unavailable", message: "The daemon has no Relay connection.", retryable: true)
+    }
+
+    /// Match (`true`) / Don't match (`false`) for the iPhone on the live session.
+    func decidePairing(approved: Bool) async throws -> RelayPairingSession {
+        let response = try await request(IPCRequest(operation: .relayPairingDecide, approved: approved))
+        apply(response, pairingAuthoritative: true)
+        if let pairing = response.pairing { return pairing }
+        throw response.failure ?? IPCFailure(code: "no_pending_device", message: "No iPhone is waiting on the pairing session.", retryable: false)
+    }
+
+    /// Leaving the page: the code stops being claimable.
+    func cancelPairing() async {
+        await perform(IPCRequest(operation: .relayPairingCancel))
+        pairing = nil
+        notifyObservers()
     }
 
     func revoke(deviceID: DeviceID) async {
         await perform(IPCRequest(operation: .relayRevokeDevice, deviceID: deviceID))
+    }
+
+    /// Deletes a revoked iPhone's record (it can pair again with a new code).
+    func remove(deviceID: DeviceID) async {
+        await perform(IPCRequest(operation: .relayRemoveDevice, deviceID: deviceID))
     }
 
     func stop() {
@@ -103,13 +128,15 @@ final class RelayHostStatusClient {
         }
     }
 
+    /// Off the Pairing page: connection + devices. On it: the same plus the
+    /// live pairing session, every second.
     private func refreshStatus() async {
-        await perform(IPCRequest(operation: .relayStatus))
+        await perform(IPCRequest(operation: pairingVisible ? .relayPairingState : .relayStatus))
     }
 
     private func perform(_ request: IPCRequest) async {
         do {
-            apply(try await self.request(request))
+            apply(try await self.request(request), pairingAuthoritative: request.operation == .relayPairingState)
         } catch {
             isConnected = false
             lastError = String(describing: error)
@@ -117,14 +144,18 @@ final class RelayHostStatusClient {
         }
     }
 
-    private func apply(_ response: IPCResponse) {
+    /// `pairingAuthoritative`: the operation speaks for the live pairing
+    /// session (start / state / decide), so a missing `pairing` means "none";
+    /// status, refresh and revoke say nothing about it.
+    private func apply(_ response: IPCResponse, pairingAuthoritative: Bool) {
         if let relay = response.relay {
             isConnected = relay.connected
             lastError = relay.lastError
             devices = relay.devices
+            if pairingAuthoritative { pairing = response.pairing }
         } else if let failure = response.failure {
-            // A failed action (revoke, pairing offer) does not mean the
-            // Relay connection dropped; only the daemon saying so does.
+            // A failed action (revoke, decision) does not mean the Relay
+            // connection dropped; only the daemon saying so does.
             if failure.code == "relay_unavailable" { isConnected = false }
             lastError = failure.message
         }

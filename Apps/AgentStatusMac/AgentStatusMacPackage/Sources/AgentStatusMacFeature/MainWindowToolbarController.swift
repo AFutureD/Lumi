@@ -6,8 +6,6 @@ import AppKit
 struct MainWindowToolbarActions {
     var search: (String) -> Void = { _ in }
     var toggleInspector: () -> Void = {}
-    var generatePairingCode: () -> Void = {}
-    var canGeneratePairingCode: () -> Bool = { false }
     var settingsTitle: () -> String = { "" }
 }
 
@@ -22,7 +20,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     private static let detailSeparator = NSToolbarItem.Identifier("AgentStatus.DetailSeparator")
     private static let deleteSession = NSToolbarItem.Identifier("AgentStatus.DeleteSession")
     private static let toggleInspector = NSToolbarItem.Identifier("AgentStatus.ToggleInspector")
-    private static let generatePairingCode = NSToolbarItem.Identifier("AgentStatus.GeneratePairingCode")
 
     let toolbar = NSToolbar(identifier: "AgentStatus.MainToolbar")
     weak var window: NSWindow?
@@ -34,7 +31,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     private var selectedTab: MainWindowController.Tab = .sessions
     private weak var titleLabel: NSTextField?
     private weak var deleteItem: NSToolbarItem?
-    private weak var generateButton: NSButton?
     private weak var searchField: NSSearchField?
 
     init(store: MacSessionStore, relayHost: RelayHostStatusClient, splitView: NSSplitView) {
@@ -59,7 +55,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     /// Re-reads titles and enabled states without touching item layout.
     func updateState() {
         deleteItem?.isEnabled = store.selectedSession != nil
-        generateButton?.isEnabled = actions.canGeneratePairingCode()
         updateTitle()
     }
 
@@ -81,7 +76,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
             Self.refreshSessions,
             Self.deleteSession,
             Self.toggleInspector,
-            Self.generatePairingCode,
         ]
     }
 
@@ -120,8 +114,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
                 symbol: "sidebar.right",
                 action: #selector(toggleInspector)
             )
-        case Self.generatePairingCode:
-            makeGenerateItem(identifier: itemIdentifier)
         default:
             nil
         }
@@ -144,11 +136,8 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
                 Self.toggleInspector,
             ]
         case .pairing:
-            return sidebar + [
-                Self.contentTitle,
-                .flexibleSpace,
-                Self.generatePairingCode,
-            ]
+            // The page draws its own header (title, Relay pill, subtitle).
+            return sidebar
         case .settings:
             return sidebar + [
                 Self.settingsLabel,
@@ -254,23 +243,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         return item
     }
 
-    private func makeGenerateItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        let button = NSButton(title: "Generate new code", target: self, action: #selector(generatePairingCode))
-        button.bezelStyle = .rounded
-        button.bezelColor = .controlAccentColor
-        button.controlSize = .regular
-        button.font = AgentStatusDesign.Font.rowTitle
-        button.isEnabled = actions.canGeneratePairingCode()
-        let item = NSToolbarItem(itemIdentifier: identifier)
-        item.label = "Generate New Code"
-        item.paletteLabel = "Generate New Code"
-        item.toolTip = "Generate a new one-time pairing code"
-        item.view = button
-        item.isBordered = false
-        generateButton = button
-        return item
-    }
-
     // MARK: Actions
 
     @objc private func refresh() {
@@ -279,10 +251,6 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
 
     @objc private func toggleInspector() {
         actions.toggleInspector()
-    }
-
-    @objc private func generatePairingCode() {
-        actions.generatePairingCode()
     }
 
     @objc private func searchChanged(_ sender: NSSearchField) {
@@ -319,7 +287,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
                 text = "Select a Session"
             }
         case .pairing:
-            text = "Pair iPhone"
+            text = "Pair an iPhone"
         case .settings:
             text = actions.settingsTitle()
         }

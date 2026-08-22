@@ -128,9 +128,13 @@ public enum IPCOperation: Hashable, Sendable {
     case saveRolloutCursor
     case reingestSession
     case relayStatus
-    case relayCreatePairingOffer
     case relayRevokeDevice
+    case relayRemoveDevice
     case relayRefreshDevices
+    case relayPairingStart
+    case relayPairingState
+    case relayPairingDecide
+    case relayPairingCancel
 
     public var rawValue: String {
         switch self {
@@ -148,9 +152,13 @@ public enum IPCOperation: Hashable, Sendable {
         case .saveRolloutCursor: "save_rollout_cursor"
         case .reingestSession: "reingest_session"
         case .relayStatus: "relay_status"
-        case .relayCreatePairingOffer: "relay_create_pairing_offer"
         case .relayRevokeDevice: "relay_revoke_device"
+        case .relayRemoveDevice: "relay_remove_device"
         case .relayRefreshDevices: "relay_refresh_devices"
+        case .relayPairingStart: "relay_pairing_start"
+        case .relayPairingState: "relay_pairing_state"
+        case .relayPairingDecide: "relay_pairing_decide"
+        case .relayPairingCancel: "relay_pairing_cancel"
         }
     }
 }
@@ -174,9 +182,13 @@ extension IPCOperation: Codable {
         case "save_rollout_cursor": .saveRolloutCursor
         case "reingest_session": .reingestSession
         case "relay_status": .relayStatus
-        case "relay_create_pairing_offer": .relayCreatePairingOffer
         case "relay_revoke_device": .relayRevokeDevice
+        case "relay_remove_device": .relayRemoveDevice
         case "relay_refresh_devices": .relayRefreshDevices
+        case "relay_pairing_start": .relayPairingStart
+        case "relay_pairing_state": .relayPairingState
+        case "relay_pairing_decide": .relayPairingDecide
+        case "relay_pairing_cancel": .relayPairingCancel
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown IPC operation: \(value)")
         }
     }
@@ -196,8 +208,10 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     public let limit: Int?
     public let path: String?
     public let rolloutCursor: RolloutCursor?
-    /// `relay_revoke_device`: the paired iPhone to revoke.
+    /// `relay_revoke_device` / `relay_remove_device`: the paired iPhone.
     public let deviceID: DeviceID?
+    /// `relay_pairing_decide`: Match (`true`) or Don't match (`false`).
+    public let approved: Bool?
 
     public init(
         operation: IPCOperation,
@@ -208,7 +222,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         limit: Int? = nil,
         path: String? = nil,
         rolloutCursor: RolloutCursor? = nil,
-        deviceID: DeviceID? = nil
+        deviceID: DeviceID? = nil,
+        approved: Bool? = nil
     ) {
         self.operation = operation
         self.event = event
@@ -219,6 +234,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.path = path
         self.rolloutCursor = rolloutCursor
         self.deviceID = deviceID
+        self.approved = approved
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -231,6 +247,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case path
         case rolloutCursor
         case deviceID
+        case approved
     }
 
     public init(from decoder: Decoder) throws {
@@ -244,6 +261,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         path = try c.decodeIfPresent(String.self, forKey: .path)
         rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
         deviceID = try c.decodeIfPresent(DeviceID.self, forKey: .deviceID)
+        approved = try c.decodeIfPresent(Bool.self, forKey: .approved)
     }
 }
 
@@ -295,7 +313,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
     }
 }
 
-public struct IPCFailure: Codable, Hashable, Sendable, Error {
+public struct IPCFailure: Codable, Hashable, Sendable, Error, LocalizedError {
     public let code: String
     public let message: String
     public let retryable: Bool
@@ -305,6 +323,8 @@ public struct IPCFailure: Codable, Hashable, Sendable, Error {
         self.message = message
         self.retryable = retryable
     }
+
+    public var errorDescription: String? { message }
 
     private enum CodingKeys: String, CodingKey {
         case code
@@ -327,8 +347,9 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let failure: IPCFailure?
     /// `relay_status` / `relay_refresh_devices` / `relay_revoke_device`.
     public let relay: RelayHostStatus?
-    /// `relay_create_pairing_offer`.
-    public let pairingOffer: PairingOffer?
+    /// `relay_pairing_start` / `relay_pairing_state` / `relay_pairing_decide`:
+    /// the daemon's live pairing session, `nil` when there is none.
+    public let pairing: RelayPairingSession?
 
     public init(
         status: IPCResponseStatus,
@@ -341,7 +362,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         rolloutCursor: RolloutCursor? = nil,
         failure: IPCFailure? = nil,
         relay: RelayHostStatus? = nil,
-        pairingOffer: PairingOffer? = nil
+        pairing: RelayPairingSession? = nil
     ) {
         self.status = status
         self.sessions = sessions
@@ -353,7 +374,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.rolloutCursor = rolloutCursor
         self.failure = failure
         self.relay = relay
-        self.pairingOffer = pairingOffer
+        self.pairing = pairing
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -367,7 +388,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case rolloutCursor
         case failure
         case relay
-        case pairingOffer
+        case pairing
     }
 
     public init(from decoder: Decoder) throws {
@@ -382,6 +403,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
         failure = try c.decodeIfPresent(IPCFailure.self, forKey: .failure)
         relay = try c.decodeIfPresent(RelayHostStatus.self, forKey: .relay)
-        pairingOffer = try c.decodeIfPresent(PairingOffer.self, forKey: .pairingOffer)
+        pairing = try c.decodeIfPresent(RelayPairingSession.self, forKey: .pairing)
     }
 }

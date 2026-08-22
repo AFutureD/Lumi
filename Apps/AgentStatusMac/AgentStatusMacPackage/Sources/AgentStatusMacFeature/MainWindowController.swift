@@ -181,7 +181,6 @@ final class RootSplitViewController: NSSplitViewController {
             self?.settingsDetail.select(section)
             self?.onToolbarStateChange?()
         }
-        pairing.onStateChange = { [weak self] in self?.onToolbarStateChange?() }
         select(.sessions)
     }
 
@@ -227,8 +226,6 @@ final class RootSplitViewController: NSSplitViewController {
         var actions = MainWindowToolbarActions()
         actions.search = { [weak self] query in self?.sessionList.apply(filter: query) }
         actions.toggleInspector = { [weak self] in self?.sessionDetail.toggleInspector() }
-        actions.generatePairingCode = { [weak self] in self?.pairing.generateNewCode() }
-        actions.canGeneratePairingCode = { [weak self] in self?.pairing.canGenerateCode ?? false }
         actions.settingsTitle = { [weak self] in self?.settingsDetail.selectedSection.title ?? "" }
         return actions
     }
@@ -237,14 +234,15 @@ final class RootSplitViewController: NSSplitViewController {
         let previous = selectedTab
         selectedTab = tab
         detailPages.select(tab.rawValue)
-        // The subheader strip lives under the toolbar as a split-item accessory.
-        let accessory: NSSplitViewItemAccessoryViewController = switch tab {
+        // The subheader strip lives under the toolbar as a split-item accessory;
+        // the pairing page draws its own header instead.
+        let accessory: NSSplitViewItemAccessoryViewController? = switch tab {
         case .sessions: sessionDetail.subheaderAccessory
-        case .pairing: pairing.subheaderAccessory
+        case .pairing: nil
         case .settings: settingsDetail.subheaderAccessory
         }
         if detailItem.topAlignedAccessoryViewControllers.first !== accessory {
-            detailItem.topAlignedAccessoryViewControllers = [accessory]
+            detailItem.topAlignedAccessoryViewControllers = accessory.map { [$0] } ?? []
         }
         switch tab {
         case .sessions:

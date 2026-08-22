@@ -7,6 +7,8 @@ import Foundation
 struct MacChannelState: Sendable {
     let hostID: HostID
     let displayName: String
+    /// The Relay this Mac is reached through (each Mac remembers its own).
+    let relayURL: URL
     let pairedAt: Date
     let isConnected: Bool
     let isHostOnline: Bool
@@ -35,8 +37,14 @@ struct MacChannelState: Sendable {
 /// How a controller builds a channel's cache and Relay socket; tests inject
 /// in-memory doubles.
 struct RelayDeviceDependencies: Sendable {
-    var relayURL: URL
+    /// The Relay used when a person types a code without a Relay URL; a
+    /// scanned link or the Advanced field can name another one. Each paired
+    /// Mac remembers its own.
+    var defaultRelayURL: URL
     var transportFactory: any RelayFrameTransportFactory
+    var pairingAPI: any RelayPairingAPI = LiveRelayPairingAPI()
+    /// How often a pairing attempt asks the Relay where the session is.
+    var pairingPollInterval: Duration = .seconds(1)
     var makeRepository: @Sendable (HostID) throws -> any SessionRepository
     var removeRepository: @Sendable (HostID) throws -> Void
     /// Drops cache files of Macs that are no longer paired (launch housekeeping).
@@ -47,12 +55,12 @@ struct RelayDeviceDependencies: Sendable {
 
     /// Production: `RelayWebSocketClient`, one SQLite file per Mac under
     /// `Application Support/Agent Status/Channels/<hostID>.sqlite3`.
-    static func live(relayURL: URL = RelayBuildConfiguration.url) -> RelayDeviceDependencies {
+    static func live(defaultRelayURL: URL = RelayBuildConfiguration.url) -> RelayDeviceDependencies {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Agent Status", isDirectory: true)
             .appendingPathComponent("Channels", isDirectory: true)
         return RelayDeviceDependencies(
-            relayURL: relayURL,
+            defaultRelayURL: defaultRelayURL,
             transportFactory: RelayWebSocketTransportFactory(),
             makeRepository: { hostID in
                 try SQLiteSessionRepository(path: directory.appendingPathComponent("\(hostID.rawValue).sqlite3").path)
@@ -170,34 +178,13 @@ final class RelayDeviceController {
 
     // MARK: - Pairing
 
-    func pair(using offer: PairingOffer) async throws {
-        guard previewStates == nil else { return }
-        guard offer.version.isCompatible(with: .current), offer.expiresAt > Date() else {
-            throw PairingError.expiredOrIncompatible
-        }
-        guard offer.relayURL == dependencies.relayURL else {
-            throw PairingError.unexpectedRelay
-        }
-        let keyPair = RelayCryptography.makeKeyPair()
-        let deviceID = deviceID(forPairingWith: offer.hostID)
-        let result = try await RelayRESTClient(baseURL: dependencies.relayURL).pair(PairingRequest(
-            hostID: offer.hostID,
-            deviceID: deviceID,
-            challenge: offer.challenge,
-            deviceName: settings.deviceName,
-            devicePublicKey: keyPair.publicKey
-        ))
-        let credentials = RelayDeviceCredentials(
-            relayURL: dependencies.relayURL,
-            hostID: offer.hostID,
-            hostName: offer.hostName,
-            deviceID: deviceID,
-            deviceToken: result.deviceToken,
-            keyPair: keyPair,
-            hostPublicKey: result.hostPublicKey,
-            pairedAt: result.pairedAt
-        )
-        try await addChannel(credentials)
+    var defaultRelayURL: URL { dependencies.defaultRelayURL }
+
+    /// A pairing attempt against `relayURL` with `code`. Start it, watch
+    /// `progress`, cancel it if the person leaves. Failures are
+    /// `PairingFailure`; nothing touches the Keychain before `.paired`.
+    func makePairingAttempt(relayURL: URL, code: String) -> RelayPairingAttempt {
+        RelayPairingAttempt(controller: self, relayURL: relayURL, code: code)
     }
 
     /// Pairing the same Mac again keeps this iPhone's device id, so the Relay
@@ -207,12 +194,16 @@ final class RelayDeviceController {
         channels[hostID]?.credentials.deviceID ?? DeviceID("device-\(UUID().uuidString.lowercased())")
     }
 
+    var pairingAPI: any RelayPairingAPI { dependencies.pairingAPI }
+    var pairingPollInterval: Duration { dependencies.pairingPollInterval }
+    var pairingDeviceName: String { settings.deviceName }
+
     /// Installs a paired channel (also the test seam around `pair`).
     func addChannel(_ credentials: RelayDeviceCredentials) async throws {
         if let existing = channels[credentials.hostID] { await existing.stop(removeLocalData: false) }
         channelOrder.removeAll { $0 == credentials.hostID }
         channelOrder.append(credentials.hostID)
-        guard let channel = makeChannel(credentials) else { throw PairingError.cacheUnavailable }
+        guard let channel = makeChannel(credentials) else { throw ChannelCacheError.unavailable }
         channels[credentials.hostID] = channel
         settings.setLastSync(nil, for: credentials.hostID)
         try saveCredentials()
@@ -290,16 +281,6 @@ final class RelayDeviceController {
     // MARK: - Private
 
     private func makeChannel(_ credentials: RelayDeviceCredentials) -> RelayDeviceChannel? {
-        let credentials = RelayDeviceCredentials(
-            relayURL: dependencies.relayURL,
-            hostID: credentials.hostID,
-            hostName: credentials.hostName,
-            deviceID: credentials.deviceID,
-            deviceToken: credentials.deviceToken,
-            keyPair: credentials.keyPair,
-            hostPublicKey: credentials.hostPublicKey,
-            pairedAt: credentials.pairedAt
-        )
         guard let cache = try? dependencies.makeRepository(credentials.hostID) else { return nil }
         return RelayDeviceChannel(
             credentials: credentials,
@@ -331,6 +312,7 @@ extension MacChannelState {
         MacChannelState(
             hostID: hostID,
             displayName: displayName,
+            relayURL: relayURL,
             pairedAt: pairedAt,
             isConnected: isConnected,
             isHostOnline: isHostOnline,
@@ -447,6 +429,7 @@ final class RelayDeviceChannel {
         MacChannelState(
             hostID: credentials.hostID,
             displayName: credentials.displayName,
+            relayURL: credentials.relayURL,
             pairedAt: credentials.pairedAt,
             isConnected: isConnected,
             isHostOnline: isHostOnline,
@@ -841,6 +824,9 @@ final class RelayDeviceChannel {
             }
         case let .error(error):
             lastError = "Relay: \(error.code)"
+        case .pairingDevice, .pairingClosed:
+            // Host-socket control messages; a device socket never gets them.
+            return
         }
         onChange()
     }
@@ -1075,19 +1061,191 @@ final class RelayDeviceChannel {
     }
 }
 
-enum PairingError: LocalizedError {
-    case expiredOrIncompatible
-    case unexpectedRelay
-    case cacheUnavailable
+/// One pairing attempt, iPhone side: claim the code → submit our identity
+/// and key → poll → verify the commitment and show the SAS → poll → on
+/// `approved`, install the channel. Cancel at any point tells the Relay.
+@MainActor
+final class RelayPairingAttempt {
+    private weak var controller: RelayDeviceController?
+    let relayURL: URL
+    let code: String
+    private let api: any RelayPairingAPI
+    private let pollInterval: Duration
+    private var task: Task<Void, Never>?
+    /// Set once the code was spent; `Try again` after `hostOffline` resumes here.
+    private var claim: RelayPairingClaim?
+    private var deviceID: DeviceID?
+    private var keyPair: RelayKeyPair?
 
-    var errorDescription: String? {
-        switch self {
-        case .expiredOrIncompatible:
-            "The pairing code has expired or uses an incompatible protocol."
-        case .unexpectedRelay:
-            "The pairing code was created for a different Relay build configuration."
-        case .cacheUnavailable:
-            "The session cache for this Mac could not be created."
+    private(set) var progress: PairingProgress?
+    private(set) var failure: PairingFailure?
+    var onChange: (() -> Void)?
+
+    init(controller: RelayDeviceController, relayURL: URL, code: String) {
+        self.controller = controller
+        self.relayURL = relayURL
+        self.code = code
+        api = controller.pairingAPI
+        pollInterval = controller.pairingPollInterval
+    }
+
+    var relayHost: String { RelayURLValidation.displayHost(relayURL) }
+    var isRunning: Bool { task != nil }
+
+    /// Runs (or, after `hostOffline`, resumes) the attempt.
+    func start() {
+        guard task == nil else { return }
+        failure = nil
+        task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.run()
+            } catch let failure as PairingFailure {
+                self.failure = failure
+            } catch is CancellationError {
+                // Told the Relay in `cancel()`.
+            } catch {
+                self.failure = Self.failure(for: error, claiming: false)
+            }
+            self.task = nil
+            self.onChange?()
         }
     }
+
+    /// Stops polling and releases the session at the Relay (best effort).
+    func cancel() {
+        task?.cancel()
+        task = nil
+        if let claim {
+            let api = api, relayURL = relayURL
+            Task { try? await api.cancel(relayURL: relayURL, hostID: claim.hostID, sessionID: claim.sessionID) }
+        }
+        claim = nil
+    }
+
+    private func set(_ progress: PairingProgress) {
+        self.progress = progress
+        onChange?()
+    }
+
+    private func run() async throws {
+        guard let controller else { return }
+        if claim == nil {
+            set(.claiming)
+            do {
+                claim = try await api.claim(relayURL: relayURL, code: code)
+            } catch {
+                throw Self.failure(for: error, claiming: true)
+            }
+        }
+        guard let claim else { return }
+        let deviceID = self.deviceID ?? controller.deviceID(forPairingWith: claim.hostID)
+        let keyPair = self.keyPair ?? RelayCryptography.makeKeyPair()
+        self.deviceID = deviceID
+        self.keyPair = keyPair
+        set(.waitingForMac(hostName: claim.hostName, relayHost: relayHost))
+        do {
+            try await api.submit(
+                relayURL: relayURL, hostID: claim.hostID, sessionID: claim.sessionID,
+                deviceID: deviceID, deviceName: controller.pairingDeviceName, devicePublicKey: keyPair.publicKey
+            )
+        } catch let error as RelayClientError {
+            // Already submitted (a resume after a network blip): just poll.
+            if case let .relay(_, code) = error, code == "invalid_state" {
+                // Fall through to polling; the state tells us where we are.
+            } else {
+                throw Self.failure(for: error, claiming: false)
+            }
+        } catch {
+            throw Self.failure(for: error, claiming: false)
+        }
+
+        var hostPublicKey: Data?
+        while true {
+            try Task.checkCancellation()
+            let status: RelayPairingSessionStatus
+            do {
+                status = try await api.status(relayURL: relayURL, hostID: claim.hostID, sessionID: claim.sessionID)
+            } catch {
+                throw Self.failure(for: error, claiming: false)
+            }
+            switch status.state {
+            case .offered, .claimed, .submitted:
+                break
+            case .revealed, .approved:
+                if hostPublicKey == nil, let key = status.hostPublicKey, let nonce = status.hostNonce {
+                    // The key and nonce the Relay hands us must be the ones the
+                    // Mac committed to before it ever saw our key — otherwise
+                    // someone in the middle is choosing keys.
+                    guard RelayCryptography.verifyPairingCommitment(claim.commit, hostPublicKey: key, hostNonce: nonce) else {
+                        let api = api, relayURL = relayURL
+                        Task { try? await api.cancel(relayURL: relayURL, hostID: claim.hostID, sessionID: claim.sessionID) }
+                        throw PairingFailure.commitMismatch
+                    }
+                    hostPublicKey = key
+                    let sas = RelayCryptography.pairingSAS(
+                        hostID: claim.hostID, deviceID: deviceID,
+                        hostPublicKey: key, devicePublicKey: keyPair.publicKey, hostNonce: nonce
+                    )
+                    set(.comparing(sas: sas, hostName: status.hostName ?? claim.hostName, relayHost: relayHost))
+                }
+                if status.state == .approved, let token = status.deviceToken, let hostPublicKey {
+                    let credentials = RelayDeviceCredentials(
+                        relayURL: relayURL,
+                        hostID: claim.hostID,
+                        hostName: status.hostName ?? claim.hostName,
+                        deviceID: deviceID,
+                        deviceToken: token,
+                        keyPair: keyPair,
+                        hostPublicKey: hostPublicKey,
+                        pairedAt: status.pairedAt ?? Date()
+                    )
+                    try await controller.addChannel(credentials)
+                    self.claim = nil
+                    set(.paired(hostID: claim.hostID, hostName: credentials.hostName, relayHost: relayHost))
+                    return
+                }
+            case .rejected:
+                self.claim = nil
+                throw PairingFailure.rejected
+            case .cancelled, .expired:
+                // The Mac rotated or dropped the code under us: same as a
+                // spent code — back to the entry screen.
+                self.claim = nil
+                throw PairingFailure.badCode
+            }
+            try await Task.sleep(for: pollInterval)
+        }
+    }
+
+    /// Folds whatever ended the attempt into one of the four designed states.
+    private static func failure(for error: Error, claiming: Bool) -> PairingFailure {
+        if let failure = error as? PairingFailure { return failure }
+        guard let relayError = error as? RelayClientError else {
+            // Unreachable Relay, a cache file that would not open, …:
+            // retryable, and `Try again` resumes where we were.
+            return .hostOffline
+        }
+        switch relayError {
+        case let .relay(_, code):
+            switch code {
+            case "invalid_or_expired_code": return .badCode
+            case "host_offline": return .hostOffline
+            // The session is gone at the Relay (rotated, expired, never
+            // there): the code is no good any more.
+            case "invalid_state", "expired", "not_found": return .badCode
+            default: return .hostOffline
+            }
+        case .unauthorized:
+            return .badCode
+        case .server, .invalidResponse, .notConnected, .unsupportedMessage:
+            return .hostOffline
+        }
+    }
+}
+
+/// The per-Mac cache file could not be created (disk / sandbox); the pairing
+/// attempt reports it as a retryable failure.
+enum ChannelCacheError: Error {
+    case unavailable
 }

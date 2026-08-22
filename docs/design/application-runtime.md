@@ -26,7 +26,7 @@ flowchart TD
 ```
 
 - `MacSessionStore`：daemon 连接、Mac SQLite、Session 选择和观察通知。
-- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态与已配对设备，生成配对码、撤销设备；配对页可见时 5 秒轮询，否则 30 秒，并跟随 `health.relayConnected` 变化立即刷新。只有 `relay_unavailable` 才把连接状态打成不可用，单个动作失败（撤销、生成配对码）只显示错误。配对码到期时配对页可见则自动生成新码，否则下次出现时生成。App 不持有 Relay 凭据或连接。
+- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态、已配对设备和当前配对会话，发起 / 决定（Match、Don't match）/ 取消配对，撤销设备、删除已撤销设备的记录（Remove）；配对页可见时 1 秒轮询 `relay_pairing_state`，否则 30 秒轮询 `relay_status`，并跟随 `health.relayConnected` 变化立即刷新。只有 `relay_unavailable` 才把连接状态打成不可用，单个动作失败（撤销、开始配对）只显示错误。配对码到期或一次结果显示完（2 秒）时配对页可见则自动开始新码；离开配对页即取消会话。App 不持有 Relay 凭据或连接，配对状态机在 daemon。
 - `MainWindowController`：AppKit 窗口、toolbar 和三栏导航。
 - `AgentStatusNookController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
 
@@ -38,7 +38,7 @@ flowchart TD
 2. 中栏：可折叠的 Main Session / Subagent Outline，或 Settings 分类。
 3. 右栏：Session 详情、iPhone 配对页或 Settings 详情。
 
-Sessions 和 Settings 保持三栏；iPhone 配对页折叠中栏，让 QR 和设备记录占据右侧区域。
+Sessions 和 Settings 保持三栏；iPhone 配对页折叠中栏，让配对码卡和设备记录占据右侧区域。配对页自己画页头（标题、右侧 Relay 药丸、一行说明、分隔线），不用工具栏标题和 subheader 附件；内容区左右直接贴窗口边缘（28 pt 内距），设备列表随窗口伸缩，配对码卡最小 420 pt、按内容撑开（Relay 地址不折行）。
 
 主界面使用 AppKit。Notch 本体和 Notch Settings detail 使用 SwiftUI；SwiftUI 状态来自同一个 `MacSessionStore` 或 OpenNook `AppState`，没有第二套 Session source of truth。
 
@@ -106,7 +106,7 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 - 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`，收齐后用 `SyncReconcilePlan` 对账（裁剪 / 整取 / 补尾 / 改 summary），pending 到齐写 lastSync。
 - 之后：`session_message` 事件通过与 daemon 相同的 `apply` 归约进缓存与内存（经同一写队列，和整 Session 替换保持顺序）；`session_info` / `session_removed` 直接落地；未知 Session 的事件触发一次整取。
 - 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、任一 presence `online`（含 Host 重连）、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
-- 列表始终显示缓存；Mac 离线只在 Macs 页标 Unavailable + 上次同步；没有缓存且离线时才显示 `Mac unavailable`。
+- 列表始终显示缓存；Mac 离线只在 Macs 页标 Offline + 上次同步 + Relay host；没有缓存且离线时才显示 `Mac unavailable`。
 - 本机隐藏（详情 Delete）的 Session 继续在后台进缓存；事件 / summary / 整取 / index 任一路径带来更新的副本（`updatedAt` 超过隐藏时刻）就重新显示。
 - 凭据被 Relay 拒绝（握手 401 / 403、close `4003`）：通道进入 Revoked 态，不再重连；Macs 页该 Mac 显示 Revoked，列表空态提示重新配对；缓存保留。重新配对同一台 Mac 复用 Device ID。
 
@@ -115,8 +115,8 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 - 根控制器：double-column `UISplitViewController`。
 - Primary：按 Mac 分 section 的 Session 列表。
 - Secondary：只读 Timeline。
-- Pair：摄像头 QR scanner；摄像头不可用时允许 Paste。
-- Device：增加另一台 Mac，或删除一个本地通道。
+- Add Mac（sheet）：6 格配对码输入 + App 内 QR scanner（解析 `agentstatus://pair?relay=…&code=…`，系统相机经 URL scheme 进同一页）+ Advanced › Relay URL；随后的等待 / SAS / 成功 / 失败页在同一导航栈里推进。
+- Macs：每行显示状态 + 该 Mac 的 Relay host；`+` 菜单 Add Device / Rename this iPhone；左滑删除一个本地通道。
 
 ## 并发边界
 
@@ -146,7 +146,7 @@ stateDiagram-v2
     Cached --> Current: 手动刷新或连接恢复
 ```
 
-Mac 在 Cached 状态仍展示本地内容并标记 daemon 不可用；iOS 同样先显示缓存，Mac 离线时在 Macs 页标 Unavailable，恢复后自动重新 index。
+Mac 在 Cached 状态仍展示本地内容并标记 daemon 不可用；iOS 同样先显示缓存，Mac 离线时在 Macs 页标 Offline，恢复后自动重新 index。
 
 ## 当前限制
 

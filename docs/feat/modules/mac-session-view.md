@@ -21,7 +21,7 @@ Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口�
 3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh Sessions、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮：默认 User、Model、Exec 三行横向时间轴（Session 开始/结束与压缩横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON。密度偏好在重启后保留；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
 4. 窗口缩放只改变右栏宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
-“iPhone”页面收起中栏：工具栏显示“Pair iPhone”和 Generate new code 按钮，subheader 显示 Relay 状态药丸，内容区左侧是二维码卡片、右侧是 Paired devices 列表。Relay 连接与配对记录由 daemon 持有，这一页只是它的控制台：退出 Mac App 后已配对 iPhone 照常同步，只有生成新配对码需要打开 App。“Settings”继续保持三栏：中栏列出 General、Notch、Daemon、Agents 和 About（44 pt 两行行、灰底选中），右栏是工具栏标题 + 副标题 subheader + 卡片式内容；Daemon 面板的 subheader 额外显示 Running / Not connected 药丸。
+“iPhone”页面收起中栏：页头是标题“Pair an iPhone”、右侧的 Relay 状态药丸和一行提示。内容区左列是配对码卡片（二维码、6 位配对码、Relay 地址、5 分钟倒计时、New code），iPhone 提交后它下方出现待确认卡片（“<iPhone 名> wants to pair”、6 位数字、Don't match / Match）；右列是 Paired iPhones 列表。Relay 连接、配对过程和配对记录都由 daemon 持有，这一页只是它的控制台：退出 Mac App 后已配对 iPhone 照常同步，只有配对时需要打开 App；离开这一页，配对码即作废。“Settings”继续保持三栏：中栏列出 General、Notch、Daemon、Agents 和 About（44 pt 两行行、灰底选中），右栏是工具栏标题 + 副标题 subheader + 卡片式内容；Daemon 面板的 subheader 额外显示 Running / Not connected 药丸。
 
 ### Notch：活动摘要
 
@@ -92,9 +92,19 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 - 过滤只在当前 Session 内有效，切到别的 Session 或重新打开就回到全选；新记录到达时保持当前过滤条件。
 - 规则引用：[MAC-R-023](#mac-r-023-activity-过滤只收窄列表)。
 
-### 撤销 iPhone 配对
+### 配对一台 iPhone
 
-在“iPhone”页面的 Paired devices 卡片点击某台设备的“Revoke”，确认后只关闭该设备的通道，其他 iPhone 不受影响。
+“iPhone”页面常驻一张配对码卡片：二维码、6 位配对码（如 `7KF 3QP`）、Relay 地址、`Expires in m:ss` 倒计时。码 5 分钟到点自动换新，旧码立刻作废；卡片上的 New code 随时手动换；离开页面码也作废。iPhone 输码或扫码提交后，卡片下方出现 “<iPhone 名> wants to pair”、Relay 地址和时间、一组 6 位数字（如 `482 913`）以及 Don't match / Match 两个按钮：和 iPhone 屏幕上的数字一样才点 Match（默认键盘焦点在 Don't match，Return 不触发任何一个）；60 秒没点自动拒绝。结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始；iPhone 那边中途取消则不显示结果，直接换新码。Mac App 退出不影响进行中的配对（过程在 daemon 里）；daemon 重启则重开这一页。规则见 [IOS-R-002](./iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)。
+
+### 管理已配对 iPhone
+
+“iPhone”页面右列的 Paired iPhones 列表每行是一台 iPhone：名称旁一枚状态 tag，下面一行是它所在的 Relay 地址，行尾一个文字动作；标题旁的数量只统计 Active 的设备。
+
+- **Active**：这台 Mac 在 Match 时记住了这台 iPhone 的身份，正在向它同步（[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。行尾是 “Revoke”：确认后只关闭该设备的通道，其他 iPhone 不受影响，记录保留为 Revoked。
+- **Unverified**：这台 iPhone 的身份不是这台 Mac 点 Match 批准过的（此版本之前配对的，或中转服务换过钥匙），不向它发送任何内容，下方提示 `Key not verified · pair this iPhone again`；行尾同样是 “Revoke”。恢复方式见[用户摩擦点](../friction-points.md#iphone-在-mac-上显示-unverified)。
+- **Revoked**：已被撤销。行尾是 “Remove”：确认后删掉这条配对记录（这台 iPhone 之后用新码可以重新配对）。
+
+刚配对成功的那一行会短暂高亮一次。
 
 ## 规则
 

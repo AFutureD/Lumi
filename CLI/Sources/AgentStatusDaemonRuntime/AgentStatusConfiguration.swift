@@ -19,8 +19,12 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     /// keeps the daemon off the network (tests, smoke runs).
     public let relayURL: URL
     public let relayEnabled: Bool
-    /// Per-device send sequences (`relay-host-state.json`, 0600).
+    /// Per-device send sequences and pinned device keys (`relay-host-state.json`, 0600).
     public let relayStatePath: String
+    /// Keychain service of the daemon's Relay host credentials. Override with
+    /// `AGENT_STATUS_RELAY_KEYCHAIN_SERVICE` so an isolated daemon (smoke
+    /// runs against a local Relay) never touches the installed one's identity.
+    public let relayCredentialService: String
 
     public static let defaultRelayURL = URL(string: "https://agent-status-relay.afuture.workers.dev")!
 
@@ -34,7 +38,8 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         claudeWatcherEnabled: Bool = true,
         relayURL: URL = AgentStatusConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
-        relayStatePath: String? = nil
+        relayStatePath: String? = nil,
+        relayCredentialService: String = KeychainRelayHostCredentialStore.defaultService
     ) {
         self.supportDirectory = supportDirectory
         self.socketPath = socketPath
@@ -46,6 +51,7 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         self.relayURL = relayURL
         self.relayEnabled = relayEnabled
         self.relayStatePath = relayStatePath ?? supportDirectory.appendingPathComponent("relay-host-state.json").path
+        self.relayCredentialService = relayCredentialService
     }
 
     public static func `default`(
@@ -78,7 +84,9 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
             relayEnabled: !["0", "false", "no"].contains(
                 (environment["AGENT_STATUS_RELAY"] ?? "").lowercased()
             ),
-            relayStatePath: environment["AGENT_STATUS_RELAY_STATE"]
+            relayStatePath: environment["AGENT_STATUS_RELAY_STATE"],
+            relayCredentialService: environment["AGENT_STATUS_RELAY_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 }
+                ?? KeychainRelayHostCredentialStore.defaultService
         )
     }
 

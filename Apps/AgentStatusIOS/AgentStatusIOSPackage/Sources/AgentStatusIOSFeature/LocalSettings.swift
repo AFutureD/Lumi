@@ -15,6 +15,7 @@ final class LocalSettings {
         static let deselectedHosts = "AgentStatus.deselectedHosts"
         static let deselectedStatuses = "AgentStatus.deselectedStatuses"
         static let lastSyncByHost = "AgentStatus.lastSyncByHost"
+        static let lastRelayURL = "AgentStatus.lastRelayURL"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -42,6 +43,15 @@ final class LocalSettings {
     var deselectedStatuses: Set<SessionStatusGroup> {
         get { Set((defaults.stringArray(forKey: Key.deselectedStatuses) ?? []).compactMap(SessionStatusGroup.init(rawValue:))) }
         set { defaults.set(newValue.map(\.rawValue).sorted(), forKey: Key.deselectedStatuses) }
+    }
+
+    /// The Relay URL last typed into Add Mac › Advanced — a prefill only,
+    /// never a source of trust. `nil` = the built-in default.
+    var lastRelayURL: URL? {
+        get { defaults.string(forKey: Key.lastRelayURL).flatMap(URL.init(string:)) }
+        set {
+            if let newValue { defaults.set(newValue.absoluteString, forKey: Key.lastRelayURL) } else { defaults.removeObject(forKey: Key.lastRelayURL) }
+        }
     }
 
     func lastSync(for hostID: HostID) -> Date? {

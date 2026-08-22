@@ -1,14 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, hashCredential, randomCredential, timingSafeStringEqual } from "./crypto";
+import type { PairingDirectory } from "./pairing-directory";
 import {
   MAX_WEBSOCKET_MESSAGE_BYTES,
   RequestValidationError,
   isRecord,
-  parsePairingOffer,
-  parsePairingRequest,
+  parsePairingDecision,
+  parsePairingDeviceSubmission,
+  parsePairingReveal,
+  parsePairingSessionCreate,
   parseRelayRoutingFrame,
   readLimitedJSON,
 } from "./protocol";
+import { RATE_LIMITS_TABLE, RateLimitError, enforceRateLimit } from "./rate-limit";
 
 interface SocketAttachment {
   role: "host" | "device";
@@ -32,15 +36,47 @@ interface MetadataRow {
   value: string;
 }
 
-interface PairingOfferRow {
+type PairingState =
+  | "offered"
+  | "claimed"
+  | "submitted"
+  | "revealed"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  | "expired";
+
+const TERMINAL_PAIRING_STATES: ReadonlySet<PairingState> = new Set<PairingState>([
+  "approved",
+  "rejected",
+  "cancelled",
+  "expired",
+]);
+
+interface PairingSessionRow {
   [key: string]: SqlStorageValue;
-  challenge_hash: string;
+  id: string;
+  host_id: string;
+  state: PairingState;
+  commit_hash: string;
   host_public_key: string;
+  host_name: string | null;
+  host_nonce: string | null;
+  device_id: string | null;
+  device_name: string | null;
+  device_public_key: string | null;
+  device_token_hash: string | null;
+  device_token: string | null;
+  created_at: number;
   expires_at: number;
-  consumed_at: number | null;
+  updated_at: number;
 }
 
-class RateLimitError extends Error {}
+const PAIRING_SESSION_COLUMNS = `id, host_id, state, commit_hash, host_public_key, host_name, host_nonce,
+  device_id, device_name, device_public_key, device_token_hash, device_token,
+  created_at, expires_at, updated_at`;
+
+const MAX_PAIRING_SESSION_LIFETIME_MS = 10 * 60_000;
 
 export class HostRelay extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -59,17 +95,24 @@ export class HostRelay extends DurableObject<Env> {
           paired_at INTEGER NOT NULL,
           revoked_at INTEGER
         );
-        CREATE TABLE IF NOT EXISTS pairing_offers (
-          challenge_hash TEXT PRIMARY KEY NOT NULL,
+        CREATE TABLE IF NOT EXISTS pairing_sessions (
+          id TEXT PRIMARY KEY NOT NULL,
+          host_id TEXT NOT NULL,
+          state TEXT NOT NULL,
+          commit_hash TEXT NOT NULL,
           host_public_key TEXT NOT NULL,
+          host_name TEXT,
+          host_nonce TEXT,
+          device_id TEXT,
+          device_name TEXT,
+          device_public_key TEXT,
+          device_token_hash TEXT,
+          device_token TEXT,
+          created_at INTEGER NOT NULL,
           expires_at INTEGER NOT NULL,
-          consumed_at INTEGER
+          updated_at INTEGER NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS rate_limits (
-          key TEXT PRIMARY KEY NOT NULL,
-          window_started_at INTEGER NOT NULL,
-          count INTEGER NOT NULL
-        );
+        ${RATE_LIMITS_TABLE}
       `);
       return Promise.resolve();
     });
@@ -87,11 +130,8 @@ export class HostRelay extends DurableObject<Env> {
       if (request.method === "PUT" && segments.length === 3) {
         return await this.registerHost(request);
       }
-      if (request.method === "POST" && segments[3] === "pairing-offers") {
-        return await this.createPairingOffer(request, hostID);
-      }
-      if (request.method === "POST" && segments[3] === "pair") {
-        return await this.pairDevice(request, hostID);
+      if (segments[3] === "pairing-sessions") {
+        return await this.routePairingSession(request, hostID, segments[4], segments[5], segments.length);
       }
       if (request.method === "GET" && segments[3] === "devices" && segments.length === 4) {
         return await this.listDevices(request);
@@ -175,53 +215,152 @@ export class HostRelay extends DurableObject<Env> {
     console.warn(JSON.stringify({ event: "websocket_error", role: attachment.role }));
   }
 
-  private async registerHost(request: Request): Promise<Response> {
-    await this.enforceRateLimit(request, "register", 10, 60_000);
-    const input = await readLimitedJSON(request);
-    if (!isRecord(input) || typeof input.hostSecret !== "string" || input.hostSecret.length < 32) {
-      throw new RequestValidationError("A high-entropy hostSecret is required.");
-    }
-    const newHash = await hashCredential(input.hostSecret);
-    const currentHash = this.metadata("host_token_hash");
-    if (currentHash && !timingSafeStringEqual(currentHash, newHash)) {
-      return json({ error: "unauthorized" }, 401);
-    }
-    if (!currentHash) this.setMetadata("host_token_hash", newHash);
-    return json({ registered: true });
+  // MARK: - Pairing sessions
+
+  /**
+   * Called by the Worker entry after the directory spent a code: the session
+   * moves from `offered` to `claimed` and the device learns the host's
+   * commitment, which it checks against the nonce revealed later.
+   */
+  async claimPairingSession(sessionID: string): Promise<{ hostName: string | null; commit: string } | null> {
+    const session = await this.loadPairingSession(sessionID);
+    if (!session || session.state !== "offered") return null;
+    this.updatePairingSession(sessionID, "claimed");
+    return { hostName: session.host_name, commit: session.commit_hash };
   }
 
-  private async createPairingOffer(request: Request, hostID: string): Promise<Response> {
+  private async routePairingSession(
+    request: Request,
+    hostID: string,
+    sessionID: string | undefined,
+    action: string | undefined,
+    segmentCount: number,
+  ): Promise<Response> {
+    if (request.method === "POST" && segmentCount === 4) {
+      return this.createPairingSession(request, hostID);
+    }
+    if (!sessionID) return json({ error: "not_found" }, 404);
+    if (segmentCount === 5 && request.method === "GET") {
+      return this.readPairingSession(request, sessionID);
+    }
+    if (segmentCount === 5 && request.method === "DELETE") {
+      return this.cancelPairingSession(request, sessionID);
+    }
+    if (segmentCount === 6 && request.method === "POST") {
+      switch (action) {
+        case "device": return this.submitPairingDevice(request, sessionID);
+        case "reveal": return this.revealPairingNonce(request, sessionID);
+        case "decision": return this.decidePairingSession(request, sessionID);
+        default: break;
+      }
+    }
+    return json({ error: "not_found" }, 404);
+  }
+
+  private async createPairingSession(request: Request, hostID: string): Promise<Response> {
     if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
-    const offer = parsePairingOffer(await readLimitedJSON(request));
-    const expiresAt = Date.parse(offer.expiresAt);
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 10 * 60_000) {
-      throw new RequestValidationError("Pairing offers must expire within ten minutes.");
+    enforceRateLimit(this.ctx.storage.sql, "pairing-session:create", 10, 60_000);
+    const input = parsePairingSessionCreate(await readLimitedJSON(request));
+    const now = Date.now();
+    const expiresAt = Date.parse(input.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt > now + MAX_PAIRING_SESSION_LIFETIME_MS) {
+      throw new RequestValidationError("Pairing sessions must expire within ten minutes.");
     }
-    const challengeHash = await hashCredential(offer.challenge);
+
+    // One live session per Mac: a new code retires whatever was on screen.
+    for (const live of this.livePairingSessions()) {
+      await this.closePairingSession(live, "cancelled");
+    }
+    // Finished sessions are dead weight once past their expiry — and an
+    // approved row still holds the Device token the iPhone collected.
+    this.ctx.storage.sql.exec("DELETE FROM pairing_sessions WHERE expires_at < ?", now);
+
+    const sessionID = randomCredential();
     this.ctx.storage.sql.exec(
-      `INSERT OR REPLACE INTO pairing_offers(challenge_hash, host_public_key, expires_at, consumed_at)
-       VALUES(?, ?, ?, NULL)`,
-      challengeHash,
-      offer.hostPublicKey,
+      `INSERT INTO pairing_sessions(
+         id, host_id, state, commit_hash, host_public_key, host_name, host_nonce,
+         device_id, device_name, device_public_key, device_token_hash, device_token,
+         created_at, expires_at, updated_at
+       ) VALUES(?, ?, 'offered', ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+      sessionID,
+      hostID,
+      input.commit,
+      input.hostPublicKey,
+      input.hostName ?? null,
+      now,
       expiresAt,
+      now,
     );
-    this.ctx.storage.sql.exec("DELETE FROM pairing_offers WHERE expires_at < ? OR consumed_at IS NOT NULL", Date.now());
-    return json({ hostID, expiresAt: new Date(expiresAt).toISOString() }, 201);
+    const code = await this.directory().allocate(hostID, sessionID, expiresAt);
+    return json({ sessionID, code, expiresAt: new Date(expiresAt).toISOString() }, 201);
   }
 
-  private async pairDevice(request: Request, hostID: string): Promise<Response> {
-    await this.enforceRateLimit(request, "pair", 20, 60_000);
-    const pairing = parsePairingRequest(await readLimitedJSON(request));
-    const challengeHash = await hashCredential(pairing.challenge);
-    const offer = this.ctx.storage.sql.exec<PairingOfferRow>(
-      `SELECT challenge_hash, host_public_key, expires_at, consumed_at
-       FROM pairing_offers WHERE challenge_hash = ?`,
-      challengeHash,
-    ).toArray()[0];
-    if (!offer || offer.consumed_at !== null || offer.expires_at <= Date.now()) {
-      return json({ error: "invalid_or_expired_pairing_offer" }, 401);
+  private async submitPairingDevice(request: Request, sessionID: string): Promise<Response> {
+    const session = await this.loadPairingSession(sessionID);
+    if (!session) return json({ error: "not_found" }, 404);
+    if (!this.authorizePairingSession(request, session)) return json({ error: "unauthorized" }, 401);
+    const submission = parsePairingDeviceSubmission(await readLimitedJSON(request));
+    if (session.state !== "claimed") return invalidState(session.state);
+    if (!this.hostIsOnline()) return json({ error: "host_offline" }, 409);
+
+    this.updatePairingSession(sessionID, "submitted", {
+      device_id: submission.deviceID,
+      device_name: submission.deviceName,
+      device_public_key: submission.devicePublicKey,
+    });
+    this.sendToHost({
+      type: "pairing_device",
+      sessionID,
+      deviceID: submission.deviceID,
+      deviceName: submission.deviceName,
+      devicePublicKey: submission.devicePublicKey,
+    });
+    return json({ state: "submitted" });
+  }
+
+  private async readPairingSession(request: Request, sessionID: string): Promise<Response> {
+    const session = await this.loadPairingSession(sessionID);
+    if (!session) return json({ error: "not_found" }, 404);
+    if (!this.authorizePairingSession(request, session)) return json({ error: "unauthorized" }, 401);
+
+    const revealed = session.state === "revealed" || session.state === "approved";
+    const approved = session.state === "approved";
+    return json({
+      state: session.state,
+      hostName: session.host_name,
+      ...(revealed ? { hostPublicKey: session.host_public_key, hostNonce: session.host_nonce } : {}),
+      ...(approved && session.device_token !== null
+        ? { deviceToken: session.device_token, pairedAt: new Date(session.updated_at).toISOString() }
+        : {}),
+    });
+  }
+
+  private async revealPairingNonce(request: Request, sessionID: string): Promise<Response> {
+    if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
+    const reveal = parsePairingReveal(await readLimitedJSON(request));
+    const session = await this.loadPairingSession(sessionID);
+    if (!session) return json({ error: "not_found" }, 404);
+    if (session.state !== "submitted") return invalidState(session.state);
+    this.updatePairingSession(sessionID, "revealed", { host_nonce: reveal.hostNonce });
+    return json({ state: "revealed" });
+  }
+
+  private async decidePairingSession(request: Request, sessionID: string): Promise<Response> {
+    if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
+    const decision = parsePairingDecision(await readLimitedJSON(request));
+    const session = await this.loadPairingSession(sessionID);
+    if (!session) return json({ error: "not_found" }, 404);
+
+    if (!decision.approved) {
+      if (session.state !== "submitted" && session.state !== "revealed") return invalidState(session.state);
+      this.updatePairingSession(sessionID, "rejected");
+      return json({ state: "rejected" });
     }
 
+    if (session.state !== "revealed") return invalidState(session.state);
+    if (session.device_id === null || session.device_name === null || session.device_public_key === null) {
+      throw new Error("Revealed pairing session has no device.");
+    }
     const deviceToken = randomCredential();
     const tokenHash = await hashCredential(deviceToken);
     const pairedAt = Date.now();
@@ -234,25 +373,122 @@ export class HostRelay extends DurableObject<Env> {
          token_hash = excluded.token_hash,
          paired_at = excluded.paired_at,
          revoked_at = NULL`,
-      pairing.deviceID,
-      pairing.deviceName,
-      pairing.devicePublicKey,
+      session.device_id,
+      session.device_name,
+      session.device_public_key,
       tokenHash,
       pairedAt,
     );
-    this.ctx.storage.sql.exec(
-      "UPDATE pairing_offers SET consumed_at = ? WHERE challenge_hash = ?",
-      pairedAt,
-      challengeHash,
-    );
+    // The plaintext token stays in the session row so the device's next poll
+    // can collect it; the row is only readable with the session capability and
+    // dies with the session.
+    this.updatePairingSession(sessionID, "approved", {
+      device_token_hash: tokenHash,
+      device_token: deviceToken,
+    }, pairedAt);
+    return json({ state: "approved", deviceID: session.device_id });
+  }
 
-    return json({
-      hostID,
-      deviceID: pairing.deviceID,
-      deviceToken,
-      hostPublicKey: offer.host_public_key,
-      pairedAt: new Date(pairedAt).toISOString(),
-    }, 201);
+  private async cancelPairingSession(request: Request, sessionID: string): Promise<Response> {
+    const session = await this.loadPairingSession(sessionID);
+    if (!session) return json({ error: "not_found" }, 404);
+    const byHost = await this.authorizeHost(request);
+    if (!byHost && !this.authorizePairingSession(request, session)) return json({ error: "unauthorized" }, 401);
+    if (!TERMINAL_PAIRING_STATES.has(session.state)) {
+      await this.closePairingSession(session, "cancelled", !byHost);
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  /** Reads a session, retiring it first if its deadline has passed. */
+  private async loadPairingSession(sessionID: string): Promise<PairingSessionRow | null> {
+    const session = this.ctx.storage.sql.exec<PairingSessionRow>(
+      `SELECT ${PAIRING_SESSION_COLUMNS} FROM pairing_sessions WHERE id = ?`,
+      sessionID,
+    ).toArray()[0];
+    if (!session) return null;
+    if (!TERMINAL_PAIRING_STATES.has(session.state) && Date.now() > session.expires_at) {
+      await this.closePairingSession(session, "expired", true);
+      return { ...session, state: "expired" };
+    }
+    return session;
+  }
+
+  private livePairingSessions(): PairingSessionRow[] {
+    return this.ctx.storage.sql.exec<PairingSessionRow>(
+      `SELECT ${PAIRING_SESSION_COLUMNS} FROM pairing_sessions
+       WHERE state IN ('offered', 'claimed', 'submitted', 'revealed')`,
+    ).toArray();
+  }
+
+  /**
+   * Ends a non-terminal session: the directory forgets its code and, when the
+   * Mac was already looking at this device, its sockets hear why it vanished.
+   */
+  private async closePairingSession(
+    session: PairingSessionRow,
+    state: "cancelled" | "expired",
+    notifyHost = false,
+  ): Promise<void> {
+    this.updatePairingSession(session.id, state);
+    await this.directory().release(session.host_id, session.id);
+    if (notifyHost && (session.state === "submitted" || session.state === "revealed")) {
+      this.sendToHost({ type: "pairing_closed", sessionID: session.id, reason: state });
+    }
+  }
+
+  private updatePairingSession(
+    sessionID: string,
+    state: PairingState,
+    fields: Record<string, string> = {},
+    updatedAt = Date.now(),
+  ): void {
+    const names = Object.keys(fields);
+    const assignments = ["state = ?", "updated_at = ?", ...names.map((name) => `${name} = ?`)].join(", ");
+    this.ctx.storage.sql.exec(
+      `UPDATE pairing_sessions SET ${assignments} WHERE id = ?`,
+      state,
+      updatedAt,
+      ...names.map((name) => fields[name] ?? null),
+      sessionID,
+    );
+  }
+
+  /** The session ID doubles as the device's bearer capability for the session. */
+  private authorizePairingSession(request: Request, session: PairingSessionRow): boolean {
+    const token = bearerToken(request);
+    if (!token) return false;
+    return timingSafeStringEqual(token, session.id);
+  }
+
+  private directory(): DurableObjectStub<PairingDirectory> {
+    return this.env.PAIRING_DIRECTORY.getByName("directory");
+  }
+
+  private hostIsOnline(): boolean {
+    return this.hostSockets().some((socket) => socket.readyState === WebSocket.OPEN);
+  }
+
+  private sendToHost(message: Record<string, unknown>): void {
+    const raw = JSON.stringify(message);
+    for (const socket of this.hostSockets()) this.forward(socket, raw, "host");
+  }
+
+  // MARK: - Host, devices, sockets
+
+  private async registerHost(request: Request): Promise<Response> {
+    await this.enforceSourceRateLimit(request, "register", 10, 60_000);
+    const input = await readLimitedJSON(request);
+    if (!isRecord(input) || typeof input.hostSecret !== "string" || input.hostSecret.length < 32) {
+      throw new RequestValidationError("A high-entropy hostSecret is required.");
+    }
+    const newHash = await hashCredential(input.hostSecret);
+    const currentHash = this.metadata("host_token_hash");
+    if (currentHash && !timingSafeStringEqual(currentHash, newHash)) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    if (!currentHash) this.setMetadata("host_token_hash", newHash);
+    return json({ registered: true });
   }
 
   private async listDevices(request: Request): Promise<Response> {
@@ -270,13 +506,21 @@ export class HostRelay extends DurableObject<Env> {
     return json({ devices });
   }
 
+  /// `DELETE …/devices/:id` revokes (the row stays, listed as Revoked so the
+  /// Mac can show it); `?purge=1` removes the record altogether — the Mac's
+  /// `Remove` on a revoked row. Either way every socket of the device closes.
   private async revokeDevice(request: Request, deviceID: string): Promise<Response> {
     if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
-    this.ctx.storage.sql.exec(
-      "UPDATE devices SET revoked_at = ? WHERE id = ?",
-      Date.now(),
-      deviceID,
-    );
+    const purge = new URL(request.url).searchParams.get("purge") === "1";
+    if (purge) {
+      this.ctx.storage.sql.exec("DELETE FROM devices WHERE id = ?", deviceID);
+    } else {
+      this.ctx.storage.sql.exec(
+        "UPDATE devices SET revoked_at = ? WHERE id = ?",
+        Date.now(),
+        deviceID,
+      );
+    }
     for (const socket of this.ctx.getWebSockets(`device:${deviceID}`)) {
       socket.close(4003, "device revoked");
     }
@@ -384,29 +628,14 @@ export class HostRelay extends DurableObject<Env> {
     return timingSafeStringEqual(await hashCredential(token), device.token_hash);
   }
 
-  private async enforceRateLimit(
+  private async enforceSourceRateLimit(
     request: Request,
     action: string,
     limit: number,
     windowMilliseconds: number,
   ): Promise<void> {
     const source = request.headers.get("cf-connecting-ip") ?? "local";
-    const key = `${action}:${await hashCredential(source)}`;
-    const now = Date.now();
-    const row = this.ctx.storage.sql.exec<{ window_started_at: number; count: number }>(
-      "SELECT window_started_at, count FROM rate_limits WHERE key = ?",
-      key,
-    ).toArray()[0];
-    if (!row || now - row.window_started_at >= windowMilliseconds) {
-      this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO rate_limits(key, window_started_at, count) VALUES(?, ?, 1)",
-        key,
-        now,
-      );
-      return;
-    }
-    if (row.count >= limit) throw new RateLimitError("Rate limit exceeded.");
-    this.ctx.storage.sql.exec("UPDATE rate_limits SET count = count + 1 WHERE key = ?", key);
+    enforceRateLimit(this.ctx.storage.sql, `${action}:${await hashCredential(source)}`, limit, windowMilliseconds);
   }
 
   private metadata(key: string): string | null {
@@ -442,6 +671,10 @@ export class HostRelay extends DurableObject<Env> {
       connectedAt: typeof value.connectedAt === "number" ? value.connectedAt : 0,
     };
   }
+}
+
+function invalidState(state: PairingState): Response {
+  return json({ error: "invalid_state", state }, 409);
 }
 
 function json(value: unknown, status = 200): Response {
