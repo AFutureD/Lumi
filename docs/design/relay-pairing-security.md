@@ -70,7 +70,7 @@ sequenceDiagram
     participant I as iPhone
 
     A->>D: IPC relay_pairing_start（进入配对页 / 码到期 / New code）
-    D->>D: nonceH = random(32); commit = H(hostPub ‖ nonceH)
+    D->>D: nonceH = random(32) commit = H(hostPub ‖ nonceH)
     D->>R: POST pairing-sessions {commit, hostPublicKey, hostName, expiresAt}   [Host secret]
     R->>R: HostRelay 建 session（取消上一个）；Directory 分配唯一 code
     R-->>D: {sessionID, code, expiresAt}
