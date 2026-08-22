@@ -1,3 +1,4 @@
+import AgentStatusTransport
 import Foundation
 
 public extension DesignSystem {
@@ -38,6 +39,10 @@ public extension DesignSystem {
         public static let popover: Double = 12
         public static let selection: Double = 8
         public static let checkbox: Double = 4
+        /// macOS FilterDropdown trigger (3.4).
+        public static let filterTrigger: Double = 6
+        /// macOS FilterDropdown panel (3.4); the iOS panel is 14.
+        public static let filterPanel: Double = 10
         /// Notch cards (echoed input, metric cards).
         public static let notchCard: Double = 10
         /// Notch action buttons.
@@ -272,6 +277,116 @@ public extension DesignSystem {
         public static let emptyStateGlyph: Double = 24
         /// Hit target of the top-bar icon buttons.
         public static let settingsButton: Double = 24
+    }
+
+    /// 3.4 Dropdown 多选过滤 FilterDropdown — macOS tier. One trigger per
+    /// filter dimension; the panel lists the dimension's options, optionally
+    /// cut into sub-groups whose header carries a tri-state checkbox. Every
+    /// value is the handoff's macOS column (the iOS tier is `IOS.FilterTrigger`
+    /// / `IOS.FilterPanel`).
+    enum FilterDropdown {
+        /// Trigger: 22 tall, radius 6, `padding 0 8`, inner gap 5; 11 / Regular
+        /// title; a 14pt count badge while filtered; 8 × 5 chevron that turns
+        /// 180° over `.18s ease` while the panel is open.
+        public enum Trigger {
+            public static let height: Double = 22
+            public static let horizontalPadding: Double = 8
+            public static let gap: Double = 5
+            public static let badgeHeight: Double = 14
+            public static let badgeMinimumWidth: Double = 14
+            public static let badgeHorizontalPadding: Double = 4
+            public static let chevronWidth: Double = 8
+            public static let chevronHeight: Double = 5
+            public static let ring: Double = 0.5
+            public static let animationDuration: Double = 0.18
+        }
+
+        /// Panel: 232 wide, radius 10, dropped 8 under the trigger and
+        /// right-aligned to it, at most 420 tall (scrolls beyond). Group title
+        /// 24; sub-group header 26; option rows 28 (`padding 0 10`, gap 8), or
+        /// 34 when the row carries a description line. 14pt checkbox (radius
+        /// 4, 9 × 7 check, 8 × 2 dash, 1.2 off-ring); 72pt tag pill; 26pt
+        /// level chip. Shadow `0 0 0 .5px rgba(0,0,0,.07), 0 12px 30px
+        /// rgba(0,0,0,.18)`.
+        public enum Panel {
+            public static let width: Double = 232
+            public static let offset: Double = 8
+            public static let maximumHeight: Double = 420
+            public static let headerHeight: Double = 24
+            public static let subgroupHeight: Double = 26
+            public static let rowHeight: Double = 28
+            public static let describedRowHeight: Double = 34
+            public static let horizontalPadding: Double = 10
+            public static let gap: Double = 8
+            public static let checkbox: Double = 14
+            public static let checkboxRing: Double = 1.2
+            public static let checkWidth: Double = 9
+            public static let checkHeight: Double = 7
+            /// The mock strokes 3 in a 16-unit box scaled to 9pt.
+            public static let checkStroke: Double = 1.7
+            public static let dashWidth: Double = 8
+            public static let dashHeight: Double = 2
+            public static let tagWidth: Double = 72
+            public static let tagVerticalPadding: Double = 2
+            public static let tagRadius: Double = 4
+            public static let levelChipWidth: Double = 26
+            public static let outline: Double = 0.5
+            public static let shadowOffsetY: Double = 12
+            /// CSS blur radius; SwiftUI's `shadow(radius:)` takes half of it.
+            public static let shadowBlur: Double = 30
+        }
+
+        /// Empty state of a list whose filter intersection is empty: 320 tall,
+        /// 13pt copy over a 22pt capsule Reset button (`padding 0 10`).
+        public enum EmptyState {
+            public static let height: Double = 320
+            public static let gap: Double = 10
+            public static let resetHeight: Double = 22
+            public static let resetHorizontalPadding: Double = 10
+        }
+
+        // MARK: Colours (light window)
+
+        /// Trigger at rest (all selected = unfiltered): `rgba(118,118,128,.12)` + black title.
+        public static let triggerFill = DesignColor(rgb: 118, 118, 128, alpha: 0.12)
+        public static let triggerText = Palette.black
+        /// Filtered trigger: the blue status-pill tint (fill `.14`, ring `.24`, text Blue 700).
+        public static let filteredTrigger = DesignHue.blue.pillStyle(.light)
+        public static let badgeFill = Ink.accent.opacity(0.9)
+        public static let badgeText = Palette.white
+
+        public static let panelFill = DesignColor(rgb: 252, 252, 252, alpha: 0.94)
+        public static let panelOutline = DesignColor(white: 0, alpha: 0.07)
+        public static let panelShadow = DesignColor(white: 0, alpha: 0.18)
+        /// Group title (uppercase) and the `.5px` lines between rows.
+        public static let headerText = DesignColor(rgb: 60, 60, 67, alpha: 0.45)
+        public static let separator = DesignColor(rgb: 60, 60, 67, alpha: 0.1)
+        public static let subgroupFill = DesignColor(rgb: 118, 118, 128, alpha: 0.06)
+        /// Counts on both levels; an option that counts 0 stays, in this colour.
+        public static let countText = DesignColor(rgb: 60, 60, 67, alpha: 0.4)
+        public static let checkboxOn = Ink.accent
+        public static let checkboxRing = DesignColor(rgb: 60, 60, 67, alpha: 0.24)
+        public static let checkMark = Palette.white
+        public static let rowHover = DesignColor(rgb: 120, 120, 128, alpha: 0.08)
+        public static let optionName = Ink.primary
+        public static let optionDescription = headerText
+
+        public static let emptyText = Ink.quaternary
+        public static let resetFill = Surface.chipFill
+        public static let resetText = Palette.neutral.s600
+
+        /// Importance-level chip (`L3` / `L2` / `L1`) in the Importance panel:
+        /// the three tiers in neutral — solid grey, grey tint, ring only.
+        public static func levelChipStyle(_ level: TimelineAttentionLevel) -> DesignTagStyle {
+            switch level {
+            case .l3:
+                DesignTagStyle(fill: Palette.neutralDot, text: .white, ring: .clear)
+            case .l2:
+                DesignTagStyle(fill: Surface.secondaryButton, text: Ink.countBadge, ring: .clear)
+            case .l1:
+                DesignTagStyle(fill: .clear, text: Ink.quaternary, ring: DesignColor(white: 0, alpha: 0.16))
+            }
+        }
     }
 
     /// Interaction-state opacities.

@@ -116,6 +116,14 @@ public extension DesignSystem {
         public static let tag = DesignTextStyle(size: 9, weight: .medium, lineHeight: 11, trackingEm: 0.04)
         /// Notch 60pt tag — 9 / Medium / .03em.
         public static let tagCompact = DesignTextStyle(size: 9, weight: .medium, lineHeight: 11, trackingEm: 0.03)
+        /// macOS FilterDropdown (3.4) trigger badge — 9 / Semibold / 12.
+        public static let filterBadge = DesignTextStyle(size: 9, weight: .semibold, lineHeight: 12)
+        /// macOS FilterDropdown group title — 10 / Semibold / 13 / .06em, uppercase.
+        public static let filterPanelHeader = DesignTextStyle(size: 10, weight: .semibold, lineHeight: 13, trackingEm: 0.06)
+        /// macOS FilterDropdown option name — 12 / Regular / 15.
+        public static let filterOptionName = DesignTextStyle(size: 12, weight: .regular, lineHeight: 15)
+        /// macOS FilterDropdown option description — 9 / Regular / 12.
+        public static let filterOptionDescription = DesignTextStyle(size: 9, weight: .regular, lineHeight: 12)
 
         // MARK: Notch (dark panel)
 

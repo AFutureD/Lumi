@@ -20,7 +20,7 @@ Codex 只运行它信任过的 Hook，而且不信任时不给任何提示。安
 
 ### Mac 会话查看
 
-Mac 主窗口参考系统 Mail.app：左侧是固定宽度的功能导航，中间是当前区域的列表，右侧是详情，工具栏按三栏分段放置折叠侧栏、搜索框和标题动作。Sessions 列表按最后更新时间倒序，Subagent 通过左侧引导线挂在 Main Session 下且可折叠；每行显示 Agent 图标、标题、相对时间和状态色点，点击父级行即可折叠。详情由 Activity 主区和右侧 Inspector 组成：Activity 提供三泳道 / 单行可切换的横向时间轴，Inspector 汇总 Token / Context / Elapsed 指标与 Session 信息。Settings 使用“设置分类—设置详情”；只有 iPhone 配对页会收起中栏。
+Mac 主窗口参考系统 Mail.app：左侧是固定宽度的功能导航，中间是当前区域的列表，右侧是详情，工具栏按三栏分段放置折叠侧栏、搜索框和标题动作。Sessions 列表按最后更新时间倒序，Subagent 通过左侧引导线挂在 Main Session 下且可折叠；每行显示 Agent 图标、标题、相对时间和状态色点，点击父级行即可折叠。详情由 Activity 主区和右侧 Inspector 组成：Activity 提供三泳道 / 单行可切换的横向时间轴，并可按消息类别与重要性（L1–L3）过滤列表（时间轴始终画全量），Inspector 汇总 Token / Context / Elapsed 指标与 Session 信息。Settings 使用“设置分类—设置详情”；只有 iPhone 配对页会收起中栏。
 
 Notch 紧凑状态显示列表中的 Session 数量，展开后按最近更新时间列出最近七天内活动过的全部主 Session（含已关闭的会话），视口一次最多显示六条、可滚动；正在工作的 Session 显示最近一条活动；带 Subagent 的 Session 在标题下多一条可点开的 Subagent 计数条（运行中默认展开成胶囊，其他状态默认折叠）；Session 完成或失败时 Notch 会自动展开并短暂提示；回合开始不自动展开。Notch 设置按钮打开主 App 的“Settings > Notch”，用户可以在第三栏的 Appearance section 选择显示屏幕，调整并恢复紧凑宽度、展开宽度和展开动画；Theme 固定为 Dark，Layout 固定为 Notch，但不显示这两个控件。
 

@@ -5,8 +5,8 @@ import AppKit
 import SwiftUI
 
 /// UI state that must survive `rootView` replacement: the lane strip mode,
-/// the transient jump highlight, the hovered tool pair, and whether the list
-/// is pinned to the bottom.
+/// the Activity filter and its open panel, the transient jump highlight, the
+/// hovered tool pair, and whether the list is pinned to the bottom.
 @MainActor
 final class SessionActivityState: ObservableObject {
     private static let timelineModeKey = "AgentStatus.Activity.TimelineMode"
@@ -15,6 +15,10 @@ final class SessionActivityState: ObservableObject {
     @Published var timelineMode: ActivityTimelineMode {
         didSet { UserDefaults.standard.set(timelineMode.rawValue, forKey: Self.timelineModeKey) }
     }
+    /// Category × Importance filter of the list; per session (reset on switch).
+    @Published var filter = SessionActivityFilter()
+    /// The FilterDropdown panel that is open, if any (at most one).
+    @Published var openFilterPanel: ActivityFilterDimension?
     @Published var highlightedID: String?
     /// `toolUseID` under the pointer; its TOOL and RESULT rows light up together.
     @Published var hoveredToolUseID: String?
@@ -22,11 +26,28 @@ final class SessionActivityState: ObservableObject {
     /// Keeps the lane strip and the row list scrolled in step (not published:
     /// it is driven from scroll callbacks and must not re-render the list).
     let scrollLink = ActivityScrollLink()
+    /// The one open filter panel window and the triggers it drops under.
+    let filterPresenter = FilterDropdownPresenter()
+    private let filterAnchors: [ActivityFilterDimension: FilterAnchorBox]
     private var highlightTask: Task<Void, Never>?
 
     init() {
         timelineMode = UserDefaults.standard.string(forKey: Self.timelineModeKey)
             .flatMap(ActivityTimelineMode.init(rawValue:)) ?? .lanes
+        filterAnchors = Dictionary(uniqueKeysWithValues: ActivityFilterDimension.allCases.map { ($0, FilterAnchorBox()) })
+        for anchor in filterAnchors.values {
+            // The trigger left the window (session cleared, sidebar switched):
+            // the panel must not outlive it.
+            anchor.onDetach = { [weak self] in
+                guard let self, self.openFilterPanel != nil else { return }
+                self.filterPresenter.dismissAll()
+                Task { @MainActor [weak self] in self?.openFilterPanel = nil }
+            }
+        }
+    }
+
+    func anchor(for dimension: ActivityFilterDimension) -> FilterAnchorBox {
+        filterAnchors[dimension]!
     }
 
     func reset() {
@@ -34,6 +55,9 @@ final class SessionActivityState: ObservableObject {
         hoveredToolUseID = nil
         followsBottom = false
         highlightTask?.cancel()
+        filter.reset()
+        openFilterPanel = nil
+        filterPresenter.dismissAll()
     }
 
     func highlight(_ id: String) {
@@ -47,32 +71,42 @@ final class SessionActivityState: ObservableObject {
     }
 }
 
-/// Activity: pinned header (title · count · lane strip toggle · User/Model/Exec
-/// lane strip) over a chronological list of `TimelineRow`s. Turn boundaries
-/// read from the rows themselves (USER … TURN END); there is no turn header.
-/// Clicking a lane cell jumps to its row; clicking a row reveals its detail.
+/// Activity: pinned header (title · count · Category / Importance filters ·
+/// lane strip toggle · User/Model/Exec lane strip) over a chronological list
+/// of `TimelineRow`s. Turn boundaries read from the rows themselves (USER …
+/// TURN END); there is no turn header. The filters narrow the list only —
+/// the strip always draws every row, so what is hidden stays visible as
+/// context. Clicking a lane cell jumps to its row; clicking a row reveals
+/// its detail.
 @MainActor
 struct SessionActivityView: View {
     let presentation: SessionPagePresentation?
     @ObservedObject var state: SessionActivityState
     let onPreview: (SessionActivityPresentation) -> Void
 
-    private var visibleActivities: [SessionActivityPresentation] {
+    private var allActivities: [SessionActivityPresentation] {
         presentation?.activities ?? []
+    }
+
+    private var visibleActivities: [SessionActivityPresentation] {
+        state.filter.isFiltering ? allActivities.filter(state.filter.includes) : allActivities
     }
 
     @State private var listPosition = ScrollPosition(edge: .top)
 
     var body: some View {
+        let all = allActivities
         let activities = visibleActivities
         ScrollViewReader { proxy in
             ScrollView {
-                if activities.isEmpty {
+                if all.isEmpty {
                     Text(presentation == nil ? "" : "No Activity")
                         .font(AgentStatusDesign.Font.UI.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, AgentStatusDesign.Layout.activityHorizontalInset)
+                } else if activities.isEmpty {
+                    ActivityFilterEmptyState { state.filter.reset() }
                 } else {
                     LazyVStack(spacing: 0) {
                         ForEach(activities) { activity in
@@ -117,7 +151,7 @@ struct SessionActivityView: View {
                 }
             }
             .onChange(of: scrollMapKey, initial: true) { _, _ in
-                state.scrollLink.map = scrollMap(for: activities)
+                state.scrollLink.map = scrollMap(for: all)
             }
             .onChange(of: activities.count) { previous, current in
                 guard current > previous, state.followsBottom, let last = activities.last else { return }
@@ -125,23 +159,34 @@ struct SessionActivityView: View {
                 state.scrollLink.scrollStripToEnd()
             }
             .safeAreaBar(edge: .top, spacing: 0) {
-                header(activities: activities, proxy: proxy)
+                header(all: all, visible: activities, proxy: proxy)
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .environment(\.colorScheme, .light)
     }
 
-    /// The map only depends on row kinds, so rebuild it when the row set changes.
+    /// The map only depends on row kinds and on which rows the filter hides,
+    /// so rebuild it when the row set or the filter changes.
     private var scrollMapKey: ActivityScrollMapKey {
-        ActivityScrollMapKey(count: visibleActivities.count, first: visibleActivities.first?.id, last: visibleActivities.last?.id)
+        ActivityScrollMapKey(
+            count: allActivities.count,
+            first: allActivities.first?.id,
+            last: allActivities.last?.id,
+            filter: state.filter
+        )
     }
 
+    /// Every row of the session is a map row; a row the filter hides keeps
+    /// its strip column but takes no list height, so the two sides stay in
+    /// step around it.
     private func scrollMap(for activities: [SessionActivityPresentation]) -> ActivityScrollMap {
-        ActivityScrollMap(
+        let filter = state.filter
+        return ActivityScrollMap(
             rows: activities.map { activity in
                 (
-                    height: activity.lane == nil
+                    height: !filter.includes(activity) ? 0
+                        : activity.lane == nil
                         ? AgentStatusDesign.Layout.activityMarkerRowHeight
                         : AgentStatusDesign.Layout.activityRowHeight,
                     columnWidth: activity.appearsInLaneStrip ? activity.laneStripColumnWidth : nil
@@ -152,19 +197,28 @@ struct SessionActivityView: View {
         )
     }
 
-    private func header(activities: [SessionActivityPresentation], proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.mPlus) {
-            HStack(spacing: DesignSystem.Spacing.mPlus) {
+    private func header(all: [SessionActivityPresentation], visible: [SessionActivityPresentation], proxy: ScrollViewProxy) -> some View {
+        let counts = SessionActivityFilter.Counts(activities: all)
+        return VStack(alignment: .leading, spacing: DesignSystem.Spacing.mPlus) {
+            HStack(spacing: DesignSystem.Spacing.m) {
                 Text("Activity")
                     .font(AgentStatusDesign.Font.UI.section)
                     .fixedSize()
-                Text("\(activities.count)")
+                Text(state.filter.isFiltering ? "\(visible.count) / \(all.count)" : "\(all.count)")
                     .font(AgentStatusDesign.Font.UI.pill.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, DesignSystem.Metrics.countPillHorizontalPadding)
                     .padding(.vertical, DesignSystem.Metrics.countPillVerticalPadding)
                     .background(AgentStatusDesign.Color.UI.chipFill, in: Capsule())
+                    .accessibilityLabel(state.filter.isFiltering ? "\(visible.count) of \(all.count) shown" : "\(all.count) items")
                 Spacer(minLength: DesignSystem.Spacing.m)
+                ForEach(ActivityFilterDimension.allCases, id: \.self) { dimension in
+                    ActivityFilterTrigger(
+                        dimension: dimension,
+                        model: state.filter.panelModel(dimension, counts: counts),
+                        state: state
+                    )
+                }
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
                         state.timelineMode = state.timelineMode.toggled
@@ -182,17 +236,21 @@ struct SessionActivityView: View {
                 .accessibilityLabel("Toggle timeline density")
             }
 
-            if !activities.isEmpty {
+            if !all.isEmpty {
+                // The strip always shows the full session, filter or not.
                 SessionActivityTimeline(
-                    activities: activities.filter(\.appearsInLaneStrip),
+                    activities: all.filter(\.appearsInLaneStrip),
                     mode: state.timelineMode,
                     link: state.scrollLink
                 ) { activity in
                     // Programmatic: the list goes to the row, the strip stays put.
+                    // A hidden row's cell lands on the nearest visible row,
+                    // without the highlight (that row is not the one clicked).
+                    guard let target = jumpTarget(for: activity, in: all) else { return }
                     withAnimation(.easeInOut(duration: 0.22)) {
-                        proxy.scrollTo(sessionActivityRowID(for: activity), anchor: .center)
+                        proxy.scrollTo(sessionActivityRowID(for: target), anchor: .center)
                     }
-                    state.highlight(activity.id)
+                    if target.id == activity.id { state.highlight(activity.id) }
                 }
             }
         }
@@ -203,6 +261,103 @@ struct SessionActivityView: View {
         .overlay(alignment: .bottom) {
             AgentStatusDesign.Color.UI.activityHairline.frame(height: 1)
         }
+    }
+
+    /// The clicked row if the filter shows it; else the next visible row
+    /// after it, else the last visible one before it.
+    private func jumpTarget(
+        for activity: SessionActivityPresentation,
+        in all: [SessionActivityPresentation]
+    ) -> SessionActivityPresentation? {
+        let filter = state.filter
+        if filter.includes(activity) { return activity }
+        guard let index = all.firstIndex(where: { $0.id == activity.id }) else { return nil }
+        return all[index...].first(where: filter.includes) ?? all[..<index].last(where: filter.includes)
+    }
+}
+
+/// One FilterDropdown trigger of the Activity header. Owns nothing: the
+/// open-panel state and the filter live in `SessionActivityState`; this view
+/// mirrors them into the presenter (present / refresh / dismiss) and hands
+/// its AppKit anchor over so the panel drops under it.
+private struct ActivityFilterTrigger: View {
+    let dimension: ActivityFilterDimension
+    let model: FilterPanelModel
+    @ObservedObject var state: SessionActivityState
+
+    private var isOpen: Bool { state.openFilterPanel == dimension }
+
+    private var panel: FilterDropdownPanel {
+        FilterDropdownPanel(
+            model: model,
+            onToggleOption: { [state, dimension] id in state.filter.toggleOption(id: id, in: dimension) },
+            onToggleSection: { [state, dimension] id in state.filter.toggleSection(id: id, in: dimension) }
+        )
+    }
+
+    var body: some View {
+        FilterTriggerButton(
+            title: dimension.title,
+            selectedCount: model.selectedCount,
+            isFiltered: model.isFiltered,
+            isOpen: isOpen
+        ) {
+            state.openFilterPanel = isOpen ? nil : dimension
+        }
+        .background(FilterAnchor(box: state.anchor(for: dimension)))
+        .onChange(of: isOpen) { _, open in
+            if open {
+                present()
+            } else {
+                state.filterPresenter.dismiss(id: dimension.rawValue)
+            }
+        }
+        .onChange(of: model) { _, _ in
+            guard isOpen else { return }
+            state.filterPresenter.update(id: dimension.rawValue, content: panel)
+        }
+        .help("Filter by \(dimension.title.lowercased())")
+    }
+
+    private func present() {
+        state.filterPresenter.present(
+            id: dimension.rawValue,
+            content: panel,
+            anchor: state.anchor(for: dimension)
+        ) { [state, dimension] in
+            if state.openFilterPanel == dimension { state.openFilterPanel = nil }
+        }
+    }
+}
+
+/// The list when Category × Importance leaves nothing: 320 tall, centred
+/// copy and a capsule Reset that restores both dimensions.
+private struct ActivityFilterEmptyState: View {
+    let onReset: () -> Void
+
+    private typealias E = DesignSystem.FilterDropdown.EmptyState
+    private typealias F = DesignSystem.FilterDropdown
+
+    var body: some View {
+        VStack(spacing: E.gap) {
+            Text("No messages match the Category and Importance filters")
+                .font(AgentStatusDesign.Font.UI.body)
+                .foregroundStyle(Color(F.emptyText))
+                .multilineTextAlignment(.center)
+            Button(action: onReset) {
+                Text("Reset")
+                    .designText(DesignSystem.Typography.subheadlineEmphasized)
+                    .foregroundStyle(Color(F.resetText))
+                    .padding(.horizontal, E.resetHorizontalPadding)
+                    .frame(height: E.resetHeight)
+                    .background(Color(F.resetFill), in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reset filters")
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: E.height)
     }
 }
 
@@ -225,6 +380,7 @@ private struct ActivityScrollMapKey: Equatable {
     var count: Int
     var first: String?
     var last: String?
+    var filter: SessionActivityFilter
 }
 
 private extension ScrollPhase {

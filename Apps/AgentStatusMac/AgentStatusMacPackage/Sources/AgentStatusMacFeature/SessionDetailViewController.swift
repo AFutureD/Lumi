@@ -129,7 +129,18 @@ final class SessionDetailViewController: NSViewController {
         presentation = rendered
         split.activity.rootView = makeActivityView()
         split.inspector.rootView = makeInspectorView()
+        if let panel = Self.debugSnapshotFilterPanel, activityState.openFilterPanel == nil {
+            // Debug snapshots (`DebugSnapshotExporter`): keep a filter panel
+            // open so the capture shows it (a session switch closes it; the
+            // next render reopens).
+            Task { @MainActor [weak self] in self?.activityState.openFilterPanel = panel }
+        }
     }
+
+    /// `-AgentStatusSnapshotFilterPanel category|importance`, debug only.
+    private static let debugSnapshotFilterPanel: ActivityFilterDimension? = UserDefaults.standard
+        .string(forKey: "AgentStatusSnapshotFilterPanel")
+        .flatMap(ActivityFilterDimension.init(rawValue:))
 
     private func applySubheader(_ summary: SessionSummary) {
         agentChip.text = summary.agent.displayName
