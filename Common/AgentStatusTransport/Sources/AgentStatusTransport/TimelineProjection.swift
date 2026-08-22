@@ -49,24 +49,27 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
     // L3 — phase (high attention)
     case user
     case turnEnd
-    case failed
+    case failed         // a tool call failed (Exec lane)
+    case turnFailed     // the turn / agent failed (Model lane); same FAILED chip
     case aborted
 
     public var level: TimelineAttentionLevel {
         switch self {
         case .session, .compact, .contextGroup, .context, .reasoning, .tool: .l1
         case .result, .assistant, .plan, .subagent: .l2
-        case .user, .turnEnd, .failed, .aborted: .l3
+        case .user, .turnEnd, .failed, .turnFailed, .aborted: .l3
         }
     }
 
     /// `nil` spans all three lanes (session markers only). Context of either
-    /// scope is input handed to the model, so it sits in the User lane.
+    /// scope is input handed to the model, so it sits in the User lane. The
+    /// lane follows the source of the row: a failed tool result stays in Exec
+    /// next to its call, a failed turn sits in Model next to its TURN END.
     public var lane: TimelineLane? {
         switch self {
         case .session, .compact: nil
         case .user, .context, .contextGroup: .user
-        case .reasoning, .assistant, .plan, .subagent, .turnEnd, .aborted: .model
+        case .reasoning, .assistant, .plan, .subagent, .turnEnd, .turnFailed, .aborted: .model
         case .tool, .result, .failed: .exec
         }
     }
@@ -85,7 +88,7 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
         case .subagent: "SUBAGENT"
         case .user: "USER"
         case .turnEnd: "TURN END"
-        case .failed: "FAILED"
+        case .failed, .turnFailed: "FAILED"
         case .aborted: "ABORTED"
         }
     }
@@ -376,7 +379,7 @@ public enum TimelineProjection {
             let lowered = (payload.title + " " + payload.message).lowercased()
             let aborted = lowered.contains("interrupt") || lowered.contains("abort") || lowered.contains("cancel")
             return Draft(
-                tag: aborted ? .aborted : .failed,
+                tag: aborted ? .aborted : .turnFailed,
                 status: aborted ? .cancelled : .failed,
                 text: joined([payload.title, payload.message])
             )
@@ -405,7 +408,7 @@ public enum TimelineProjection {
             case .completed:
                 return Draft(tag: .turnEnd, status: .succeeded, text: payload.message ?? "Turn complete")
             case .failed:
-                return Draft(tag: .failed, status: .failed, text: payload.message ?? "Turn failed")
+                return Draft(tag: .turnFailed, status: .failed, text: payload.message ?? "Turn failed")
             case .aborted:
                 return Draft(tag: .aborted, status: .cancelled, text: payload.message ?? "Turn aborted")
             }

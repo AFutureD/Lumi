@@ -96,6 +96,20 @@ private func item(
     #expect(rows[3].lane == .model)
 }
 
+@Test func turnFailureAndErrorsSitInTheModelLaneWhileToolFailuresStayInExec() {
+    let rows = TimelineProjection.rows(from: [
+        item("t", 0, .tool(ToolTimelinePayload(name: "Bash", status: .failed, toolUseID: "tu1"))),
+        item("e", 1, .error(ErrorTimelinePayload(title: "API error", message: "overloaded", recoverable: false))),
+        item("x", 2, .turnEnd(TurnEndTimelinePayload(outcome: .failed, message: "boom"))),
+        item("a", 3, .error(ErrorTimelinePayload(title: "Interrupted", message: "user", recoverable: true))),
+    ])
+    #expect(rows.map(\.tag) == [.failed, .turnFailed, .turnFailed, .aborted])
+    #expect(rows.map(\.lane) == [.exec, .model, .model, .model])
+    #expect(rows.map(\.label) == ["FAILED", "FAILED", "FAILED", "ABORTED"])
+    #expect(rows.allSatisfy { $0.level == .l3 })
+    #expect(rows.map(\.status) == [.failed, .failed, .failed, .cancelled])
+}
+
 @Test func sessionMarkersSpanLanesAndUsageIsHidden() {
     let rows = TimelineProjection.rows(from: [
         item("s", 0, turnID: nil, .sessionMarker(SessionMarkerTimelinePayload(kind: .sessionStarted, detail: "resume", model: "gpt-5"))),

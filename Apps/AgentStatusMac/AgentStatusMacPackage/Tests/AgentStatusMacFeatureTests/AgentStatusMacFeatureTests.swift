@@ -612,7 +612,7 @@ private func nookSession(
         nookRow("t1", .tool),          // L1: never a notch event
         nookRow("r1", .reasoning),     // L1: never a notch event
         nookRow("e1", .turnEnd),
-        nookRow("f1", .failed),
+        nookRow("f1", .turnFailed),
     ])
     let events = AgentStatusNookActivityDiff.turnEvents(previous: [before], current: [after])
     #expect(events.map(\.kind) == [.ended, .failed])
@@ -653,8 +653,8 @@ private func nookSession(
         current: [backfilled]
     ).isEmpty)
 
-    // One tool call failing mid-turn (row carries its toolUseID) is routine
-    // noise; only turn-level failures notify.
+    // One tool call failing mid-turn (FAILED in the Exec lane) is routine
+    // noise; only turn-level failures (FAILED in the Model lane) notify.
     let toolFailure = nookSession(
         backfilled.recentRows + [nookRow("f1", .failed, toolUseID: "tool-1")]
     )
@@ -662,7 +662,7 @@ private func nookSession(
         previous: [backfilled],
         current: [toolFailure]
     ).isEmpty)
-    let turnFailure = nookSession(toolFailure.recentRows + [nookRow("f2", .failed)])
+    let turnFailure = nookSession(toolFailure.recentRows + [nookRow("f2", .turnFailed)])
     #expect(AgentStatusNookActivityDiff.turnEvents(
         previous: [toolFailure],
         current: [turnFailure]
@@ -964,11 +964,12 @@ private func nookSession(
         .assistant,
         .result,
         .subagent,
-        .failed,
+        .turnFailed,     // error payload: the turn failed, Model lane
     ])
     #expect(presentation.activities.first { $0.tag == .user }?.content == "User message")
     #expect(presentation.activities.first { $0.tag == .result }?.lane == .exec)
-    #expect(presentation.activities.first { $0.tag == .failed }?.level == .l3)
+    #expect(presentation.activities.first { $0.tag == .turnFailed }?.level == .l3)
+    #expect(presentation.activities.first { $0.tag == .turnFailed }?.lane == .model)
     let userActivity = try #require(presentation.activities.first { $0.tag == .user })
     #expect(
         SessionPagePresentationBuilder.rawData(for: userActivity.rawItem)
@@ -1400,25 +1401,25 @@ func macStoreAppliesDaemonEventsInArrivalOrderSoDiscardsWin() async throws {
 }
 
 @Test func activityScrollMapRelatesRowsAndColumnsByIndex() {
-    // Rows: marker 32 (4pt bar), item 40 (cell), TOOL 40 (no cell), item 40 (cell). Top inset 6, gap 4.
+    // Rows: marker 32 (4pt bar), then three item rows of 40 (13pt cells). Top inset 6, gap 4.
     let map = ActivityScrollMap(
-        rows: [(32, 4), (40, 13), (40, nil), (40, 13)],
+        rows: [(32, 4), (40, 13), (40, 13), (40, 13)],
         topInset: 6, spacing: 4
     )
-    #expect(map.rowCount == 4 && map.columnCount == 3)
-    #expect(map.rowOfColumn == [0, 1, 3])
-    // Column lefts: 0 (bar), 8, 25; next 42.
-    #expect(map.columnLefts == [0, 8, 25, 42])
+    #expect(map.rowCount == 4 && map.columnCount == 4)
+    #expect(map.rowOfColumn == [0, 1, 2, 3])
+    // Column lefts: 0 (bar), 8, 25, 42; next 59.
+    #expect(map.columnLefts == [0, 8, 25, 42, 59])
     // Row tops: 6, 38, 78, 118; bottom 158.
     #expect(map.rowIndex(at: 0) == 0 && map.rowIndex(at: 38) == 1 && map.rowIndex(at: 117.9) == 2 && map.rowIndex(at: 999) == 3)
     // Row 0 top edge ↔ column 0; half way down row 1 ↔ half way across column 1 (8 + 8.5).
     #expect(map.stripOffset(forListOffset: 6) == 0)
     #expect(map.stripOffset(forListOffset: 58) == 16.5)
-    // The TOOL row parks on the next cell's column (2) for its whole height.
-    #expect(map.stripOffset(forListOffset: 80) == 25)
-    #expect(map.stripOffset(forListOffset: 117) == 25)
-    // Inverse: column 2 ↔ row 3's top; half way across column 0 (4) ↔ half way down row 0.
-    #expect(map.listOffset(forStripOffset: 25) == 118)
+    // Row tops land on column lefts.
+    #expect(map.stripOffset(forListOffset: 78) == 25)
+    #expect(map.stripOffset(forListOffset: 118) == 42)
+    // Inverse: column 2 ↔ row 2's top; half way across column 0 (4) ↔ half way down row 0.
+    #expect(map.listOffset(forStripOffset: 25) == 78)
     #expect(map.listOffset(forStripOffset: 4) == 22.0)
     // Out of range clamps instead of crashing.
     #expect(map.listOffset(forStripOffset: 1000) == 158.0)

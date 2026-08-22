@@ -97,7 +97,7 @@ import AgentStatusTransport
     #expect(category.title == "Category")
     #expect(category.sections.map(\.id) == ["session", "user", "model", "exec"])
     #expect(category.sections.map(\.title) == ["Session", "User", "Model", "Exec"])
-    // Every tag is listed (14), zero counts included; counts are pre-filter.
+    // Every tag is listed (15), zero counts included; counts are pre-filter.
     #expect(category.options.count == TimelineTag.allCases.count)
     let user = category.sections[1]
     #expect(user.options.map(\.id) == ["user", "contextGroup", "context"])   // CONTEXT ×N appeared before CONTEXT (never)
@@ -106,13 +106,13 @@ import AgentStatusTransport
     #expect(user.options[0].isSelected == false && user.options[1].isSelected == true)
     #expect(user.options[1].leading == .tag(label: "CONTEXT ×N", style: TimelineTag.contextGroup.tagStyle(.light)))
     #expect(user.options[1].name == "Session context")
-    // Model: reasoning → assistant → turnEnd appeared; plan / subagent / aborted trail in table order.
-    #expect(category.sections[2].options.map(\.id) == ["reasoning", "assistant", "turnEnd", "plan", "subagent", "aborted"])
+    // Model: reasoning → assistant → turnEnd appeared; plan / subagent / turnFailed / aborted trail in table order.
+    #expect(category.sections[2].options.map(\.id) == ["reasoning", "assistant", "turnEnd", "plan", "subagent", "turnFailed", "aborted"])
     #expect(category.sections[3].options.map(\.id) == ["tool", "result", "failed"])
-    #expect(category.selectedCount == 13 && category.isFiltered)
+    #expect(category.selectedCount == 14 && category.isFiltered)
     #expect(category.rowHeight == DesignSystem.FilterDropdown.Panel.rowHeight)
-    // 24 header + 4 × 26 sub-group headers + 14 × 28 rows = 520 → capped at 420.
-    #expect(category.contentHeight == 520 && category.panelHeight == 420)
+    // 24 header + 4 × 26 sub-group headers + 15 × 28 rows = 548 → capped at 420.
+    #expect(category.contentHeight == 548 && category.panelHeight == 420)
 
     let importance = filter.importancePanel(counts: counts)
     #expect(importance.sections.count == 1 && importance.sections[0].title == nil)
@@ -130,20 +130,20 @@ import AgentStatusTransport
 }
 
 @Test func activityScrollMapKeepsHiddenRowsColumnsAtZeroHeight() {
-    // Rows: item (cell), hidden item (cell, height 0), hidden TOOL (no cell), item (cell). Top inset 6, gap 4.
+    // Rows: item, two hidden items (height 0, cells kept), item. Top inset 6, gap 4.
     let map = ActivityScrollMap(
-        rows: [(40, 13), (0, 13), (0, nil), (40, 13)],
+        rows: [(40, 13), (0, 13), (0, 13), (40, 13)],
         topInset: 6, spacing: 4
     )
-    #expect(map.rowCount == 4 && map.columnCount == 3)
-    // Row tops: 6, 46, 46, 46; bottom 86. Column lefts: 0, 17, 34; next 51.
-    #expect(map.rowOfColumn == [0, 1, 3])
-    // The hidden row's column maps onto where the next visible row starts.
+    #expect(map.rowCount == 4 && map.columnCount == 4)
+    // Row tops: 6, 46, 46, 46; bottom 86. Column lefts: 0, 17, 34, 51; next 68.
+    #expect(map.rowOfColumn == [0, 1, 2, 3])
+    // A hidden row's column maps onto where the next visible row starts.
     #expect(map.listOffset(forStripOffset: 17) == 46)
     #expect(map.listOffset(forStripOffset: 34) == 46)
     // Past the first row the list is on the last visible row → its column.
-    #expect(map.stripOffset(forListOffset: 46) == 34)
-    #expect(map.stripOffset(forListOffset: 66) == 34 + 8.5)
+    #expect(map.stripOffset(forListOffset: 46) == 51)
+    #expect(map.stripOffset(forListOffset: 66) == 51 + 8.5)
     #expect(map.rowIndex(at: 46) == 3)
 }
 

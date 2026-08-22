@@ -183,24 +183,7 @@ public struct SessionActivityPresentation: Hashable, Sendable, Identifiable {
     /// Anchor item for the raw-JSON inspector; merged rows expose all items.
     public var rawItem: TimelineItem { row.anchor }
     public var rawItems: [TimelineItem] { row.items }
-    public var isFailed: Bool { row.tag == .failed || row.tag == .aborted }
-
-    /// Rows that earn a lane-strip cell. TOOL calls are list-only (their
-    /// RESULT stands for the call in the Exec lane), and Claude's periodic
-    /// `total_tokens_reminder` context is bookkeeping noise in the strip.
-    public var appearsInLaneStrip: Bool {
-        switch row.tag {
-        case .tool:
-            return false
-        case .context:
-            if case let .context(payload) = row.anchor.payload, payload.kind == "total_tokens_reminder" {
-                return false
-            }
-            return true
-        default:
-            return true
-        }
-    }
+    public var isFailed: Bool { row.tag == .failed || row.tag == .turnFailed || row.tag == .aborted }
 }
 
 public struct SessionPagePresentation: Equatable, Sendable {

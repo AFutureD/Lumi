@@ -177,9 +177,9 @@ struct SessionActivityView: View {
         )
     }
 
-    /// Every row of the session is a map row; a row the filter hides keeps
-    /// its strip column but takes no list height, so the two sides stay in
-    /// step around it.
+    /// Every row of the session is a map row and a strip column; a row the
+    /// filter hides keeps its strip column but takes no list height, so the
+    /// two sides stay in step around it.
     private func scrollMap(for activities: [SessionActivityPresentation]) -> ActivityScrollMap {
         let filter = state.filter
         return ActivityScrollMap(
@@ -189,7 +189,7 @@ struct SessionActivityView: View {
                         : activity.lane == nil
                         ? AgentStatusDesign.Layout.activityMarkerRowHeight
                         : AgentStatusDesign.Layout.activityRowHeight,
-                    columnWidth: activity.appearsInLaneStrip ? activity.laneStripColumnWidth : nil
+                    columnWidth: activity.laneStripColumnWidth
                 )
             },
             topInset: DesignSystem.Spacing.s,
@@ -239,7 +239,7 @@ struct SessionActivityView: View {
             if !all.isEmpty {
                 // The strip always shows the full session, filter or not.
                 SessionActivityTimeline(
-                    activities: all.filter(\.appearsInLaneStrip),
+                    activities: all,
                     mode: state.timelineMode,
                     link: state.scrollLink
                 ) { activity in
@@ -405,18 +405,15 @@ private func sessionActivityRowID(for activity: SessionActivityPresentation) -> 
 /// inset, and every strip column has a known left edge (13pt cells, 4pt
 /// marker bars, 4pt gaps), so the two scroll offsets relate through indices,
 /// not proportions: the row at the list's top edge is the column at the
-/// strip's left edge. Rows that have no strip cell (TOOL, bookkeeping
-/// context) map onto the column of the next row that has one, so the mapping
-/// stays monotonic. Within a row / column the offset is interpolated, which
-/// keeps the follower moving smoothly. Pure value type — unit-tested, no
-/// SwiftUI.
+/// strip's left edge. Every row draws a column, so rows and columns pair by
+/// index. Within a row / column the offset is interpolated, which keeps the
+/// follower moving smoothly. Pure value type — unit-tested, no SwiftUI.
 struct ActivityScrollMap: Equatable {
     /// Top edge of each list row, in list content coordinates; one trailing
     /// entry holds the content bottom.
     private(set) var rowTops: [CGFloat] = [0]
-    /// Strip column that stands for each list row (the row's own cell, or the
-    /// next row's when this row draws no cell); one trailing entry holds the
-    /// column count.
+    /// Strip column of each list row; one trailing entry holds the column
+    /// count.
     private(set) var columnOfRow: [Int] = [0]
     /// List row shown by each strip column.
     private(set) var rowOfColumn: [Int] = []
@@ -427,27 +424,23 @@ struct ActivityScrollMap: Equatable {
     init() {}
 
     /// - Parameters:
-    ///   - rows: per list row, `(height, columnWidth)` — `nil` width when the
-    ///     row draws no strip cell.
+    ///   - rows: per list row, `(height, columnWidth)` — 13pt cell or 4pt
+    ///     marker bar.
     ///   - topInset: list content padding above the first row.
     ///   - spacing: gap between strip columns.
-    init(rows: [(height: CGFloat, columnWidth: CGFloat?)], topInset: CGFloat, spacing: CGFloat) {
+    init(rows: [(height: CGFloat, columnWidth: CGFloat)], topInset: CGFloat, spacing: CGFloat) {
         rowTops.reserveCapacity(rows.count + 1)
         columnOfRow.reserveCapacity(rows.count + 1)
         rowTops = [topInset]
         columnOfRow = []
         columnLefts = [0]
-        var column = 0
         for (index, row) in rows.enumerated() {
-            columnOfRow.append(column)
-            if let width = row.columnWidth {
-                rowOfColumn.append(index)
-                columnLefts.append(columnLefts[column] + width + spacing)
-                column += 1
-            }
+            columnOfRow.append(index)
+            rowOfColumn.append(index)
+            columnLefts.append(columnLefts[index] + row.columnWidth + spacing)
             rowTops.append(rowTops[index] + row.height)
         }
-        columnOfRow.append(column)
+        columnOfRow.append(rows.count)
     }
 
     var rowCount: Int { rowTops.count - 1 }
@@ -460,12 +453,7 @@ struct ActivityScrollMap: Equatable {
         let top = rowTops[row], height = rowTops[row + 1] - top
         let progress = height > 0 ? min(max((listOffset - top) / height, 0), 1) : 0
         let column = columnOfRow[row]
-        if columnOfRow[row + 1] > column {
-            // This row draws a cell: interpolate across its column.
-            return columnLefts[column] + progress * (columnLefts[column + 1] - columnLefts[column])
-        }
-        // Parked on the next cell (or the content end).
-        return columnLefts[min(column, columnLefts.count - 1)]
+        return columnLefts[column] + progress * (columnLefts[column + 1] - columnLefts[column])
     }
 
     /// List offset whose top edge shows the row of the column at `stripOffset`.
@@ -672,10 +660,9 @@ struct LaneStripGeometry: Equatable {
 /// a single `Canvas` (one view for the whole strip instead of thousands of
 /// cell views). A cell is filled with the tag's lane colour only in the row's
 /// own lane; rows that span all lanes do not occupy a lane — each lane draws a
-/// 13×4 bar (radius 2) and the column narrows to 4. TOOL calls are list-only
-/// (the caller filters them out): the Exec lane shows results, so a call and
-/// its result do not take two columns. The strip scrolls in step with the
-/// list (and the list with the strip).
+/// 13×4 bar (radius 2) and the column narrows to 4. Every list row has a
+/// column (a TOOL call and its RESULT are two Exec cells). The strip scrolls
+/// in step with the list (and the list with the strip).
 ///
 /// Interaction: only filled cells are targets — the pointer becomes a hand
 /// and the cell gets a hover ring; clicking one scrolls the list to its row.

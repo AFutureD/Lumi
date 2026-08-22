@@ -90,7 +90,7 @@ enum ActivityDetailPresentationBuilder {
                 sections.append(ActivityDetailSection(title: "Plan", text: planText(row), isMonospaced: false))
             case .subagent:
                 sections.append(ActivityDetailSection(title: "Subagent", text: row.text, isMonospaced: false))
-            case .failed, .aborted:
+            case .failed, .turnFailed, .aborted:
                 sections.append(ActivityDetailSection(title: "Error", text: row.text, isMonospaced: true))
             case .turnEnd:
                 sections.append(ActivityDetailSection(title: "Turn", text: row.text, isMonospaced: false))

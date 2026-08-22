@@ -4,7 +4,7 @@ import AgentStatusTransport
 import Foundation
 
 // Activity filter (macOS handoff `design_handoff_macos_activity_filter`): two
-// FilterDropdowns in the Activity header — **Category** (the 14 message tags,
+// FilterDropdowns in the Activity header — **Category** (the 15 message tags,
 // grouped by lane Session / User / Model / Exec) and **Importance** (L3 / L2 /
 // L1). A row shows when its tag is selected *and* its level is selected
 // (intersection); inside a dimension the selection is a union. A dimension
@@ -58,7 +58,7 @@ enum ActivityCategoryGroup: String, Hashable, Sendable, CaseIterable {
         switch self {
         case .session: [.session, .compact]
         case .user: [.user, .context, .contextGroup]
-        case .model: [.reasoning, .assistant, .plan, .subagent, .turnEnd, .aborted]
+        case .model: [.reasoning, .assistant, .plan, .subagent, .turnEnd, .turnFailed, .aborted]
         case .exec: [.tool, .result, .failed]
         }
     }
@@ -158,10 +158,11 @@ extension TimelineTag {
         case .plan: "Plan"
         case .subagent: "Subagent"
         case .turnEnd: "Turn end"
+        case .turnFailed: "Turn failure"
         case .aborted: "Interrupted"
         case .tool: "Tool call"
         case .result: "Tool result"
-        case .failed: "Failure"
+        case .failed: "Tool failure"
         }
     }
 

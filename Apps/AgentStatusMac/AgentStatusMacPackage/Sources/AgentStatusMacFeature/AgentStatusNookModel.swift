@@ -342,11 +342,10 @@ enum AgentStatusNookActivityDiff {
                     events.append(.init(sessionID: session.id, kind: .started, row: row))
                 case .turnEnd:
                     events.append(.init(sessionID: session.id, kind: .ended, row: row))
-                case .failed, .aborted:
-                    // A failed row carrying a toolUseID is one tool call going
-                    // wrong mid-turn — routine, recoverable noise. Only
-                    // turn-level failures and aborts notify.
-                    guard row.toolUseID == nil else { break }
+                case .turnFailed, .aborted:
+                    // A failed tool call (`.failed`, Exec lane) is routine,
+                    // recoverable mid-turn noise; only turn-level failures
+                    // and aborts notify.
                     events.append(.init(sessionID: session.id, kind: .failed, row: row))
                 default:
                     break

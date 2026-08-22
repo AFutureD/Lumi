@@ -175,7 +175,7 @@ public extension TimelineTag {
     /// Hue of the tag (`4.3 消息类别`): Neutral SESSION · COMPACT · CONTEXT ·
     /// CONTEXT ×N (L1); Blue REASONING (L1) · ASSISTANT (L2) · TURN END (L3);
     /// Yellow TOOL (L1) · RESULT (L2); Purple PLAN (L2); Orange SUBAGENT (L2);
-    /// Green USER (L3); Red FAILED · ABORTED (L3).
+    /// Green USER (L3); Red FAILED (tool · turn) · ABORTED (L3).
     var hue: DesignHue {
         switch self {
         case .session, .compact, .contextGroup, .context: .neutral
@@ -185,7 +185,7 @@ public extension TimelineTag {
         case .subagent: .orange
         case .assistant, .turnEnd: .blue
         case .user: .green
-        case .failed, .aborted: .red
+        case .failed, .turnFailed, .aborted: .red
         }
     }
 

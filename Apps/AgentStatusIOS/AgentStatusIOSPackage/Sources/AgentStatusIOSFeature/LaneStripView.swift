@@ -3,10 +3,11 @@ import AgentStatusDesignSystem
 import AgentStatusTransport
 import UIKit
 
-/// Three lanes — Input / Tools / Model — one 12px cell column per Activity
-/// row, coloured in the row's own lane (L1 neutral / L2 pale / L3 solid),
-/// blank elsewhere. Cross-lane rows draw a 4px bar through every lane.
-/// Tapping a column reports the index into the strip's activities.
+/// Three lanes — User / Model / Exec, the Mac's order — one 12px cell column
+/// per Activity row (every row has one), coloured in the row's own lane (L1
+/// neutral / L2 pale / L3 solid), blank elsewhere. Cross-lane rows draw a 4px
+/// bar through every lane. Tapping a column reports the index into the
+/// strip's activities.
 final class LaneStripView: UIView, UIScrollViewDelegate {
     var onSelect: ((Int) -> Void)?
     /// The user panned the strip: index of the activity whose column is now
@@ -24,7 +25,7 @@ final class LaneStripView: UIView, UIScrollViewDelegate {
         names.alignment = .trailing
         names.spacing = lane.gap
         names.translatesAutoresizingMaskIntoConstraints = false
-        for title in ["Input", "Tools", "Model"] {
+        for title in TimelineLane.allCases.map(\.title) {
             let label = UILabel()
             label.font = .design(IOSDS.Typography.laneName)
             label.textColor = .secondaryLabel
@@ -74,9 +75,8 @@ final class LaneStripView: UIView, UIScrollViewDelegate {
 
     func configure(activities: [SessionActivityPresentation]) {
         let wasAtEnd = scrollView.contentOffset.x >= scrollView.contentSize.width - scrollView.bounds.width - 1
-        canvas.columns = activities.enumerated().compactMap { index, activity in
-            guard activity.appearsInLaneStrip else { return nil }
-            return LaneCanvasView.Column(activityIndex: index, lane: activity.lane, color: UIColor(activity.tag.laneCellColor))
+        canvas.columns = activities.enumerated().map { index, activity in
+            LaneCanvasView.Column(activityIndex: index, lane: activity.lane, color: UIColor(activity.tag.laneCellColor))
         }
         layoutIfNeeded()
         if wasAtEnd || scrollView.contentSize.width <= scrollView.bounds.width {
@@ -143,12 +143,9 @@ final class LaneCanvasView: UIView {
         return CGSize(width: max(0, width), height: lane.cell * 3 + lane.gap * 2)
     }
 
+    /// Strip row of a lane: `TimelineLane.allCases` order, top to bottom.
     private func row(for lane: TimelineLane) -> Int {
-        switch lane {
-        case .user: 0
-        case .exec: 1
-        case .model: 2
-        }
+        TimelineLane.allCases.firstIndex(of: lane)!
     }
 
     override func draw(_ rect: CGRect) {
