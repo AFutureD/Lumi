@@ -39,7 +39,7 @@ Your job is trying to add documents in this swift package project.
 
 ### What it contains
 
-- The product name in English and Chinese, and how to write them together.
+- The product name (English only) and how to write it inside Chinese text.
 - The one metaphor the product is built on, and the instruction never to mix in another.
 - The user-facing name of each part of the product (background service, reporter, cross-device transport, notch display).
 - Session status words — the vocabulary users rely on to decide whether to go look.
