@@ -10,7 +10,7 @@ private func healthReporting(_ hash: String?) -> DaemonHealth {
         uptimeSeconds: 1,
         activeSessionCount: 0,
         retainedSessionCount: 0,
-        socketPath: "/tmp/agent-status.sock",
+        socketPath: "/tmp/lumi.sock",
         relayConnected: false
     )
 }

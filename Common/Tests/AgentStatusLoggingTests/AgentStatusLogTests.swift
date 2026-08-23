@@ -4,7 +4,7 @@ import Testing
 @testable import AgentStatusLogging
 
 private func temporaryDirectory() -> URL {
-    FileManager.default.temporaryDirectory.appendingPathComponent("agent-status-log-\(UUID().uuidString)", isDirectory: true)
+    FileManager.default.temporaryDirectory.appendingPathComponent("lumi-log-\(UUID().uuidString)", isDirectory: true)
 }
 
 private func lines(of url: URL) throws -> [String] {

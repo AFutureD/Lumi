@@ -8,7 +8,7 @@ import Testing
 
 @Test func serviceIngestsAndListsSessions() async throws {
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash")
+    let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
     let event = AgentIngressEvent(
         eventID: EventID("event"),
         sessionID: SessionID("session"),
@@ -31,7 +31,7 @@ import Testing
 
 @Test func serviceDeletesOneSessionAndRejectsItsLateEvents() async throws {
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash")
+    let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
     let sessionID = SessionID("session-to-delete")
     let event = AgentIngressEvent(
         eventID: EventID("first-event"),
@@ -70,7 +70,7 @@ import Testing
         if case let .event(event) = message { capture.append(event) }
     }
     defer { hub.unsubscribe(subscriptionID) }
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash", subscriptions: hub)
+    let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash", subscriptions: hub)
     let ghost = SessionID("ghost")
     let start = AgentIngressEvent(
         eventID: EventID("ghost-start"), sessionID: ghost, agent: .claude,
@@ -147,7 +147,7 @@ import Testing
 
 @Test func listPlusPagedGetSessionReassemblesEverySession() async throws {
     let repository = InMemorySessionRepository()
-    let service = DaemonService(repository: repository, socketPath: "/tmp/agent-status.sock", executableHash: "test-hash")
+    let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
     let date = Date(timeIntervalSince1970: 1_700_000_000)
 
     // Two sessions, one of them wider than a single page.
@@ -271,7 +271,7 @@ import Testing
 
 @Test func rolloutWatcherResumesFromPersistedOffset() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-rollout-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-rollout-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let rollout = directory.appendingPathComponent("rollout.jsonl")
@@ -303,7 +303,7 @@ import Testing
 
 @Test func rolloutWatcherSkipsForkedParentHistoryUntilSubagentTrigger() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-subagent-rollout-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-subagent-rollout-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let rollout = directory.appendingPathComponent("rollout.jsonl")
@@ -385,7 +385,7 @@ import Testing
 
 @Test func rolloutWatcherSynchronizesCodexTitlesAndSubagentIdentity() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-title-sync-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-title-sync-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = InMemorySessionRepository()
@@ -447,7 +447,7 @@ import Testing
 
 @Test func firstRunBaselineIgnoresExistingSessionsAndRecordsNewFiles() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-baseline-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-baseline-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let existing = directory.appendingPathComponent("existing.jsonl")
@@ -532,7 +532,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     let repository = InMemorySessionRepository()
     let service = DaemonService(
         repository: repository,
-        socketPath: "/tmp/agent-status.sock",
+        socketPath: "/tmp/lumi.sock",
         executableHash: "test-hash",
         reingester: SessionReingester(repository: repository, homeDirectory: home)
     )
@@ -563,7 +563,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
 // must leave parked sessions alone.
 @Test func claudeWatcherIngestsInterruptAndTitleWrittenAfterTheLastHook() async throws {
     let home = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-claude-watcher-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-claude-watcher-\(UUID().uuidString)", isDirectory: true)
     let projectDir = home.appendingPathComponent(".claude/projects/-tmp-project", isDirectory: true)
     try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: home) }

@@ -19,7 +19,7 @@ if [[ "${configuration}" == "Release" ]]; then
 fi
 
 products=(Lumen Spark)
-temporary_root="${DERIVED_FILE_DIR}/AgentStatusEmbeddedServices"
+temporary_root="${DERIVED_FILE_DIR}/LumiEmbeddedServices"
 resource_destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 launch_agent_destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchAgents"
 

@@ -146,7 +146,7 @@ import Testing
 
 @Test func grdbRepositoryPersistsTimelineUntilManualDeletion() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let path = directory.appendingPathComponent("sessions.sqlite3").path
     let repository = try SQLiteSessionRepository(path: path)
@@ -185,7 +185,7 @@ import Testing
 
 @Test func grdbRepositoryPersistsRetainedSessionDiagnostics() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-diagnostics-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-diagnostics-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
     let sessionID = SessionID("diagnostics-session")
@@ -265,7 +265,7 @@ import Testing
 
 @Test func grdbRepositoryReadsCurrentTurnUserMessagesWithoutLoadingFullDetails() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-current-message-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-current-message-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(
         path: directory.appendingPathComponent("sessions.sqlite3").path
@@ -316,7 +316,7 @@ import Testing
 
 @Test func grdbRepositoryDeletesOneSessionAndKeepsItDeleted() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-delete-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-delete-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
     let deletedID = SessionID("deleted")
@@ -370,7 +370,7 @@ import Testing
 
 @Test func grdbRepositoryDeletesTheLineageSubtreeWithTheParent() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-cascade-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-cascade-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
     try await seedLineageFixture(repository)
@@ -423,7 +423,7 @@ private func seedLineageFixture(_ repository: some SessionRepository) async thro
 
 @Test func grdbRepositoryKeepsNotchArchiveUntilTheHumanReEngages() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-notch-archive-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-notch-archive-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
     let sessionID = SessionID("archived")
@@ -458,7 +458,7 @@ private func seedLineageFixture(_ repository: some SessionRepository) async thro
 
 @Test func grdbRepositoryReplacesOneSessionAndPrunesToAnIndex() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-replace-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-replace-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("cache.sqlite3").path)
     let first = SessionDetail(summary: summary(id: "first", updatedAt: 1), timeline: [])
@@ -607,7 +607,7 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
 
 @Test func grdbRepositoryDiscardsAndTombstonesWithoutReplayResurrection() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-discard-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-discard-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("sessions.sqlite3").path)
     try await assertDiscardSemantics(repository)
@@ -615,7 +615,7 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
 
 @Test func grdbSessionReplaceClearsOnlyItsOwnClientTombstone() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-replace-tombstone-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-replace-tombstone-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = try SQLiteSessionRepository(path: directory.appendingPathComponent("cache.sqlite3").path)
     let ghost = SessionID("ghost")
@@ -647,7 +647,7 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
 
 @Test func grdbMigrationSweepsEmptyCompletedClaudeSessionsOnly() async throws {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-sweep-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-sweep-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let path = directory.appendingPathComponent("sessions.sqlite3").path
     let ghost = SessionID("ghost")

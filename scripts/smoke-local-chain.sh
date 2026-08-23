@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 cli_root="${repo_root}/CLI"
-smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/agent-status-smoke.XXXXXX")"
+smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/lumi-smoke.XXXXXX")"
 daemon_pid=""
 
 cleanup() {
