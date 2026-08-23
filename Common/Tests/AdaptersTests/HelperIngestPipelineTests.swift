@@ -117,6 +117,8 @@ private func hook(_ fields: [String: Any]) -> Data {
         ["type": "user", "uuid": "u2", "sessionId": session, "timestamp": "2026-08-18T14:35:31.000Z",
          "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "toolu_1", "content": "a\nb", "is_error": false]]],
          "toolUseResult": ["stdout": "a\nb"]],
+        ["type": "attachment", "uuid": "at1", "sessionId": session, "timestamp": "2026-08-18T14:35:32.000Z",
+         "attachment": ["type": "auto_mode", "bypass": true, "steerOnly": true]],
         ["type": "assistant", "uuid": "a2", "sessionId": session, "timestamp": "2026-08-18T14:35:33.000Z",
          "message": ["role": "assistant", "model": "claude-opus-4-7", "content": [["type": "text", "text": "Two files."]]]],
     ]
@@ -139,13 +141,15 @@ private func hook(_ fields: [String: Any]) -> Data {
 
     let rows = TimelineProjection.rows(from: detail.timeline)
     let tags = rows.map(\.tag)
-    #expect(tags == [.user, .context, .reasoning, .tool, .result, .assistant, .turnEnd] || tags == [.context, .user, .reasoning, .tool, .result, .assistant, .turnEnd])
+    #expect(tags == [.user, .context, .reasoning, .tool, .result, .config, .assistant, .turnEnd] || tags == [.context, .user, .reasoning, .tool, .result, .config, .assistant, .turnEnd])
+    // auto_mode is a run-mode attachment: CONFIG, spanning the lanes.
+    #expect(rows.first { $0.tag == .config }?.spansLanes == true)
     #expect(rows.filter { $0.tag == .tool }.count == 1)
     #expect(rows.filter { $0.tag == .result }.count == 1)
     #expect(rows.first { $0.tag == .result }?.toolUseID == "toolu_1")
     #expect(rows.first { $0.tag == .result }?.text.hasPrefix("Bash") == true)
     #expect(rows.first { $0.tag == .assistant }?.status == .succeeded)
-    #expect(rows.allSatisfy { $0.tag == .context || $0.turnID == TurnID(prompt) })
+    #expect(rows.allSatisfy { $0.tag == .context || $0.tag == .config || $0.turnID == TurnID(prompt) })
 
     // Nothing new: cursor at end, no extra events beyond the hook.
     let before = port.ingested.count
@@ -200,9 +204,10 @@ private func hook(_ fields: [String: Any]) -> Data {
     #expect(detail.turns[0].toolCallCount == 2)
 
     let rows = TimelineProjection.rows(from: detail.timeline)
-    #expect(rows.map(\.tag) == [.session, .contextGroup, .context, .user, .reasoning, .tool, .result, .tool, .failed, .assistant, .turnEnd])
+    #expect(rows.map(\.tag) == [.session, .context, .config, .user, .reasoning, .tool, .result, .tool, .failed, .assistant, .turnEnd])
     #expect(rows[0].spansLanes)
     #expect(rows[1].count == 1)          // base instructions (model configuration is header metadata)
+    #expect(rows[2].spansLanes)          // turn_context is configuration
     #expect(rows[5].toolUseID == "call_1" && rows[6].toolUseID == "call_1")
     #expect(rows[6].text.contains("exec"))
     #expect(rows[8].tag == .failed && rows[8].toolUseID == "call_2")

@@ -263,7 +263,6 @@ import Testing
     }
     #expect(reasoningPayload.text == "Let me look")
     #expect(worldStatePayload.kind == "world_state")
-    #expect(worldStatePayload.scope == .turn)
     #expect(worldStateEvents.first?.timelineItem?.id != worldStateDeltaEvents.first?.timelineItem?.id)
 }
 
@@ -289,7 +288,7 @@ import Testing
     })
     #expect(sessionEvents.contains {
         guard case let .context(context)? = $0.timelineItem?.payload else { return false }
-        return context.scope == .session && context.kind == "base_instructions"
+        return context.kind == "base_instructions"
     })
 
     let completionLine = Data("""

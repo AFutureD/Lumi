@@ -172,13 +172,13 @@ public extension DesignHue {
 // MARK: - Timeline tags → hue + tier
 
 public extension TimelineTag {
-    /// Hue of the tag (`4.3 消息类别`): Neutral SESSION · COMPACT · CONTEXT ·
-    /// CONTEXT ×N (L1); Blue REASONING (L1) · ASSISTANT (L2) · TURN END (L3);
+    /// Hue of the tag (`4.3 消息类别`): Neutral SESSION · COMPACT · CONFIG ·
+    /// CONTEXT (L1); Blue REASONING (L1) · ASSISTANT (L2) · TURN END (L3);
     /// Yellow TOOL (L1) · RESULT (L2); Purple PLAN (L2); Orange SUBAGENT (L2);
     /// Green USER (L3); Red FAILED (tool · turn) · ABORTED (L3).
     var hue: DesignHue {
         switch self {
-        case .session, .compact, .contextGroup, .context: .neutral
+        case .session, .compact, .config, .context: .neutral
         case .reasoning: .blue
         case .tool, .result: .yellow
         case .plan: .purple

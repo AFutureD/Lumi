@@ -71,7 +71,7 @@ Turn phase 转换集中在 Helper 的 `TurnStateMachine`：`submitted →thinkin
 ```
 TimelineRow { id, sessionId, occurredAt, tag: Tag, level: L1|L2|L3, lane: Lane?, content, status: ItemStatus,
               toolUseId?, agentId?, seen: Bool, expandable: Bool }
-enum Lane { user, model, exec }        // nil = 横跨（只有 SESSION / COMPACT；CONTEXT ×N 在 User 泳道）
+enum Lane { user, model, exec }        // nil = 横跨（SESSION / COMPACT / CONFIG；CONTEXT 在 User 泳道）
 enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 ```
 
@@ -81,9 +81,9 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 |---|---|---|---|
 | `SESSION` | L1 | 横跨 | 会话开始 / 会话结束 |
 | `COMPACT` | L1 | 横跨 | 上下文压缩 |
-| `CONTEXT ×N` | L1 | User | 会话上下文（相邻多条合并，可展开）。设计稿原定横跨三泳道，实现改为只占 User 泳道：任何作用域的上下文都是喂给模型的输入，横跨只留给 SESSION / COMPACT。合并行在列表是一行（chip 标 ×N）、在 lane strip 是一格——同文本 REASONING 去重、同 agentId SUBAGENT 原地更新同理 |
+| `CONFIG` | L1 | 横跨 | 配置：Agent 怎么跑（设置文件、工作目录、每轮的 model / effort / sandbox）。2026-08-24 起替代原 `CONTEXT ×N`：配置不是喂给模型的输入，横跨三泳道与 SESSION / COMPACT 同组 |
 | `USER` | **L3** | User | 用户输入 —— **Turn 起点** |
-| `CONTEXT` | L1 | User | 本轮注入上下文 |
+| `CONTEXT` | L1 | User | 注入上下文（指令文件、附件、system reminder、压缩摘要——模型读到的、非用户键入的内容）。2026-08-24 起不再分 session / turn 两档，也不再相邻合并成 ×N；同文本 REASONING 去重、同 agentId SUBAGENT 原地更新保持不变 |
 | `REASONING` | L1 | Model | 思考（蓝色系 L1：透明底、蓝字 `#0069D7`，不再紫色；交接稿 README 写的"统一灰字"以设计系统 §4.3 为准）。Codex 每个新的 reasoning item 会把本 turn 已有的 summary 标题再发一遍（`event_msg.agent_reasoning` A、B，然后 A、B、C…），投影按 turn 去重：同一 turn 内同文本只保留首行，后续记录并入该行的 items。空文本（Claude 只写 signature 的 `thinking` block）显示为 `Empty`，每条自成一行、不参与去重 |
 | `ASSISTANT` | L2 | Model | 助手回复（Agent 蓝的 L2 淡色） |
 | `PLAN` | L2 | Model | 计划（PLAN 紫的 L2 淡色） |
@@ -113,9 +113,9 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 |---|---|
 | SessionStarted / SessionEnded | `SESSION`(横跨, info) |
 | CompactionBegan+Ended | `COMPACT`(横跨, running→succeeded) |
-| SessionContext ×N | `CONTEXT ×N`(User, 合并) |
+| sessionConfig（ConfigChange / CwdChanged / turn_context / thread_settings） | `CONFIG`(横跨, L1) |
 | userPrompt | `USER`(User, L3) |
-| turnContext | `CONTEXT`(User, L1) |
+| context（instructions / attachment / reminder / world_state …） | `CONTEXT`(User, L1) |
 | assistantThinking | `REASONING`(Model, L1) |
 | assistantText | `ASSISTANT`(Model, L2)；turnStopped 后末条 status=succeeded |
 | assistantPlan | `PLAN`(Model, L2) |
@@ -153,7 +153,7 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 ### E.2 Daemon（`Common/Sources/Core/SQLiteSessionRepository.swift`, `SessionRepository.swift`, `DaemonRuntime/`）
 - schema：`turns(session_id, turn_id, idx, phase, started_at, ended_at, prompt)`、`turn_messages(id, session_id, turn_id, occurred_at, tool_use_id?, agent_id?, kind, payload)`、`session_messages(...)`。
 - `SessionReduction` 直接接收 lifecycle/phase；`SessionDetail` 返回 turns + messages；`CodexRolloutWatcher` 退役（feature flag 保留一版）。
-- `TimelineProjection`（Common）：A → `[TimelineRow]`，含合并 CONTEXT ×N、SUBAGENT 原地更新、TURN END 追加、FAILED 升级。
+- `TimelineProjection`（Common）：A → `[TimelineRow]`，含 SUBAGENT 原地更新、TURN END 追加、FAILED 升级。
 
 ### E.3 Mac 主窗口（`SessionDetailPresentation.swift`, `SessionActivityView.swift`, `Design.swift`, `SessionListViewController.swift`）
 - 行模型换 `TimelineRow`；Tag chip 三级样式 + 类目色 token 进 `Design.swift`；去掉 status-dot 列；lane strip 三行改读 `lane`。
@@ -183,8 +183,8 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 | A 层 Session / Turn 模型 | `Transport`：`SessionLifecycle` +`compacting`；`TurnPhase` +`subagentRunning`/`compacting`；新增 `TurnSummary`/`TurnOutcome`；`SessionDetail.turns`；`AgentKind` +`claude`/`claudeSubagent` | 增量式扩展，旧数据可解码 |
 | A 层消息 | `TimelinePayload` 新增 `.reasoning` `.context(scope: session|turn)` `.sessionMarker` `.turnEnd`；`ToolTimelinePayload.toolUseID` | 保留 `.modelConfiguration`/`.usageMetrics`/`.internalContext` 作为元数据或历史数据 |
 | daemon 表 `turns / turn_messages / session_messages` | 只新增 `turns` 表；消息仍存 `timeline`（Session 级消息 `turnID == nil`） | 语义相同、迁移更小 |
-| A→B `TimelineProjection` | `Transport/TimelineProjection.swift`（`TimelineTag`/`TimelineLane`/`TimelineAttentionLevel`/`TimelineRow`） | 含 CONTEXT ×N 合并、SUBAGENT 原地更新、TURN END 追加并把末条 ASSISTANT 标为 succeeded、RESULT 从配对 TOOL 补名、同时间戳排序 marker→context→user→其他 |
-| `.modelConfiguration` → CONTEXT ×N | **不显示为行**（页头 Model 区仍读取） | Claude transcript 每条 assistant 都会重发模型配置，作为行会落在 Turn 中间 |
+| A→B `TimelineProjection` | `Transport/TimelineProjection.swift`（`TimelineTag`/`TimelineLane`/`TimelineAttentionLevel`/`TimelineRow`） | 含 SUBAGENT 原地更新、TURN END 追加并把末条 ASSISTANT 标为 succeeded、RESULT 从配对 TOOL 补名、同时间戳排序 marker→context→user→其他 |
+| `.modelConfiguration` → 行 | **不显示为行**（页头 Model 区仍读取）；行级配置另走 `.config` | Claude transcript 每条 assistant 都会重发模型配置，作为行会落在 Turn 中间 |
 | Helper `AgentDomainReducer` | `HelperIngestPipeline` + `CodexAdapter`/`ClaudeAdapter`（`Common/Adapters`），`HelperDaemonPort` 抽象 | 状态机体现在两个 Adapter 的映射表 + daemon `SessionReduction`/`TurnReduction` |
 | rollout 迁入 Helper、cursor 走 IPC | 已实现；`ingest_batch`、`get/save_rollout_cursor` | daemon `CodexRolloutWatcher` 保留，`LUMI_ROLLOUT_WATCHER=1` 开启，默认关 |
 | 权限不进 Timeline | `PermissionRequest` 只置 lifecycle/phase | — |
@@ -198,6 +198,7 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 | 三端一致性修订（2026-08-22 追加） | `SessionHierarchy`（Core）统一父子分组：任意深度的子 Agent 并入最上层被列出的祖先，Mac 主窗口 / Notch / iPhone 子项都按 running → waiting → failed → done；`TransportCoding` 日期带毫秒；删除 `AgentKind` / `SessionLifecycle` / `TurnPhase` / `IPCOperation` / `RelayFrameKind` / `RemotePayloadKind` / `TimelinePayload` 的 `.unknown` 兜底（未知值 = 解码错误）；daemon 本地流新增 `summary` 帧，iPhone 的已查看经它到达 Mac 窗口与 Notch；`reingest_session` 跳过已删除子 Agent并把重建结果推给 iPhone；iOS 隐藏会话规则统一为“daemon 的副本更新（`updatedAt` 更新）才回来”，并继续写入缓存；iOS `cache.apply` 进入写队列 | 之前 iOS / Notch 丢孙级子 Agent、同秒记录按 id 排序、iPhone 已查看不回 Mac、隐藏会话三条路径规则不一 |
 | 列表 ↔ 泳道分类对齐（2026-08-22 追加） | `TimelineTag` 新增 `.turnFailed`（FAILED chip、Model 泳道、L3）：`turnEnd(.failed)` 与非中断 `.error` 映射到它，`.failed` 只剩工具失败（Exec）；删除 `SessionActivityPresentation.appearsInLaneStrip`——每行一格，Mac `ActivityScrollMap` 行列按下标配对，TOOL / `total_tokens_reminder` 进 strip；iPhone lane strip 改读 `TimelineLane.allCases`（User / Model / Exec，与 Mac 同名同序，不再是 Input / Tools / Model）；Mac Category 过滤 Model 组加 "Turn failure"，Exec 组 "Failure" 改名 "Tool failure"；Notch 只对 `.turnFailed` / `.aborted` 推失败 toast | 之前 Turn 级失败画在 Exec 泳道、列表有行而 strip 无格、两端泳道中间一行含义相反；SUBAGENT 维持 Model（iOS 交接稿的 tools 泳道不采用）；TOOL 维持 L1（本稿 B.1 原写 L2，以设计系统 §4.3 与代码为准）|
 | 工具失败降为 L2（2026-08-24 追加） | `TimelineTag.failed.level` L3 → L2：chip 变红色淡底（`DesignHue.red` L2 tint）、泳道格变 `red.s200`，Importance 面板里归入 Process 档；`.turnFailed` / `.aborted` 维持 L3 | 失败与中断的区分：工具失败是过程（回合还在继续），回合失败 / 中断是阶段终点；设计档案 `DESIGN SYSTEM.html` 未改（只在同步设计文件时更新），下次同步时把工具 FAILED 行改为 L2 淡底 |
+| CONTEXT 合并为单档 + 新增 CONFIG（2026-08-24 追加） | `ContextTimelinePayload` 去掉 `scope`（上下文一律 turn 级、不再合并 ×N，`CONTEXT ×N` chip 退役）；新增 `.config`/`ConfigTimelinePayload` → `CONFIG` tag（L1、横跨，Category 面板 Session 组）：Claude `ConfigChange`/`CwdChanged` 与 transcript attachment 里的运行模式（`auto_mode`/`plan_mode`/`plan_mode_exit`/`command_permissions`）、Codex `turn_context`/`thread_settings_applied` 归它；`InstructionsLoaded`、`base_instructions`、attachment、reminder 等仍是 `CONTEXT`（User 泳道）；同时 Claude 停装 `UserPromptExpansion` hook（18 个事件） | 配置是"Agent 怎么跑"，上下文是"模型读什么"；`internalContext` 不再按 kind 提升为会话级 |
 | 泳道跟随过滤（2026-08-24 追加） | Mac `SessionActivityView` 把过滤后的行同时喂给列表和 `SessionActivityTimeline`，`ActivityScrollMap` 只按可见行建（不再有 0 高度行），`ActivityScrollLink.rowsDidRefilter()` 让下一次列表几何报告把 strip 对齐到顶部行；iPhone 无 Activity 过滤，strip 本就每行一格 | 之前 Mac strip 始终画全量、被过滤掉的行保留格子但 0 高度，点格子落到“最近可见行”；现在列表有几行 strip 就有几格，两端一致 |
 
 验证：Transport 16 / Common 25 / CLI 10 / Mac 21 项测试通过；`xcodebuild` LumiMac 与 IOSFeature 构建成功；用真实 Claude transcript 走 daemon+helper 端到端得到 2 个 Turn、11 对 TOOL/RESULT、标题来自 `custom-title`。

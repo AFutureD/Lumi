@@ -48,26 +48,27 @@ private func item(
     #expect(rows[0].lane == .exec)
 }
 
-@Test func adjacentSessionContextMergesIntoContextGroup() {
+@Test func contextStaysOneRowPerItemAndConfigSpansLanes() {
     let rows = TimelineProjection.rows(from: [
-        item("c1", 0, turnID: nil, .context(ContextTimelinePayload(scope: .session, kind: "instructions", summary: "CLAUDE.md"))),
-        item("c2", 1, turnID: nil, .context(ContextTimelinePayload(scope: .session, kind: "model_configuration", summary: "gpt-5"))),
-        item("c3", 2, turnID: nil, .context(ContextTimelinePayload(scope: .session, kind: "cwd", summary: "/tmp"))),
+        item("c1", 0, turnID: nil, .context(ContextTimelinePayload(kind: "instructions", summary: "CLAUDE.md"))),
+        item("c2", 1, turnID: nil, .context(ContextTimelinePayload(kind: "base_instructions", summary: "Base instructions"))),
+        item("k1", 2, turnID: nil, .config(ConfigTimelinePayload(kind: "cwd_changed", summary: "/tmp"))),
         item("hidden", 2, turnID: nil, .modelConfiguration(ModelConfigurationTimelinePayload(source: "x", model: "gpt-5", settings: .null))),
         item("u", 3, .message(MessageTimelinePayload(role: .user, text: "hi"))),
-        item("c4", 4, .context(ContextTimelinePayload(scope: .turn, kind: "system_reminder", summary: "reminder"))),
+        item("c4", 4, .context(ContextTimelinePayload(kind: "system_reminder", summary: "reminder"))),
     ])
-    #expect(rows.count == 3)
-    #expect(rows[0].tag == .contextGroup)
-    #expect(rows[0].count == 3)
-    #expect(rows[0].label == "CONTEXT ×3")
-    #expect(!rows[0].spansLanes)
+    #expect(rows.count == 5)
+    #expect(rows[0].tag == .context && rows[1].tag == .context)
+    #expect(rows.allSatisfy { $0.count == 1 })
     #expect(rows[0].lane == .user)
-    #expect(rows[0].items.count == 3)
-    #expect(rows[1].tag == .user)
-    #expect(rows[2].tag == .context)
-    #expect(rows[2].lane == .user)
+    #expect(rows[2].tag == .config)
+    #expect(rows[2].label == "CONFIG")
+    #expect(rows[2].spansLanes)
     #expect(rows[2].level == .l1)
+    #expect(rows[3].tag == .user)
+    #expect(rows[4].tag == .context)
+    #expect(rows[4].lane == .user)
+    #expect(rows[4].level == .l1)
 }
 
 @Test func subagentUpdatesInPlaceByAgentID() {
@@ -138,7 +139,8 @@ private func item(
 @Test func newPayloadsRoundTripThroughCoding() throws {
     let payloads: [TimelinePayload] = [
         .reasoning(ReasoningTimelinePayload(text: "t")),
-        .context(ContextTimelinePayload(scope: .turn, kind: "attachment", summary: "a", content: .string("x"))),
+        .context(ContextTimelinePayload(kind: "attachment", summary: "a", content: .string("x"))),
+        .config(ConfigTimelinePayload(kind: "config_change", summary: "settings.json", content: .string("x"))),
         .sessionMarker(SessionMarkerTimelinePayload(kind: .compactionStarted, detail: "manual")),
         .turnEnd(TurnEndTimelinePayload(outcome: .aborted, message: "user")),
         .tool(ToolTimelinePayload(name: "Bash", status: .started, toolUseID: "id")),

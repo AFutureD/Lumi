@@ -152,19 +152,6 @@ public struct ClaudeAdapter: AgentAdapter {
                 itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) }
             )]
 
-        case "UserPromptExpansion":
-            guard let expanded = root.string("expanded_prompt") else { return [] }
-            return [event(
-                lifecycle: .running,
-                phase: .thinking,
-                timeline: .context(ContextTimelinePayload(
-                    scope: .turn,
-                    kind: "command_expansion",
-                    summary: ["/" + (root.string("command_name") ?? "command"), AdapterText.excerpt(expanded)].compactMap { $0 }.joined(separator: " · "),
-                    content: .string(expanded)
-                ))
-            )]
-
         case "PreToolUse":
             return [event(
                 lifecycle: .running,
@@ -305,7 +292,6 @@ public struct ClaudeAdapter: AgentAdapter {
             let path = root.string("file_path") ?? "instructions"
             return [event(
                 timeline: .context(ContextTimelinePayload(
-                    scope: .session,
                     kind: "instructions",
                     summary: [URL(fileURLWithPath: path).lastPathComponent, root.string("load_reason")].compactMap { $0 }.joined(separator: " · "),
                     content: .string(path)
@@ -316,8 +302,7 @@ public struct ClaudeAdapter: AgentAdapter {
         case "ConfigChange":
             let path = root.string("file_path") ?? ""
             return [event(
-                timeline: .context(ContextTimelinePayload(
-                    scope: .session,
+                timeline: .config(ConfigTimelinePayload(
                     kind: "config_change",
                     summary: [root.string("source"), URL(fileURLWithPath: path).lastPathComponent].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
                     content: .string(path)
@@ -338,8 +323,7 @@ public struct ClaudeAdapter: AgentAdapter {
                     sessionID: sessionID,
                     turnID: turnID,
                     occurredAt: occurredAt,
-                    payload: .context(ContextTimelinePayload(
-                        scope: .session,
+                    payload: .config(ConfigTimelinePayload(
                         kind: "cwd_changed",
                         summary: newCwd,
                         content: root.jsonValue(keys: ["old_cwd", "new_cwd"])
@@ -460,7 +444,6 @@ public struct ClaudeAdapter: AgentAdapter {
                     for reminder in reminders {
                         events.append(makeEvent(
                             timeline: .context(ContextTimelinePayload(
-                                scope: .turn,
                                 kind: "system_reminder",
                                 summary: AdapterText.excerpt(reminder),
                                 content: .string(reminder)
@@ -487,7 +470,6 @@ public struct ClaudeAdapter: AgentAdapter {
                     } else if let kind = Self.injectedKind(trimmed) {
                         events.append(makeEvent(
                             timeline: .context(ContextTimelinePayload(
-                                scope: .turn,
                                 kind: kind,
                                 summary: AdapterText.excerpt(trimmed),
                                 content: .string(trimmed)
@@ -531,7 +513,7 @@ public struct ClaudeAdapter: AgentAdapter {
 
                 case "image", "document":
                     events.append(makeEvent(
-                        timeline: .context(ContextTimelinePayload(scope: .turn, kind: block.type, summary: block.type.capitalized)),
+                        timeline: .context(ContextTimelinePayload(kind: block.type, summary: block.type.capitalized)),
                         suffix: next()
                     ))
 
@@ -668,13 +650,14 @@ public struct ClaudeAdapter: AgentAdapter {
         case "attachment":
             let attachment = root.dictionary("attachment")
             let kind = attachment?.string("type") ?? "attachment"
+            let summary = attachment.flatMap { Self.attachmentSummary($0) } ?? kind.replacingOccurrences(of: "_", with: " ")
+            let content = root.jsonValue("attachment")
+            // Run-mode attachments are how the agent runs, not model input.
+            if Self.configAttachmentKinds.contains(kind) {
+                return [makeEvent(timeline: .config(ConfigTimelinePayload(kind: kind, summary: summary, content: content)))]
+            }
             return [makeEvent(
-                timeline: .context(ContextTimelinePayload(
-                    scope: .turn,
-                    kind: kind,
-                    summary: attachment.flatMap { Self.attachmentSummary($0) } ?? kind.replacingOccurrences(of: "_", with: " "),
-                    content: root.jsonValue("attachment")
-                ))
+                timeline: .context(ContextTimelinePayload(kind: kind, summary: summary, content: content))
             )]
 
         case "system":
@@ -682,7 +665,6 @@ public struct ClaudeAdapter: AgentAdapter {
             let content = root.string("content")
             return [makeEvent(
                 timeline: .context(ContextTimelinePayload(
-                    scope: .turn,
                     kind: subtype,
                     summary: AdapterText.excerpt(content) ?? subtype.replacingOccurrences(of: "_", with: " "),
                     content: content.map(JSONValue.string)
@@ -693,7 +675,6 @@ public struct ClaudeAdapter: AgentAdapter {
             guard let summary = root.string("summary") else { return [] }
             return [makeEvent(
                 timeline: .context(ContextTimelinePayload(
-                    scope: .session,
                     kind: "summary",
                     summary: AdapterText.excerpt(summary),
                     content: .string(summary)
@@ -772,6 +753,12 @@ public struct ClaudeAdapter: AgentAdapter {
         guard !tag.contains(" "), !tag.hasPrefix("/"), !tag.isEmpty else { return nil }
         return String(tag).replacingOccurrences(of: "-", with: "_")
     }
+
+    /// Attachment types that describe the run mode (CONFIG), not injected
+    /// model input (CONTEXT): permission / plan mode and allowed commands.
+    static let configAttachmentKinds: Set<String> = [
+        "auto_mode", "plan_mode", "plan_mode_exit", "command_permissions",
+    ]
 
     static func attachmentSummary(_ attachment: [String: Any]) -> String? {
         let type = attachment.string("type") ?? "attachment"

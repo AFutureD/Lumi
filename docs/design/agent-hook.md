@@ -90,8 +90,8 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | `StopFailure`（Claude） | Failed | Idle | outcome=failed | `turnEnd(failed, error)` |
 | `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
 | `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)`；Claude 且会话仍临时（无 Turn、无 transcript）→ 改为 `disposition: .discard`（删除 + 墓碑，无 item） |
-| `UserPromptExpansion`（Claude） | Running | Thinking | — | `context(turn, command_expansion)` |
-| `InstructionsLoaded` / `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `context(session, …)`；CwdChanged 同时更新 workspace |
+| `InstructionsLoaded`（Claude） | — | — | — | `context(instructions)` |
+| `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `config(config_change / cwd_changed)`；CwdChanged 同时更新 workspace |
 | `Notification(agent_needs_input / permission_prompt / idle_prompt)`（Claude） | Waiting For Input | Waiting For Approval / Idle | — | 无 |
 
 未知 Hook 事件返回空数组。
@@ -102,31 +102,31 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 
 | record | 结果 |
 | --- | --- |
-| `session_meta` | Starting/Idle + `sessionMarker(sessionStarted)`（与 hook 同 ID 去重）+ `modelConfiguration`（页头元数据）+ `context(session, base_instructions)` |
-| `turn_context` | `modelConfiguration` + `context(turn, turn_context)` |
+| `session_meta` | Starting/Idle + `sessionMarker(sessionStarted)`（与 hook 同 ID 去重）+ `modelConfiguration`（页头元数据）+ `context(base_instructions)` |
+| `turn_context` | `modelConfiguration` + `config(turn_context)` |
 | `task_started` | Running/Thinking，建 Turn |
 | `user_message` / `agent_message` / `agent_reasoning` | `message(user)`（Turn.prompt）/ `message(assistant)` / `reasoning` |
 | `response_item reasoning` | 忽略（`agent_reasoning` 的加密副本） |
-| `response_item message` role=developer / user 内 `<tag>` 或 `# AGENTS.md` | `context(turn, developer_instructions / <tag> / agents_md)`；普通 user/assistant 忽略（event_msg 已有） |
+| `response_item message` role=developer / user 内 `<tag>` 或 `# AGENTS.md` | `context(developer_instructions / <tag> / agents_md)`；普通 user/assistant 忽略（event_msg 已有） |
 | `response_item custom_tool_call` / `function_call` | `tool(started, name, input 摘要, toolUseID=call_id)`；`update_plan` → `plan` |
 | `response_item *_output` | `tool(succeeded/failed by metadata.exit_code, output 摘要, toolUseID)`；名称从同次读取的 call 或投影阶段配对补齐 |
 | exec/patch/mcp/dynamic/web/image begin·end | 同上，含 `call_id` |
 | `task_complete` / `turn_aborted` | `turnEnd(completed|failed|aborted)`，Waiting For Input / Failed / Interrupted |
-| `world_state` / `compacted` / `context_compacted` | `context(turn, …)` |
-| `thread_settings_applied` / `token_count` | `modelConfiguration` / `usageMetrics` |
+| `world_state` / `compacted` / `context_compacted` | `context(…)` |
+| `thread_settings_applied` / `token_count` | `modelConfiguration` + `config(thread_settings)` / `usageMetrics` |
 | `sub_agent_activity` | `subagent(...)`，ID `subagent:<session>:<agent_thread_id>:<phase>` |
 
 **Claude transcript**（`currentTurnID` 由 user 记录的 `promptId` 设定；`isSidechain: true` 记录忽略）：
 
 | record / block | 结果 |
 | --- | --- |
-| `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(turn, system_reminder)`；`<command-name>` 等标签块为 `context(turn, <tag>)` |
+| `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 等标签块为 `context(<tag>)` |
 | `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
 | `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)` |
 | `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
 | `assistant` `stop_reason` ∈ {`end_turn`, `stop_sequence`, `max_tokens`, `refusal`} | Turn 结束：Waiting For Input / Idle + Turn `endedAt/outcome=completed/lastAssistantMessage` + `turnEnd`（ID `turn_end:<s>:<turn>`，与 Stop hook 同一行）。transcript 自己就能收口，Stop hook 丢失或被后到事件覆盖时下一次读增量即自愈；`tool_use` 不结束 Turn |
 | `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |
-| `attachment` / `system` / `summary` | `context(turn|session, …)` |
+| `attachment` / `system` / `summary` | `context(…)`；attachment 中的运行模式类（`auto_mode` / `plan_mode` / `plan_mode_exit` / `command_permissions`）改为 `config(…)` |
 | `custom-title` | Session 标题 |
 | `queue-operation` / `last-prompt` 等 | 忽略 |
 

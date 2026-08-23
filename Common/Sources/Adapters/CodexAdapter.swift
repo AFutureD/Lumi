@@ -303,7 +303,6 @@ public struct CodexAdapter: AgentAdapter {
                         sessionID: sessionID,
                         occurredAt: occurredAt,
                         payload: .context(ContextTimelinePayload(
-                            scope: .session,
                             kind: "base_instructions",
                             summary: "Base instructions",
                             content: baseInstructions
@@ -420,14 +419,13 @@ public struct CodexAdapter: AgentAdapter {
                 let summary = [payload.string("model"), payload.string("effort"), payload.string("cwd")]
                     .compactMap { $0 }.joined(separator: " · ")
                 events.append(makeEvent(
-                    timeline: .context(ContextTimelinePayload(
-                        scope: .turn,
+                    timeline: .config(ConfigTimelinePayload(
                         kind: "turn_context",
                         summary: summary.isEmpty ? nil : summary,
                         content: content
                     )),
-                    suffix: ":context",
-                    diagnosticKey: turnID.map { "context:turn_context:\($0.rawValue)" } ?? "context:turn_context"
+                    suffix: ":config",
+                    diagnosticKey: turnID.map { "config:turn_context:\($0.rawValue)" } ?? "config:turn_context"
                 ))
             }
             return events
@@ -449,7 +447,6 @@ public struct CodexAdapter: AgentAdapter {
             }
             return [makeEvent(
                 timeline: .context(ContextTimelinePayload(
-                    scope: .turn,
                     kind: recordType,
                     summary: recordType == "compacted" ? "Compaction summary" : "World state",
                     content: content
@@ -499,7 +496,6 @@ public struct CodexAdapter: AgentAdapter {
                 guard let content = try? JSONValue(jsonObject: payload) else { return [] }
                 return [makeEvent(
                     timeline: .context(ContextTimelinePayload(
-                        scope: .turn,
                         kind: type,
                         summary: "Context compacted",
                         content: content
@@ -510,17 +506,29 @@ public struct CodexAdapter: AgentAdapter {
             case "thread_settings_applied":
                 guard let settingsDictionary = payload.dictionary("thread_settings"),
                       let settings = try? JSONValue(jsonObject: settingsDictionary) else { return [] }
-                return [makeEvent(
-                    timeline: .modelConfiguration(ModelConfigurationTimelinePayload(
-                        source: "thread_settings_applied",
-                        model: settingsDictionary.string("model"),
-                        provider: settingsDictionary.string("model_provider_id"),
-                        reasoningEffort: settingsDictionary.string("reasoning_effort"),
-                        settings: settings
-                    )),
-                    suffix: ":model_configuration",
-                    diagnosticKey: "model_configuration:thread_settings"
-                )]
+                let summary = [settingsDictionary.string("model"), settingsDictionary.string("reasoning_effort")]
+                    .compactMap { $0 }.joined(separator: " · ")
+                return [
+                    makeEvent(
+                        timeline: .modelConfiguration(ModelConfigurationTimelinePayload(
+                            source: "thread_settings_applied",
+                            model: settingsDictionary.string("model"),
+                            provider: settingsDictionary.string("model_provider_id"),
+                            reasoningEffort: settingsDictionary.string("reasoning_effort"),
+                            settings: settings
+                        )),
+                        suffix: ":model_configuration",
+                        diagnosticKey: "model_configuration:thread_settings"
+                    ),
+                    makeEvent(
+                        timeline: .config(ConfigTimelinePayload(
+                            kind: "thread_settings",
+                            summary: summary.isEmpty ? "Thread settings" : summary,
+                            content: settings
+                        )),
+                        suffix: ":config"
+                    ),
+                ]
 
             case "token_count":
                 let info = payload.dictionary("info")
@@ -701,7 +709,6 @@ public struct CodexAdapter: AgentAdapter {
                 if role == "developer" {
                     return [makeEvent(
                         timeline: .context(ContextTimelinePayload(
-                            scope: .turn,
                             kind: "developer_instructions",
                             summary: AdapterText.excerpt(text),
                             content: .string(text)
@@ -712,7 +719,6 @@ public struct CodexAdapter: AgentAdapter {
                 if role == "user", let kind = Self.injectedContextKind(text) {
                     return [makeEvent(
                         timeline: .context(ContextTimelinePayload(
-                            scope: .turn,
                             kind: kind,
                             summary: AdapterText.excerpt(text.replacingOccurrences(of: "<\(kind)>", with: "")),
                             content: .string(text)

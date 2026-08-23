@@ -57,8 +57,8 @@ enum ActivityCategoryGroup: String, Hashable, Sendable, CaseIterable {
     /// tags that have not appeared in the timeline yet).
     var tags: [TimelineTag] {
         switch self {
-        case .session: [.session, .compact]
-        case .user: [.user, .context, .contextGroup]
+        case .session: [.session, .compact, .config]
+        case .user: [.user, .context]
         case .model: [.reasoning, .assistant, .plan, .subagent, .turnEnd, .turnFailed, .aborted]
         case .exec: [.tool, .result, .failed]
         }
@@ -152,8 +152,8 @@ extension TimelineTag {
         case .session: "Start / end"
         case .compact: "Compaction"
         case .user: "User input"
-        case .context: "Turn context"
-        case .contextGroup: "Session context"
+        case .config: "Configuration"
+        case .context: "Context"
         case .reasoning: "Thinking"
         case .assistant: "Reply"
         case .plan: "Plan"
@@ -167,10 +167,8 @@ extension TimelineTag {
         }
     }
 
-    /// Chip label in the Category panel; the merged row is listed as `CONTEXT ×N`.
-    var filterLabel: String {
-        self == .contextGroup ? "CONTEXT ×N" : label
-    }
+    /// Chip label in the Category panel.
+    var filterLabel: String { label }
 }
 
 extension TimelineAttentionLevel {
@@ -188,7 +186,7 @@ extension TimelineAttentionLevel {
         switch self {
         case .l3: "Input · turn end · turn failure"
         case .l2: "Reply · result · tool failure · plan · agent"
-        case .l1: "Thinking · context · tool call"
+        case .l1: "Thinking · context · config · tool call"
         }
     }
 }

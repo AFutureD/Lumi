@@ -37,8 +37,8 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
     // L1 — general (low attention)
     case session
     case compact
-    case contextGroup   // "CONTEXT ×N", session-scope context (merged), User lane
-    case context        // turn-scope context, User lane
+    case config         // how the agent runs: settings, cwd, model / effort of a turn
+    case context        // what the model reads besides the prompt, User lane
     case reasoning
     case tool
     // L2 — turn process (medium attention)
@@ -55,31 +55,32 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
 
     public var level: TimelineAttentionLevel {
         switch self {
-        case .session, .compact, .contextGroup, .context, .reasoning, .tool: .l1
+        case .session, .compact, .config, .context, .reasoning, .tool: .l1
         case .result, .assistant, .plan, .subagent, .failed: .l2
         case .user, .turnEnd, .turnFailed, .aborted: .l3
         }
     }
 
-    /// `nil` spans all three lanes (session markers only). Context of either
-    /// scope is input handed to the model, so it sits in the User lane. The
+    /// `nil` spans all three lanes (session markers and configuration).
+    /// Context is input handed to the model, so it sits in the User lane. The
     /// lane follows the source of the row: a failed tool result stays in Exec
     /// next to its call, a failed turn sits in Model next to its TURN END.
     public var lane: TimelineLane? {
         switch self {
-        case .session, .compact: nil
-        case .user, .context, .contextGroup: .user
+        case .session, .compact, .config: nil
+        case .user, .context: .user
         case .reasoning, .assistant, .plan, .subagent, .turnEnd, .turnFailed, .aborted: .model
         case .tool, .result, .failed: .exec
         }
     }
 
-    /// Chip label; `contextGroup` is rendered as `CONTEXT ×N` by the caller.
+    /// Chip label.
     public var label: String {
         switch self {
         case .session: "SESSION"
         case .compact: "COMPACT"
-        case .contextGroup, .context: "CONTEXT"
+        case .config: "CONFIG"
+        case .context: "CONTEXT"
         case .reasoning: "REASONING"
         case .tool: "TOOL"
         case .result: "RESULT"
@@ -104,7 +105,7 @@ public enum TimelineRowStatus: String, Codable, Hashable, Sendable {
 }
 
 /// One visible line of the Timeline. `items` are the Agent-domain items that
-/// were folded into this row (one, or several for merged CONTEXT ×N /
+/// were folded into this row (one, or several for merged REASONING headers /
 /// in-place SUBAGENT updates); `items.first` is the anchor.
 public struct TimelineRow: Hashable, Sendable, Identifiable {
     public let id: String
@@ -118,7 +119,7 @@ public struct TimelineRow: Hashable, Sendable, Identifiable {
     public let items: [TimelineItem]
     public let toolUseID: String?
     public let agentID: String?
-    /// Merged-item count (`CONTEXT ×N`); 1 otherwise.
+    /// Number of folded items; 1 otherwise.
     public let count: Int
 
     public init(
@@ -152,10 +153,8 @@ public struct TimelineRow: Hashable, Sendable, Identifiable {
     public var spansLanes: Bool { tag.lane == nil }
     public var anchor: TimelineItem { items[0] }
 
-    /// `CONTEXT ×3` / `TOOL` — the chip text.
-    public var label: String {
-        tag == .contextGroup && count > 1 ? "CONTEXT ×\(count)" : tag.label
-    }
+    /// The chip text.
+    public var label: String { tag.label }
 
     fileprivate func replacing(
         tag: TimelineTag? = nil,
@@ -211,12 +210,6 @@ public enum TimelineProjection {
                 if !isEmptyReasoning(item),
                    let index = reasoningRowIndexByTurn[item.turnID]?[draft.text] {
                     rows[index] = rows[index].replacing(appending: item)
-                    continue
-                }
-            case .contextGroup:
-                // Adjacent session-scope context items merge into CONTEXT ×N.
-                if let last = rows.last, last.tag == .contextGroup {
-                    rows[rows.count - 1] = last.replacing(appending: item)
                     continue
                 }
             case .subagent:
@@ -287,7 +280,7 @@ public enum TimelineProjection {
     private static func sortRank(_ payload: TimelinePayload) -> Int {
         switch payload {
         case .sessionMarker: 0
-        case .context, .modelConfiguration, .internalContext: 1
+        case .context, .config, .modelConfiguration, .internalContext: 1
         case let .message(message): message.role == .user ? 2 : 3
         default: 3
         }
@@ -385,11 +378,10 @@ public enum TimelineProjection {
             )
 
         case let .context(payload):
-            return Draft(
-                tag: payload.scope == .session ? .contextGroup : .context,
-                status: .info,
-                text: payload.summary ?? humanized(payload.kind)
-            )
+            return Draft(tag: .context, status: .info, text: payload.summary ?? humanized(payload.kind))
+
+        case let .config(payload):
+            return Draft(tag: .config, status: .info, text: payload.summary ?? humanized(payload.kind))
 
         case let .sessionMarker(payload):
             switch payload.kind {
@@ -423,9 +415,8 @@ public enum TimelineProjection {
             if kind.contains("reasoning") {
                 return Draft(tag: .reasoning, status: .info, text: jsonSummary(payload.content))
             }
-            let sessionScoped = kind.contains("instruction") || kind == "session_meta" || kind == "system"
             return Draft(
-                tag: sessionScoped ? .contextGroup : .context,
+                tag: .context,
                 status: .info,
                 text: joined([humanized(payload.kind), jsonSummary(payload.content)])
             )

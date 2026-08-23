@@ -84,9 +84,9 @@ import Transport
 
 @Test func activityFilterPanelsCountBeforeFilteringAndFollowFirstAppearance() {
     let activities = [
-        activity(.session, 0), activity(.user, 1), activity(.contextGroup, 2), activity(.reasoning, 3),
+        activity(.session, 0), activity(.user, 1), activity(.config, 2), activity(.reasoning, 3),
         activity(.tool, 4), activity(.result, 5), activity(.assistant, 6), activity(.turnEnd, 7),
-        activity(.user, 8), activity(.failed, 9), activity(.contextGroup, 10),
+        activity(.user, 8), activity(.failed, 9), activity(.config, 10),
     ]
     var filter = SessionActivityFilter()
     filter.toggle(.user)
@@ -99,13 +99,16 @@ import Transport
     #expect(category.sections.map(\.title) == ["Session", "User", "Model", "Exec"])
     // Every tag is listed (15), zero counts included; counts are pre-filter.
     #expect(category.options.count == TimelineTag.allCases.count)
+    let session = category.sections[0]
+    #expect(session.options.map(\.id) == ["session", "config", "compact"])  // CONFIG appeared before COMPACT (never)
+    #expect(session.options.map(\.count) == [1, 2, 0])
+    #expect(session.options[1].leading == .tag(label: "CONFIG", style: TimelineTag.config.tagStyle(.light)))
+    #expect(session.options[1].name == "Configuration")
     let user = category.sections[1]
-    #expect(user.options.map(\.id) == ["user", "contextGroup", "context"])   // CONTEXT ×N appeared before CONTEXT (never)
-    #expect(user.options.map(\.count) == [2, 2, 0])
-    #expect(user.count == 4)
+    #expect(user.options.map(\.id) == ["user", "context"])
+    #expect(user.options.map(\.count) == [2, 0])
+    #expect(user.count == 2)
     #expect(user.options[0].isSelected == false && user.options[1].isSelected == true)
-    #expect(user.options[1].leading == .tag(label: "CONTEXT ×N", style: TimelineTag.contextGroup.tagStyle(.light)))
-    #expect(user.options[1].name == "Session context")
     // Model: reasoning → assistant → turnEnd appeared; plan / subagent / turnFailed / aborted trail in table order.
     #expect(category.sections[2].options.map(\.id) == ["reasoning", "assistant", "turnEnd", "plan", "subagent", "turnFailed", "aborted"])
     #expect(category.sections[3].options.map(\.id) == ["tool", "result", "failed"])

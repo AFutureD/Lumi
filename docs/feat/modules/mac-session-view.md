@@ -18,7 +18,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 
 1. 左栏是固定 224 pt 的全高侧边栏，分为 Monitor / Connections / Application 三组：Sessions 行右侧显示会话数量，iPhone 行右侧在 Relay 连接时显示绿点。工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
 2. 中栏是 Session 列表，按最后更新时间倒序，不分组、不按状态分档；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级。每行是固定网格：`[Agent 图标][标题][相对时间]` 加第二行 `[状态色点 + 生命周期 · Turn 阶段][折叠数量]`，状态色点与标题左对齐。Codex 使用 OpenAI 标记的圆角图标；Subagent 不缩进、不显示图标，标题与父级共用同一左边线，层级只画成沿图标轴的引导线（折角 + 竖线）。Subagent 默认收起；点击有 Subagent 的 Main Session 行任意位置即可展开/收起，收起时第二行右侧显示子项数量的圆角标记，点击它也可展开。展开后的 Subagent 按 running → waiting → failed → done、同档内最新活动在前排列，与 Notch 和 iPhone 的顺序一致。右侧相对时间只用单一单位（now / 12s / 4m / 1h / 3d，不出现 yesterday 之类文字）每 30 秒刷新。选中行使用中性灰底、文字颜色不变。标题固定一行，原始换行和连续空白会归一为空格，超出可用宽度时尾部省略；工具栏标题遵循相同规则。Main Session 使用 Codex 标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时使用“Codex Session”；已同步过的 Subagent 在标题暂时不可用时继续保留原类型和关系。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变，窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
-3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh Sessions、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮：默认 User、Model、Exec 三行横向时间轴（Session 开始/结束与压缩横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON。密度偏好在重启后保留；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
+3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh Sessions、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮：默认 User、Model、Exec 三行横向时间轴（Session 开始/结束、压缩与配置横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON。密度偏好在重启后保留；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
 4. 窗口缩放只改变右栏宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
 “iPhone”页面收起中栏：页头是标题“Pair an iPhone”、右侧的 Relay 状态药丸和一行提示。内容区左列是配对码卡片（二维码、6 位配对码、Relay 地址、5 分钟倒计时、New code），iPhone 提交后它下方出现待确认卡片（“<iPhone 名> wants to pair”、6 位数字、Don't match / Match）；右列是 Paired iPhones 列表。Relay 连接、配对过程和配对记录都由 daemon 持有，这一页只是它的控制台：退出 Mac App 后已配对 iPhone 照常同步，只有配对时需要打开 App；离开这一页，配对码即作废。“Settings”继续保持三栏：中栏列出 General、Notch、Daemon、Agents 和 About（44 pt 两行行、灰底选中），右栏是工具栏标题 + 副标题 subheader + 卡片式内容；Daemon 面板的 subheader 额外显示 Running / Not connected 药丸。
@@ -83,7 +83,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 过滤 Activity
 
-Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，面板按 Session / User / Model / Exec 四个泳道分组；失败分两项——Model 组的 Turn failure 和 Exec 组的 Tool failure，标签都是 FAILED，但前者是实色红、后者是淡红底）和 **Importance**（按 L3 / L2 / L1 三档：L3 是阶段——用户输入、回合结束、回合失败、中断；L2 是过程——回复、工具结果、工具失败、计划、子 Agent；L1 是细节——思考、上下文、工具调用）。点开面板后点任意一行勾选或取消，列表和上方的横向时间轴立即只显示“类别被选中 且 重要性被选中”的记录——列表少几行，时间轴就少几格，两边始终一行对一格；分组头可以一键全选 / 全不选整组。过滤中的按钮变蓝并显示仍选中的项数，标题旁的计数变成“命中 / 总数”（如 `11 / 27`）。
+Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，面板按 Session / User / Model / Exec 四个泳道分组；失败分两项——Model 组的 Turn failure 和 Exec 组的 Tool failure，标签都是 FAILED，但前者是实色红、后者是淡红底）和 **Importance**（按 L3 / L2 / L1 三档：L3 是阶段——用户输入、回合结束、回合失败、中断；L2 是过程——回复、工具结果、工具失败、计划、子 Agent；L1 是细节——思考、上下文、配置、工具调用）。点开面板后点任意一行勾选或取消，列表和上方的横向时间轴立即只显示“类别被选中 且 重要性被选中”的记录——列表少几行，时间轴就少几格，两边始终一行对一格；分组头可以一键全选 / 全不选整组。过滤中的按钮变蓝并显示仍选中的项数，标题旁的计数变成“命中 / 总数”（如 `11 / 27`）。
 
 - 面板里的计数永远是这个 Session 的全量条数，不随另一枚按钮变化；为 0 的项保留但压灰。
 - 一个维度不能全部取消：取消掉最后一项会自动回到全选。
@@ -223,7 +223,7 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 
 - 条件：用户选择的 Session 包含一条或多条 Activity。
-- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格（列表一行对应时间轴一格，合并成 `CONTEXT ×N` 的记录也只占一格），只填在自己所属的泳道（User：用户输入和所有上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End、回合级失败与中断；Exec：Tool、Result、工具失败），其余泳道留空；Session 开始/结束与上下文压缩不占泳道，而是在三条泳道各画一条 4 pt 窄条，靠宽度与实格区分；单行模式下所有记录排成一行，方格填类别色。横向时间轴与下方列表同步滚动：滚动列表时时间轴跟着移动，在时间轴上横向滚动或按住鼠标左右拖动时列表也随之滚动，拖动松手后时间轴带惯性滑行一小段（列表继续跟随），再次拖动、滚动或点击即停；只有填了色的方格可以点击（悬停时指针变为手形、方格出现描边），点击后列表滚动到对应记录并短暂高亮，空白泳道格和方格间隙不响应点击。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
+- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格（列表一行对应时间轴一格），只填在自己所属的泳道（User：用户输入和注入的上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End、回合级失败与中断；Exec：Tool、Result、工具失败），其余泳道留空；Session 开始/结束、上下文压缩与配置变化不占泳道，而是在三条泳道各画一条 4 pt 窄条，靠宽度与实格区分；单行模式下所有记录排成一行，方格填类别色。横向时间轴与下方列表同步滚动：滚动列表时时间轴跟着移动，在时间轴上横向滚动或按住鼠标左右拖动时列表也随之滚动，拖动松手后时间轴带惯性滑行一小段（列表继续跟随），再次拖动、滚动或点击即停；只有填了色的方格可以点击（悬停时指针变为手形、方格出现描边），点击后列表滚动到对应记录并短暂高亮，空白泳道格和方格间隙不响应点击。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
 - 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
 - 限制或例外：时间轴与密度切换只改变当前详情的查看方式和位置，不修改或控制 Codex Session。
 

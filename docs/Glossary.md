@@ -23,3 +23,32 @@
 | macOS Helper | Spark |
 | Relay        | Ray   |
 | macOS Notch  | Halo  |
+
+## Activity 消息类别
+
+Activity 里每条记录的 chip 标签，以及 Category 过滤面板里的名称。
+
+| Chip | 面板名 | 含义 |
+| --- | --- | --- |
+| SESSION | Start / end | 会话开始 / 结束 |
+| COMPACT | Compaction | 上下文压缩 |
+| CONFIG | Configuration | 配置：Agent 怎么跑（设置、工作目录、模型档位） |
+| CONTEXT | Context | 注入上下文：模型读到的、非用户键入的内容 |
+| USER | User input | 用户输入 |
+| REASONING | Thinking | 思考 |
+| ASSISTANT | Reply | 回复 |
+| PLAN | Plan | 计划 |
+| SUBAGENT | Subagent | 子 Agent |
+| TURN END | Turn end | 回合结束 |
+| FAILED | Turn failure / Tool failure | 回合失败（Model 泳道）/ 工具失败（Exec 泳道），同一个 chip |
+| ABORTED | Interrupted | 中断 |
+| TOOL | Tool call | 工具调用 |
+| RESULT | Tool result | 工具结果 |
+
+## 弃用词
+
+| 不再用 | 原因 |
+| --- | --- |
+| CONTEXT ×N | 2026-08-24 起相邻上下文不再合并；一条记录一行 CONTEXT |
+| Session context / Turn context | 上下文不再分两档：模型读的叫 Context，Agent 的运行方式叫 Configuration |
+

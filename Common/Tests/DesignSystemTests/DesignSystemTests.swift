@@ -124,7 +124,7 @@ typealias DS = DesignSystem
     #expect(TimelineTag.plan.hue == .purple && TimelineTag.subagent.hue == .orange)
     #expect(TimelineTag.assistant.hue == .blue && TimelineTag.turnEnd.hue == .blue)
     #expect(TimelineTag.user.hue == .green && TimelineTag.failed.hue == .red)
-    #expect(TimelineTag.context.hue == .neutral && TimelineTag.contextGroup.hue == .neutral)
+    #expect(TimelineTag.context.hue == .neutral && TimelineTag.config.hue == .neutral)
     #expect(TimelineTag.reasoning.hue == .blue)
     // REASONING / TOOL are L1 but keep their hue — same text as the L2 tint. CONTEXT stays neutral grey.
     #expect(TimelineTag.tool.level == .l1)

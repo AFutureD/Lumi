@@ -31,7 +31,7 @@ import NookApp
 
 @Test func claudeSettingsMergeKeepsOtherSettingsAndRefreshesCommand() throws {
     let existing = Data("""
-    {"permissions":{"allow":["Bash(ls:*)"]},"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"other-tool"}]}]}}
+    {"permissions":{"allow":["Bash(ls:*)"]},"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"other-tool"}]}],"UserPromptExpansion":[{"hooks":[{"type":"command","command":"'/old/Lumi/bin/Spark' --agent claude"},{"type":"command","command":"expansion-tool"}]}]}}
     """.utf8)
     let once = try ClaudeHookInstaller.merging(existing, helperCommand: "'/old/Lumi/bin/Spark' --agent claude")
     // Reinstalling with a new path refreshes the command instead of appending.
@@ -46,11 +46,15 @@ import NookApp
     let text = String(data: twice, encoding: .utf8)!
     #expect(text.contains("/new/Lumi/bin/Spark") && !text.contains("/old/Lumi/bin/Spark"))
     #expect(text.contains("other-tool"))
+    // Retired event: the Lumi handler is pruned, other people's handlers stay.
+    let expansion = try #require(hooks["UserPromptExpansion"] as? [[String: Any]])
+    #expect((expansion[0]["hooks"] as? [[String: Any]])?.count == 1)
+    #expect(text.contains("expansion-tool"))
 
     let removed = try AgentHookConfigInstaller.removingLumiHandlers(from: twice)
     let removedRoot = try #require(JSONSerialization.jsonObject(with: removed) as? [String: Any])
     let removedHooks = try #require(removedRoot["hooks"] as? [String: Any])
-    #expect(removedHooks.keys.sorted() == ["PreToolUse"])
+    #expect(removedHooks.keys.sorted() == ["PreToolUse", "UserPromptExpansion"])
     #expect(removedRoot["model"] as? String == "opus")
 }
 
@@ -957,7 +961,7 @@ private func nookSession(
     #expect(presentation.metrics.totalTokensText == "100")
     #expect(presentation.metrics.contextText == "0%")
     #expect(presentation.activities.map(\.tag) == [
-        .contextGroup,   // base_instructions (session scope)
+        .context,        // base_instructions
         .context,        // turn_context
         .reasoning,
         .user,
@@ -978,10 +982,10 @@ private func nookSession(
 }
 
 @Test func timelineTagsMapToLanesAndLevels() {
-    #expect([TimelineTag.user, .context, .contextGroup].map(\.lane) == [.user, .user, .user])
+    #expect([TimelineTag.user, .context].map(\.lane) == [.user, .user])
     #expect([TimelineTag.tool, .result, .failed].map(\.lane) == [.exec, .exec, .exec])
     #expect([TimelineTag.reasoning, .assistant, .plan, .subagent, .turnEnd].map(\.lane) == [.model, .model, .model, .model, .model])
-    #expect([TimelineTag.session, .compact].map(\.lane) == [nil, nil])
+    #expect([TimelineTag.session, .compact, .config].map(\.lane) == [nil, nil, nil])
     #expect(TimelineTag.user.level == .l3 && TimelineTag.tool.level == .l1 && TimelineTag.reasoning.level == .l1)
     #expect(TimelineTag.user.tagStyle(.light).fill != .clear)
     #expect(TimelineTag.session.tagStyle(.light).fill == .clear)

@@ -63,8 +63,8 @@ enum PreviewFixture {
             source: "session_meta", model: "gpt-5-codex", provider: "openai", contextWindow: 272_000,
             reasoningEffort: "medium", clientVersion: "codex-cli 0.48.2", settings: .object([:])
         )))
-        add(2, .context(.init(scope: .session, kind: "developer_instructions", summary: "System Instructions · developer instructions")))
-        add(2, .context(.init(scope: .session, kind: "environment_context", summary: "Environment Context · cwd ~/dev/lumi")))
+        add(2, .config(.init(kind: "turn_context", summary: "gpt-5-codex · medium · ~/dev/lumi")))
+        add(2, .context(.init(kind: "developer_instructions", summary: "System Instructions · developer instructions")))
         add(5, .message(.init(role: .user, text: "Refactor the transport DTO boundaries so Common no longer imports AppKit")))
         add(10, .reasoning(.init(text: "Inspecting package targets before editing")))
         add(12, .tool(.init(name: "shell", summary: "rg --files Common/Sources", status: .started, toolUseID: "t1")))

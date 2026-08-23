@@ -74,7 +74,7 @@ enum Design {
         static let pillHeight: CGFloat = DS.StatusPill.height
 
         static let activityRowHeight: CGFloat = DS.Metrics.activityRowHeight
-        /// SESSION / COMPACT / CONTEXT ×N rows that span all lanes.
+        /// SESSION / COMPACT / CONFIG rows that span all lanes.
         static let activityMarkerRowHeight: CGFloat = DS.Metrics.activityMarkerRowHeight
         static let activityHorizontalInset: CGFloat = DS.Spacing.xxl
         static let activityColumnGap: CGFloat = DS.Spacing.l

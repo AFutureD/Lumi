@@ -94,17 +94,10 @@ enum ActivityDetailPresentationBuilder {
                 sections.append(ActivityDetailSection(title: "Error", text: row.text, isMonospaced: true))
             case .turnEnd:
                 sections.append(ActivityDetailSection(title: "Turn", text: row.text, isMonospaced: false))
-            case .session, .compact, .context, .contextGroup, .tool, .result:
+            case .config:
+                sections.append(ActivityDetailSection(title: "Configuration", text: row.text, isMonospaced: true))
+            case .session, .compact, .context, .tool, .result:
                 sections.append(ActivityDetailSection(title: "Context", text: row.text, isMonospaced: true))
-            }
-            if row.count > 1 {
-                let merged = row.items.compactMap { item -> String? in
-                    guard case let .context(payload) = item.payload else { return nil }
-                    return payload.summary ?? payload.kind
-                }
-                if !merged.isEmpty {
-                    sections.append(ActivityDetailSection(title: "Merged items", text: merged.joined(separator: "\n"), isMonospaced: true))
-                }
             }
         }
 

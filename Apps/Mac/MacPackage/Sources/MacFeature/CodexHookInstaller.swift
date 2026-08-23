@@ -166,6 +166,23 @@ public struct AgentHookConfigInstaller: Sendable {
             }
             hooks[event] = groups
         }
+        // Events Lumi no longer listens to (e.g. UserPromptExpansion) keep
+        // other people's handlers but lose ours.
+        for event in Array(hooks.keys) where !events.contains(event) {
+            guard let groups = hooks[event] as? [[String: Any]] else { continue }
+            let retainedGroups = groups.compactMap { group -> [String: Any]? in
+                guard let handlers = group["hooks"] as? [[String: Any]] else { return group }
+                let retainedHandlers = handlers.filter {
+                    ($0["command"] as? String)?.contains(CodexHookTrustAuthorizer.helperMarker) != true
+                }
+                guard !retainedHandlers.isEmpty else { return nil }
+                var retainedGroup = group
+                retainedGroup["hooks"] = retainedHandlers
+                return retainedGroup
+            }
+            if retainedGroups.isEmpty { hooks.removeValue(forKey: event) }
+            else { hooks[event] = retainedGroups }
+        }
         root["hooks"] = hooks
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     }
@@ -254,7 +271,6 @@ public struct ClaudeHookInstaller: Sendable {
     public static let supportedEvents = [
         "SessionStart",
         "UserPromptSubmit",
-        "UserPromptExpansion",
         "PreToolUse",
         "PermissionRequest",
         "PermissionDenied",

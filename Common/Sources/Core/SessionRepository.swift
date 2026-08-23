@@ -240,7 +240,7 @@ private extension AgentIngressEvent {
         guard let payload = timelineItem?.payload else { return false }
         return switch payload {
         case .message, .reasoning, .tool, .plan, .subagent, .error, .sessionMarker, .turnEnd: true
-        case .context, .modelConfiguration, .internalContext, .usageMetrics: false
+        case .context, .config, .modelConfiguration, .internalContext, .usageMetrics: false
         }
     }
 }

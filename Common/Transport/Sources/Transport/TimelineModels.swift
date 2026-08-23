@@ -80,23 +80,29 @@ public struct ReasoningTimelinePayload: Codable, Hashable, Sendable {
     }
 }
 
-/// Context injected into the model that the user did not type. `session`
-/// scope: instructions files, configuration, model settings, cwd changes.
-/// `turn` scope: attachments, system reminders, hook-injected context,
-/// expanded skills, compaction summaries.
+/// Context injected into the model that the user did not type: instructions
+/// files, attachments, system reminders, hook-injected context, expanded
+/// skills, compaction summaries. Always turn-level.
 public struct ContextTimelinePayload: Codable, Hashable, Sendable {
-    public enum Scope: String, Codable, Hashable, Sendable {
-        case session
-        case turn
-    }
-
-    public let scope: Scope
     public let kind: String
     public let summary: String?
     public let content: JSONValue?
 
-    public init(scope: Scope, kind: String, summary: String? = nil, content: JSONValue? = nil) {
-        self.scope = scope
+    public init(kind: String, summary: String? = nil, content: JSONValue? = nil) {
+        self.kind = kind
+        self.summary = summary
+        self.content = content
+    }
+}
+
+/// How the agent runs rather than what it reads: settings files, working
+/// directory, model / effort / sandbox of a turn.
+public struct ConfigTimelinePayload: Codable, Hashable, Sendable {
+    public let kind: String
+    public let summary: String?
+    public let content: JSONValue?
+
+    public init(kind: String, summary: String? = nil, content: JSONValue? = nil) {
         self.kind = kind
         self.summary = summary
         self.content = content
@@ -299,6 +305,7 @@ public enum TimelinePayload: Hashable, Sendable {
     case subagent(SubagentTimelinePayload)
     case error(ErrorTimelinePayload)
     case context(ContextTimelinePayload)
+    case config(ConfigTimelinePayload)
     case sessionMarker(SessionMarkerTimelinePayload)
     case turnEnd(TurnEndTimelinePayload)
     case modelConfiguration(ModelConfigurationTimelinePayload)
@@ -316,6 +323,7 @@ extension TimelinePayload: Codable {
         case subagent
         case error
         case context
+        case config
         case sessionMarker
         case turnEnd
         case modelConfiguration
@@ -334,6 +342,7 @@ extension TimelinePayload: Codable {
         case "subagent": self = .subagent(try container.decode(SubagentTimelinePayload.self, forKey: .subagent))
         case "error": self = .error(try container.decode(ErrorTimelinePayload.self, forKey: .error))
         case "context": self = .context(try container.decode(ContextTimelinePayload.self, forKey: .context))
+        case "config": self = .config(try container.decode(ConfigTimelinePayload.self, forKey: .config))
         case "session_marker": self = .sessionMarker(try container.decode(SessionMarkerTimelinePayload.self, forKey: .sessionMarker))
         case "turn_end": self = .turnEnd(try container.decode(TurnEndTimelinePayload.self, forKey: .turnEnd))
         case "model_configuration":
@@ -359,6 +368,9 @@ extension TimelinePayload: Codable {
         case let .context(payload):
             try container.encode("context", forKey: .type)
             try container.encode(payload, forKey: .context)
+        case let .config(payload):
+            try container.encode("config", forKey: .type)
+            try container.encode(payload, forKey: .config)
         case let .sessionMarker(payload):
             try container.encode("session_marker", forKey: .type)
             try container.encode(payload, forKey: .sessionMarker)
