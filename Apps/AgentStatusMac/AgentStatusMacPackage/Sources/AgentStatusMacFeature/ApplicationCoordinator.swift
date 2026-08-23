@@ -1,6 +1,10 @@
+import AgentStatusLogging
+import Logging
 import AgentStatusRemote
 import AgentStatusTransport
 import AppKit
+
+private let log = Logger(label: "lifecycle")
 
 @MainActor
 public final class ApplicationCoordinator: NSObject {
@@ -17,6 +21,25 @@ public final class ApplicationCoordinator: NSObject {
 
     public override init() {
         super.init()
+    }
+
+    /// swift-log's bootstrap runs once per process, before anything logs:
+    /// `AgentStatusMacApp.main` calls this first. `app.log` sits next to the
+    /// daemon's; `-AgentStatusLogLevel debug` turns the per-frame lines on
+    /// for one launch.
+    public static func bootstrapLogging() {
+        let configuration = LogConfiguration(
+            subsystem: "app",
+            minimumLevel: UserDefaults.standard.string(forKey: "AgentStatusLogLevel").flatMap(Logger.Level.init(lenient:)) ?? .info,
+            directory: LogConfiguration.defaultDirectory()
+        )
+        AgentStatusLogging.bootstrap(configuration)
+        log.info("app_started", metadata: .fields([
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+            "log_level": configuration.minimumLevel.label.lowercased(),
+            "log_directory": configuration.directory,
+        ]))
     }
 
     public func start() {
@@ -38,6 +61,7 @@ public final class ApplicationCoordinator: NSObject {
         store.stop()
         relayHost.stop()
         await notch.stop()
+        log.info("app_stopped")
     }
 
     /// Hooks execute the helper copied into Application Support, not the one
@@ -59,13 +83,15 @@ public final class ApplicationCoordinator: NSObject {
                 do {
                     try refresh()
                 } catch {
-                    NSLog("agent-status hook refresh failed: %@", String(describing: error))
+                    log.error("hook_refresh_failed", metadata: .fields(["error": error]))
                 }
             }
             guard codex.isInstalled() else { return }
             let trust = CodexHookTrustAuthorizer().authorize()
             if trust.needsAttention {
-                NSLog("agent-status codex hook trust unresolved: %@", String(describing: trust))
+                log.warning("codex_hook_trust_unresolved", metadata: .fields(["state": String(describing: trust)]))
+            } else {
+                log.debug("codex_hook_trust_ok", metadata: .fields(["state": String(describing: trust)]))
             }
         }
     }

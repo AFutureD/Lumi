@@ -26,6 +26,7 @@ let package = Package(
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "NIOCore", package: "swift-nio"),
@@ -35,7 +36,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "AgentStatusDaemon",
-            dependencies: ["AgentStatusDaemonRuntime"]
+            dependencies: [
+                "AgentStatusDaemonRuntime",
+                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
+            ]
         ),
         .executableTarget(
             name: "AgentStatusHelper",
@@ -43,6 +47,7 @@ let package = Package(
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "NIOCore", package: "swift-nio"),
             ]
@@ -54,6 +59,7 @@ let package = Package(
                 .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "Testing", package: "swift-testing"),

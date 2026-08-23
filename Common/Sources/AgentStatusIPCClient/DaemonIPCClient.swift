@@ -1,8 +1,12 @@
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
 @preconcurrency import NIOCore
 @preconcurrency import NIOFoundationCompat
 @preconcurrency import NIOPosix
+
+private let log = Logger(label: "ipc")
 
 public enum DaemonIPCClientError: Error, Sendable {
     case timedOut
@@ -18,6 +22,36 @@ public final class DaemonIPCClient: @unchecked Sendable {
         socketPath: String,
         timeout: TimeAmount = .seconds(2)
     ) throws -> IPCResponse {
+        let started = ContinuousClock.now
+        do {
+            let (response, bytesOut) = try send(request, socketPath: socketPath, timeout: timeout)
+            let failed = response.status == .error
+            log.log(level: failed ? .warning : .debug, "ipc_request", metadata: .fields([
+                "op": request.operation.rawValue,
+                "session": request.sessionID?.rawValue,
+                "events": request.events?.count,
+                "bytes_out": bytesOut,
+                "status": response.status.rawValue,
+                "failure": response.failure?.code,
+                "ms": LogClock.milliseconds(since: started),
+            ]))
+            return response
+        } catch {
+            log.warning("ipc_request_failed", metadata: .fields([
+                "op": request.operation.rawValue,
+                "socket": socketPath,
+                "ms": LogClock.milliseconds(since: started),
+                "error": error,
+            ]))
+            throw error
+        }
+    }
+
+    private func send(
+        _ request: IPCRequest,
+        socketPath: String,
+        timeout: TimeAmount
+    ) throws -> (IPCResponse, Int) {
         let group = MultiThreadedEventLoopGroup.singleton
         let eventLoop = group.next()
         let responsePromise = eventLoop.makePromise(of: IPCResponse.self)
@@ -39,7 +73,12 @@ public final class DaemonIPCClient: @unchecked Sendable {
             .connect(unixDomainSocketPath: socketPath)
             .wait()
 
-        let envelope = TransportEnvelope(payload: request)
+        // Inside a traced unit (a helper run, a Mac reconcile pass) the
+        // request carries that unit's id, so the daemon's lines join ours.
+        let envelope = TransportEnvelope(
+            requestID: currentTraceID.map(RequestID.init(rawValue:)) ?? RequestID(),
+            payload: request
+        )
         let body = try TransportCoding.makeEncoder().encode(envelope)
         guard body.count <= LengthPrefixedFrameCodec.maximumFrameLength else {
             throw FrameCodecError.frameTooLarge(body.count)
@@ -60,7 +99,7 @@ public final class DaemonIPCClient: @unchecked Sendable {
         }
 
         let responseEnvelope = try responsePromise.futureResult.wait()
-        return responseEnvelope
+        return (responseEnvelope, body.count)
     }
 }
 
@@ -130,10 +169,12 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
             channel = newChannel
             connecting = false
             lock.unlock()
+            log.info("ipc_stream_connected", metadata: .fields(["socket": socketPath]))
         } catch {
             lock.lock()
             connecting = false
             lock.unlock()
+            log.warning("ipc_stream_connect_failed", metadata: .fields(["socket": socketPath, "error": error]))
             throw error
         }
     }
@@ -152,6 +193,7 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
         channel = nil
         connecting = false
         lock.unlock()
+        log.info("ipc_stream_disconnected")
     }
 }
 
@@ -260,15 +302,43 @@ private final class ClientSubscriptionHandler: ChannelInboundHandler, @unchecked
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var buffer = unwrapInboundIn(data)
-        guard let body = buffer.readData(length: buffer.readableBytes),
-              let envelope = try? TransportCoding.makeDecoder().decode(
-                TransportEnvelope<IPCResponse>.self,
-                from: body
-              ),
-              envelope.version.isCompatible(with: .current) else { return }
-        if let health = envelope.payload.health { onHealth(health) }
-        if let event = envelope.payload.event { onEvent(event) }
-        if let summary = envelope.payload.summary { onSummary(summary) }
+        guard let body = buffer.readData(length: buffer.readableBytes) else { return }
+        let envelope: TransportEnvelope<IPCResponse>
+        do {
+            envelope = try TransportCoding.makeDecoder().decode(TransportEnvelope<IPCResponse>.self, from: body)
+        } catch {
+            // A frame this build cannot read is dropped, not fatal — but it
+            // is the one symptom of a daemon / app version skew worth seeing.
+            log.warning("ipc_stream_frame_rejected", metadata: .fields(["bytes": body.count, "error": error]))
+            return
+        }
+        guard envelope.version.isCompatible(with: .current) else {
+            log.warning("ipc_stream_frame_incompatible", metadata: .fields([
+                "bytes": body.count,
+                "major": envelope.version.major,
+            ]))
+            return
+        }
+        if let health = envelope.payload.health {
+            log.debug("ipc_stream_health", metadata: .fields([
+                "active": health.activeSessionCount,
+                "retained": health.retainedSessionCount,
+                "relay": health.relayConnected,
+            ]))
+            onHealth(health)
+        }
+        if let event = envelope.payload.event {
+            log.debug("ipc_stream_event", metadata: .fields([
+                "session": event.sessionID.rawValue,
+                "event": event.eventID.rawValue,
+                "bytes": body.count,
+            ]))
+            onEvent(event)
+        }
+        if let summary = envelope.payload.summary {
+            log.debug("ipc_stream_summary", metadata: .fields(["session": summary.id.rawValue]))
+            onSummary(summary)
+        }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
@@ -276,6 +346,7 @@ private final class ClientSubscriptionHandler: ChannelInboundHandler, @unchecked
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        log.warning("ipc_stream_error", metadata: .fields(["error": error]))
         context.close(promise: nil)
     }
 }

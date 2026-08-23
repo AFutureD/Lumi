@@ -1,5 +1,9 @@
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "relay")
 
 public enum RelayClientError: Error, Sendable {
     case invalidResponse
@@ -262,8 +266,29 @@ public struct RelayRESTClient: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.httpBody = try TransportCoding.makeEncoder().encode(body)
         }
-        let (data, response) = try await session.data(for: request)
+        let started = ContinuousClock.now
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            log.warning("relay_rest_failed", metadata: .fields([
+                "method": method,
+                "path": Self.redactedPath(path),
+                "ms": LogClock.milliseconds(since: started),
+                "error": error,
+            ]))
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else { throw RelayClientError.invalidResponse }
+        log.log(level: (200..<300).contains(http.statusCode) ? .debug : .warning, "relay_rest", metadata: .fields([
+            "method": method,
+            "path": Self.redactedPath(path),
+            "status": http.statusCode,
+            "bytes_out": request.httpBody?.count ?? 0,
+            "bytes_in": data.count,
+            "ms": LogClock.milliseconds(since: started),
+        ]))
         if http.statusCode == 401 { throw RelayClientError.unauthorized }
         guard (200..<300).contains(http.statusCode) else {
             if let body = try? JSONDecoder().decode(RelayErrorBody.self, from: data) {
@@ -278,6 +303,18 @@ public struct RelayRESTClient: Sendable {
             return EmptyResponse() as! ResponseBody
         }
         return try TransportCoding.makeDecoder().decode(ResponseBody.self, from: data)
+    }
+
+    /// Pairing session ids double as bearer capabilities, so a path that
+    /// names one is logged with the id shortened to its first 8 characters.
+    static func redactedPath(_ path: String) -> String {
+        var components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard let index = components.firstIndex(of: "pairing-sessions"), index + 1 < components.count,
+              components[index + 1].count > 8 else { return path }
+        let value = components[index + 1]
+        let query = value.firstIndex(of: "?").map { String(value[$0...]) } ?? ""
+        components[index + 1] = String(value.prefix(8)) + "…" + query
+        return components.joined(separator: "/")
     }
 }
 
@@ -310,6 +347,18 @@ public enum RelayIncomingMessage: Sendable {
     case pairingDevice(RelayPairingDeviceNotice)
     /// Host socket only: the iPhone cancelled the live pairing session.
     case pairingClosed(sessionID: String, reason: String)
+
+    /// What a log line calls the message: frames by kind and sequence,
+    /// control messages by type — never their payload.
+    public var logName: String {
+        switch self {
+        case let .frame(frame): "frame:\(frame.kind.rawValue):\(frame.sequence)"
+        case let .presence(online): "presence:\(online ? "online" : "offline")"
+        case let .error(error): "error:\(error.code)"
+        case .pairingDevice: "pairing_device"
+        case let .pairingClosed(_, reason): "pairing_closed:\(reason)"
+        }
+    }
 }
 
 public actor RelayWebSocketClient {
@@ -342,6 +391,11 @@ public actor RelayWebSocketClient {
         task?.cancel(with: .goingAway, reason: nil)
         task = newTask
         newTask.resume()
+        log.info("relay_ws_connecting", metadata: .fields([
+            "relay": baseURL.host ?? baseURL.absoluteString,
+            "host": hostID.rawValue,
+            "role": Self.roleName(role),
+        ]))
     }
 
     public func send(_ frame: RelayRoutingFrame) async throws {
@@ -350,7 +404,24 @@ public actor RelayWebSocketClient {
         guard let text = String(data: encoded, encoding: .utf8) else {
             throw RelayClientError.invalidResponse
         }
-        try await task.send(.string(text))
+        do {
+            try await task.send(.string(text))
+        } catch {
+            log.warning("relay_ws_send_failed", metadata: .fields([
+                "kind": frame.kind.rawValue,
+                "device": frame.deviceID?.rawValue,
+                "sequence": frame.sequence,
+                "bytes": encoded.count,
+                "error": error,
+            ]))
+            throw error
+        }
+        log.debug("relay_ws_sent", metadata: .fields([
+            "kind": frame.kind.rawValue,
+            "device": frame.deviceID?.rawValue,
+            "sequence": frame.sequence,
+            "bytes": encoded.count,
+        ]))
     }
 
     public func next() async throws -> RelayIncomingMessage {
@@ -364,7 +435,15 @@ public actor RelayWebSocketClient {
             // accepted: surface that instead of a generic socket error, so
             // callers stop reconnecting and ask the user to pair again.
             let httpStatus = (task.response as? HTTPURLResponse)?.statusCode
-            if Self.isCredentialRejection(httpStatus: httpStatus, closeCode: task.closeCode.rawValue) {
+            let closeCode = task.closeCode.rawValue
+            let rejected = Self.isCredentialRejection(httpStatus: httpStatus, closeCode: closeCode)
+            log.warning("relay_ws_receive_failed", metadata: .fields([
+                "http_status": httpStatus,
+                "close_code": closeCode,
+                "credential_rejected": rejected,
+                "error": error,
+            ]))
+            if rejected {
                 throw RelayClientError.unauthorized
             }
             throw error
@@ -375,6 +454,15 @@ public actor RelayWebSocketClient {
         case let .data(value): data = value
         @unknown default: throw RelayClientError.unsupportedMessage
         }
+        let incoming = try Self.decode(data)
+        log.debug("relay_ws_received", metadata: .fields([
+            "type": incoming.logName,
+            "bytes": data.count,
+        ]))
+        return incoming
+    }
+
+    private static func decode(_ data: Data) throws -> RelayIncomingMessage {
         if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
             switch control.type {
             case "presence":
@@ -409,8 +497,18 @@ public actor RelayWebSocketClient {
     }
 
     public func disconnect() {
+        if task != nil {
+            log.info("relay_ws_disconnected", metadata: .fields(["relay": baseURL.host ?? baseURL.absoluteString]))
+        }
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+    }
+
+    private static func roleName(_ role: RelayConnectionRole) -> String {
+        switch role {
+        case .host: "host"
+        case .device: "device"
+        }
     }
 
     /// The worker's close code for a device the Mac revoked (`host-relay.ts`).

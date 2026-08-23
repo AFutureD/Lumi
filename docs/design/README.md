@@ -12,6 +12,7 @@
 4. [Relay、配对与安全设计](relay-pairing-security.md)：Cloudflare Durable Object、配对、E2EE、序号和撤销。
 5. [App 与运行时设计](application-runtime.md)：macOS、Notch、iOS、缓存、刷新和并发边界。
 6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Universal 2、Relay 部署和 CI。
+7. [日志设计](logging.md)：三端共用的分级 / 分类 / 结构化字段，文件位置、错误汇总、Relay 的 JSON 行，以及什么永远不进日志。
 
 ## 设计状态
 

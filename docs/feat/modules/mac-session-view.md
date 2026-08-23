@@ -75,7 +75,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 清空全部历史
 
-在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。升级 App 后不需要手动 Reinstall：启动时发现运行中的 daemon 版本过期会自动重启它（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
+在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。最下方的 Logs 卡片显示日志目录（`~/Library/Logs/Agent Status`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。升级 App 后不需要手动 Reinstall：启动时发现运行中的 daemon 版本过期会自动重启它（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
 
 ### 过滤 Session 列表
 

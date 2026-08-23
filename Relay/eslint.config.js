@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    ignores: ["worker-configuration.d.ts", "coverage/**", "eslint.config.js"],
+    ignores: ["worker-configuration.d.ts", "coverage/**", "eslint.config.js", ".wrangler/**"],
   },
   {
     files: ["**/*.ts"],

@@ -1,6 +1,10 @@
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "lifecycle")
 
 /// launchd keeps a registered daemon running on the binary it launched, so an
 /// app update leaves a stale process behind until something re-registers the
@@ -65,7 +69,7 @@ final class DaemonAutoUpdater {
                 do {
                     return try ExecutableFingerprint.sha256Hex(fileAt: bundled.resolvingSymlinksInPath())
                 } catch {
-                    NSLog("agent-status daemon auto-update: hashing bundled daemon failed: %@", String(describing: error))
+                    log.error("daemon_auto_update_hash_failed", metadata: .fields(["path": bundled, "error": error]))
                     return nil
                 }
             }.value
@@ -87,24 +91,29 @@ final class DaemonAutoUpdater {
             break
         case .upToDate:
             finished = true
+            log.info("daemon_up_to_date", metadata: .fields(["fingerprint": bundledHash.prefix(12)]))
         case .restart(let reason):
             attempted = true
             guard manager.status == .enabled else {
                 finished = true
+                log.info("daemon_auto_update_skipped", metadata: .fields(["reason": reason, "service": manager.describeStatus()]))
                 return
             }
-            NSLog("agent-status daemon auto-update: restarting daemon (%@)", reason)
+            log.info("daemon_auto_update_restarting", metadata: .fields(["reason": reason]))
             do {
                 awaitingDisconnect = true
                 try restart()
                 store.refresh()
             } catch {
                 finished = true
-                NSLog("agent-status daemon auto-update: restart failed: %@", String(describing: error))
+                log.error("daemon_auto_update_restart_failed", metadata: .fields(["reason": reason, "error": error]))
             }
         case .stillStale:
             finished = true
-            NSLog("agent-status daemon auto-update: daemon is still stale after one restart; not retrying")
+            log.warning("daemon_still_stale_after_restart", metadata: .fields([
+                "running": store.health?.executableHash?.prefix(12),
+                "bundled": bundledHash.prefix(12),
+            ]))
         }
     }
 }

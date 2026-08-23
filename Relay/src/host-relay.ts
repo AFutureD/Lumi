@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, hashCredential, randomCredential, timingSafeStringEqual } from "./crypto";
+import { elapsedMs, loggerForEnv, shortID, traceID, type Logger } from "./log";
 import type { PairingDirectory } from "./pairing-directory";
 import {
   MAX_WEBSOCKET_MESSAGE_BYTES,
@@ -12,7 +13,7 @@ import {
   parseRelayRoutingFrame,
   readLimitedJSON,
 } from "./protocol";
-import { RATE_LIMITS_TABLE, RateLimitError, enforceRateLimit } from "./rate-limit";
+import { RATE_LIMITS_TABLE, RateLimitError, enforceRateLimit, sourceBucket } from "./rate-limit";
 
 interface SocketAttachment {
   role: "host" | "device";
@@ -77,10 +78,20 @@ const PAIRING_SESSION_COLUMNS = `id, host_id, state, commit_hash, host_public_ke
   created_at, expires_at, updated_at`;
 
 const MAX_PAIRING_SESSION_LIFETIME_MS = 10 * 60_000;
+/** How long after a session's deadline the purge alarm fires. */
+const PAIRING_PURGE_GRACE_MS = 1_000;
 
 export class HostRelay extends DurableObject<Env> {
+  /** `http`: requests into this object; `ws`: sockets and frames; `pairing`: the session state machine. */
+  private log: Logger;
+  private wsLog: Logger;
+  private pairingLog: Logger;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.log = loggerForEnv(env, "http");
+    this.wsLog = this.log.withCategory("ws");
+    this.pairingLog = this.log.withCategory("pairing");
     void this.ctx.blockConcurrencyWhile(() => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS metadata (
@@ -119,10 +130,20 @@ export class HostRelay extends DurableObject<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
+    const startedAt = Date.now();
+    const url = new URL(request.url);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const hostID = segments[2];
+    // Every line of this object names its host; the first request binds it.
+    if (hostID && this.log.fields.hostID === undefined) {
+      this.log = this.log.child({ hostID });
+      this.wsLog = this.wsLog.child({ hostID });
+      this.pairingLog = this.pairingLog.child({ hostID });
+    }
+    // This request's lines carry its trace (cf-ray); the object's loggers
+    // are shared, so the request scope is a local child.
+    const log = this.log.child({ trace: traceID(request) });
     try {
-      const url = new URL(request.url);
-      const segments = url.pathname.split("/").filter(Boolean);
-      const hostID = segments[2];
       if (segments[0] !== "v1" || segments[1] !== "hosts" || !hostID) {
         return json({ error: "not_found" }, 404);
       }
@@ -145,12 +166,20 @@ export class HostRelay extends DurableObject<Env> {
       return json({ error: "not_found" }, 404);
     } catch (error) {
       if (error instanceof RequestValidationError) {
+        log.warn("request_invalid", { method: request.method, path: segments.slice(3).join("/"), error });
         return json({ error: "invalid_request", message: error.message }, 400);
       }
       if (error instanceof RateLimitError) {
+        log.warn("request_rate_limited", { method: request.method, path: segments.slice(3).join("/") });
         return json({ error: "rate_limited" }, 429);
       }
-      console.error(JSON.stringify({ event: "relay_request_failed", error: String(error) }));
+      log.error("request_failed", {
+        method: request.method,
+        path: segments.slice(3, 4).join("/"),
+        ms: elapsedMs(startedAt),
+        error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return json({ error: "internal_error" }, 500);
     }
   }
@@ -161,10 +190,12 @@ export class HostRelay extends DurableObject<Env> {
       ? new TextEncoder().encode(message).byteLength
       : message.byteLength;
     if (byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
+      this.wsLog.warn("ws_message_too_large", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength });
       ws.close(1009, "message too large");
       return;
     }
     if (typeof message !== "string") {
+      this.wsLog.warn("ws_message_not_text", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength });
       ws.close(1003, "routing frames must be JSON text");
       return;
     }
@@ -174,10 +205,11 @@ export class HostRelay extends DurableObject<Env> {
       frame = parseRelayRoutingFrame(JSON.parse(message) as unknown);
     } catch (error) {
       ws.send(JSON.stringify({ type: "error", code: "invalid_frame" }));
-      console.warn(JSON.stringify({ event: "invalid_frame", role: attachment.role, error: String(error) }));
+      this.wsLog.warn("ws_frame_invalid", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength, error });
       return;
     }
     if (frame.hostID !== attachment.hostID) {
+      this.wsLog.warn("ws_host_mismatch", { role: attachment.role, deviceID: attachment.deviceID, frameHostID: frame.hostID });
       ws.close(1008, "host mismatch");
       return;
     }
@@ -185,34 +217,74 @@ export class HostRelay extends DurableObject<Env> {
     // the frame was valid, its sequence stands, and `invalid_frame` would
     // only mislead the host.
     if (attachment.role === "host") {
-      this.handleHostFrame(frame, message);
+      this.handleHostFrame(frame, message, byteLength);
     } else {
-      this.handleDeviceFrame(attachment, frame, message, ws);
+      this.handleDeviceFrame(attachment, frame, message, ws, byteLength);
     }
   }
 
   /** Sends to one peer socket; a closed or failing socket is logged, not thrown. */
-  private forward(target: WebSocket, raw: string, role: "host" | "device"): void {
+  private forward(target: WebSocket, raw: string, role: "host" | "device"): boolean {
     try {
       target.send(raw);
+      return true;
     } catch (error) {
-      console.warn(JSON.stringify({ event: "forward_failed", to: role, error: String(error) }));
+      this.wsLog.warn("ws_forward_failed", { to: role, error });
+      return false;
     }
   }
 
-  override webSocketClose(ws: WebSocket): void {
+  override webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const attachment = this.attachment(ws);
     const hasAnotherOpenHost = this.hostSockets().some(
       (candidate) => candidate !== ws && candidate.readyState === WebSocket.OPEN,
     );
+    this.wsLog.info("ws_closed", {
+      role: attachment.role,
+      deviceID: attachment.deviceID,
+      code,
+      reason,
+      wasClean,
+      connectedMs: attachment.connectedAt > 0 ? elapsedMs(attachment.connectedAt) : undefined,
+      hostOnline: attachment.role === "host" ? hasAnotherOpenHost : this.hostIsOnline(),
+    });
     if (attachment.role === "host" && !hasAnotherOpenHost) {
       this.broadcastPresence(false);
     }
   }
 
-  override webSocketError(ws: WebSocket): void {
+  override webSocketError(ws: WebSocket, error: unknown): void {
     const attachment = this.attachment(ws);
-    console.warn(JSON.stringify({ event: "websocket_error", role: attachment.role }));
+    this.wsLog.warn("ws_error", { role: attachment.role, deviceID: attachment.deviceID, error });
+  }
+
+  /**
+   * Fires just after the latest pairing deadline: live sessions past it are
+   * closed the normal way (code released, host told), then every expired row
+   * is dropped — an approved row still holds the plaintext Device token the
+   * iPhone collected, and nothing needs it after the session window.
+   */
+  override async alarm(): Promise<void> {
+    const now = Date.now();
+    for (const session of this.livePairingSessions()) {
+      if (session.expires_at <= now) await this.closePairingSession(session, "expired", true);
+    }
+    const purged = this.ctx.storage.sql.exec("DELETE FROM pairing_sessions WHERE expires_at <= ?", now).rowsWritten;
+    const next = this.ctx.storage.sql.exec<{ [key: string]: SqlStorageValue; next: number | null }>(
+      "SELECT MIN(expires_at) AS next FROM pairing_sessions",
+    ).toArray()[0]?.next ?? null;
+    if (next !== null) await this.ctx.storage.setAlarm(next + PAIRING_PURGE_GRACE_MS);
+    this.pairingLog.info("pairing_sessions_purged", {
+      purged,
+      nextAlarm: next === null ? undefined : new Date(next + PAIRING_PURGE_GRACE_MS).toISOString(),
+    });
+  }
+
+  /** Makes sure the purge alarm fires no later than just after `expiresAt`. */
+  private async schedulePairingPurge(expiresAt: number): Promise<void> {
+    const target = expiresAt + PAIRING_PURGE_GRACE_MS;
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > target) await this.ctx.storage.setAlarm(target);
   }
 
   // MARK: - Pairing sessions
@@ -224,7 +296,10 @@ export class HostRelay extends DurableObject<Env> {
    */
   async claimPairingSession(sessionID: string): Promise<{ hostName: string | null; commit: string } | null> {
     const session = await this.loadPairingSession(sessionID);
-    if (!session || session.state !== "offered") return null;
+    if (!session || session.state !== "offered") {
+      this.pairingLog.info("pairing_claim_refused", { sessionID: shortID(sessionID), state: session?.state ?? "missing" });
+      return null;
+    }
     this.updatePairingSession(sessionID, "claimed");
     return { hostName: session.host_name, commit: session.commit_hash };
   }
@@ -268,12 +343,13 @@ export class HostRelay extends DurableObject<Env> {
     }
 
     // One live session per Mac: a new code retires whatever was on screen.
-    for (const live of this.livePairingSessions()) {
-      await this.closePairingSession(live, "cancelled");
+    const live = this.livePairingSessions();
+    for (const session of live) {
+      await this.closePairingSession(session, "cancelled");
     }
     // Finished sessions are dead weight once past their expiry — and an
     // approved row still holds the Device token the iPhone collected.
-    this.ctx.storage.sql.exec("DELETE FROM pairing_sessions WHERE expires_at < ?", now);
+    const purged = this.ctx.storage.sql.exec("DELETE FROM pairing_sessions WHERE expires_at < ?", now).rowsWritten;
 
     const sessionID = randomCredential();
     this.ctx.storage.sql.exec(
@@ -292,6 +368,13 @@ export class HostRelay extends DurableObject<Env> {
       now,
     );
     const code = await this.directory().allocate(hostID, sessionID, expiresAt);
+    await this.schedulePairingPurge(expiresAt);
+    this.pairingLog.info("pairing_session_created", {
+      sessionID: shortID(sessionID),
+      expiresAt: new Date(expiresAt).toISOString(),
+      supersededLive: live.length,
+      purgedExpired: purged,
+    });
     return json({ sessionID, code, expiresAt: new Date(expiresAt).toISOString() }, 201);
   }
 
@@ -300,9 +383,13 @@ export class HostRelay extends DurableObject<Env> {
     if (!session) return json({ error: "not_found" }, 404);
     if (!this.authorizePairingSession(request, session)) return json({ error: "unauthorized" }, 401);
     const submission = parsePairingDeviceSubmission(await readLimitedJSON(request));
-    if (session.state !== "claimed") return invalidState(session.state);
-    if (!this.hostIsOnline()) return json({ error: "host_offline" }, 409);
+    if (session.state !== "claimed") return this.invalidState("device", session);
+    if (!this.hostIsOnline()) {
+      this.pairingLog.info("pairing_device_host_offline", { sessionID: shortID(sessionID), deviceID: submission.deviceID });
+      return json({ error: "host_offline" }, 409);
+    }
 
+    this.pairingLog.info("pairing_device_submitted", { sessionID: shortID(sessionID), deviceID: submission.deviceID });
     this.updatePairingSession(sessionID, "submitted", {
       device_id: submission.deviceID,
       device_name: submission.deviceName,
@@ -340,8 +427,9 @@ export class HostRelay extends DurableObject<Env> {
     const reveal = parsePairingReveal(await readLimitedJSON(request));
     const session = await this.loadPairingSession(sessionID);
     if (!session) return json({ error: "not_found" }, 404);
-    if (session.state !== "submitted") return invalidState(session.state);
+    if (session.state !== "submitted") return this.invalidState("reveal", session);
     this.updatePairingSession(sessionID, "revealed", { host_nonce: reveal.hostNonce });
+    this.pairingLog.info("pairing_revealed", { sessionID: shortID(sessionID), deviceID: session.device_id });
     return json({ state: "revealed" });
   }
 
@@ -352,12 +440,13 @@ export class HostRelay extends DurableObject<Env> {
     if (!session) return json({ error: "not_found" }, 404);
 
     if (!decision.approved) {
-      if (session.state !== "submitted" && session.state !== "revealed") return invalidState(session.state);
+      if (session.state !== "submitted" && session.state !== "revealed") return this.invalidState("decision", session);
       this.updatePairingSession(sessionID, "rejected");
+      this.pairingLog.info("pairing_rejected", { sessionID: shortID(sessionID), deviceID: session.device_id, from: session.state });
       return json({ state: "rejected" });
     }
 
-    if (session.state !== "revealed") return invalidState(session.state);
+    if (session.state !== "revealed") return this.invalidState("decision", session);
     if (session.device_id === null || session.device_name === null || session.device_public_key === null) {
       throw new Error("Revealed pairing session has no device.");
     }
@@ -386,6 +475,7 @@ export class HostRelay extends DurableObject<Env> {
       device_token_hash: tokenHash,
       device_token: deviceToken,
     }, pairedAt);
+    this.pairingLog.info("pairing_approved", { sessionID: shortID(sessionID), deviceID: session.device_id });
     return json({ state: "approved", deviceID: session.device_id });
   }
 
@@ -395,6 +485,7 @@ export class HostRelay extends DurableObject<Env> {
     const byHost = await this.authorizeHost(request);
     if (!byHost && !this.authorizePairingSession(request, session)) return json({ error: "unauthorized" }, 401);
     if (!TERMINAL_PAIRING_STATES.has(session.state)) {
+      this.pairingLog.info("pairing_cancel_requested", { sessionID: shortID(sessionID), by: byHost ? "host" : "device", from: session.state });
       await this.closePairingSession(session, "cancelled", !byHost);
     }
     return new Response(null, { status: 204 });
@@ -432,9 +523,17 @@ export class HostRelay extends DurableObject<Env> {
   ): Promise<void> {
     this.updatePairingSession(session.id, state);
     await this.directory().release(session.host_id, session.id);
-    if (notifyHost && (session.state === "submitted" || session.state === "revealed")) {
+    const notified = notifyHost && (session.state === "submitted" || session.state === "revealed");
+    if (notified) {
       this.sendToHost({ type: "pairing_closed", sessionID: session.id, reason: state });
     }
+    this.pairingLog.info("pairing_session_closed", { sessionID: shortID(session.id), from: session.state, to: state, hostNotified: notified });
+  }
+
+  /** 409 for an action the session's state does not allow; logged, since a stuck client repeats it. */
+  private invalidState(action: string, session: PairingSessionRow): Response {
+    this.pairingLog.info("pairing_invalid_state", { sessionID: shortID(session.id), action, state: session.state });
+    return invalidState(session.state);
   }
 
   private updatePairingSession(
@@ -485,9 +584,11 @@ export class HostRelay extends DurableObject<Env> {
     const newHash = await hashCredential(input.hostSecret);
     const currentHash = this.metadata("host_token_hash");
     if (currentHash && !timingSafeStringEqual(currentHash, newHash)) {
+      this.log.warn("host_register_rejected", { reason: "secret_mismatch" });
       return json({ error: "unauthorized" }, 401);
     }
     if (!currentHash) this.setMetadata("host_token_hash", newHash);
+    this.log.info("host_registered", { fresh: !currentHash });
     return json({ registered: true });
   }
 
@@ -512,18 +613,21 @@ export class HostRelay extends DurableObject<Env> {
   private async revokeDevice(request: Request, deviceID: string): Promise<Response> {
     if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
     const purge = new URL(request.url).searchParams.get("purge") === "1";
+    let rows: number;
     if (purge) {
-      this.ctx.storage.sql.exec("DELETE FROM devices WHERE id = ?", deviceID);
+      rows = this.ctx.storage.sql.exec("DELETE FROM devices WHERE id = ?", deviceID).rowsWritten;
     } else {
-      this.ctx.storage.sql.exec(
+      rows = this.ctx.storage.sql.exec(
         "UPDATE devices SET revoked_at = ? WHERE id = ?",
         Date.now(),
         deviceID,
-      );
+      ).rowsWritten;
     }
-    for (const socket of this.ctx.getWebSockets(`device:${deviceID}`)) {
+    const sockets = this.ctx.getWebSockets(`device:${deviceID}`);
+    for (const socket of sockets) {
       socket.close(4003, "device revoked");
     }
+    this.log.info(purge ? "device_purged" : "device_revoked", { deviceID, rows, socketsClosed: sockets.length });
     return new Response(null, { status: 204 });
   }
 
@@ -536,9 +640,15 @@ export class HostRelay extends DurableObject<Env> {
     const deviceID = url.searchParams.get("deviceId") ?? undefined;
 
     if (role === "host") {
-      if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
+      if (!(await this.authorizeHost(request))) {
+        this.wsLog.warn("ws_unauthorized", { role });
+        return json({ error: "unauthorized" }, 401);
+      }
     } else if (role === "device" && deviceID) {
-      if (!(await this.authorizeDevice(request, deviceID))) return json({ error: "unauthorized" }, 401);
+      if (!(await this.authorizeDevice(request, deviceID))) {
+        this.wsLog.warn("ws_unauthorized", { role, deviceID });
+        return json({ error: "unauthorized" }, 401);
+      }
     } else {
       throw new RequestValidationError("Invalid WebSocket role.");
     }
@@ -553,25 +663,43 @@ export class HostRelay extends DurableObject<Env> {
     };
     const tags = role === "host" ? ["role:host"] : ["role:device", `device:${deviceID}`];
 
+    let replaced = 0;
     if (role === "host") {
-      for (const existing of this.hostSockets()) existing.close(4001, "host connection replaced");
+      for (const existing of this.hostSockets()) {
+        existing.close(4001, "host connection replaced");
+        replaced += 1;
+      }
     }
     this.ctx.acceptWebSocket(server, tags);
     server.serializeAttachment(attachment);
+    const hostOnline = this.hostSockets().length > 0;
     if (role === "host") {
       this.broadcastPresence(true);
     } else {
-      server.send(JSON.stringify({ type: "presence", online: this.hostSockets().length > 0 }));
+      server.send(JSON.stringify({ type: "presence", online: hostOnline }));
     }
+    this.wsLog.info("ws_opened", {
+      role,
+      deviceID,
+      replacedHostSockets: role === "host" ? replaced : undefined,
+      deviceSockets: this.deviceSockets().length,
+      hostOnline,
+    });
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  private handleHostFrame(frame: ReturnType<typeof parseRelayRoutingFrame>, raw: string): void {
+  private handleHostFrame(frame: ReturnType<typeof parseRelayRoutingFrame>, raw: string, bytes: number): void {
     // Sequences belong to a paired Mac/iOS channel. Two devices may both send
     // sequence 1; sessions inside either channel never influence this cursor.
     const channelKey = `last_host_sequence:${frame.deviceID ?? "broadcast"}`;
     const lastSequence = Number(this.metadata(channelKey) ?? "-1");
     if (frame.sequence <= lastSequence) {
+      this.wsLog.warn("ws_sequence_rejected", {
+        deviceID: frame.deviceID,
+        kind: frame.kind,
+        sequence: frame.sequence,
+        lastSequence,
+      });
       // Tell the host where the channel actually is so it can move its own
       // cursor past the reused value instead of looping on the error.
       for (const host of this.hostSockets()) {
@@ -590,7 +718,23 @@ export class HostRelay extends DurableObject<Env> {
     const targets = frame.deviceID
       ? this.ctx.getWebSockets(`device:${frame.deviceID}`)
       : this.deviceSockets();
-    for (const target of targets) this.forward(target, raw, "device");
+    let delivered = 0;
+    for (const target of targets) {
+      if (this.forward(target, raw, "device")) delivered += 1;
+    }
+    // A frame per line is only worth it while debugging a channel; the
+    // sequence on every line makes gaps visible without a decoder.
+    this.wsLog.debug("ws_host_frame_forwarded", {
+      deviceID: frame.deviceID,
+      kind: frame.kind,
+      sequence: frame.sequence,
+      bytes,
+      targets: targets.length,
+      delivered,
+    });
+    if (targets.length === 0) {
+      this.wsLog.info("ws_host_frame_undeliverable", { deviceID: frame.deviceID, kind: frame.kind, sequence: frame.sequence, bytes });
+    }
   }
 
   private handleDeviceFrame(
@@ -598,15 +742,36 @@ export class HostRelay extends DurableObject<Env> {
     frame: ReturnType<typeof parseRelayRoutingFrame>,
     raw: string,
     socket: WebSocket,
+    bytes: number,
   ): void {
     if (frame.deviceID !== attachment.deviceID || frame.kind !== "request") {
+      this.wsLog.warn("ws_device_frame_rejected", {
+        deviceID: attachment.deviceID,
+        frameDeviceID: frame.deviceID,
+        kind: frame.kind,
+        sequence: frame.sequence,
+      });
       socket.close(1008, "device is read-only");
       return;
     }
     // The relay keeps no replay buffer and cannot read the body: a device's
     // sealed `request` (sync index, fetch session, session reviewed, …) is
     // forwarded to the host verbatim and answered by the host in `data` frames.
-    for (const host of this.hostSockets()) this.forward(host, raw, "host");
+    const hosts = this.hostSockets();
+    let delivered = 0;
+    for (const host of hosts) {
+      if (this.forward(host, raw, "host")) delivered += 1;
+    }
+    this.wsLog.debug("ws_device_frame_forwarded", {
+      deviceID: attachment.deviceID,
+      sequence: frame.sequence,
+      bytes,
+      hosts: hosts.length,
+      delivered,
+    });
+    if (hosts.length === 0) {
+      this.wsLog.info("ws_device_frame_undeliverable", { deviceID: attachment.deviceID, sequence: frame.sequence, bytes });
+    }
   }
 
   private async authorizeHost(request: Request): Promise<boolean> {
@@ -634,7 +799,7 @@ export class HostRelay extends DurableObject<Env> {
     limit: number,
     windowMilliseconds: number,
   ): Promise<void> {
-    const source = request.headers.get("cf-connecting-ip") ?? "local";
+    const source = sourceBucket(request.headers.get("cf-connecting-ip") ?? "local");
     enforceRateLimit(this.ctx.storage.sql, `${action}:${await hashCredential(source)}`, limit, windowMilliseconds);
   }
 

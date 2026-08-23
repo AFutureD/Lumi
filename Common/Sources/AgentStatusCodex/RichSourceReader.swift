@@ -1,6 +1,10 @@
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "convert")
 
 /// Locates a session's rich source on disk (Claude transcript / Codex rollout).
 public enum RichSourceLocator {
@@ -111,6 +115,7 @@ public enum RichSourceReader {
 
         var events: [AgentIngressEvent] = []
         var lines = 0
+        var rejectedLines = 0
         var lineStart = data.startIndex
         var consumed = 0
         while let newline = data[lineStart...].firstIndex(of: 0x0A) {
@@ -121,8 +126,19 @@ public enum RichSourceReader {
                     byteOffset: offset + UInt64(consumed),
                     sessionID: sessionID
                 )
-                if let lineEvents = try? adapter.events(fromRolloutLine: line, context: context, state: &state) {
-                    events.append(contentsOf: lineEvents)
+                do {
+                    events.append(contentsOf: try adapter.events(fromRolloutLine: line, context: context, state: &state))
+                } catch {
+                    // One bad record must not lose the rest of the read; it
+                    // is logged (position only, never the record) and skipped.
+                    rejectedLines += 1
+                    log.warning("rich_source_line_rejected", metadata: .fields([
+                        "session": sessionID.rawValue,
+                        "path": path,
+                        "offset": context.byteOffset,
+                        "bytes": line.count,
+                        "error": error,
+                    ]))
                 }
                 lines += 1
             }
@@ -132,6 +148,15 @@ public enum RichSourceReader {
             if lineStart == data.endIndex { break }
         }
 
+        log.debug("rich_source_read", metadata: .fields([
+            "session": sessionID.rawValue,
+            "path": path,
+            "from": offset,
+            "to": offset + UInt64(consumed),
+            "lines": lines,
+            "rejected": rejectedLines,
+            "events": events.count,
+        ]))
         return RichSourceRead(
             events: events,
             cursor: RolloutCursor(

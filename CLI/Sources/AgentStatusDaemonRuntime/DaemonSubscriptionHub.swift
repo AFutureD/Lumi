@@ -1,5 +1,9 @@
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "agent")
 
 /// What the daemon's single local stream carries: Agent events as applied,
 /// and summary-only changes that have no event (reviewed, archived) so every
@@ -24,14 +28,20 @@ public final class DaemonSubscriptionHub: @unchecked Sendable {
         let id = UUID()
         lock.lock()
         handlers[id] = handler
+        let count = handlers.count
         lock.unlock()
+        log.debug("stream_subscribed", metadata: .fields(["subscriber": id.uuidString.prefix(8), "subscribers": count]))
         return id
     }
 
     public func unsubscribe(_ id: UUID) {
         lock.lock()
-        handlers.removeValue(forKey: id)
+        let removed = handlers.removeValue(forKey: id) != nil
+        let count = handlers.count
         lock.unlock()
+        if removed {
+            log.debug("stream_unsubscribed", metadata: .fields(["subscriber": id.uuidString.prefix(8), "subscribers": count]))
+        }
     }
 
     public func publish(_ event: AgentIngressEvent) {
@@ -46,6 +56,23 @@ public final class DaemonSubscriptionHub: @unchecked Sendable {
         lock.lock()
         let current = Array(handlers.values)
         lock.unlock()
+        if log.logLevel <= .debug {
+            switch message {
+            case let .event(event):
+                log.debug("stream_publish", metadata: .fields([
+                    "kind": "event",
+                    "session": event.sessionID.rawValue,
+                    "event": event.eventID.rawValue,
+                    "subscribers": current.count,
+                ]))
+            case let .summary(summary):
+                log.debug("stream_publish", metadata: .fields([
+                    "kind": "summary",
+                    "session": summary.id.rawValue,
+                    "subscribers": current.count,
+                ]))
+            }
+        }
         current.forEach { $0(message) }
     }
 }

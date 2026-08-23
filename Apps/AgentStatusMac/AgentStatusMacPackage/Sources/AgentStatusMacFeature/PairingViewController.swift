@@ -562,7 +562,7 @@ final class PairingViewController: NSViewController {
                 _ = try await relayHost.startPairing()
                 startFailure = nil
             } catch {
-                NSLog("agent-status pairing: start failed: %@", String(describing: error))
+                // Logged by RelayHostStatusClient (`pairing_page_start_failed`).
                 startFailure = error.localizedDescription
             }
         }
@@ -721,7 +721,7 @@ final class PairingViewController: NSViewController {
             do {
                 _ = try await relayHost.decidePairing(approved: approved)
             } catch {
-                NSLog("agent-status pairing: decision failed: %@", String(describing: error))
+                // Logged by RelayHostStatusClient (`pairing_page_decision_failed`).
                 pendingFootnote.stringValue = error.localizedDescription
             }
         }

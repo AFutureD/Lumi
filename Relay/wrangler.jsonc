@@ -4,6 +4,17 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-16",
   "compatibility_flags": ["nodejs_compat"],
+  // Edge rate limit, checked in the Worker before any Durable Object is
+  // reached: per client address (IPv6 per /64). Generous on purpose — a home
+  // NAT with one Mac (device refresh every 10 s) and two iPhones pairing
+  // (1 poll/s each) stays well under it; floods and host-ID sprawl do not.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 300, "period": 60 }
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -26,6 +37,9 @@
       "new_sqlite_classes": ["PairingDirectory"]
     }
   ],
+  "vars": {
+    "LOG_LEVEL": "info"
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

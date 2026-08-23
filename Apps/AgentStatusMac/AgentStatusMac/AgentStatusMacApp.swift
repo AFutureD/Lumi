@@ -8,6 +8,7 @@ final class AgentStatusMacApp: NSObject, NSApplicationDelegate {
     private var isPreparingToTerminate = false
 
     static func main() {
+        ApplicationCoordinator.bootstrapLogging()
         let application = NSApplication.shared
         let delegate = AgentStatusMacApp()
         application.delegate = delegate

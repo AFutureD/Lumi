@@ -1,6 +1,10 @@
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "convert")
 
 public enum SessionReingestError: Error, Equatable, Sendable {
     case sessionNotFound
@@ -101,6 +105,16 @@ public struct SessionReingester: Sendable {
         guard let detail = try await fullDetail(sessionID) else {
             throw SessionReingestError.sessionNotFound
         }
+        log.info("session_reingested", metadata: .fields([
+            "session": sessionID.rawValue,
+            "agent": previous.summary.agent.rawValue,
+            "path": path,
+            "lines": read.lines,
+            "events": read.events.count,
+            "applied": applied,
+            "rebuilt": rebuilt.count,
+            "generation": generation,
+        ]))
         return SessionReingestReport(path: path, linesRead: read.lines, eventsApplied: applied, detail: detail, rebuiltSessionIDs: rebuilt)
     }
 

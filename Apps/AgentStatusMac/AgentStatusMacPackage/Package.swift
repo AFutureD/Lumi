@@ -27,6 +27,7 @@ let package = Package(
                 .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusDesignSystem", package: "AgentStatusCommon"),
+                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "NookApp", package: "opennook"),

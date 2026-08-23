@@ -1,8 +1,12 @@
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import AppKit
 import ServiceManagement
 import SwiftUI
+
+private let log = Logger(label: "ui")
 
 /// State + actions behind the General / Daemon / Agents / About panels.
 /// The hosting view controller supplies window-bound confirmation and error UI.
@@ -26,6 +30,11 @@ final class SettingsModel: ObservableObject {
     let build: String
     let hookLocation = "~/.codex/hooks.json · agent-status-helper --agent codex"
     let claudeHookLocation = "~/.claude/settings.json · agent-status-helper --agent claude"
+    /// `~/Library/Logs/Agent Status` — daemon.log, helper.log, app.log and errors.log.
+    let logDirectory = LogConfiguration.defaultDirectory()
+    var logDirectoryDescription: String {
+        SessionPagePresentationBuilder.abbreviatedWorkspace(logDirectory.path) ?? logDirectory.path
+    }
 
     var presentError: (Error) -> Void = { _ in }
     /// Returns `true` when the destructive action was confirmed.
@@ -100,6 +109,13 @@ final class SettingsModel: ObservableObject {
     }
 
     // MARK: Actions
+
+    /// Opens the log folder in Finder (creating it, so the button always lands somewhere).
+    func revealLogs() {
+        try? FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        log.info("logs_revealed")
+        NSWorkspace.shared.activateFileViewerSelecting([logDirectory])
+    }
 
     func setLoginEnabled(_ enabled: Bool) {
         do {
@@ -288,6 +304,18 @@ struct DaemonSettingsPanel: View {
                         Button { model.clearHistory() } label: {
                             Text("Clear history…").foregroundStyle(AgentStatusDesign.Color.UI.destructiveText)
                         }
+                    }
+                }
+            }
+
+            SettingsSection(title: "Logs") {
+                SettingsCard {
+                    SettingsRow(
+                        title: model.logDirectoryDescription,
+                        subtitle: "daemon.log, helper.log and app.log, plus errors.log with every error from all three. Session content is never written.",
+                        titleFont: AgentStatusDesign.Font.UI.rowTitle
+                    ) {
+                        Button("Show in Finder") { model.revealLogs() }
                     }
                 }
             }

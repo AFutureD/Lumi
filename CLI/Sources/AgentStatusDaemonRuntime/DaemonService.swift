@@ -1,7 +1,14 @@
 import AgentStatusCodex
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "ipc")
+private let agentLog = Logger(label: "agent")
+private let convertLog = Logger(label: "convert")
+private let dbLog = Logger(label: "db")
 
 public actor DaemonService {
     public static let version = "0.1.0"
@@ -78,6 +85,7 @@ public actor DaemonService {
                 if let event = envelope.payload.event {
                     let inserted = try await repository.apply(event)
                     if inserted { subscriptions.publish(event) }
+                    logIngested([event], accepted: inserted ? 1 : 0)
                     payload = IPCResponse(status: inserted ? .accepted : .ok, event: event)
                 } else {
                     payload = failure(code: "missing_event", message: "The ingest request has no event.")
@@ -91,6 +99,7 @@ public actor DaemonService {
                         subscriptions.publish(event)
                     }
                 }
+                logIngested(events, accepted: accepted)
                 payload = IPCResponse(status: accepted > 0 ? .accepted : .ok, acceptedCount: accepted)
             case .listSessions:
                 payload = IPCResponse(
@@ -114,6 +123,7 @@ public actor DaemonService {
             case .deleteSession:
                 if let id = envelope.payload.sessionID {
                     let removed = try await repository.deleteSession(id: id)
+                    dbLog.info("session_deleted", metadata: .fields(["session": id.rawValue, "removed": removed.count]))
                     await relay?.sessionsRemoved(removed)
                     payload = IPCResponse(status: .ok)
                 } else {
@@ -145,6 +155,7 @@ public actor DaemonService {
             case .clearHistory:
                 let retained = try await repository.listSessions(limit: 10_000).map(\.id)
                 _ = try await repository.deleteAllSessions()
+                dbLog.info("history_cleared", metadata: .fields(["sessions": retained.count]))
                 await relay?.sessionsRemoved(retained)
                 payload = IPCResponse(status: .ok)
             case .getRolloutCursor:
@@ -180,6 +191,7 @@ public actor DaemonService {
                     } catch SessionReingestError.sessionNotFound {
                         payload = failure(code: "session_not_found", message: "The session is no longer retained.")
                     } catch SessionReingestError.richSourceUnavailable {
+                        convertLog.warning("session_reingest_unavailable", metadata: .fields(["session": id.rawValue]))
                         payload = failure(
                             code: "rich_source_unavailable",
                             message: "No readable transcript or rollout is known for the session."
@@ -259,6 +271,12 @@ public actor DaemonService {
             }
             return response(requestID: envelope.requestID, payload: payload)
         } catch {
+            // The client only sees `internal_error`; the cause is recorded here.
+            log.error("ipc_operation_failed", metadata: .fields([
+                "op": envelope.payload.operation.rawValue,
+                "session": envelope.payload.sessionID?.rawValue,
+                "error": error,
+            ]))
             return response(
                 requestID: envelope.requestID,
                 payload: failure(
@@ -268,6 +286,23 @@ public actor DaemonService {
                 )
             )
         }
+    }
+
+    /// One line per ingest call: how many events arrived, how many were new
+    /// (the rest were replays the idempotency table swallowed), for which
+    /// sessions. Per-event detail is on the stream's debug line.
+    private func logIngested(_ events: [AgentIngressEvent], accepted: Int) {
+        guard !events.isEmpty else { return }
+        var sessions: [String] = []
+        for event in events where !sessions.contains(event.sessionID.rawValue) {
+            sessions.append(event.sessionID.rawValue)
+        }
+        agentLog.info("events_ingested", metadata: .fields([
+            "received": events.count,
+            "accepted": accepted,
+            "duplicates": events.count - accepted,
+            "sessions": sessions.joined(separator: ","),
+        ]))
     }
 
     private func relayStatus() async -> RelayHostStatus {

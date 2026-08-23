@@ -1,7 +1,13 @@
 import AgentStatusCodex
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "agent")
+private let dbLog = Logger(label: "db")
+private let lifecycleLog = Logger(label: "lifecycle")
 
 /// Polls the transcripts of *active* Claude sessions so records written when
 /// no hook will ever fire still reach the daemon.
@@ -18,7 +24,6 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
     private let homeDirectory: URL
     private let pollIntervalSeconds: Double
     private let maximumIncrementBytes: Int
-    private let logger: @Sendable (String) -> Void
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
     private let adapter = ClaudeAdapter()
     private let lock = NSLock()
@@ -30,14 +35,12 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         pollIntervalSeconds: Double = 2,
         maximumIncrementBytes: Int = 32 * 1024 * 1024,
-        logger: @escaping @Sendable (String) -> Void = { _ in },
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void = { _ in }
     ) {
         self.repository = repository
         self.homeDirectory = homeDirectory
         self.pollIntervalSeconds = pollIntervalSeconds
         self.maximumIncrementBytes = maximumIncrementBytes
-        self.logger = logger
         self.onEvent = onEvent
     }
 
@@ -48,6 +51,7 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         task = Task { [weak self] in
             await self?.run()
         }
+        lifecycleLog.info("claude_watcher_started", metadata: .fields(["poll_seconds": pollIntervalSeconds]))
     }
 
     public func stop() {
@@ -56,6 +60,9 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         task = nil
         lock.unlock()
         currentTask?.cancel()
+        if currentTask != nil {
+            lifecycleLog.info("claude_watcher_stopped")
+        }
     }
 
     public func scanOnce() async {
@@ -63,7 +70,7 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         do {
             summaries = try await repository.listSessions(limit: 10_000)
         } catch {
-            logger("claude_watcher_list_failed error=\(error)")
+            dbLog.error("claude_watcher_list_failed", metadata: .fields(["error": error]))
             return
         }
         for summary in summaries where Self.isActive(summary) {
@@ -71,7 +78,7 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
             do {
                 try await scan(summary)
             } catch {
-                logger("claude_watcher_scan_failed session=\(summary.id.rawValue) error=\(error)")
+                log.error("claude_watcher_scan_failed", metadata: .fields(["session": summary.id.rawValue, "error": error]))
             }
         }
     }
@@ -107,11 +114,28 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
             initialTurnID: (turns.last(where: { $0.isOpen }) ?? turns.last)?.id,
             maximumBytes: maximumIncrementBytes
         )
+        var applied = 0
         for event in read.events {
-            if try await repository.apply(event) { onEvent(event) }
+            if try await repository.apply(event) {
+                applied += 1
+                onEvent(event)
+            }
         }
         if read.lines > 0 || read.cursor.byteOffset != cursor?.byteOffset {
             try await repository.saveRolloutCursor(read.cursor)
+        }
+        if read.lines > 0 {
+            // The hook-less tail: whatever reached the transcript without a
+            // hook (interrupts, late output) is visible only through this line.
+            log.info("transcript_scanned", metadata: .fields([
+                "session": summary.id.rawValue,
+                "path": path,
+                "from": cursor?.byteOffset ?? 0,
+                "to": read.cursor.byteOffset,
+                "lines": read.lines,
+                "events": read.events.count,
+                "applied": applied,
+            ]))
         }
         markScanned(path: path, fileSize: fileSize)
     }

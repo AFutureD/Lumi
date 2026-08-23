@@ -63,7 +63,7 @@ Relay 不保存 Session 正文或可浏览的历史。Mac 不在线时，iPhone 
 
 ## 遇到卡点
 
-按“Daemon unavailable”“Codex 未信任 Hook”“Relay unavailable”“配对失败”或“Mac unavailable”等可见症状查看[恢复路径](friction-points.md)。
+按“Daemon unavailable”“Codex 未信任 Hook”“Relay unavailable”“配对失败”或“Mac unavailable”等可见症状查看[恢复路径](friction-points.md)。说不清原因时，先看 `~/Library/Logs/Agent Status/errors.log`（“Settings > Daemon > Logs > Show in Finder”）——日志只记标识和数量，不含 Session 正文。
 
 ## 当前边界
 

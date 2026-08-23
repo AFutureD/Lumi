@@ -175,13 +175,28 @@ Mac 上的码在中途换掉或过期，也按 ① 处理——回到输码屏�
 
 **完成信号**：Notch 出现在所选屏幕；之后的紧凑、展开和活动提示都使用同一屏幕。
 
-## 仍无法恢复
+## 仍无法恢复：先看日志
 
-保留界面上的错误文字，并记录以下信息：
+三个本机进程各写一份日志，错误另外汇总成一份：
+
+| 文件 | 谁写的 | 先看什么 |
+| --- | --- | --- |
+| `errors.log` | daemon、helper、Mac App 的全部 ERROR | 出问题先打开它 |
+| `daemon.log` | 后台 daemon | 启动 / 监听、每批事件入库、Relay 连接与配对、给 iPhone 推了什么 |
+| `helper.log` | 每次 Codex / Claude Hook 触发的 helper | 每次 Hook 一行：会话、Hook 名、读了多少行、发了几个事件；读不到对话记录是 WARN |
+| `app.log` | Mac App | 与 daemon 的连接、每次同步的数量、daemon 自动更新、配对页操作 |
+
+位置：`~/Library/Logs/Agent Status/`。打开方式：“Settings > Daemon”最下方的 Logs 卡片点“Show in Finder”；或在 Console.app 按子系统 `com.huanan.AgentStatus` 筛选（记得勾上 Action › Include Info Messages）。
+
+每行的样子：`[时间] [级别:进程] [模块] ['trace':请求id] 事件 key=value …`。同一次操作的所有行共用一个 trace id——helper 一次 hook、Mac 一次同步、daemon 处理的对应请求都是同一个，按它 grep 就能把一件事从头看到尾。模块名：`lifecycle`（启动 / 更新）、`agent`（Agent 事件流入）、`convert`（对话记录解析）、`db`、`ipc`（本机连接）、`relay`、`pairing`、`ui`。
+
+日志只记标识、数量、字节数和耗时，不记 Session 正文、工具参数、配对码或任何凭据，可以直接附到问题里。
+
+需要更细的内容（每一帧、每条事件）时，临时把级别调到 debug：daemon 用环境变量 `AGENT_STATUS_LOG_LEVEL=debug`，Mac App 用启动参数 `-AgentStatusLogLevel debug`，helper 在 Hook 命令后加 `--verbose`。单文件超过 5 MB 自动轮转，最多保留 3 份旧的。
+
+仍然说不清时，再补上：
 
 - Mac Settings 中 daemon 状态；
 - Mac“iPhone”页 Relay 状态；
 - 发生问题的是哪台 Mac 通道；
 - 问题发生在启动、手动 Refresh 还是 Agent 事件之后。
-
-不要复制 Session 正文、工具参数、配对内容或设备凭据到公开问题中。

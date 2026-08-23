@@ -14,17 +14,27 @@ let package = Package(
         .library(name: "AgentStatusIPCClient", targets: ["AgentStatusIPCClient"]),
         .library(name: "AgentStatusRemote", targets: ["AgentStatusRemote"]),
         .library(name: "AgentStatusDesignSystem", targets: ["AgentStatusDesignSystem"]),
+        .library(name: "AgentStatusLogging", targets: ["AgentStatusLogging"]),
     ],
     dependencies: [
         .package(path: "AgentStatusTransport"),
         .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.10.0"),
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.101.3"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
+        .package(url: "https://github.com/apple/swift-service-context.git", from: "1.0.0"),
         .package(
             url: "https://github.com/swiftlang/swift-testing.git",
             revision: "swift-6.2.4-RELEASE"
         ),
     ],
     targets: [
+        .target(
+            name: "AgentStatusLogging",
+            dependencies: [
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceContextModule", package: "swift-service-context"),
+            ]
+        ),
         .target(
             name: "AgentStatusCore",
             dependencies: [
@@ -36,6 +46,7 @@ let package = Package(
             name: "AgentStatusCodex",
             dependencies: [
                 "AgentStatusCore",
+                "AgentStatusLogging",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
             ]
@@ -43,6 +54,7 @@ let package = Package(
         .target(
             name: "AgentStatusIPCClient",
             dependencies: [
+                "AgentStatusLogging",
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
@@ -59,6 +71,7 @@ let package = Package(
         .target(
             name: "AgentStatusRemote",
             dependencies: [
+                "AgentStatusLogging",
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
             ],
             linkerSettings: [
@@ -89,6 +102,13 @@ let package = Package(
                 "AgentStatusDesignSystem",
                 "AgentStatusCore",
                 .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Testing", package: "swift-testing"),
+            ]
+        ),
+        .testTarget(
+            name: "AgentStatusLoggingTests",
+            dependencies: [
+                "AgentStatusLogging",
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

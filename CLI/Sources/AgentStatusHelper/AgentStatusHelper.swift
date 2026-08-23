@@ -1,10 +1,14 @@
 import AgentStatusCodex
 import AgentStatusCore
 import AgentStatusIPCClient
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Darwin
 import Foundation
 import NIOCore
+
+private let log = Logger(label: "agent")
 
 /// `agent-status-helper [--agent codex|claude|auto] [--verbose]`
 ///
@@ -13,7 +17,8 @@ import NIOCore
 /// Agent-domain events, and ships them to the daemon over the Unix socket.
 ///
 /// Always exits 0: a hook exit code of 2 would block the agent's tool call,
-/// and a monitoring failure must never do that. Problems go to stderr.
+/// and a monitoring failure must never do that. Problems go to stderr and to
+/// `helper.log`; `--verbose` mirrors every line (debug included) to stderr.
 @main
 enum AgentStatusHelperMain {
     static func main() {
@@ -37,6 +42,25 @@ enum AgentStatusHelperMain {
             }
         }
 
+        var configuration = LogConfiguration.fromEnvironment(
+            subsystem: "helper",
+            standardErrorPrefix: "agent-status-helper:",
+            standardErrorMinimumLevel: verbose ? .debug : .warning
+        )
+        if verbose { configuration.minimumLevel = .debug }
+        AgentStatusLogging.bootstrap(configuration)
+        let started = ContinuousClock.now
+
+        // One hook invocation is one unit of work: its run id leads every
+        // line here and, as the IPC request id, every daemon line it caused.
+        let runID = makeTraceID()
+        withTrace(runID) {
+            run(selection: selection, started: started)
+        }
+        exit(EXIT_SUCCESS)
+    }
+
+    private static func run(selection: HelperAgentSelection, started: ContinuousClock.Instant) {
         do {
             let input = FileHandle.standardInput.readDataToEndOfFile()
             guard !input.isEmpty else { throw HelperError.emptyInput }
@@ -46,22 +70,36 @@ enum AgentStatusHelperMain {
             let pipeline = HelperIngestPipeline(port: port)
             let report = try pipeline.run(hookData: input, agent: selection)
             for warning in report.warnings {
-                log("warning: \(warning)")
+                log.warning("hook_ingest_warning", metadata: .fields([
+                    "session": report.sessionID?.rawValue,
+                    "hook": report.hookEventName,
+                    "detail": warning,
+                ]))
             }
-            if verbose {
-                for note in report.notes {
-                    log("note: \(note)")
-                }
-                log("provider=\(report.provider.rawValue) session=\(report.sessionID?.rawValue ?? "-") hook=\(report.hookEventName ?? "-") rich=\(report.richSourcePath ?? "-") lines=\(report.richSourceLinesRead) events=\(report.eventsSent)")
+            for note in report.notes {
+                log.debug("hook_ingest_note", metadata: .fields([
+                    "session": report.sessionID?.rawValue,
+                    "hook": report.hookEventName,
+                    "detail": note,
+                ]))
             }
+            log.info("hook_ingested", metadata: .fields([
+                "provider": report.provider.rawValue,
+                "session": report.sessionID?.rawValue,
+                "hook": report.hookEventName,
+                "rich": report.richSourcePath,
+                "lines": report.richSourceLinesRead,
+                "events": report.eventsSent,
+                "hook_bytes": input.count,
+                "ms": LogClock.milliseconds(since: started),
+            ]))
         } catch {
-            log("\(error)")
+            log.error("hook_ingest_failed", metadata: .fields([
+                "agent": selection.rawValue,
+                "ms": LogClock.milliseconds(since: started),
+                "error": error,
+            ]))
         }
-        exit(EXIT_SUCCESS)
-    }
-
-    private static func log(_ message: String) {
-        FileHandle.standardError.write(Data("agent-status-helper: \(message)\n".utf8))
     }
 }
 

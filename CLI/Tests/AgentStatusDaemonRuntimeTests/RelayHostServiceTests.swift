@@ -47,7 +47,6 @@ private struct RelayHarness {
             hostName: { "Test Mac" },
             healthProvider: healthProvider,
             onConnectionChange: { connected in connections.append(connected) },
-            logger: { _ in },
             eventCoalesceInterval: .milliseconds(20),
             reconnectDelay: .milliseconds(50),
             deviceRefreshInterval: .seconds(60),
@@ -466,6 +465,11 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     guard case .presence(online: true) = try await withTimeout(seconds: 5, { try await device.next() }) else {
         Issue.record("expected the host to reconnect")
         return
+    }
+    // The presence flag reaches the device as soon as the socket is up; the
+    // daemon's own observer runs right after, so give it a moment.
+    for _ in 0..<300 where harness.connections.snapshot != [true, false, true] {
+        try await Task.sleep(for: .milliseconds(10))
     }
     #expect(harness.connections.snapshot == [true, false, true])
     // A push after reconnect goes nowhere until the device re-indexes.

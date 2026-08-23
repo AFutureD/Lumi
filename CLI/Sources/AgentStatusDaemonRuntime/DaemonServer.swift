@@ -1,9 +1,13 @@
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Darwin
 import Foundation
 @preconcurrency import NIOCore
 @preconcurrency import NIOFoundationCompat
 @preconcurrency import NIOPosix
+
+private let log = Logger(label: "ipc")
 
 public enum DaemonServerError: Error, Sendable {
     case occupiedSocketPath(String)
@@ -47,6 +51,7 @@ public final class DaemonServer: @unchecked Sendable {
             try? channel?.close().wait()
             throw POSIXError(.EACCES)
         }
+        log.info("ipc_listening", metadata: .fields(["socket": socketPath]))
     }
 
     public func wait() throws {
@@ -60,6 +65,7 @@ public final class DaemonServer: @unchecked Sendable {
         if (try? FileManager.default.attributesOfItem(atPath: socketPath)[.type] as? FileAttributeType) == .typeSocket {
             try? FileManager.default.removeItem(atPath: socketPath)
         }
+        log.info("ipc_closed", metadata: .fields(["socket": socketPath]))
     }
 
     private func prepareSocketPath() throws {
@@ -114,13 +120,19 @@ private final class ChannelResponseWriter: @unchecked Sendable {
         self.channel = channel
     }
 
-    func send(_ envelope: TransportEnvelope<IPCResponse>) {
+    /// Encodes and writes one frame; returns the bytes put on the wire.
+    @discardableResult
+    func send(_ envelope: TransportEnvelope<IPCResponse>) -> Int {
         do {
             var body = try TransportCoding.makeEncoder().encode(envelope)
             if body.count > LengthPrefixedFrameCodec.maximumFrameLength {
                 // The client-side decoder rejects oversized frames and drops
                 // the connection; a clean failure keeps the channel usable and
                 // tells the caller to page down.
+                log.warning("ipc_response_too_large", metadata: .fields([
+                    "bytes": body.count,
+                    "limit": LengthPrefixedFrameCodec.maximumFrameLength,
+                ]))
                 body = try TransportCoding.makeEncoder().encode(TransportEnvelope(
                     requestID: envelope.requestID,
                     payload: IPCResponse(
@@ -140,8 +152,11 @@ private final class ChannelResponseWriter: @unchecked Sendable {
                 buffer.writeBytes(frame)
                 channel.writeAndFlush(buffer, promise: nil)
             }
+            return frame.count
         } catch {
+            log.error("ipc_response_encode_failed", metadata: .fields(["error": error]))
             channel.close(promise: nil)
+            return 0
         }
     }
 }
@@ -158,10 +173,16 @@ private final class ServerRequestHandler: ChannelInboundHandler, @unchecked Send
         self.subscriptions = subscriptions
     }
 
+    func channelActive(context: ChannelHandlerContext) {
+        log.debug("ipc_client_connected")
+        context.fireChannelActive()
+    }
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var frame = unwrapInboundIn(data)
         guard let body = frame.readData(length: frame.readableBytes) else { return }
         let writer = ChannelResponseWriter(channel: context.channel)
+        let started = ContinuousClock.now
 
         do {
             let envelope = try TransportCoding.makeDecoder().decode(
@@ -177,12 +198,30 @@ private final class ServerRequestHandler: ChannelInboundHandler, @unchecked Send
                         writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, summary: summary)))
                     }
                 }
+                log.info("ipc_stream_client_subscribed")
             }
+            let bytesIn = body.count
+            // One IPC request is one unit of work: the request id (the
+            // helper's run id, the Mac's reconcile id) leads every line
+            // logged while the service handles it.
             Task { [service] in
-                let response = await service.handle(envelope)
-                writer.send(response)
+                await withTrace(envelope.requestID.rawValue) {
+                    let response = await service.handle(envelope)
+                    let bytesOut = writer.send(response)
+                    let failed = response.payload.status == .error
+                    log.log(level: failed ? .warning : .debug, "ipc_handled", metadata: .fields([
+                        "op": envelope.payload.operation.rawValue,
+                        "session": envelope.payload.sessionID?.rawValue,
+                        "status": response.payload.status.rawValue,
+                        "failure": response.payload.failure?.code,
+                        "bytes_in": bytesIn,
+                        "bytes_out": bytesOut,
+                        "ms": LogClock.milliseconds(since: started),
+                    ]))
+                }
             }
         } catch {
+            log.warning("ipc_request_malformed", metadata: .fields(["bytes": body.count, "error": error]))
             let response = TransportEnvelope(
                 payload: IPCResponse(
                     status: .error,
@@ -198,11 +237,13 @@ private final class ServerRequestHandler: ChannelInboundHandler, @unchecked Send
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        log.warning("ipc_client_error", metadata: .fields(["subscribed": subscriptionID != nil, "error": error]))
         unsubscribe()
         context.close(promise: nil)
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        log.debug("ipc_client_disconnected", metadata: .fields(["subscribed": subscriptionID != nil]))
         unsubscribe()
         context.fireChannelInactive()
     }

@@ -1,7 +1,14 @@
 import AgentStatusCore
 import AgentStatusIPCClient
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "ipc")
+private let agentLog = Logger(label: "agent")
+private let convertLog = Logger(label: "convert")
+private let dbLog = Logger(label: "db")
 
 /// The store's daemon request seam; production is `DaemonIPCClient`, tests
 /// inject a scripted stub.
@@ -55,6 +62,7 @@ public final class MacSessionStore {
         } catch {
             cache = nil
             connectionError = "Unable to open the macOS sync database: \(error)"
+            dbLog.error("cache_open_failed", metadata: .fields(["path": resolvedCachePath, "error": error]))
         }
     }
 
@@ -111,6 +119,7 @@ public final class MacSessionStore {
                 notifyObservers()
             } catch {
                 connectionError = "Unable to read the macOS sync database: \(error)"
+                dbLog.error("cache_read_failed", metadata: .fields(["session": sessionID.rawValue, "error": error]))
                 notifyObservers()
             }
         }
@@ -157,10 +166,15 @@ public final class MacSessionStore {
                 if let detail = response.session, let cache {
                     try await cache.replaceSession(detail)
                     cachedSnapshotDetails = nil
+                    convertLog.info("session_refreshed", metadata: .fields([
+                        "session": sessionID.rawValue,
+                        "timeline": detail.timeline.count,
+                        "turns": detail.turns.count,
+                    ]))
                     await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
                 }
             } catch {
-                handleConnectionFailure(error)
+                handleConnectionFailure(error, action: "refresh_session")
             }
             refresh()
         }
@@ -189,7 +203,7 @@ public final class MacSessionStore {
                 let response = try await request(IPCRequest(operation: .markSessionReviewed, sessionID: sessionID))
                 if let failure = response.failure { throw failure }
             } catch {
-                handleConnectionFailure(error)
+                handleConnectionFailure(error, action: "mark_reviewed")
             }
         }
     }
@@ -218,7 +232,7 @@ public final class MacSessionStore {
                 let response = try await request(IPCRequest(operation: .markSessionHiddenInNotch, sessionID: sessionID))
                 if let failure = response.failure { throw failure }
             } catch {
-                handleConnectionFailure(error)
+                handleConnectionFailure(error, action: "hide_in_notch")
             }
         }
     }
@@ -237,9 +251,10 @@ public final class MacSessionStore {
                 }
                 let response = try await request(IPCRequest(operation: .deleteSession, sessionID: sessionID))
                 if let failure = response.failure { throw failure }
+                dbLog.info("session_delete_requested", metadata: .fields(["session": sessionID.rawValue]))
                 scheduleReconcile()
             } catch {
-                handleConnectionFailure(error)
+                handleConnectionFailure(error, action: "delete_session")
             }
         }
     }
@@ -254,9 +269,10 @@ public final class MacSessionStore {
                 }
                 let response = try await request(IPCRequest(operation: .clearHistory))
                 if let failure = response.failure { throw failure }
+                dbLog.info("history_clear_requested")
                 scheduleReconcile()
             } catch {
-                handleConnectionFailure(error)
+                handleConnectionFailure(error, action: "clear_history")
             }
         }
     }
@@ -325,10 +341,14 @@ public final class MacSessionStore {
                 if let eventApplyTask = self.eventApplyTask {
                     await eventApplyTask.value
                 }
-                do {
-                    try await self.reconcileOnce()
-                } catch {
-                    self.handleConnectionFailure(error)
+                // One reconcile pass is one unit of work; its id rides on
+                // every IPC request it makes, so the daemon's lines match.
+                await withTrace(makeTraceID()) {
+                    do {
+                        try await self.reconcileOnce()
+                    } catch {
+                        self.handleConnectionFailure(error, action: "reconcile")
+                    }
                 }
             }
             self.reconcileTask = nil
@@ -342,6 +362,7 @@ public final class MacSessionStore {
 
     private func reconcileOnce() async throws {
         guard let cache else { return }
+        let started = ContinuousClock.now
         let healthResponse = try await request(IPCRequest(operation: .health))
         if let failure = healthResponse.failure { throw failure }
         let indexResponse = try await request(IPCRequest(operation: .listSessions, limit: 10_000))
@@ -352,16 +373,30 @@ public final class MacSessionStore {
         let index = indexResponse.sessions ?? []
         let local = try await cache.listSessions(limit: 10_000)
         let plan = SessionReconcilePlan.make(local: local, daemon: index)
-        var changed = false
+        var fetched = 0
+        var missing = 0
         for id in plan.fetch {
-            guard let detail = try await fetchFullDetail(id: id) else { continue }
+            guard let detail = try await fetchFullDetail(id: id) else {
+                missing += 1
+                continue
+            }
             try await cache.replaceSession(detail)
-            changed = true
+            fetched += 1
         }
+        let changed = fetched > 0
         let pruned = try await cache.pruneSessions(keeping: Set(index.map(\.id)))
         if changed || pruned > 0 { cachedSnapshotDetails = nil }
         health = healthResponse.health
         connectionError = nil
+        dbLog.info("reconciled", metadata: .fields([
+            "daemon_sessions": index.count,
+            "local_sessions": local.count,
+            "planned": plan.fetch.count,
+            "fetched": fetched,
+            "missing": missing,
+            "pruned": pruned,
+            "ms": LogClock.milliseconds(since: started),
+        ]))
         await reloadFromCache(
             reloadSelected: true,
             persistedDataChanged: changed || pruned > 0
@@ -386,6 +421,7 @@ public final class MacSessionStore {
             if let failure = response.failure {
                 if failure.code == "session_not_found" { return nil }
                 if failure.code == "response_too_large", limit > 25 {
+                    log.warning("session_page_too_large", metadata: .fields(["session": id.rawValue, "limit": limit]))
                     limit = 25
                     continue
                 }
@@ -417,12 +453,14 @@ public final class MacSessionStore {
             do {
                 try await cache.updateSummary(summary)
                 cachedSnapshotDetails = nil
+                agentLog.debug("summary_applied", metadata: .fields(["session": summary.id.rawValue]))
                 await reloadFromCache(
                     reloadSelected: selectedSession?.summary.id == summary.id,
                     persistedDataChanged: true
                 )
             } catch {
                 connectionError = "Unable to apply the daemon summary: \(error)"
+                dbLog.error("summary_apply_failed", metadata: .fields(["session": summary.id.rawValue, "error": error]))
                 notifyObservers()
             }
         }
@@ -452,11 +490,14 @@ public final class MacSessionStore {
             try? await Task.sleep(for: .milliseconds(50))
             var appliedAny = false
             var appliedEvents: [AgentIngressEvent] = []
+            var received = 0
+            var failed = 0
             while !self.pendingEvents.isEmpty, !Task.isCancelled {
                 let batch = self.pendingEvents
                 self.pendingEvents.removeAll(keepingCapacity: true)
                 self.pendingEventIDs.removeAll(keepingCapacity: true)
                 guard let cache = self.cache else { break }
+                received += batch.count
                 for event in batch {
                     do {
                         if try await cache.apply(event) {
@@ -464,9 +505,22 @@ public final class MacSessionStore {
                             appliedEvents.append(event)
                         }
                     } catch {
+                        failed += 1
                         self.connectionError = "Unable to apply the daemon event: \(error)"
+                        dbLog.error("event_apply_failed", metadata: .fields([
+                            "session": event.sessionID.rawValue,
+                            "event": event.eventID.rawValue,
+                            "error": error,
+                        ]))
                     }
                 }
+            }
+            if received > 0 {
+                agentLog.debug("events_applied", metadata: .fields([
+                    "received": received,
+                    "applied": appliedEvents.count,
+                    "failed": failed,
+                ]))
             }
             if appliedAny {
                 self.connectionError = nil
@@ -525,6 +579,7 @@ public final class MacSessionStore {
             )
         } catch {
             connectionError = "Unable to read the macOS sync database: \(error)"
+            dbLog.error("cache_reload_failed", metadata: .fields(["error": error]))
             notifyObservers()
         }
     }
@@ -571,6 +626,7 @@ public final class MacSessionStore {
         guard started else { return }
         health = nil
         connectionError = error.map(String.init(describing:)) ?? "Daemon event stream disconnected"
+        log.warning("daemon_stream_disconnected", metadata: .fields(["reconnect_in_s": 2, "error": error]))
         notifyObservers()
         guard reconnectTask == nil else { return }
         reconnectTask = Task { [weak self] in
@@ -683,9 +739,10 @@ public final class MacSessionStore {
         self.cachedSnapshotDetails = cachedSnapshotDetails
     }
 
-    private func handleConnectionFailure(_ error: Error) {
+    private func handleConnectionFailure(_ error: Error, action: String) {
         connectionError = String(describing: error)
         health = nil
+        log.warning("daemon_request_failed", metadata: .fields(["action": action, "error": error]))
         notifyObservers()
     }
 

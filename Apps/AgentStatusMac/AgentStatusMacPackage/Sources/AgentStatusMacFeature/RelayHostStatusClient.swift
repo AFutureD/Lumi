@@ -1,6 +1,11 @@
 import AgentStatusIPCClient
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "relay")
+private let pairingLog = Logger(label: "pairing")
 
 /// The Mac app's read-mostly view of the daemon's Relay host: connection
 /// state, last error, the paired iPhones and the live pairing session, plus
@@ -67,16 +72,26 @@ final class RelayHostStatusClient {
     func startPairing() async throws -> RelayPairingSession {
         let response = try await request(IPCRequest(operation: .relayPairingStart))
         apply(response, pairingAuthoritative: true)
-        if let pairing = response.pairing { return pairing }
-        throw response.failure ?? IPCFailure(code: "relay_unavailable", message: "The daemon has no Relay connection.", retryable: true)
+        if let pairing = response.pairing {
+            pairingLog.info("pairing_page_started", metadata: .fields(["expires_at": pairing.expiresAt]))
+            return pairing
+        }
+        let failure = response.failure ?? IPCFailure(code: "relay_unavailable", message: "The daemon has no Relay connection.", retryable: true)
+        pairingLog.warning("pairing_page_start_failed", metadata: .fields(["code": failure.code, "message": failure.message]))
+        throw failure
     }
 
     /// Match (`true`) / Don't match (`false`) for the iPhone on the live session.
     func decidePairing(approved: Bool) async throws -> RelayPairingSession {
         let response = try await request(IPCRequest(operation: .relayPairingDecide, approved: approved))
         apply(response, pairingAuthoritative: true)
-        if let pairing = response.pairing { return pairing }
-        throw response.failure ?? IPCFailure(code: "no_pending_device", message: "No iPhone is waiting on the pairing session.", retryable: false)
+        if let pairing = response.pairing {
+            pairingLog.info("pairing_page_decided", metadata: .fields(["approved": approved, "outcome": pairing.outcome?.kind.rawValue]))
+            return pairing
+        }
+        let failure = response.failure ?? IPCFailure(code: "no_pending_device", message: "No iPhone is waiting on the pairing session.", retryable: false)
+        pairingLog.warning("pairing_page_decision_failed", metadata: .fields(["approved": approved, "code": failure.code]))
+        throw failure
     }
 
     /// Leaving the page: the code stops being claimable.
@@ -138,6 +153,9 @@ final class RelayHostStatusClient {
         do {
             apply(try await self.request(request), pairingAuthoritative: request.operation == .relayPairingState)
         } catch {
+            if isConnected {
+                log.warning("relay_status_unavailable", metadata: .fields(["op": request.operation.rawValue, "error": error]))
+            }
             isConnected = false
             lastError = String(describing: error)
             notifyObservers()
@@ -149,6 +167,12 @@ final class RelayHostStatusClient {
     /// status, refresh and revoke say nothing about it.
     private func apply(_ response: IPCResponse, pairingAuthoritative: Bool) {
         if let relay = response.relay {
+            if relay.connected != isConnected {
+                log.info(relay.connected ? "relay_reported_connected" : "relay_reported_disconnected", metadata: .fields([
+                    "devices": relay.devices.count,
+                    "last_error": relay.lastError,
+                ]))
+            }
             isConnected = relay.connected
             lastError = relay.lastError
             devices = relay.devices

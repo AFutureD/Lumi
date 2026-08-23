@@ -1,7 +1,12 @@
 import AgentStatusCodex
 import AgentStatusCore
+import AgentStatusLogging
+import Logging
 import AgentStatusTransport
 import Foundation
+
+private let log = Logger(label: "agent")
+private let lifecycleLog = Logger(label: "lifecycle")
 
 public final class CodexRolloutWatcher: @unchecked Sendable {
     private let rootDirectory: URL
@@ -9,7 +14,6 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     private let threadIdentities: any CodexThreadIdentityProviding
     private let adapter: CodexAdapter
     private let pollIntervalSeconds: Double
-    private let logger: @Sendable (String) -> Void
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
     private let lock = NSLock()
     private var task: Task<Void, Never>?
@@ -21,7 +25,6 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         repository: any SessionRepository,
         threadIdentities: (any CodexThreadIdentityProviding)? = nil,
         pollIntervalSeconds: Double = 2,
-        logger: @escaping @Sendable (String) -> Void = { _ in },
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void = { _ in }
     ) {
         self.rootDirectory = rootDirectory
@@ -35,7 +38,6 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         self.threadIdentities = resolvedThreadIdentities
         adapter = CodexAdapter(threads: resolvedThreadIdentities)
         self.pollIntervalSeconds = pollIntervalSeconds
-        self.logger = logger
         self.onEvent = onEvent
     }
 
@@ -46,6 +48,10 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         task = Task { [weak self] in
             await self?.run()
         }
+        lifecycleLog.info("rollout_watcher_started", metadata: .fields([
+            "root": rootDirectory,
+            "poll_seconds": pollIntervalSeconds,
+        ]))
     }
 
     public func stop() {
@@ -54,6 +60,9 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         task = nil
         lock.unlock()
         currentTask?.cancel()
+        if currentTask != nil {
+            lifecycleLog.info("rollout_watcher_stopped")
+        }
     }
 
     public func scanOnce() async {
@@ -69,7 +78,7 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
                     markScanned(path: fileURL.path, fileSize: fileSize)
                 }
             } catch {
-                logger("rollout_scan_failed path=\(fileURL.lastPathComponent) error=\(error)")
+                log.error("rollout_scan_failed", metadata: .fields(["path": fileURL.path, "error": error]))
             }
         }
     }
@@ -77,7 +86,9 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     /// Establishes the first-run watermark without importing pre-existing Codex history.
     public func prepareInitialBaseline() async throws {
         guard try await !repository.isRolloutBaselineInitialized() else { return }
-        for (fileURL, values) in rolloutFiles() {
+        let files = rolloutFiles()
+        lifecycleLog.info("rollout_baseline_initializing", metadata: .fields(["files": files.count]))
+        for (fileURL, values) in files {
             if let sessionID = existingSessionID(in: fileURL) {
                 try await repository.markSessionIgnored(sessionID)
             }
@@ -158,10 +169,16 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
                     title: title,
                     lineage: identity.lineage
                 )
-                if try await repository.apply(event) { onEvent(event) }
+                if try await repository.apply(event) {
+                    log.info("thread_identity_applied", metadata: .fields([
+                        "session": summary.id.rawValue,
+                        "agent": agent.rawValue,
+                    ]))
+                    onEvent(event)
+                }
             }
         } catch {
-            logger("thread_identity_sync_failed error=\(error)")
+            log.error("thread_identity_sync_failed", metadata: .fields(["error": error]))
         }
     }
 
@@ -196,12 +213,15 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
 
         let initialHistory = Self.initialSubagentHistory(in: data, offset: offset)
         if case .waitingForTrigger = initialHistory {
-            logger("rollout_scan_waiting_for_subagent_trigger path=\(url.lastPathComponent)")
+            log.debug("rollout_scan_waiting_for_subagent_trigger", metadata: .fields(["path": path]))
             return false
         }
 
         var lineStart = data.startIndex
         var consumed = 0
+        var lines = 0
+        var produced = 0
+        var applied = 0
         while let newline = data[lineStart...].firstIndex(of: 0x0A) {
             if newline > lineStart {
                 let line = Data(data[lineStart..<newline])
@@ -226,8 +246,13 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
                     sessionID: sessionID
                 )
                 let events = try adapter.events(fromRolloutLine: line, context: context)
+                lines += 1
+                produced += events.count
                 for event in events {
-                    if try await repository.apply(event) { onEvent(event) }
+                    if try await repository.apply(event) {
+                        applied += 1
+                        onEvent(event)
+                    }
                     if sessionID == nil { sessionID = event.sessionID }
                 }
             }
@@ -244,6 +269,17 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
             sessionID: sessionID
         )
         try await repository.saveRolloutCursor(cursor!)
+        if lines > 0 {
+            log.info("rollout_scanned", metadata: .fields([
+                "session": sessionID?.rawValue,
+                "path": path,
+                "from": offset,
+                "to": offset + UInt64(consumed),
+                "lines": lines,
+                "events": produced,
+                "applied": applied,
+            ]))
+        }
         return true
     }
 

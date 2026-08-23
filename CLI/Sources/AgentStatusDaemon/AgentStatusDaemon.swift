@@ -1,15 +1,38 @@
 import AgentStatusCodex
 import AgentStatusCore
 import AgentStatusDaemonRuntime
+import AgentStatusLogging
+import Logging
 import AgentStatusRemote
 import Foundation
+
+private let log = Logger(label: "lifecycle")
+private let dbLog = Logger(label: "db")
 
 @main
 enum AgentStatusDaemonMain {
     static func main() async throws {
         let configuration = AgentStatusConfiguration.default()
-        try configuration.prepareFileSystem()
-        let repository = try SQLiteSessionRepository(path: configuration.databasePath)
+        // Logging first: everything after this line, including a failing
+        // start, lands in `daemon.log` (and `errors.log`) as well as stderr.
+        let logConfiguration = LogConfiguration.fromEnvironment(
+            subsystem: "daemon",
+            standardErrorPrefix: "agent-status-daemon:"
+        )
+        AgentStatusLogging.bootstrap(logConfiguration)
+        do {
+            try configuration.prepareFileSystem()
+        } catch {
+            log.error("support_directory_unavailable", metadata: .fields(["path": configuration.supportDirectory, "error": error]))
+            throw error
+        }
+        let repository: SQLiteSessionRepository
+        do {
+            repository = try SQLiteSessionRepository(path: configuration.databasePath)
+        } catch {
+            dbLog.error("database_open_failed", metadata: .fields(["path": configuration.databasePath, "error": error]))
+            throw error
+        }
         let subscriptions = DaemonSubscriptionHub()
         let executableHash: String
         do {
@@ -18,9 +41,7 @@ enum AgentStatusDaemonMain {
             // An empty hash never matches the bundled binary, so the Mac app's
             // auto-update restarts this process — self-healing over crashing.
             executableHash = ""
-            FileHandle.standardError.write(Data(
-                "agent-status-daemon: executable fingerprint failed: \(error)\n".utf8
-            ))
+            log.error("executable_fingerprint_failed", metadata: .fields(["error": error]))
         }
         let service = DaemonService(
             repository: repository,
@@ -37,9 +58,6 @@ enum AgentStatusDaemonMain {
                 rootDirectory: configuration.codexSessionsDirectory,
                 repository: repository,
                 pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
-                logger: { message in
-                    FileHandle.standardError.write(Data("agent-status-daemon: \(message)\n".utf8))
-                },
                 onEvent: { subscriptions.publish($0) }
             )
             : nil
@@ -47,9 +65,6 @@ enum AgentStatusDaemonMain {
             ? ClaudeTranscriptWatcher(
                 repository: repository,
                 pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
-                logger: { message in
-                    FileHandle.standardError.write(Data("agent-status-daemon: \(message)\n".utf8))
-                },
                 onEvent: { subscriptions.publish($0) }
             )
             : nil
@@ -67,26 +82,39 @@ enum AgentStatusDaemonMain {
                 transportFactory: RelayWebSocketTransportFactory(),
                 rest: LiveRelayHostREST(baseURL: configuration.relayURL),
                 healthProvider: { await service.currentHealth() },
-                onConnectionChange: { connected in await service.setRelayConnected(connected) },
-                logger: { message in
-                    FileHandle.standardError.write(Data("agent-status-daemon: \(message)\n".utf8))
-                }
+                onConnectionChange: { connected in await service.setRelayConnected(connected) }
             )
             : nil
         if let relay { await service.attachRelay(relay) }
 
-        try await watcher?.prepareInitialBaseline()
-        try server.start()
+        do {
+            try await watcher?.prepareInitialBaseline()
+            try server.start()
+        } catch {
+            log.error("daemon_start_failed", metadata: .fields(["socket": configuration.socketPath, "error": error]))
+            throw error
+        }
         watcher?.start()
         claudeWatcher?.start()
+        // Announced before the Relay connects: the socket is already
+        // serving, and the first Relay round-trip can take a while.
+        log.info("daemon_started", metadata: .fields([
+            "version": DaemonService.version,
+            "fingerprint": executableHash.isEmpty ? nil : String(executableHash.prefix(12)),
+            "socket": configuration.socketPath,
+            "database": configuration.databasePath,
+            "rollout_watcher": watcher != nil,
+            "claude_watcher": claudeWatcher != nil,
+            "relay": relay == nil ? "off" : configuration.relayURL.absoluteString,
+            "log_level": logConfiguration.minimumLevel.label.lowercased(),
+            "log_directory": logConfiguration.directory,
+        ]))
         await relay?.start()
-        FileHandle.standardError.write(Data(
-            "agent-status-daemon: listening at \(configuration.socketPath) rollout_watcher=\(watcher == nil ? "off" : "on") claude_watcher=\(claudeWatcher == nil ? "off" : "on") relay=\(relay == nil ? "off" : configuration.relayURL.absoluteString)\n".utf8
-        ))
         defer {
             claudeWatcher?.stop()
             watcher?.stop()
             server.shutdown()
+            log.info("daemon_stopped")
         }
         try server.wait()
         await relay?.stop()

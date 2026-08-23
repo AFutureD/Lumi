@@ -1,4 +1,4 @@
-import { SELF } from "cloudflare:test";
+import { env, runDurableObjectAlarm, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { PAIRING_CODE_ALPHABET } from "../src/pairing-code";
 import {
@@ -242,6 +242,51 @@ describe("pairing sessions", () => {
     expect(await limited.json()).toEqual({ error: "rate_limited" });
     // Another address is unaffected.
     expect((await claimCode("ZZZZZZ", "198.51.100.8")).status).toBe(404);
+  });
+
+  it("counts claims from one IPv6 /64 as one source", async () => {
+    await freshHost("ratelimit6");
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect((await claimCode("ZZZZZZ", "2001:db8:77:1::1")).status).toBe(404);
+    }
+    // Another address in the same /64 shares the budget…
+    expect((await claimCode("ZZZZZZ", "2001:db8:77:1:ffff:ffff:ffff:ffff")).status).toBe(429);
+    // …a neighbouring /64 does not.
+    expect((await claimCode("ZZZZZZ", "2001:db8:77:2::1")).status).toBe(404);
+  });
+
+  it("purges finished sessions, and the device token in them, once the deadline passes", async () => {
+    const { id: hostID, secret: hostSecret } = await freshHost("purge");
+    const session = await createPairingSession(hostID, hostSecret, {
+      expiresAt: new Date(Date.now() + 2_500).toISOString(),
+    });
+    expect((await claimCode(session.code)).status).toBe(200);
+    const host = await openSocket("host", hostSecret, undefined, hostID);
+    const hostMessages = collectMessages(host);
+    expect((await submitDevice(hostID, session.sessionID, "device-purge-0001")).status).toBe(200);
+    await hostMessages.nextFrame("pairing_device");
+    expect((await reveal(hostID, hostSecret, session.sessionID)).status).toBe(200);
+    expect((await decide(hostID, hostSecret, session.sessionID, true)).status).toBe(200);
+    host.close(1000, "done");
+
+    const approved = await readSession(hostID, session.sessionID);
+    expect(approved.status).toBe(200);
+    expect((await approved.json<SessionView>()).deviceToken).toBeDefined();
+
+    // The alarm is scheduled for just after the deadline; run it after the
+    // deadline has passed.
+    await new Promise((resolve) => setTimeout(resolve, 2_600));
+    const stub = env.HOST_RELAY.getByName(hostID);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    const gone = await readSession(hostID, session.sessionID);
+    expect(gone.status).toBe(404);
+    // Nothing left to purge: no alarm is re-armed.
+    expect(await runDurableObjectAlarm(stub)).toBe(false);
+    // The Mac's device list is untouched.
+    const listed = await SELF.fetch(`https://example.com/v1/hosts/${hostID}/devices`, { headers: authHeaders(hostSecret) });
+    const list = await listed.json<{ devices: Array<{ id: string }> }>();
+    expect(list.devices.map((device) => device.id)).toEqual(["device-purge-0001"]);
   });
 
   it("validates the session body", async () => {

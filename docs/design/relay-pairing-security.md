@@ -32,6 +32,7 @@ flowchart LR
 - **iPhone**：没有全局唯一的 Relay。每条 Mac 通道在配对时记下自己的 Relay URL（Keychain），REST / WSS 各用各的地址；一台 iPhone 可以同时连着两个不同 Relay 上的 Mac。
 - **配对时怎么来**：二维码 / 链接 `agentstatus://pair?relay=<https URL>&code=<6 位>` 直接给出；手输时默认内置 Relay（`agent-status-relay.afuture.workers.dev`），Add Mac › Advanced 可改。上次填过的地址只作下次预填（`LocalSettings`），不参与信任。
 - **校验**：`https`、有 host、无 userinfo / query / fragment、host 小写、去尾 `/`、≤ 256 字符；DEBUG 构建额外放行 `http://localhost` / `http://127.0.0.1`（`wrangler dev`）。
+- **Worker 侧也拒绝明文**：非 `https` 的请求一律 `403 https_required`（只放行 loopback，给 `wrangler dev`）。所有凭据都是 bearer token，不能出现在明文连接上；workers.dev 本身不做 http→https 跳转，所以由 Worker 自己拒。
 - **地址不承载信任**：指向攻击者 Relay 的二维码最多让 iPhone 配上一台“假 Mac”，碰不到真 Mac 的通道——所以每个配对界面都显示 Relay host。
 
 ## REST 接口
@@ -182,7 +183,7 @@ Keychain 项由 daemon 进程自己创建，因此 daemon 在该项 ACL 内，�
 
 - Host token hash
 - `devices`：Device ID、名称、公钥、token hash、配对与撤销时间
-- `pairing_sessions`：state、commit、Host 公钥与名称、reveal 后的 nonce、设备 ID / 名称 / 公钥、approve 后的 Device token hash 与明文 token（留给 iPhone 下一次轮询领取，只有 sessionID 持有者可读；目前不另行清理）、创建 / 到期 / 更新时间
+- `pairing_sessions`：state、commit、Host 公钥与名称、reveal 后的 nonce、设备 ID / 名称 / 公钥、approve 后的 Device token hash 与明文 token（留给 iPhone 下一次轮询领取，只有 sessionID 持有者可读；会话到期后由 alarm 连整行删除）、创建 / 到期 / 更新时间
 - 每个设备最后 Host sequence
 - 基于来源地址 hash 的限流窗口
 
@@ -233,11 +234,13 @@ iPhone 本地“Remove”只删除自己的 Keychain 通道、SQLite 缓存文�
 - Host/Device ID：8..128 位字母、数字、下划线或连字符。
 - HTTP JSON body：最大 64 KiB。
 - WebSocket message：最大 2 MiB，只接受 JSON text。
-- 注册 Host：每来源每分钟 10 次。
-- 配对码：6 位 Crockford Base32，Directory 只存 SHA-256(code)；5 分钟到期、单次消费；`claim` 每来源 IP 每分钟 5 次、全局每分钟 60 次（对错都计数，猜码只能走这一个口）。
-- 配对会话：每 Host 每分钟最多建 10 个；同一 Host 同时只有一个活会话（新建即取消上一个）；Relay 接受的最长有效期 10 分钟（daemon 用 5 分钟）；过期会话在下一次访问时标 expired。
+- 边缘限流：Worker 在碰任何 Durable Object 之前，先按客户端地址用 Workers Rate Limiting binding（`wrangler.jsonc` 的 `RATE_LIMITER`）限每分钟 300 次，超限 `429 rate_limited`。没有 `cf-connecting-ip` 的请求（本地 / 内部调用）不计。对象内的限流只有进了对象才开始计数，而进对象本身已经要花一次调用、对陌生 Host ID 还要建一个对象——边缘这层挡的就是这个。
+- “来源”的定义（边缘和对象内一致，`sourceBucket`）：IPv4 按地址；IPv6 按 /64——一台主机能随手换 2⁶⁴ 个地址，按单地址计等于没限。
+- 注册 Host：每来源每分钟 10 次（按 Host 对象计）。
+- 配对码：6 位 Crockford Base32，Directory 只存 SHA-256(code)；5 分钟到期、单次消费；`claim` 每来源每分钟 5 次、全局每分钟 600 次（对错都计数，猜码只能走这一个口）。全局上限是两种风险的折中：调低挡分布式猜码，调高防几个地址把所有人的配对锁死；600/分钟对 30 bit、5 分钟的码是 ≤ 3000 次 / 码（≈ 3×10⁻⁶），打满需要 120 个不同的 IPv4 地址或 IPv6 /64。
+- 配对会话：每 Host 每分钟最多建 10 个；同一 Host 同时只有一个活会话（新建即取消上一个）；Relay 接受的最长有效期 10 分钟（daemon 用 5 分钟）；过期会话在下一次访问时标 expired。每个 Host 对象在最新会话到期后 1 秒触发 alarm：仍未结束的会话按正常路径关闭（释放码、通知 daemon），所有已到期的行整行删除——approved 行里的明文 Device token 也随之消失。
 - 限流窗口按 key 记在 DO SQLite，开新窗口时顺手删掉 10 个窗口期之前的旧行。
-- Device 只允许发送密封的 `request` 帧（`sync_index` / `fetch_session` / `fetch_timeline_since` / `session_reviewed`，Relay 读不到是哪一种）；其他 kind 关闭为只读违规（1008）。解析失败（缺少 nonce / ciphertext、ID 不合规）回 `{type:"error",code:"invalid_frame"}` 不关闭；转发到对端失败只记日志（`forward_failed`），不算发送方的错误，序号照常推进。
+- Device 只允许发送密封的 `request` 帧（`sync_index` / `fetch_session` / `fetch_timeline_since` / `session_reviewed`，Relay 读不到是哪一种）；其他 kind 关闭为只读违规（1008）。解析失败（缺少 nonce / ciphertext、ID 不合规）回 `{type:"error",code:"invalid_frame"}` 不关闭；转发到对端失败只记日志（`ws_forward_failed`，见[日志设计](logging.md)），不算发送方的错误，序号照常推进。
 - 协议 major 不是 1 时拒绝 frame。
 
 ## 安全边界与当前缺口
@@ -245,16 +248,19 @@ iPhone 本地“Remove”只删除自己的 Keychain 通道、SQLite 缓存文�
 | 风险 | 当前控制 | 剩余边界 |
 | --- | --- | --- |
 | Relay 读取正文 | 端到端 ChaChaPoly | Relay 仍观察路由元数据、Host / 设备名、两把公钥、承诺与 nonce、IP、帧大小和 `data` / `request` 方向，但读不到请求或载荷类型 |
-| 路人猜码 | 30 bit、5 分钟、单次、claim 限流（≈ 300 次 / 窗口 → ≈ 3×10⁻⁷）；猜中仍要过 Mac 的 Match | 可忽略 |
+| 路人猜码 | 30 bit、5 分钟、单次、claim 限流（全局 600/分钟 → ≤ 3000 次 / 窗口 → ≈ 3×10⁻⁶）；猜中仍要过 Mac 的 Match | 可忽略 |
+| 占满全局 claim 限流锁死配对 | 每来源按 IPv6 /64 聚合 + 全局 600/分钟 | 仍需 ≥ 120 个不同地址 / /64 持续打满；手里有 /48 的攻击者做得到，代价是一场可观测的 429 风暴（`pairing_claim_rate_limited`） |
 | 偷看屏幕抄到码 | 能走到提交设备，但 Mac 弹“陌生 iPhone wants to pair”且默认焦点在 Don't match | 用户误点 Match |
 | Relay 换钥匙（MITM） | 承诺 + SAS：一次盲猜 10⁻⁶，失败可见；Mac 钉住 Match 时看到的设备公钥，Relay 之后换钥匙 = Unverified | 用户不比对数字直接点 Match |
 | Relay 冒充 iPhone 取 token | token 只在 Mac `decision{approved}` 后签发、绑定 Mac 看到的 devicePub；Relay 换 devicePub 则通道密钥和 SAS 都对不上 | — |
 | 恶意 QR / 链接指向攻击者 Relay | 攻击者 Relay 没有真 Mac 的 code / Host secret，只能扮演“假 Mac”推假数据；iPhone 泄露的只有设备名、设备公钥和 `session_reviewed` 的 session ID；每个界面显示 Relay host | 用户被假数据误导 |
-| 凭据泄露 | Host secret 只存 hash；端点凭据在 Keychain；配对会话在 daemon 内存 | approved 的 `pairing_sessions` 行保留明文 Device token（sessionID 持有者可读，token 本身解不开任何帧），目前不清理 |
+| 凭据泄露 | Host secret 只存 hash；端点凭据在 Keychain；配对会话在 daemon 内存；approved 行的明文 Device token 随会话到期被 alarm 删除 | 到期前 sessionID 持有者可读 token（token 本身解不开任何帧，拿它只能开一个只收密文的 device socket） |
+| 明文 http | Worker 拒绝非 https（loopback 除外）；两端客户端只生成 https 地址 | — |
+| Host ID 被抢注 | 首次 `PUT` 即占、之后只认同一 secret；ID 122 bit 随机不可枚举 | 只有 Relay 存储被重置（删 DO class / 换 namespace）后，知道 ID 的人（如已撤销的旧 iPhone）才可能抢先；生产不要做这种迁移。撞上时 daemon 记 `relay_host_identity_rejected` 并停止重连 |
 | 重放 / 路由头篡改 | 路由头为 AEAD AAD；per-device 单调 sequence（Relay 拒绝复用，设备丢弃重复帧） | 设备 → daemon 方向没有序号校验（请求幂等，最坏多发一次 index） |
 | 设备被撤销 | 持久 revoked_at + 主动关闭 socket；iPhone 识别 401 / 4003 进入 Revoked 态并停止重连 | 需重新配对才能恢复（复用 Device ID） |
 | 大 Session | 2 MiB message 上限 | 载荷按单 Session 发送、明文 zlib 压缩、超预算按 timeline 分片；超大单条 item 只在 Relay 副本中省略 |
-| 资源滥用 | 注册 / 建会话 / claim 限流；一 Host 一活会话；ID 正则；body / 消息上限 | 任何人都能用随机 HostID 实例化一个空 DO（无全局限流）；`GET session` 轮询没有单独限流 |
+| 资源滥用 | 边缘按地址限流（300/分钟，IPv6 按 /64）先于任何 DO；注册 / 建会话 / claim 限流；一 Host 一活会话；ID 正则；body / 消息上限 | 单个地址仍可在限额内用随机 HostID 实例化空 DO（≤ 300/分钟）；大规模分布式洪水交给 Cloudflare DDoS 防护 / 仪表盘里的 WAF 规则；`GET session` 轮询只受边缘限流 |
 | 手机后台更新 | 当前无 APNs | App 未运行时没有通用唤醒通知 |
 
 ## 相关文档

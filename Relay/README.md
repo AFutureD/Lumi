@@ -8,7 +8,9 @@ Revocation is `DELETE /v1/hosts/:h/devices/:d` (the row stays, listed as revoked
 
 It keeps no replay buffer: a frame for a device that is not connected is dropped, and the device asks the host for the index again when it reconnects. Hosts send sealed `data` frames (per-device monotonic sequences); devices may send only sealed `request` frames (sync index, fetch session, session reviewed, …), which are forwarded to the host verbatim — anything else closes the socket as a read-only violation.
 
-Session content is opaque to the Worker and is not written to persistent storage. Durable Object storage contains authorization, pairing-session, rate-limit, expiry, and per-channel sequence metadata only.
+Session content is opaque to the Worker and is not written to persistent storage. Durable Object storage contains authorization, pairing-session, rate-limit, expiry, and per-channel sequence metadata only. Finished pairing sessions are purged by a Durable Object alarm once their deadline passes.
+
+Every request is rate limited at the edge per client address (IPv6 per /64) through the `RATE_LIMITER` binding in `wrangler.jsonc` before it can reach a Durable Object, and plain `http://` is refused outside loopback. Pairing-code claims are limited again inside the directory, per source and globally.
 
 APNs is not part of the current implementation.
 
