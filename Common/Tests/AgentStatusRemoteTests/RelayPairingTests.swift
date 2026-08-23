@@ -28,7 +28,7 @@ import Testing
 }
 
 @Test func relayURLsAreHTTPSHostsOnly() {
-    #expect(RelayURLValidation.normalize("https://Agent-Status-Relay.afuture.workers.dev/")?.absoluteString == "https://agent-status-relay.afuture.workers.dev")
+    #expect(RelayURLValidation.normalize("https://Relay.Lumi.Huanan.app/")?.absoluteString == "https://relay.lumi.huanan.app")
     #expect(RelayURLValidation.normalize("  https://relay.example.com  ")?.absoluteString == "https://relay.example.com")
     #expect(RelayURLValidation.normalize("https://relay.example.com/base/")?.absoluteString == "https://relay.example.com/base")
     #expect(RelayURLValidation.normalize("http://relay.example.com") == nil)
@@ -43,16 +43,16 @@ import Testing
     #expect(RelayURLValidation.normalize("http://localhost:8787", allowInsecureLocalhost: true)?.absoluteString == "http://localhost:8787")
     #expect(RelayURLValidation.normalize("http://127.0.0.1:8787", allowInsecureLocalhost: true)?.absoluteString == "http://127.0.0.1:8787")
     #expect(RelayURLValidation.normalize("http://evil.example.com", allowInsecureLocalhost: true) == nil)
-    #expect(RelayURLValidation.displayHost(URL(string: "https://agent-status-relay.afuture.workers.dev")!) == "agent-status-relay.afuture.workers.dev")
+    #expect(RelayURLValidation.displayHost(URL(string: "https://relay.lumi.huanan.app")!) == "relay.lumi.huanan.app")
 }
 
 @Test func pairingLinksRoundTripAndRejectStrangers() throws {
-    let relay = URL(string: "https://agent-status-relay.afuture.workers.dev")!
+    let relay = URL(string: "https://relay.lumi.huanan.app")!
     let link = PairingLink(relayURL: relay, code: "7KF3QP")
     let url = link.url
     #expect(url.scheme == "lumi")
     #expect(url.host == "pair")
-    #expect(url.absoluteString == "lumi://pair?relay=https%3A%2F%2Fagent%2Dstatus%2Drelay%2Eafuture%2Eworkers%2Edev&code=7KF3QP")
+    #expect(url.absoluteString == "lumi://pair?relay=https%3A%2F%2Frelay%2Elumi%2Ehuanan%2Eapp&code=7KF3QP")
     #expect(PairingLink(url: url) == link)
 
     // What a person might paste: un-encoded relay, lowercase code, hyphen.

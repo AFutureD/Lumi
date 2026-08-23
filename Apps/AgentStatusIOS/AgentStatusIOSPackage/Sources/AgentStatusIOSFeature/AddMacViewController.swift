@@ -227,7 +227,7 @@ final class AddMacViewController: UIViewController {
         ])
         relayHelp.numberOfLines = 0
         relayHelp.setText(
-            "留空即用内置 Relay（\(RelayURLValidation.displayHost(relay.defaultRelayURL))）。自托管填自己的 Worker 地址，例如 https://afuture.workers.dev；只收 https，填过一次就记住，下次预填。",
+            "留空即用内置 Relay（\(RelayURLValidation.displayHost(relay.defaultRelayURL))）。自托管填自己的 Worker 地址，例如 https://relay.example.com；只收 https，填过一次就记住，下次预填。",
             style: IOSDS.Typography.caption, color: .inkTertiary
         )
         advancedBox.axis = .vertical

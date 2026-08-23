@@ -1,4 +1,4 @@
-# Agent Status Relay
+# Lumi Relay
 
 The Relay is a TypeScript Cloudflare Worker backed by one `HostRelay` Durable Object per Mac plus a single `PairingDirectory` Durable Object. It provides host registration, code-based pairing, per-device credentials, revocation, hibernating WebSockets and online presence.
 

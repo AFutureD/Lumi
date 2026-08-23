@@ -24,7 +24,7 @@ TARGETED_DEVICE_FAMILY = 1,2
 // Info PLIST
 // ==========================================
 GENERATE_INFOPLIST_FILE = YES
-AGENT_STATUS_RELAY_URL = https:/$()/agent-status-relay.afuture.workers.dev
+AGENT_STATUS_RELAY_URL = https:/$()/relay.lumi.huanan.app
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
 INFOPLIST_KEY_NSCameraUsageDescription = Scan the pairing code shown in Lumi on your Mac.

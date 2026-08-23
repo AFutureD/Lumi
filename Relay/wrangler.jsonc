@@ -1,7 +1,11 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "agent-status-relay",
+  "name": "lumi-relay",
   "main": "src/index.ts",
+  // One public address. Pairing links carry it, so the workers.dev alias
+  // stays off and the custom domain is the only way in.
+  "workers_dev": false,
+  "routes": [{ "pattern": "relay.lumi.huanan.app", "custom_domain": true }],
   "compatibility_date": "2026-08-16",
   "compatibility_flags": ["nodejs_compat"],
   // Edge rate limit, checked in the Worker before any Durable Object is

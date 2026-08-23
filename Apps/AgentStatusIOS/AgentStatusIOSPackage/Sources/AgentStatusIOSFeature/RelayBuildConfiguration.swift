@@ -9,6 +9,6 @@ enum RelayBuildConfiguration {
         }
         // SwiftPM tests do not run inside the application bundle. The shipped
         // app overrides this fallback through AGENT_STATUS_RELAY_URL.
-        return URL(string: "https://agent-status-relay.afuture.workers.dev")!
+        return URL(string: "https://relay.lumi.huanan.app")!
     }()
 }

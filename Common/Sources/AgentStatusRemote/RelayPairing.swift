@@ -79,7 +79,7 @@ public enum RelayURLValidation {
         return components.url
     }
 
-    /// What the screens show for a Relay: its host (`afuture.workers.dev`).
+    /// What the screens show for a Relay: its host (`relay.lumi.huanan.app`).
     public static func displayHost(_ url: URL) -> String {
         url.host ?? url.absoluteString
     }

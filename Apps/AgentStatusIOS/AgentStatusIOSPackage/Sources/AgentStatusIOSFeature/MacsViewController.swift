@@ -181,8 +181,8 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         return dataSource
     }
 
-    /// `Online · afuture.workers.dev` / `Offline · 2h ago · afuture.workers.dev`
-    /// / `Revoked · afuture.workers.dev`: the state, then which Relay this Mac
+    /// `Online · relay.lumi.huanan.app` / `Offline · 2h ago · relay.lumi.huanan.app`
+    /// / `Revoked · relay.lumi.huanan.app`: the state, then which Relay this Mac
     /// is reached through (each Mac remembers its own).
     static func meta(for state: MacChannelState, now: Date) -> String {
         let relayHost = RelayURLValidation.displayHost(state.relayURL)

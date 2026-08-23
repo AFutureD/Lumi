@@ -60,7 +60,7 @@ The macOS main window uses AppKit, the Notch and its main-App settings detail us
 The current development Relay is deployed at:
 
 ```text
-https://agent-status-relay.afuture.workers.dev
+https://relay.lumi.huanan.app
 ```
 
 The Relay URL is a build setting, not a user-editable preference. Keep the macOS and iOS values aligned:

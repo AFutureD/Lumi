@@ -1,6 +1,6 @@
 /**
  * Structured logging for the Worker and its Durable Objects — the Relay's
- * counterpart of the Swift `AgentStatusLogging` module.
+ * counterpart of the Swift logging module.
  *
  * One JSON object per line: `{"ts","level","subsystem":"relay","category",
  * "trace"?, "event", ...fields}`, so `wrangler tail` and Workers Logs can

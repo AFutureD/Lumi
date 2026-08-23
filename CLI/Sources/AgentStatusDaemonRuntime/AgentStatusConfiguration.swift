@@ -26,7 +26,7 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     /// runs against a local Relay) never touches the installed one's identity.
     public let relayCredentialService: String
 
-    public static let defaultRelayURL = URL(string: "https://agent-status-relay.afuture.workers.dev")!
+    public static let defaultRelayURL = URL(string: "https://relay.lumi.huanan.app")!
 
     public init(
         supportDirectory: URL,

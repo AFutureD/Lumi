@@ -160,7 +160,7 @@ public extension DesignSystem {
             public static let failureMaxWidth: Double = 290
             /// Success screen dwell before returning to the Macs list.
             public static let successDwell: Double = 1.5
-            /// Macs list subtitle — SF Mono 13 / 18 (`Online · afuture.workers.dev`).
+            /// Macs list subtitle — SF Mono 13 / 18 (`Online · relay.lumi.huanan.app`).
             public static let macRowSubtitle = DesignTextStyle(size: 13, weight: .regular, lineHeight: 18, family: .mono)
         }
     }

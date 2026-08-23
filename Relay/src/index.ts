@@ -26,7 +26,7 @@ export default {
 
 async function dispatch(request: Request, env: Env, url: URL, log: Logger): Promise<Response> {
   // Every credential on this API is a bearer token: plain HTTP would put it
-  // on the wire in clear. workers.dev answers http:// too, so refuse it here;
+  // on the wire in clear. the edge answers http:// too, so refuse it here;
   // only loopback (wrangler dev) is exempt.
   if (url.protocol !== "https:" && !isLoopbackHost(url.hostname)) {
     log.warn("https_required", { protocol: url.protocol });
