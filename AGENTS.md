@@ -31,3 +31,30 @@ Your job is trying to add documents in this swift package project.
 - Invoke the `$i-have-adhd` skill whenever writing or revising `docs/FEAT.md`. Apply it to the document's reader-facing structure and wording, not only to the assistant response.
 - Before adding content, review the complete `docs/FEAT.md`. Improve nearby wording, merge overlapping explanations, and remove stale or redundant content instead of only appending another section.
 - Keep the document concise and user-facing. Avoid implementation details and do not duplicate exhaustive setup or reference material from `README.md`.
+
+
+## 0x03. Glossary
+
+`docs/Glossary.md` is the single source of truth for **what things are called**. It governs wording, not implementation.
+
+### What it contains
+
+- The product name in English and Chinese, and how to write them together.
+- The one metaphor the product is built on, and the instruction never to mix in another.
+- The user-facing name of each part of the product (background service, reporter, cross-device transport, notch display).
+- Session status words — the vocabulary users rely on to decide whether to go look.
+- Preferred phrasings for common actions, each paired with the wording to avoid.
+- Tone of voice, and a list of retired or banned words.
+
+### What it must NOT contain
+
+No implementation detail of any kind: no bundle identifiers, file paths, environment variables, module or target names, API shapes, or code samples. If a line would only make sense to someone reading the source, it does not belong here.
+
+### When to update it
+
+- Before writing any user-visible string, read it first and reuse the existing wording rather than inventing a synonym.
+- Whenever a new user-visible concept, component, or state appears, add its name in the same change.
+- Whenever a name is changed or retired, update the entry and move the old name into the banned-words list — do not silently delete it, so the reason stays visible.
+- When `docs/FEAT.md` or any feature doc introduces a term not yet listed, add it to the glossary in the same change.
+
+Invoke the `$i-have-adhd` skill when writing or revising it. Keep it short enough to be read in full every time.
