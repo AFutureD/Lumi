@@ -19,8 +19,8 @@
     {
       "target" : {
         "containerPath" : "container:AgentStatusIOSPackage",
-        "identifier" : "AgentStatusIOSFeatureTests",
-        "name" : "AgentStatusIOSFeatureTests"
+        "identifier" : "IOSFeatureTests",
+        "name" : "IOSFeatureTests"
       }
     },
     {

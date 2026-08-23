@@ -1,5 +1,5 @@
 import UIKit
-import AgentStatusIOSFeature
+import IOSFeature
 
 @main
 final class LumiIOSApp: UIResponder, UIApplicationDelegate {

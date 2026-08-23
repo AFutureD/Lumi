@@ -3,17 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentStatusMacFeature",
+    name: "MacFeature",
     platforms: [.macOS(.v26)],
     products: [
         .library(
-            name: "AgentStatusMacFeature",
-            targets: ["AgentStatusMacFeature"]
+            name: "MacFeature",
+            targets: ["MacFeature"]
         ),
     ],
     dependencies: [
-        .package(name: "AgentStatusCommon", path: "../../../Common"),
-        .package(name: "AgentStatusTransport", path: "../../../Common/AgentStatusTransport"),
+        .package(name: "Common", path: "../../../Common"),
+        .package(name: "Transport", path: "../../../Common/Transport"),
         .package(
             url: "https://github.com/AFutureD/opennook.git",
             revision: "e4c51a4d161d12ce91aac360706dc818c0c3a96d"
@@ -22,14 +22,14 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AgentStatusMacFeature",
+            name: "MacFeature",
             dependencies: [
-                .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusDesignSystem", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "IPCClient", package: "Common"),
+                .product(name: "Core", package: "Common"),
+                .product(name: "DesignSystem", package: "Common"),
+                .product(name: "Diagnostics", package: "Common"),
+                .product(name: "Remote", package: "Common"),
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "NookApp", package: "opennook"),
                 .product(name: "NookComponents", package: "opennook"),
             ],
@@ -39,9 +39,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "AgentStatusMacFeatureTests",
+            name: "MacFeatureTests",
             dependencies: [
-                "AgentStatusMacFeature",
+                "MacFeature",
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

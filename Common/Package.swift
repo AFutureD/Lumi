@@ -3,21 +3,21 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentStatusCommon",
+    name: "Common",
     platforms: [
         .macOS(.v15),
         .iOS(.v18),
     ],
     products: [
-        .library(name: "AgentStatusCore", targets: ["AgentStatusCore"]),
-        .library(name: "AgentStatusCodex", targets: ["AgentStatusCodex"]),
-        .library(name: "AgentStatusIPCClient", targets: ["AgentStatusIPCClient"]),
-        .library(name: "AgentStatusRemote", targets: ["AgentStatusRemote"]),
-        .library(name: "AgentStatusDesignSystem", targets: ["AgentStatusDesignSystem"]),
-        .library(name: "AgentStatusLogging", targets: ["AgentStatusLogging"]),
+        .library(name: "Core", targets: ["Core"]),
+        .library(name: "Adapters", targets: ["Adapters"]),
+        .library(name: "IPCClient", targets: ["IPCClient"]),
+        .library(name: "Remote", targets: ["Remote"]),
+        .library(name: "DesignSystem", targets: ["DesignSystem"]),
+        .library(name: "Diagnostics", targets: ["Diagnostics"]),
     ],
     dependencies: [
-        .package(path: "AgentStatusTransport"),
+        .package(path: "Transport"),
         .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.10.0"),
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.101.3"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
@@ -29,94 +29,94 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AgentStatusLogging",
+            name: "Diagnostics",
             dependencies: [
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "ServiceContextModule", package: "swift-service-context"),
             ]
         ),
         .target(
-            name: "AgentStatusCore",
+            name: "Core",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Transport", package: "Transport"),
             ]
         ),
         .target(
-            name: "AgentStatusCodex",
+            name: "Adapters",
             dependencies: [
-                "AgentStatusCore",
-                "AgentStatusLogging",
+                "Core",
+                "Diagnostics",
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Transport", package: "Transport"),
             ]
         ),
         .target(
-            name: "AgentStatusIPCClient",
+            name: "IPCClient",
             dependencies: [
-                "AgentStatusLogging",
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                "Diagnostics",
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ]
         ),
         .target(
-            name: "AgentStatusDesignSystem",
+            name: "DesignSystem",
             dependencies: [
-                "AgentStatusCore",
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                "Core",
+                .product(name: "Transport", package: "Transport"),
             ]
         ),
         .target(
-            name: "AgentStatusRemote",
+            name: "Remote",
             dependencies: [
-                "AgentStatusLogging",
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                "Diagnostics",
+                .product(name: "Transport", package: "Transport"),
             ],
             linkerSettings: [
                 .linkedFramework("Security"),
             ]
         ),
         .testTarget(
-            name: "AgentStatusCoreTests",
+            name: "CoreTests",
             dependencies: [
-                "AgentStatusCore",
+                "Core",
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),
         .testTarget(
-            name: "AgentStatusCodexTests",
+            name: "AdaptersTests",
             dependencies: [
-                "AgentStatusCodex",
+                "Adapters",
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),
         .testTarget(
-            name: "AgentStatusDesignSystemTests",
+            name: "DesignSystemTests",
             dependencies: [
-                "AgentStatusDesignSystem",
-                "AgentStatusCore",
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                "DesignSystem",
+                "Core",
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),
         .testTarget(
-            name: "AgentStatusLoggingTests",
+            name: "DiagnosticsTests",
             dependencies: [
-                "AgentStatusLogging",
+                "Diagnostics",
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),
         .testTarget(
-            name: "AgentStatusRemoteTests",
+            name: "RemoteTests",
             dependencies: [
-                "AgentStatusRemote",
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                "Remote",
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

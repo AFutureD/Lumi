@@ -1,4 +1,4 @@
-import fixture from "../../Common/AgentStatusTransport/Sources/AgentStatusTransport/Resources/transport-v1.json";
+import fixture from "../../Common/Transport/Sources/Transport/Resources/transport-v1.json";
 import { describe, expect, it } from "vitest";
 import { parseRelayRoutingFrame } from "../src/protocol";
 

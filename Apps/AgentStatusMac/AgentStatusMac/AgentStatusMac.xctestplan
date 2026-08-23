@@ -26,8 +26,8 @@
     {
       "target" : {
         "containerPath" : "container:AgentStatusMacPackage",
-        "identifier" : "AgentStatusMacFeatureTests",
-        "name" : "AgentStatusMacFeatureTests"
+        "identifier" : "MacFeatureTests",
+        "name" : "MacFeatureTests"
       }
     }
   ],

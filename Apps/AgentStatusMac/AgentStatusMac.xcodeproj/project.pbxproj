@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		8B90D1482DEDD44A00FBD189 /* AgentStatusMacFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 8B90D1472DEDD44A00FBD189 /* AgentStatusMacFeature */; };
+		8B90D1482DEDD44A00FBD189 /* MacFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 8B90D1472DEDD44A00FBD189 /* MacFeature */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,7 +64,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				8B90D1482DEDD44A00FBD189 /* AgentStatusMacFeature in Frameworks */,
+				8B90D1482DEDD44A00FBD189 /* MacFeature in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -127,7 +127,7 @@
 			);
 			name = AgentStatusMac;
 			packageProductDependencies = (
-				8B90D1472DEDD44A00FBD189 /* AgentStatusMacFeature */,
+				8B90D1472DEDD44A00FBD189 /* MacFeature */,
 			);
 			productName = AgentStatusMac;
 			productReference = 8BC2655C2DEDD3F400F279A4 /* Lumi.app */;
@@ -358,9 +358,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		8B90D1472DEDD44A00FBD189 /* AgentStatusMacFeature */ = {
+		8B90D1472DEDD44A00FBD189 /* MacFeature */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = AgentStatusMacFeature;
+			productName = MacFeature;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,5 +1,5 @@
 import AppKit
-import AgentStatusMacFeature
+import MacFeature
 
 @main
 @MainActor

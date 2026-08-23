@@ -3,16 +3,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentStatusCLI",
+    name: "CLI",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "AgentStatusDaemonRuntime", targets: ["AgentStatusDaemonRuntime"]),
-        .executable(name: "Lumen", targets: ["AgentStatusDaemon"]),
-        .executable(name: "Spark", targets: ["AgentStatusHelper"]),
+        .library(name: "DaemonRuntime", targets: ["DaemonRuntime"]),
+        .executable(name: "Lumen", targets: ["Daemon"]),
+        .executable(name: "Spark", targets: ["Helper"]),
     ],
     dependencies: [
-        .package(name: "AgentStatusCommon", path: "../Common"),
-        .package(name: "AgentStatusTransport", path: "../Common/AgentStatusTransport"),
+        .package(name: "Common", path: "../Common"),
+        .package(name: "Transport", path: "../Common/Transport"),
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.101.3"),
         .package(
             url: "https://github.com/swiftlang/swift-testing.git",
@@ -21,47 +21,47 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AgentStatusDaemonRuntime",
+            name: "DaemonRuntime",
             dependencies: [
-                .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Core", package: "Common"),
+                .product(name: "Adapters", package: "Common"),
+                .product(name: "IPCClient", package: "Common"),
+                .product(name: "Diagnostics", package: "Common"),
+                .product(name: "Remote", package: "Common"),
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ]
         ),
         .executableTarget(
-            name: "AgentStatusDaemon",
+            name: "Daemon",
             dependencies: [
-                "AgentStatusDaemonRuntime",
-                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
+                "DaemonRuntime",
+                .product(name: "Diagnostics", package: "Common"),
             ]
         ),
         .executableTarget(
-            name: "AgentStatusHelper",
+            name: "Helper",
             dependencies: [
-                .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                .product(name: "Core", package: "Common"),
+                .product(name: "Adapters", package: "Common"),
+                .product(name: "IPCClient", package: "Common"),
+                .product(name: "Diagnostics", package: "Common"),
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "NIOCore", package: "swift-nio"),
             ]
         ),
         .testTarget(
-            name: "AgentStatusDaemonRuntimeTests",
+            name: "DaemonRuntimeTests",
             dependencies: [
-                "AgentStatusDaemonRuntime",
-                .product(name: "AgentStatusCodex", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusCore", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusIPCClient", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusLogging", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusRemote", package: "AgentStatusCommon"),
-                .product(name: "AgentStatusTransport", package: "AgentStatusTransport"),
+                "DaemonRuntime",
+                .product(name: "Adapters", package: "Common"),
+                .product(name: "Core", package: "Common"),
+                .product(name: "IPCClient", package: "Common"),
+                .product(name: "Diagnostics", package: "Common"),
+                .product(name: "Remote", package: "Common"),
+                .product(name: "Transport", package: "Transport"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),
