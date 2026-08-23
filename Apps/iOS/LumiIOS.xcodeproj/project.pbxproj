@@ -17,7 +17,7 @@
 			containerPortal = 8B41F63D2DEDD0D5001A66F9 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 8B41F6442DEDD0D5001A66F9;
-			remoteInfo = AgentStatusIOS;
+			remoteInfo = LumiIOS;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -27,14 +27,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		1907D7863031F42F003125BC /* Exceptions for "AgentStatusIOS" folder in "AgentStatusIOS" target */ = {
+		1907D7863031F42F003125BC /* Exceptions for "LumiIOS" folder in "LumiIOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 8B41F6442DEDD0D5001A66F9 /* AgentStatusIOS */;
+			target = 8B41F6442DEDD0D5001A66F9 /* LumiIOS */;
 		};
-		8BD71C0A2DEE41E000CEDD92 /* Exceptions for "Config" folder in "AgentStatusIOS" target */ = {
+		8BD71C0A2DEE41E000CEDD92 /* Exceptions for "Config" folder in "LumiIOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Debug.xcconfig,
@@ -42,28 +42,28 @@
 				Shared.xcconfig,
 				Tests.xcconfig,
 			);
-			target = 8B41F6442DEDD0D5001A66F9 /* AgentStatusIOS */;
+			target = 8B41F6442DEDD0D5001A66F9 /* LumiIOS */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		8B41F6472DEDD0D5001A66F9 /* AgentStatusIOS */ = {
+		8B41F6472DEDD0D5001A66F9 /* LumiIOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				1907D7863031F42F003125BC /* Exceptions for "AgentStatusIOS" folder in "AgentStatusIOS" target */,
+				1907D7863031F42F003125BC /* Exceptions for "LumiIOS" folder in "LumiIOS" target */,
 			);
-			path = AgentStatusIOS;
+			path = LumiIOS;
 			sourceTree = "<group>";
 		};
-		8B41F65F2DEDD0D6001A66F9 /* AgentStatusIOSUITests */ = {
+		8B41F65F2DEDD0D6001A66F9 /* LumiIOSUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = AgentStatusIOSUITests;
+			path = LumiIOSUITests;
 			sourceTree = "<group>";
 		};
 		8BD71C052DEE41D800CEDD92 /* Config */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				8BD71C0A2DEE41E000CEDD92 /* Exceptions for "Config" folder in "AgentStatusIOS" target */,
+				8BD71C0A2DEE41E000CEDD92 /* Exceptions for "Config" folder in "LumiIOS" target */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -94,8 +94,8 @@
 			isa = PBXGroup;
 			children = (
 				8BD71C052DEE41D800CEDD92 /* Config */,
-				8B41F6472DEDD0D5001A66F9 /* AgentStatusIOS */,
-				8B41F65F2DEDD0D6001A66F9 /* AgentStatusIOSUITests */,
+				8B41F6472DEDD0D5001A66F9 /* LumiIOS */,
+				8B41F65F2DEDD0D6001A66F9 /* LumiIOSUITests */,
 				8B41F6812DEDD23B001A66F9 /* Frameworks */,
 				8B41F6462DEDD0D5001A66F9 /* Products */,
 			);
@@ -120,9 +120,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		8B41F6442DEDD0D5001A66F9 /* AgentStatusIOS */ = {
+		8B41F6442DEDD0D5001A66F9 /* LumiIOS */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 8B41F6662DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "AgentStatusIOS" */;
+			buildConfigurationList = 8B41F6662DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "LumiIOS" */;
 			buildPhases = (
 				8B41F6412DEDD0D5001A66F9 /* Sources */,
 				8B41F6422DEDD0D5001A66F9 /* Frameworks */,
@@ -133,20 +133,20 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				8B41F6472DEDD0D5001A66F9 /* AgentStatusIOS */,
+				8B41F6472DEDD0D5001A66F9 /* LumiIOS */,
 				8BD71C052DEE41D800CEDD92 /* Config */,
 			);
-			name = AgentStatusIOS;
+			name = LumiIOS;
 			packageProductDependencies = (
 				8B41F6842DEDD25C001A66F9 /* IOSFeature */,
 			);
-			productName = AgentStatusIOS;
+			productName = LumiIOS;
 			productReference = 8B41F6452DEDD0D5001A66F9 /* Lumi.app */;
 			productType = "com.apple.product-type.application";
 		};
-		8B41F65B2DEDD0D6001A66F9 /* AgentStatusIOSUITests */ = {
+		8B41F65B2DEDD0D6001A66F9 /* LumiIOSUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 8B41F66C2DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "AgentStatusIOSUITests" */;
+			buildConfigurationList = 8B41F66C2DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "LumiIOSUITests" */;
 			buildPhases = (
 				8B41F6582DEDD0D6001A66F9 /* Sources */,
 				8B41F6592DEDD0D6001A66F9 /* Frameworks */,
@@ -158,13 +158,13 @@
 				8B41F65E2DEDD0D6001A66F9 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				8B41F65F2DEDD0D6001A66F9 /* AgentStatusIOSUITests */,
+				8B41F65F2DEDD0D6001A66F9 /* LumiIOSUITests */,
 			);
-			name = AgentStatusIOSUITests;
+			name = LumiIOSUITests;
 			packageProductDependencies = (
 				8B41F6822DEDD23B001A66F9 /* IOSFeature */,
 			);
-			productName = AgentStatusIOSUITests;
+			productName = LumiIOSUITests;
 			productReference = 8B41F65C2DEDD0D6001A66F9 /* Lumi.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
@@ -187,7 +187,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 8B41F6402DEDD0D5001A66F9 /* Build configuration list for PBXProject "AgentStatusIOS" */;
+			buildConfigurationList = 8B41F6402DEDD0D5001A66F9 /* Build configuration list for PBXProject "LumiIOS" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -201,8 +201,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				8B41F6442DEDD0D5001A66F9 /* AgentStatusIOS */,
-				8B41F65B2DEDD0D6001A66F9 /* AgentStatusIOSUITests */,
+				8B41F6442DEDD0D5001A66F9 /* LumiIOS */,
+				8B41F65B2DEDD0D6001A66F9 /* LumiIOSUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -244,7 +244,7 @@
 /* Begin PBXTargetDependency section */
 		8B41F65E2DEDD0D6001A66F9 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 8B41F6442DEDD0D5001A66F9 /* AgentStatusIOS */;
+			target = 8B41F6442DEDD0D5001A66F9 /* LumiIOS */;
 			targetProxy = 8B41F65D2DEDD0D6001A66F9 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -382,7 +382,7 @@
 				DEVELOPMENT_TEAM = 8GSN8K4KD9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = AgentStatusIOS/Info.plist;
+				INFOPLIST_FILE = LumiIOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Lumi on your Mac.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -410,7 +410,7 @@
 				DEVELOPMENT_TEAM = 8GSN8K4KD9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = AgentStatusIOS/Info.plist;
+				INFOPLIST_FILE = LumiIOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Lumi on your Mac.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -437,7 +437,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = AgentStatusIOS;
+				TEST_TARGET_NAME = LumiIOS;
 			};
 			name = Debug;
 		};
@@ -451,14 +451,14 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = AgentStatusIOS;
+				TEST_TARGET_NAME = LumiIOS;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		8B41F6402DEDD0D5001A66F9 /* Build configuration list for PBXProject "AgentStatusIOS" */ = {
+		8B41F6402DEDD0D5001A66F9 /* Build configuration list for PBXProject "LumiIOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8B41F6642DEDD0D6001A66F9 /* Debug */,
@@ -467,7 +467,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		8B41F6662DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "AgentStatusIOS" */ = {
+		8B41F6662DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "LumiIOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8B41F6672DEDD0D6001A66F9 /* Debug */,
@@ -476,7 +476,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		8B41F66C2DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "AgentStatusIOSUITests" */ = {
+		8B41F66C2DEDD0D6001A66F9 /* Build configuration list for PBXNativeTarget "LumiIOSUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8B41F66D2DEDD0D6001A66F9 /* Debug */,

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "group:README.md">
+   </FileRef>
+   <FileRef
+      location = "group:AGENTS.md">
+   </FileRef>
+   <FileRef
+      location = "group:Common">
+   </FileRef>
+   <FileRef
+      location = "group:CLI">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/Mac/LumiMac.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/Mac/MacPackage">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/iOS/LumiIOS.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:Apps/iOS/IOSPackage">
+   </FileRef>
+</Workspace>

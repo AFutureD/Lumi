@@ -7,7 +7,7 @@ Agent Status aggregates multiple Codex Agents and Sessions on one Mac, displays 
 - `Apps`: AppKit macOS app and UIKit iOS app.
 - `CLI`: SwiftPM daemon, stateless Hook helper, and daemon runtime.
 - `Common`: shared Swift packages for product state, persistence, Codex adaptation, IPC, encryption, and transport objects.
-- `Common/AgentStatusTransport`: independent Foundation-only Swift package; the sole declaration source for cross-process and cross-device DTOs.
+- `Common/Transport`: independent Foundation-only Swift package; the sole declaration source for cross-process and cross-device DTOs.
 - `Relay`: TypeScript Cloudflare Worker and per-Mac Durable Object.
 - Root: Xcode workspace, CI, scripts, and documentation.
 
@@ -34,22 +34,22 @@ Agent Status aggregates multiple Codex Agents and Sessions on one Mac, displays 
 ```sh
 swift build --package-path Common
 swift test --package-path Common
-swift build --package-path Common/AgentStatusTransport
-swift test --package-path Common/AgentStatusTransport
+swift build --package-path Common/Transport
+swift test --package-path Common/Transport
 swift build --package-path CLI
 swift test --package-path CLI
-swift test --package-path Apps/AgentStatusMac/AgentStatusMacPackage
+swift test --package-path Apps/Mac/MacPackage
 scripts/smoke-local-chain.sh
 scripts/check-transport-boundaries.sh
 ```
 
 ## Build Apps
 
-Open `AgentStatus.xcworkspace` in Xcode 26, or use the project schemes from the command line:
+Open `Lumi.xcworkspace` in Xcode 26, or use the project schemes from the command line:
 
 ```sh
-xcodebuild -workspace AgentStatus.xcworkspace -scheme AgentStatusMac build
-xcodebuild -workspace AgentStatus.xcworkspace -scheme AgentStatusIOS \
+xcodebuild -workspace Lumi.xcworkspace -scheme LumiMac build
+xcodebuild -workspace Lumi.xcworkspace -scheme LumiIOS \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
@@ -65,8 +65,8 @@ https://relay.lumi.huanan.app
 
 The Relay URL is a build setting, not a user-editable preference. Keep the macOS and iOS values aligned:
 
-- `Apps/AgentStatusMac/Config/Shared.xcconfig`
-- `Apps/AgentStatusIOS/Config/Shared.xcconfig`
+- `Apps/Mac/Config/Shared.xcconfig`
+- `Apps/iOS/Config/Shared.xcconfig`
 
 Verify and deploy:
 
@@ -101,5 +101,5 @@ The Codex integration installer preserves existing Hooks. Users may need to revi
 - [Data, communication, and storage](docs/design/data-communication-storage.md)
 - [Agent Hook design](docs/design/agent-hook.md)
 - [Product overview](docs/feat/index.md)
-- [Design system handoff](design/README.md) — `design/DESIGN SYSTEM.html` is the source of every colour, type and spacing value; Swift tokens live in `Common/Sources/AgentStatusDesignSystem`
+- [Design system handoff](design/README.md) — `design/DESIGN SYSTEM.html` is the source of every colour, type and spacing value; Swift tokens live in `Common/Sources/DesignSystem`
 - [Current implementation task](docs/developer/tasks/260816T1953-agent-status-v1/TASK.md)

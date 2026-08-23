@@ -17,8 +17,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8B41F6442DEDD0D5001A66F9"
                BuildableName = "Lumi.app"
-               BlueprintName = "AgentStatusIOS"
-               ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
+               BlueprintName = "LumiIOS"
+               ReferencedContainer = "container:LumiIOS.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -30,10 +30,10 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:AgentStatusIOS.xctestplan">
+            reference = "container:LumiIOS.xctestplan">
          </TestPlanReference>
          <TestPlanReference
-            reference = "container:AgentStatusIOS/AgentStatusIOS.xctestplan"
+            reference = "container:LumiIOS/LumiIOS.xctestplan"
             default = "YES">
          </TestPlanReference>
       </TestPlans>
@@ -44,8 +44,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8B41F65B2DEDD0D6001A66F9"
                BuildableName = "Lumi.xctest"
-               BlueprintName = "AgentStatusIOSUITests"
-               ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
+               BlueprintName = "LumiIOSUITests"
+               ReferencedContainer = "container:LumiIOS.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -66,8 +66,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8B41F6442DEDD0D5001A66F9"
             BuildableName = "Lumi.app"
-            BlueprintName = "AgentStatusIOS"
-            ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
+            BlueprintName = "LumiIOS"
+            ReferencedContainer = "container:LumiIOS.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -83,8 +83,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8B41F6442DEDD0D5001A66F9"
             BuildableName = "Lumi.app"
-            BlueprintName = "AgentStatusIOS"
-            ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
+            BlueprintName = "LumiIOS"
+            ReferencedContainer = "container:LumiIOS.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

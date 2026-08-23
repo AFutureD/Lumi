@@ -2,9 +2,9 @@
 <Workspace
    version = "1.0">
    <FileRef
-      location = "group:AgentStatusMacPackage">
+      location = "group:MacPackage">
    </FileRef>
    <FileRef
-      location = "container:AgentStatusMac.xcodeproj">
+      location = "container:LumiMac.xcodeproj">
    </FileRef>
 </Workspace>

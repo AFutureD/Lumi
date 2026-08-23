@@ -10,22 +10,22 @@
   ],
   "defaultOptions" : {
     "targetForVariableExpansion" : {
-      "containerPath" : "container:AgentStatusMac.xcodeproj",
+      "containerPath" : "container:LumiMac.xcodeproj",
       "identifier" : "8BC2655B2DEDD3F400F279A4",
-      "name" : "AgentStatusMac"
+      "name" : "LumiMac"
     }
   },
   "testTargets" : [
     {
       "target" : {
-        "containerPath" : "container:AgentStatusMac.xcodeproj",
+        "containerPath" : "container:LumiMac.xcodeproj",
         "identifier" : "8BC265732DEDD3F500F279A4",
-        "name" : "AgentStatusMacUITests"
+        "name" : "LumiMacUITests"
       }
     },
     {
       "target" : {
-        "containerPath" : "container:AgentStatusMacPackage",
+        "containerPath" : "container:MacPackage",
         "identifier" : "MacFeatureTests",
         "name" : "MacFeatureTests"
       }

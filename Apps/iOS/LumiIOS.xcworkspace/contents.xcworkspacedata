@@ -2,9 +2,9 @@
 <Workspace
    version = "1.0">
    <FileRef
-      location = "group:AgentStatusIOSPackage">
+      location = "group:IOSPackage">
    </FileRef>
    <FileRef
-      location = "container:AgentStatusIOS.xcodeproj">
+      location = "container:LumiIOS.xcodeproj">
    </FileRef>
 </Workspace>

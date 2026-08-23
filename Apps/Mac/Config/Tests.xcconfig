@@ -8,7 +8,7 @@
 // Test Target Settings (Customizable by scaffold tool)
 // ==========================================
 PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi.mac.uitests
-TEST_TARGET_NAME = AgentStatusMac
+TEST_TARGET_NAME = LumiMac
 
 // Fix duplicate module name issue
 PRODUCT_MODULE_NAME = $(PRODUCT_NAME)UITests

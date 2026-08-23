@@ -56,5 +56,5 @@ for product in "${products[@]}"; do
 done
 
 ditto \
-  "${SRCROOT}/AgentStatusMac/LaunchAgents/app.huanan.lumi.daemon.plist" \
+  "${SRCROOT}/LumiMac/LaunchAgents/app.huanan.lumi.daemon.plist" \
   "${launch_agent_destination}/app.huanan.lumi.daemon.plist"

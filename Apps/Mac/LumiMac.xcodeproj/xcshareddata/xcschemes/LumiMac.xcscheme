@@ -17,8 +17,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8BC2655B2DEDD3F400F279A4"
                BuildableName = "Lumi.app"
-               BlueprintName = "AgentStatusMac"
-               ReferencedContainer = "container:AgentStatusMac.xcodeproj">
+               BlueprintName = "LumiMac"
+               ReferencedContainer = "container:LumiMac.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -30,7 +30,7 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:AgentStatusMac/AgentStatusMac.xctestplan"
+            reference = "container:LumiMac/LumiMac.xctestplan"
             default = "YES">
          </TestPlanReference>
       </TestPlans>
@@ -42,8 +42,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8BC265732DEDD3F500F279A4"
                BuildableName = "Lumi.xctest"
-               BlueprintName = "AgentStatusMacUITests"
-               ReferencedContainer = "container:AgentStatusMac.xcodeproj">
+               BlueprintName = "LumiMacUITests"
+               ReferencedContainer = "container:LumiMac.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -64,8 +64,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8BC2655B2DEDD3F400F279A4"
             BuildableName = "Lumi.app"
-            BlueprintName = "AgentStatusMac"
-            ReferencedContainer = "container:AgentStatusMac.xcodeproj">
+            BlueprintName = "LumiMac"
+            ReferencedContainer = "container:LumiMac.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -81,8 +81,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8BC2655B2DEDD3F400F279A4"
             BuildableName = "Lumi.app"
-            BlueprintName = "AgentStatusMac"
-            ReferencedContainer = "container:AgentStatusMac.xcodeproj">
+            BlueprintName = "LumiMac"
+            ReferencedContainer = "container:LumiMac.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

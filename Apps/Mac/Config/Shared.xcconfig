@@ -15,23 +15,21 @@ CURRENT_PROJECT_VERSION = 1
 // ==========================================
 // Platform Configuration
 // ==========================================
-IPHONEOS_DEPLOYMENT_TARGET = 18.0
-
-// (1 == iPhone, 2 == iPad)
-TARGETED_DEVICE_FAMILY = 1,2
+MACOSX_DEPLOYMENT_TARGET = 26.0
+ALWAYS_SEARCH_USER_PATHS = NO
 
 // ==========================================
 // Info PLIST
 // ==========================================
 GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_FILE = LumiMac/Info.plist
 LUMI_RELAY_URL = https:/$()/relay.lumi.huanan.app
-INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait
-INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
-INFOPLIST_KEY_NSCameraUsageDescription = Scan the pairing code shown in Lumi on your Mac.
-SUPPORTS_MACCATALYST = NO
+INFOPLIST_KEY_LumiRelayURL = $(LUMI_RELAY_URL)
 
 // ==========================================
 // Entitlements
 // ==========================================
-// AI agents can modify Config/AgentStatusIOS.entitlements to add capabilities
-CODE_SIGN_ENTITLEMENTS = Config/AgentStatusIOS.entitlements
+// AI agents can modify Config/LumiMac.entitlements to add capabilities
+CODE_SIGN_ENTITLEMENTS = Config/LumiMac.entitlements
+ENABLE_HARDENED_RUNTIME = YES
+ENABLE_USER_SCRIPT_SANDBOXING = NO
