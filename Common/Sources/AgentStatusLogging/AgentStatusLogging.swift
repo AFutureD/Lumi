@@ -21,8 +21,8 @@ public struct LogConfiguration: Sendable {
     /// How many rotated generations to keep besides the live file.
     public var retainedRotations: Int
 
-    public static let environmentLevelKey = "AGENT_STATUS_LOG_LEVEL"
-    public static let environmentDirectoryKey = "AGENT_STATUS_LOG_DIRECTORY"
+    public static let environmentLevelKey = "LUMI_LOG_LEVEL"
+    public static let environmentDirectoryKey = "LUMI_LOG_DIRECTORY"
 
     public init(
         subsystem: String,
@@ -55,8 +55,8 @@ public struct LogConfiguration: Sendable {
         homeDirectory.appendingPathComponent("Library/Logs/Lumi", isDirectory: true)
     }
 
-    /// Level from `AGENT_STATUS_LOG_LEVEL` (default `info`); directory from
-    /// `AGENT_STATUS_LOG_DIRECTORY` (default `~/Library/Logs/Lumi`;
+    /// Level from `LUMI_LOG_LEVEL` (default `info`); directory from
+    /// `LUMI_LOG_DIRECTORY` (default `~/Library/Logs/Lumi`;
     /// `off` / `0` / `none` disables files). Isolated smoke runs point the
     /// directory at their scratch folder so they never touch the real logs.
     public static func fromEnvironment(

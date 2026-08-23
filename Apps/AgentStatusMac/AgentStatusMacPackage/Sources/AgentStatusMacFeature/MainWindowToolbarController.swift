@@ -13,15 +13,15 @@ struct MainWindowToolbarActions {
 /// sidebar (toggle, trailing) | content list (search / "Settings") | detail (title + actions).
 @MainActor
 final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
-    private static let contentTitle = NSToolbarItem.Identifier("AgentStatus.ContentTitle")
-    private static let searchSessions = NSToolbarItem.Identifier("AgentStatus.SearchSessions")
-    private static let settingsLabel = NSToolbarItem.Identifier("AgentStatus.SettingsLabel")
-    private static let refreshSessions = NSToolbarItem.Identifier("AgentStatus.RefreshSessions")
-    private static let detailSeparator = NSToolbarItem.Identifier("AgentStatus.DetailSeparator")
-    private static let deleteSession = NSToolbarItem.Identifier("AgentStatus.DeleteSession")
-    private static let toggleInspector = NSToolbarItem.Identifier("AgentStatus.ToggleInspector")
+    private static let contentTitle = NSToolbarItem.Identifier("Lumi.ContentTitle")
+    private static let searchSessions = NSToolbarItem.Identifier("Lumi.SearchSessions")
+    private static let settingsLabel = NSToolbarItem.Identifier("Lumi.SettingsLabel")
+    private static let refreshSessions = NSToolbarItem.Identifier("Lumi.RefreshSessions")
+    private static let detailSeparator = NSToolbarItem.Identifier("Lumi.DetailSeparator")
+    private static let deleteSession = NSToolbarItem.Identifier("Lumi.DeleteSession")
+    private static let toggleInspector = NSToolbarItem.Identifier("Lumi.ToggleInspector")
 
-    let toolbar = NSToolbar(identifier: "AgentStatus.MainToolbar")
+    let toolbar = NSToolbar(identifier: "Lumi.MainToolbar")
     weak var window: NSWindow?
     var actions = MainWindowToolbarActions()
 

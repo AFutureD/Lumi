@@ -42,7 +42,7 @@ final class AgentStatusNookController {
     /// Matches the turn card's route dwell in `AgentStatusNookModel.showTurnCard`.
     private static let turnCardSurfaceDwell: Duration = .seconds(6)
 
-    /// Non-nil only when launched with `-AgentStatusNotchStateLog <path>`.
+    /// Non-nil only when launched with `-LumiNotchStateLog <path>`.
     private var stateLogger: DebugNotchStateLogger?
 
     init(store: MacSessionStore, actions: AgentStatusNookActions) {

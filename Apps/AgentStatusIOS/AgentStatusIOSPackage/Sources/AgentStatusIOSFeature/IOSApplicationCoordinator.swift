@@ -24,7 +24,7 @@ public final class IOSApplicationCoordinator: NSObject {
     }
 
     public func start(in window: UIWindow) {
-        if ProcessInfo.processInfo.arguments.contains("-AgentStatusPreviewData") {
+        if ProcessInfo.processInfo.arguments.contains("-LumiPreviewData") {
             relay.usePreview(PreviewFixture.channelStates(now: Date()))
         }
         tabs.viewControllers = [sessions, macs, settingsScreen].map { screen in

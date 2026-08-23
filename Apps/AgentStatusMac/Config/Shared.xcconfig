@@ -23,8 +23,8 @@ ALWAYS_SEARCH_USER_PATHS = NO
 // ==========================================
 GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_FILE = AgentStatusMac/Info.plist
-AGENT_STATUS_RELAY_URL = https:/$()/relay.lumi.huanan.app
-INFOPLIST_KEY_AgentStatusRelayURL = $(AGENT_STATUS_RELAY_URL)
+LUMI_RELAY_URL = https:/$()/relay.lumi.huanan.app
+INFOPLIST_KEY_LumiRelayURL = $(LUMI_RELAY_URL)
 
 // ==========================================
 // Entitlements

@@ -83,7 +83,7 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> URL? {
         let candidates: [URL] = [
-            environment["AGENT_STATUS_CODEX_CLI"],
+            environment["LUMI_CODEX_CLI"],
             environment["CODEX_CLI_PATH"],
             "/Applications/ChatGPT.app/Contents/Resources/codex",
             homeDirectory.appendingPathComponent(".local/bin/codex").path,

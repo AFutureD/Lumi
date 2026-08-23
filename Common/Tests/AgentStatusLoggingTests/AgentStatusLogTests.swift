@@ -114,7 +114,7 @@ private func makeLogger(category: String, _ configuration: LogConfiguration) -> 
 
     let tuned = LogConfiguration.fromEnvironment(
         subsystem: "daemon",
-        environment: ["AGENT_STATUS_LOG_LEVEL": "Debug", "AGENT_STATUS_LOG_DIRECTORY": "/tmp/smoke"],
+        environment: ["LUMI_LOG_LEVEL": "Debug", "LUMI_LOG_DIRECTORY": "/tmp/smoke"],
         homeDirectory: home
     )
     #expect(tuned.minimumLevel == .debug)
@@ -122,7 +122,7 @@ private func makeLogger(category: String, _ configuration: LogConfiguration) -> 
 
     let off = LogConfiguration.fromEnvironment(
         subsystem: "helper",
-        environment: ["AGENT_STATUS_LOG_LEVEL": "nonsense", "AGENT_STATUS_LOG_DIRECTORY": "off"],
+        environment: ["LUMI_LOG_LEVEL": "nonsense", "LUMI_LOG_DIRECTORY": "off"],
         homeDirectory: home
     )
     #expect(off.minimumLevel == .info)

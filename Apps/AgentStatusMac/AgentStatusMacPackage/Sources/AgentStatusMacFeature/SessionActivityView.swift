@@ -9,7 +9,7 @@ import SwiftUI
 /// hovered tool pair, and whether the list is pinned to the bottom.
 @MainActor
 final class SessionActivityState: ObservableObject {
-    private static let timelineModeKey = "AgentStatus.Activity.TimelineMode"
+    private static let timelineModeKey = "Lumi.Activity.TimelineMode"
 
     /// Lanes vs single line; a user preference, so it survives session changes.
     @Published var timelineMode: ActivityTimelineMode {

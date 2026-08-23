@@ -14,10 +14,10 @@ Pairing credentials live in the Keychain. Each paired Mac gets its own SQLite ca
 
 ## Running without a Mac
 
-Launch with `-AgentStatusPreviewData` to load two fixture Macs with the sessions of the design screens (no Relay traffic). Useful for screenshots and layout checks:
+Launch with `-LumiPreviewData` to load two fixture Macs with the sessions of the design screens (no Relay traffic). Useful for screenshots and layout checks:
 
 ```bash
-xcrun simctl launch booted me.afuture.AgentStatusIOS -AgentStatusPreviewData
+xcrun simctl launch booted me.afuture.AgentStatusIOS -LumiPreviewData
 ```
 
 ## Tests

@@ -36,7 +36,7 @@ final class RoundedSelectionRowView: NSTableRowView {
 /// opacity (0.8s ease-in-out, autoreversing) while the style breathes.
 @MainActor
 final class StatusDotView: NSView {
-    private static let breathingKey = "AgentStatus.StatusDot.Breathing"
+    private static let breathingKey = "Lumi.StatusDot.Breathing"
     private let halo = NSView()
     private let dot = NSView()
     private var style: DesignStatusDotStyle?

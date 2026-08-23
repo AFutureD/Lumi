@@ -11,11 +11,11 @@ final class LocalSettings {
 
     private let defaults: UserDefaults
     private enum Key {
-        static let deviceName = "AgentStatus.deviceName"
-        static let deselectedHosts = "AgentStatus.deselectedHosts"
-        static let deselectedStatuses = "AgentStatus.deselectedStatuses"
-        static let lastSyncByHost = "AgentStatus.lastSyncByHost"
-        static let lastRelayURL = "AgentStatus.lastRelayURL"
+        static let deviceName = "Lumi.deviceName"
+        static let deselectedHosts = "Lumi.deselectedHosts"
+        static let deselectedStatuses = "Lumi.deselectedStatuses"
+        static let lastSyncByHost = "Lumi.lastSyncByHost"
+        static let lastRelayURL = "Lumi.lastRelayURL"
     }
 
     init(defaults: UserDefaults = .standard) {

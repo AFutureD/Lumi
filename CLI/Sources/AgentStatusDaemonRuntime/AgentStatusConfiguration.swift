@@ -8,21 +8,21 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     public let codexSessionsDirectory: URL
     public let rolloutPollIntervalSeconds: Double
     /// The in-daemon rollout tailer is a fallback; the helper now reads the
-    /// transcript on every hook. Enable with `AGENT_STATUS_ROLLOUT_WATCHER=1`.
+    /// transcript on every hook. Enable with `LUMI_ROLLOUT_WATCHER=1`.
     public let rolloutWatcherEnabled: Bool
     /// Polls active Claude sessions' transcripts for records no hook delivers
     /// (a user interrupt fires no hook). On by default; disable with
-    /// `AGENT_STATUS_CLAUDE_WATCHER=0`.
+    /// `LUMI_CLAUDE_WATCHER=0`.
     public let claudeWatcherEnabled: Bool
     /// The Relay the daemon registers with as the host; paired iPhones sync
-    /// through it. Override with `AGENT_STATUS_RELAY_URL`; `AGENT_STATUS_RELAY=0`
+    /// through it. Override with `LUMI_RELAY_URL`; `LUMI_RELAY=0`
     /// keeps the daemon off the network (tests, smoke runs).
     public let relayURL: URL
     public let relayEnabled: Bool
     /// Per-device send sequences and pinned device keys (`relay-host-state.json`, 0600).
     public let relayStatePath: String
     /// Keychain service of the daemon's Relay host credentials. Override with
-    /// `AGENT_STATUS_RELAY_KEYCHAIN_SERVICE` so an isolated daemon (smoke
+    /// `LUMI_RELAY_KEYCHAIN_SERVICE` so an isolated daemon (smoke
     /// runs against a local Relay) never touches the installed one's identity.
     public let relayCredentialService: String
 
@@ -58,10 +58,10 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> AgentStatusConfiguration {
-        let supportDirectory = environment["AGENT_STATUS_SUPPORT_DIRECTORY"]
+        let supportDirectory = environment["LUMI_SUPPORT_DIRECTORY"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent("Library/Application Support/Lumi", isDirectory: true)
-        let databasePath = environment["AGENT_STATUS_DATABASE"]
+        let databasePath = environment["LUMI_DATABASE"]
             ?? supportDirectory.appendingPathComponent("sessions.sqlite3").path
         let codexHome = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent(".codex", isDirectory: true)
@@ -75,17 +75,17 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
             databasePath: databasePath,
             codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true),
             rolloutWatcherEnabled: ["1", "true", "yes"].contains(
-                (environment["AGENT_STATUS_ROLLOUT_WATCHER"] ?? "").lowercased()
+                (environment["LUMI_ROLLOUT_WATCHER"] ?? "").lowercased()
             ),
             claudeWatcherEnabled: !["0", "false", "no"].contains(
-                (environment["AGENT_STATUS_CLAUDE_WATCHER"] ?? "").lowercased()
+                (environment["LUMI_CLAUDE_WATCHER"] ?? "").lowercased()
             ),
-            relayURL: environment["AGENT_STATUS_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
+            relayURL: environment["LUMI_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
             relayEnabled: !["0", "false", "no"].contains(
-                (environment["AGENT_STATUS_RELAY"] ?? "").lowercased()
+                (environment["LUMI_RELAY"] ?? "").lowercased()
             ),
-            relayStatePath: environment["AGENT_STATUS_RELAY_STATE"],
-            relayCredentialService: environment["AGENT_STATUS_RELAY_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 }
+            relayStatePath: environment["LUMI_RELAY_STATE"],
+            relayCredentialService: environment["LUMI_RELAY_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 }
                 ?? KeychainRelayHostCredentialStore.defaultService
         )
     }

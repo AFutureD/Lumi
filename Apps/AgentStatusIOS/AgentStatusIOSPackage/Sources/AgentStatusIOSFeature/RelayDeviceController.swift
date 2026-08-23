@@ -98,7 +98,7 @@ final class RelayDeviceController {
     private var channelOrder: [HostID] = []
     private var channels: [HostID: RelayDeviceChannel] = [:]
     private var observers: [UUID: () -> Void] = [:]
-    /// Developer preview (`-AgentStatusPreviewData`): fixed states instead of Relay.
+    /// Developer preview (`-LumiPreviewData`): fixed states instead of Relay.
     private var previewStates: [MacChannelState]?
 
     init(settings: LocalSettings = .shared, dependencies: RelayDeviceDependencies = .live(), loadStoredCredentials: Bool = true) {

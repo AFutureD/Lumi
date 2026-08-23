@@ -39,10 +39,10 @@ final class MainWindowController: NSWindowController {
         // Setting the content view controller re-sizes the window to the view's
         // fitting size; restore the design size (or the saved frame) afterwards.
         window.setContentSize(NSSize(width: 1_440, height: 860))
-        if !window.setFrameUsingName("AgentStatus.MainWindow") {
+        if !window.setFrameUsingName("Lumi.MainWindow") {
             window.center()
         }
-        window.setFrameAutosaveName("AgentStatus.MainWindow")
+        window.setFrameAutosaveName("Lumi.MainWindow")
         toolbarController.window = window
         toolbarController.actions = rootController.toolbarActions()
         window.toolbar = toolbarController.toolbar
@@ -75,9 +75,9 @@ final class MainWindowController: NSWindowController {
 @MainActor
 enum MainWindowLayoutPreferences {
     private static let defaults = UserDefaults.standard
-    private static let sessionsListWidthKey = "AgentStatus.Layout.SessionsListWidth"
-    private static let settingsListWidthKey = "AgentStatus.Layout.SettingsListWidth"
-    private static let sidebarCollapsedKey = "AgentStatus.Layout.SidebarCollapsed"
+    private static let sessionsListWidthKey = "Lumi.Layout.SessionsListWidth"
+    private static let settingsListWidthKey = "Lumi.Layout.SettingsListWidth"
+    private static let sidebarCollapsedKey = "Lumi.Layout.SidebarCollapsed"
 
     static var sessionsListWidth: CGFloat {
         get { stored(sessionsListWidthKey) ?? AgentStatusDesign.Layout.sessionListWidth }
@@ -268,9 +268,9 @@ final class RootSplitViewController: NSSplitViewController {
         onToolbarStateChange?()
     }
 
-    /// `AGENT_STATUS_INITIAL_TAB=pairing|settings:<section>` (development screenshots only).
+    /// `LUMI_INITIAL_TAB=pairing|settings:<section>` (development screenshots only).
     private func applyDebugInitialTab() {
-        guard let value = ProcessInfo.processInfo.environment["AGENT_STATUS_INITIAL_TAB"] else { return }
+        guard let value = ProcessInfo.processInfo.environment["LUMI_INITIAL_TAB"] else { return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self else { return }

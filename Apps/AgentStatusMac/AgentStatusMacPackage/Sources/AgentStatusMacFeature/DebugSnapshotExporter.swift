@@ -1,6 +1,6 @@
 import AppKit
 
-/// Debug-only: when launched with `-AgentStatusSnapshotDirectory <dir>`, waits
+/// Debug-only: when launched with `-LumiSnapshotDirectory <dir>`, waits
 /// for the UI to settle and writes a PNG of every visible window (main window,
 /// Notch panel in list / detail / turn-complete routes) into `dir`, then
 /// quits. Rendering goes through `NSView.cacheDisplay`, so it needs no
@@ -9,7 +9,7 @@ import AppKit
 @MainActor
 enum DebugSnapshotExporter {
     static var directory: URL? {
-        UserDefaults.standard.string(forKey: "AgentStatusSnapshotDirectory").map { URL(fileURLWithPath: $0) }
+        UserDefaults.standard.string(forKey: "LumiSnapshotDirectory").map { URL(fileURLWithPath: $0) }
     }
 
     static func run(notch: AgentStatusNookController) {

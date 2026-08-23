@@ -137,9 +137,9 @@ final class SessionDetailViewController: NSViewController {
         }
     }
 
-    /// `-AgentStatusSnapshotFilterPanel category|importance`, debug only.
+    /// `-LumiSnapshotFilterPanel category|importance`, debug only.
     private static let debugSnapshotFilterPanel: ActivityFilterDimension? = UserDefaults.standard
-        .string(forKey: "AgentStatusSnapshotFilterPanel")
+        .string(forKey: "LumiSnapshotFilterPanel")
         .flatMap(ActivityFilterDimension.init(rawValue:))
 
     private func applySubheader(_ summary: SessionSummary) {
@@ -206,7 +206,7 @@ final class SessionDetailViewController: NSViewController {
 /// Activity | Inspector. The inspector is fixed at 288 and only the toolbar toggles it.
 @MainActor
 final class SessionDetailSplitViewController: NSSplitViewController {
-    private static let inspectorVisibleKey = "AgentStatus.Layout.InspectorVisible"
+    private static let inspectorVisibleKey = "Lumi.Layout.InspectorVisible"
 
     let activity = NSHostingView(rootView: SessionActivityView(
         presentation: nil,

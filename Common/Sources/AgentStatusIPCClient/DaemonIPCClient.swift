@@ -202,7 +202,7 @@ public enum DaemonEndpoint {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> String {
-        if let override = environment["AGENT_STATUS_SOCKET"], !override.isEmpty {
+        if let override = environment["LUMI_SOCKET"], !override.isEmpty {
             return override
         }
         return homeDirectory

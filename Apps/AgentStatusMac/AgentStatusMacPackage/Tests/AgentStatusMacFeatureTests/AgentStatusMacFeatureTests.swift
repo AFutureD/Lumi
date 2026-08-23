@@ -231,8 +231,8 @@ private let lumiCommand = "'/Users/me/Library/Application Support/Lumi/bin/Spark
 
 /// Read-only smoke test against the Codex actually installed on this machine —
 /// the stubs above cannot catch a change to the app-server's JSON-RPC contract.
-/// Opt in with `AGENT_STATUS_CODEX_INTEGRATION=1 swift test`.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["AGENT_STATUS_CODEX_INTEGRATION"] != nil))
+/// Opt in with `LUMI_CODEX_INTEGRATION=1 swift test`.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["LUMI_CODEX_INTEGRATION"] != nil))
 func codexAppServerProbeSpeaksToTheInstalledCodex() throws {
     let transport = try CodexAppServerProcessTransport()
     defer { transport.close() }

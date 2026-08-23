@@ -2,7 +2,7 @@ import Combine
 import Foundation
 import NookApp
 
-/// Debug-only: when launched with `-AgentStatusNotchStateLog <path>`, appends a
+/// Debug-only: when launched with `-LumiNotchStateLog <path>`, appends a
 /// timestamped line for every Notch surface visibility flip and every turn
 /// event the controller acts on. This is how expand/collapse behavior is
 /// verified headlessly — the Notch window is a fixed full-width panel, so
@@ -19,7 +19,7 @@ final class DebugNotchStateLogger {
     }()
 
     init?(appState: AppState) {
-        guard let path = UserDefaults.standard.string(forKey: "AgentStatusNotchStateLog") else { return nil }
+        guard let path = UserDefaults.standard.string(forKey: "LumiNotchStateLog") else { return nil }
         url = URL(fileURLWithPath: path)
         FileManager.default.createFile(atPath: path, contents: nil)
         appState.$isNookVisible

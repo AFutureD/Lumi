@@ -1,7 +1,7 @@
 import AgentStatusTransport
 import Foundation
 
-/// Developer-only data behind `-AgentStatusPreviewData`: two Macs and the
+/// Developer-only data behind `-LumiPreviewData`: two Macs and the
 /// sessions of the design screens, so every screen can be checked without
 /// a paired Mac. Never used in a normal launch.
 enum PreviewFixture {

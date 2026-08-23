@@ -25,12 +25,12 @@ public final class ApplicationCoordinator: NSObject {
 
     /// swift-log's bootstrap runs once per process, before anything logs:
     /// `AgentStatusMacApp.main` calls this first. `app.log` sits next to the
-    /// daemon's; `-AgentStatusLogLevel debug` turns the per-frame lines on
+    /// daemon's; `-LumiLogLevel debug` turns the per-frame lines on
     /// for one launch.
     public static func bootstrapLogging() {
         let configuration = LogConfiguration(
             subsystem: "app",
-            minimumLevel: UserDefaults.standard.string(forKey: "AgentStatusLogLevel").flatMap(Logger.Level.init(lenient:)) ?? .info,
+            minimumLevel: UserDefaults.standard.string(forKey: "LumiLogLevel").flatMap(Logger.Level.init(lenient:)) ?? .info,
             directory: LogConfiguration.defaultDirectory()
         )
         AgentStatusLogging.bootstrap(configuration)
