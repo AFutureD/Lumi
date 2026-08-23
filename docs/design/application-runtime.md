@@ -14,7 +14,7 @@ flowchart TD
     Store["MacSessionStore"]
     Relay["RelayHostStatusClient"]
     Window["MainWindowController"]
-    Nook["AgentStatusNookController"]
+    Nook["HaloController"]
 
     Coordinator --> Store
     Coordinator --> Relay
@@ -28,7 +28,7 @@ flowchart TD
 - `MacSessionStore`：daemon 连接、Mac SQLite、Session 选择和观察通知。
 - `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态、已配对设备和当前配对会话，发起 / 决定（Match、Don't match）/ 取消配对，撤销设备、删除已撤销设备的记录（Remove）；配对页可见时 1 秒轮询 `relay_pairing_state`，否则 30 秒轮询 `relay_status`，并跟随 `health.relayConnected` 变化立即刷新。只有 `relay_unavailable` 才把连接状态打成不可用，单个动作失败（撤销、开始配对）只显示错误。配对码到期或一次结果显示完（2 秒）时配对页可见则自动开始新码；离开配对页即取消会话。App 不持有 Relay 凭据或连接，配对状态机在 daemon。
 - `MainWindowController`：AppKit 窗口、toolbar 和三栏导航。
-- `AgentStatusNookController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
+- `HaloController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
 
 ### 三栏窗口
 
@@ -74,7 +74,7 @@ OpenNook 配置：
 - 每行：标题、lifecycle + phase、当前 Turn 最近 User message。
 - 完成、失败、审批和内容变化可以进入短暂 ActivityNook 卡片。
 - 设置按钮打开主 App 的 `Settings > Notch`。
-- Theme 在 Agent Status 中固定为 Dark，Layout 固定为 Notch；第三栏的 Appearance section 不显示这两个控件，启动时会纠正旧的可变偏好。
+- Theme 在 Lumi 中固定为 Dark，Layout 固定为 Notch；第三栏的 Appearance section 不显示这两个控件，启动时会纠正旧的可变偏好。
 - 屏幕可选内建屏幕、主屏幕或以稳定 UUID 记录的一台已连接屏幕；断开时按内建屏幕、主屏幕、首个可用屏幕的顺序回退。
 - 紧凑 Notch gap、展开内容宽度和展开动画时长通过 OpenNook 偏好保存并实时投射到 surface；三项设置均可恢复默认值，滑块使用无刻度外观；物理刘海宽度仍是紧凑 gap 的下限。
 
@@ -115,7 +115,7 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 - 根控制器：double-column `UISplitViewController`。
 - Primary：按 Mac 分 section 的 Session 列表。
 - Secondary：只读 Timeline。
-- Add Mac（sheet）：6 格配对码输入 + App 内 QR scanner（解析 `agentstatus://pair?relay=…&code=…`，系统相机经 URL scheme 进同一页）+ Advanced › Relay URL；随后的等待 / SAS / 成功 / 失败页在同一导航栈里推进。
+- Add Mac（sheet）：6 格配对码输入 + App 内 QR scanner（解析 `lumi://pair?relay=…&code=…`，系统相机经 URL scheme 进同一页）+ Advanced › Relay URL；随后的等待 / SAS / 成功 / 失败页在同一导航栈里推进。
 - Macs：每行显示状态 + 该 Mac 的 Relay host；`+` 菜单 Add Device / Rename this iPhone；左滑删除一个本地通道。
 
 ## 并发边界

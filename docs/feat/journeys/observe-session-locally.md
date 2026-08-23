@@ -8,7 +8,7 @@
 
 - 同时运行多个 Codex Session 时，不必逐个切换终端。
 - 快速判断哪个 Session 正在执行、等着自己审批、已结束但还没看过、看过了，或者出错。
-- 需要时查看消息与执行时间线，但不从 Agent Status 控制 Agent。
+- 需要时查看消息与执行时间线，但不从 Lumi 控制 Agent。
 
 ## 前置条件
 
@@ -23,7 +23,7 @@
    - 规则引用：[MAC-R-001](../modules/mac-session-view.md#mac-r-001-daemon-决定实时可用性)。
 2. 在中栏选择“Agents”，点击“Install Hook”。
    - 系统反馈：安装成功或显示具体错误；随后 Codex 卡片显示“Trusted by Codex”。
-   - 数据变化：只增加 Agent Status Hook，其他集成保留；Codex 的信任记录只针对 Agent Status 自己的处理项写入。
+   - 数据变化：只增加 Lumi Hook，其他集成保留；Codex 的信任记录只针对 Lumi 自己的处理项写入。
    - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](../modules/mac-session-view.md#mac-r-021-自动向-codex-申请-hook-信任)。
 3. 回到侧边栏“Sessions”，再新建一个 Codex Session 并提交任务。
    - 系统反馈：Main Session 以标题、Agent 类型和状态出现在主窗口中栏；Subagent 作为可折叠子项显示在所属 Main Session 下，并使用自己的名称或任务身份，不复用父 Session 请求作为标题。Notch 展开后显示标题、状态和当前 Turn 用户消息。
@@ -68,7 +68,7 @@
 
 - 用户看到：Hook 已安装但 Codex Session 不再更新；“Settings > Agents”的 Codex 卡片提示还有处理项未被信任。
 - 可执行动作：点击卡片上的“Authorize”；仍不成功再到 Codex `/hooks` 手动信任。
-- 数据影响：现有其他 Hooks 不变，只为 Agent Status 自己的处理项写入信任记录。
+- 数据影响：现有其他 Hooks 不变，只为 Lumi 自己的处理项写入信任记录。
 
 ### 列表为空
 
@@ -79,7 +79,7 @@
 ## 持久化结果
 
 - Session 不按时间自动过期，由用户决定何时删除。
-- 单条删除和清空历史都只影响 Agent Status。
+- 单条删除和清空历史都只影响 Lumi。
 - 外部 Session 内容只通过 App 启动、手动刷新和 Agent 事件同步；删除和清空会立即同步操作结果。规则见 [MAC-R-009](../modules/mac-session-view.md#mac-r-009-外部内容只有三种同步入口)。
 
 ## 下一目标

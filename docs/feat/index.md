@@ -1,8 +1,8 @@
-# Agent Status 功能全景
+# Lumi 功能全景
 
 > 适用版本：v1 开发预览。macOS App 已完成本机编译与运行，iOS App 已完成模拟器编译、单元测试与预览数据页面走查，Relay 已部署并通过健康检查。真实 Codex Hook、iPhone 实机、Developer ID 签名、公证和干净机器安装仍待验收。
 
-Agent Status 把一台 Mac 上多个 Codex Agent、多个 Session 的状态集中到一个地方。用户可以在 Mac 的三栏主窗口和 Notch 查看状态，也可以把一台或多台 Mac 配对到 iPhone，进行只读查看。
+Lumi 把一台 Mac 上多个 Codex Agent、多个 Session 的状态集中到一个地方。用户可以在 Mac 的三栏主窗口和 Notch 查看状态，也可以把一台或多台 Mac 配对到 iPhone，进行只读查看。
 
 本文把后台服务称为“daemon”，把 Codex 会话称为“Session”，把屏幕顶部状态胶囊称为“Notch”。
 
@@ -43,7 +43,7 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 ## 核心业务数据
 
-- [Session 状态与时间线](data-flows.md#session-状态与时间线)：由新加入 Agent Status 的 Codex Session 产生，并同步到 daemon、Mac 与在线 iPhone。
+- [Session 状态与时间线](data-flows.md#session-状态与时间线)：由新加入 Lumi 的 Codex Session 产生，并同步到 daemon、Mac 与在线 iPhone。
 - [设备与通道](data-flows.md#设备与通道)：每台 Mac 对每台已授权 iPhone 建立一条通道，一条通道承载该 Mac 的所有 Session。
 - [配对授权](data-flows.md#配对授权)：每台 iPhone 独立授权，可在 Mac 上单独撤销。
 
@@ -63,7 +63,7 @@ Relay 不保存 Session 正文或可浏览的历史。Mac 不在线时，iPhone 
 
 ## 遇到卡点
 
-按“Daemon unavailable”“Codex 未信任 Hook”“Relay unavailable”“配对失败”或“Mac unavailable”等可见症状查看[恢复路径](friction-points.md)。说不清原因时，先看 `~/Library/Logs/Agent Status/errors.log`（“Settings > Daemon > Logs > Show in Finder”）——日志只记标识和数量，不含 Session 正文。
+按“Daemon unavailable”“Codex 未信任 Hook”“Relay unavailable”“配对失败”或“Mac unavailable”等可见症状查看[恢复路径](friction-points.md)。说不清原因时，先看 `~/Library/Logs/Lumi/errors.log`（“Settings > Daemon > Logs > Show in Finder”）——日志只记标识和数量，不含 Session 正文。
 
 ## 当前边界
 

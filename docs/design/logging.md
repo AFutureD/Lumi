@@ -19,7 +19,7 @@
 
 | 端 | 写到哪 | 看哪 |
 | --- | --- | --- |
-| daemon | `~/Library/Logs/Agent Status/daemon.log` + os_log `com.huanan.AgentStatus.daemon` + stderr | 文件 / Console.app |
+| daemon | `~/Library/Logs/Lumi/daemon.log` + os_log `app.huanan.lumi.daemon` + stderr | 文件 / Console.app |
 | helper（每次 hook 一个进程） | `helper.log` + os_log `…helper` + stderr（默认只有 WARN 以上） | 文件 |
 | macOS App | `app.log` + os_log `…app` | Settings › Daemon › Logs › Show in Finder；Console.app |
 | 三者的 ERROR | 同目录 `errors.log`（额外一份） | 出问题先看这个 |
@@ -29,16 +29,16 @@
 
 - [swift-log](https://github.com/apple/swift-log)（1.6）：`Logger(label:)`、`Logger.Level`、`Logger.Metadata`、`LogHandler`、`MetadataProvider`、`LoggingSystem.bootstrap`。业务代码只认识 swift-log 的 `Logger`。
 - [swift-service-context](https://github.com/apple/swift-service-context)（1.x）：task-local 的 `ServiceContext` 装 trace id——这是 swift-distributed-tracing 的地基，我们只用这一层，不引 Tracer / span。
-- 自己写的只有 `Common/Sources/AgentStatusLogging/`：
-  - `AgentStatusLogHandler`：唯一的 `LogHandler`。渲染行、写 os_log（subsystem `com.huanan.AgentStatus.<subsystem>`，category = label）、`<subsystem>.log`、`errors.log`（error 及以上）、可选 stderr；文件 0700 / 0600、`O_APPEND`（三个进程共用 `errors.log` 不串行）、5 MB × 3 轮转（轮转发生在写入前，最新一行总在活文件）。
+- 自己写的只有 `Common/Sources/Diagnostics/`：
+  - `DiagnosticsLogHandler`：唯一的 `LogHandler`。渲染行、写 os_log（subsystem `app.huanan.lumi.<subsystem>`，category = label）、`<subsystem>.log`、`errors.log`（error 及以上）、可选 stderr；文件 0700 / 0600、`O_APPEND`（三个进程共用 `errors.log` 不串行）、5 MB × 3 轮转（轮转发生在写入前，最新一行总在活文件）。
   - `Trace.swift`：`TraceIDKey`、`withTrace(id) { }`（继承调用方 isolation，`@MainActor` 里也能用）、`currentTraceID`、`makeTraceID()`（8 位 hex）、`Logger.MetadataProvider.traceID`。
-  - `AgentStatusLogging.bootstrap(LogConfiguration)`：进程入口调一次；`LogConfiguration.fromEnvironment(subsystem:)` 读 `AGENT_STATUS_LOG_LEVEL`（默认 info）/ `AGENT_STATUS_LOG_DIRECTORY`（默认 `~/Library/Logs/Agent Status`，`off` 关文件）；Mac 用启动参数 `-AgentStatusLogLevel`。
+  - `Diagnostics.bootstrap(LogConfiguration)`：进程入口调一次；`LogConfiguration.fromEnvironment(subsystem:)` 读 `LUMI_LOG_LEVEL`（默认 info）/ `LUMI_LOG_DIRECTORY`（默认 `~/Library/Logs/Lumi`，`off` 关文件）；Mac 用启动参数 `-LumiLogLevel`。
   - `Logger.Metadata.fields([...])`：业务字段糖——丢 `nil`、Date → ISO、Double 一位小数；`LogClock.milliseconds(since:)` 给 `ms=`。
 
 ## 业务侧怎么写
 
 ```swift
-import AgentStatusLogging
+import Diagnostics
 import Logging
 
 private let log = Logger(label: "ipc")          // 声明决定 category
@@ -52,7 +52,7 @@ dbLog.error("apply_failed", metadata: .fields(["session": id, "error": error]))
 | 单元 | 在哪开作用域 | id |
 | --- | --- | --- |
 | daemon 处理一个 IPC 请求 | `DaemonServer` 的 `Task { await withTrace(envelope.requestID.rawValue) { … } }` | 客户端给的 requestID |
-| helper 一次 hook | `AgentStatusHelper.main` | `makeTraceID()`；`DaemonIPCClient` 把 `currentTraceID` 当 IPC requestID 发出去，所以 daemon 侧同一个 id |
+| helper 一次 hook | `SparkMain.main` | `makeTraceID()`；`DaemonIPCClient` 把 `currentTraceID` 当 IPC requestID 发出去，所以 daemon 侧同一个 id |
 | Mac 一次 reconcile | `MacSessionStore.scheduleReconcile` | `makeTraceID()`，同样随 IPC 请求带到 daemon |
 | daemon 处理一个 Relay 请求（index / fetch / timeline / removed） | `RelayHostService.process` | payload.requestID |
 | Relay Worker 一个请求 | `index.ts` / `HostRelay.fetch` 的 child logger | `cf-ray` |
@@ -81,5 +81,5 @@ Relay：`http`（入口每请求一行 `http_request route= status= ms=`、`http
 ## 边界
 
 - 日志不是数据通道：没有任何逻辑读取日志文件。
-- iOS 暂不写文件，只有 `AgentStatusRemote` 的 relay 行进 os_log。
+- iOS 暂不写文件，只有 `Remote` 的 relay 行进 os_log。
 - 不做 span / 采样 / 导出；要接 OTel 时，`ServiceContext` 已经是 span context 该待的位置，日志一行不用改。

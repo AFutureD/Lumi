@@ -96,7 +96,7 @@ enum PreviewFixture {
             total: TokenUsage(inputTokens: 184_220, cachedInputTokens: 151_808, outputTokens: 9_431, reasoningOutputTokens: 6_208, totalTokens: 193_651),
             modelContextWindow: 272_000
         )))
-        add(223, .tool(.init(name: "shell", summary: "swift test --package-path AgentStatusMacPackage", status: .started, toolUseID: "t6")))
+        add(223, .tool(.init(name: "shell", summary: "swift test --package-path MacPackage", status: .started, toolUseID: "t6")))
 
         let refactorSummary = SessionSummary(
             id: refactor, agent: .codex, title: "Refactor transport DTO boundaries",

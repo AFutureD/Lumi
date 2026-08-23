@@ -19,12 +19,12 @@ flowchart LR
 ## Session 状态与时间线
 
 - **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标，以及两个由用户操作产生的标记——已查看（清除绿色待查看，[MAC-R-019](modules/mac-session-view.md#mac-r-019-打开-session-即视为已查看)）和 Notch 归档（[MAC-R-014](modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)）。
-- **创建来源**：启用 Agent Status 后新建的 Codex Session。
+- **创建来源**：启用 Lumi 后新建的 Codex Session。
 - **更新来源**：Codex Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或 Timeline。用户在 CLI 里主动中止（Esc）Claude 后，即使 Claude 不再上报任何事件，Session 也会在数秒内变为中断（红色），中止前最后设置的标题一并生效。
 - **主要消费者**：Mac 主窗口、Notch，以及在线的已配对 iPhone。
 - **保留方式**：不按时间自动删除；用户可删除单条或清空全部。
 - **展示边界**：主活动时间线显示属于当前 Session 的消息、工具、计划、子 Agent、错误和已进入 Timeline 的未知记录；Subagent 为执行任务获得的父 Session 历史不重复显示为自身活动。模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情的 Inspector 与 iPhone 详情的 Info Tab 展示这些诊断数据。规则见 [MAC-R-018](modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
-- **隐私边界**：每类最新内部上下文会完整保留来源提供的嵌套内容，可能包含 reasoning、基础指令、线程上下文、世界状态、压缩历史，以及其中出现的路径、凭据、环境信息或工具内容。本地副本及已配对设备都必须视为高敏感数据；当前没有内容级脱敏保证。Agent Status 未识别的其他事件和完整原始日志文件不会被另外复制。
+- **隐私边界**：每类最新内部上下文会完整保留来源提供的嵌套内容，可能包含 reasoning、基础指令、线程上下文、世界状态、压缩历史，以及其中出现的路径、凭据、环境信息或工具内容。本地副本及已配对设备都必须视为高敏感数据；当前没有内容级脱敏保证。Lumi 未识别的其他事件和完整原始日志文件不会被另外复制。
 
 ### 从 Agent 事件到三端一致
 
@@ -39,7 +39,7 @@ flowchart LR
 ### 删除
 
 - **单条删除**：用户在 Mac 选择 Session，通过删除图标（Delete Session）并确认后，daemon、Mac 和已连接 iPhone 移除同一 Session。删除 Main Session 会连带删除挂在它下面的全部 Subagent（含 Subagent 的 Subagent）；单独删除一个 Subagent 不影响父级。
-- **全部清空**：用户在 Settings 确认“Clear Session history…”后，全部 Agent Status Session 被清空。
+- **全部清空**：用户在 Settings 确认“Clear Session history…”后，全部 Lumi Session 被清空。
 - **删除后的新事件**：被动到达的旧活动不会让已删除 Session 重新出现；同一 Session 再次被人使用（新的用户请求，或会话重新启动）时它会回来。
 - **外部影响**：Codex 自身 Session 和日志不被删除。
 
@@ -67,7 +67,7 @@ flowchart LR
 
 | 位置 | 保存内容 | 用户可见行为 |
 | --- | --- | --- |
-| daemon | 该 Mac 已加入 Agent Status 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
+| daemon | 该 Mac 已加入 Lumi 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
 | Mac App | 与 daemon 同步的完整本地副本 | 快速启动和浏览；断线时仍可查看最近同步内容 |
 | iPhone App | 每台已配对 Mac 一个本机缓存数据库（与 Mac 同一格式）；Keychain 只存配对凭据（含每台 Mac 的 Relay 地址） | 启动立即显示缓存；在线后按索引只补差异；Mac 离线仍可翻看 |
 | Relay | 设备授权、进行中的配对会话和运行所需信息 | 不提供 Session 正文或历史查询 |

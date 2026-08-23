@@ -1,6 +1,6 @@
 # 整体架构设计
 
-Agent Status 使用“daemon 唯一权威、客户端持久缓存、Relay 不透明转发”的结构。daemon 负责采集、归并，并作为 Relay Host 把数据层记录（index / 事件 / 整 Session）同步给 iPhone；macOS App 负责本机 UI 与 Notch；iOS 以每台 Mac 一个 SQLite 缓存只读消费，业务层（状态档、展示文案）在各端用共享代码计算。
+Lumi 使用“daemon 唯一权威、客户端持久缓存、Relay 不透明转发”的结构。daemon 负责采集、归并，并作为 Relay Host 把数据层记录（index / 事件 / 整 Session）同步给 iPhone；macOS App 负责本机 UI 与 Notch；iOS 以每台 Mac 一个 SQLite 缓存只读消费，业务层（状态档、展示文案）在各端用共享代码计算。
 
 ## 目标
 
@@ -26,8 +26,8 @@ flowchart LR
         Codex["Codex"]
         Hook["Codex Hooks"]
         Rollout["rollout JSONL"]
-        Helper["agent-status-helper<br/>无状态"]
-        Daemon["agent-status-daemon<br/>本地权威"]
+        Helper["Spark<br/>无状态"]
+        Daemon["Lumen<br/>本地权威"]
         DaemonDB[("daemon SQLite")]
         MacStore["MacSessionStore"]
         MacDB[("Mac SQLite 缓存")]
@@ -105,12 +105,12 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Transport["AgentStatusTransport<br/>Foundation only"]
-    Core["AgentStatusCore<br/>GRDB + Reducer"]
-    Codex["AgentStatusCodex<br/>Adapter"]
-    IPC["AgentStatusIPCClient<br/>SwiftNIO"]
-    Remote["AgentStatusRemote<br/>CryptoKit + URLSession + Keychain"]
-    Design["AgentStatusDesignSystem<br/>颜色 / 字号 / 间距 token"]
+    Transport["Transport<br/>Foundation only"]
+    Core["Core<br/>GRDB + Reducer"]
+    Codex["Adapters<br/>Adapter"]
+    IPC["IPCClient<br/>SwiftNIO"]
+    Remote["Remote<br/>CryptoKit + URLSession + Keychain"]
+    Design["DesignSystem<br/>颜色 / 字号 / 间距 token"]
     CLI["CLI daemon/helper"]
     Mac["macOS Feature"]
     IOS["iOS Feature"]
@@ -136,10 +136,10 @@ flowchart TD
 
 边界规则：
 
-- `AgentStatusTransport` 只依赖 Foundation。
+- `Transport` 只依赖 Foundation。
 - Session、Timeline、IPC 和 Relay routing DTO 不在 Package 外重复声明。
-- `AgentStatusCore` 拥有 reducer 与 GRDB repository，不依赖 AppKit/UIKit。
-- `AgentStatusDesignSystem` 承载设计系统 L1 基础规范（颜色、字号、间距、圆角、关键尺寸、消息类别标签与状态色梯度），只依赖 Foundation（SwiftUI 适配放在 `#if canImport(SwiftUI)`）；macOS、Notch、iOS 视图不写颜色 / 字号 literal，只引用这里的 token。设计交接原件归档在仓库根目录 `design/`（`DESIGN SYSTEM.html` 为唯一取值来源）。
+- `Core` 拥有 reducer 与 GRDB repository，不依赖 AppKit/UIKit。
+- `DesignSystem` 承载设计系统 L1 基础规范（颜色、字号、间距、圆角、关键尺寸、消息类别标签与状态色梯度），只依赖 Foundation（SwiftUI 适配放在 `#if canImport(SwiftUI)`）；macOS、Notch、iOS 视图不写颜色 / 字号 literal，只引用这里的 token。设计交接原件归档在仓库根目录 `design/`（`DESIGN SYSTEM.html` 为唯一取值来源）。
 - App 创建 ViewModel 或控制器状态，但不重新声明传输层业务对象。
 - Relay 通过共享 golden JSON 校验 routing frame，不解析 `RemoteSessionPayload`。
 
@@ -162,7 +162,7 @@ flowchart TD
 3. 第一次运行时把已存在 rollout 文件标为基线，不导入旧 Session。
 4. 启动 Unix socket，socket 权限设为 `0600`。
 5. 启动 rollout watcher，默认每 2 秒检查文件尺寸变化。
-6. 从 Keychain 加载（或创建并注册）Relay host 凭据，建立 Host WSS，订阅自己的事件流；`DaemonHealth.relayConnected` 随连接状态变化（`AGENT_STATUS_RELAY=0` 可关闭）。
+6. 从 Keychain 加载（或创建并注册）Relay host 凭据，建立 Host WSS，订阅自己的事件流；`DaemonHealth.relayConnected` 随连接状态变化（`LUMI_RELAY=0` 可关闭）。
 
 ### macOS App
 

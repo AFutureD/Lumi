@@ -27,7 +27,7 @@
 
 1. 在 Settings 中栏选择“Agents”。
 2. 点击 Codex 卡片上的“Authorize”。
-3. 若按钮之后仍提示未信任，在 Codex 打开 `/hooks`，核对 Agent Status 命令后手动信任。
+3. 若按钮之后仍提示未信任，在 Codex 打开 `/hooks`，核对 Lumi 命令后手动信任。
 
 **完成信号**：卡片改为显示“Trusted by Codex”，新 Session 的首个受支持事件到达后 Mac 列表自动更新。
 
@@ -59,7 +59,7 @@
 
 ## Session 标题仍显示 Codex Session
 
-**用户会看到**：Codex 侧已经有可识别标题，但 Agent Status 列表仍显示 `Codex Session`，Subagent 也没有放在 Main Session 下。
+**用户会看到**：Codex 侧已经有可识别标题，但 Lumi 列表仍显示 `Codex Session`，Subagent 也没有放在 Main Session 下。
 
 **可能原因**：运行中的 daemon 还是升级前版本，尚未从 Codex `state_5.sqlite` 同步标题与 Subagent lineage。Mac App 启动时会自动检测并重启过期 daemon，因此这个状态通常只出现在自动重启还没完成、或自动重启失败的时候。
 
@@ -104,7 +104,7 @@
 | 提示 | 意思 | 下一步 |
 | --- | --- | --- |
 | 配对码不对或已过期（六格变红） | 输错，或 Mac 上的码已换新 / 被用过 | 回 Mac 看一眼当前的码，改好后 Try again |
-| Mac 不在线 | 码是对的，但这台 Mac 没连上 Relay | 确认 Mac 上 Agent Status 在运行、显示 Relay connected，Try again（接着这一次继续） |
+| Mac 不在线 | 码是对的，但这台 Mac 没连上 Relay | 确认 Mac 上 Lumi 在运行、显示 Relay connected，Try again（接着这一次继续） |
 | Mac 拒绝了这次配对 | Mac 点了 Don't match，或 60 秒没点 | 如果只是没来得及点，Start over 重来；数字确实不一样就别配 |
 | 校验失败（红色） | Relay 返回的数据不一致——可能有人在中间换钥匙 | 换个网络 Try again；仍失败停止配对，检查这台 Mac 用的 Relay |
 
@@ -139,7 +139,7 @@ Mac 上的码在中途换掉或过期，也按 ① 处理——回到输码屏�
 
 **恢复步骤**：
 
-1. 确认目标 Mac 开机联网；daemon 由 launchd 常驻，必要时在 Mac 打开 Agent Status 让它自检重装。
+1. 确认目标 Mac 开机联网；daemon 由 launchd 常驻，必要时在 Mac 打开 Lumi 让它自检重装。
 2. 等待 iPhone 自动重新对账（上线后几秒内）。
 
 **完成信号**：该 Mac 显示 Online，差异补齐后列表回到最新。其他 Mac 通道不受影响。
@@ -186,13 +186,13 @@ Mac 上的码在中途换掉或过期，也按 ① 处理——回到输码屏�
 | `helper.log` | 每次 Codex / Claude Hook 触发的 helper | 每次 Hook 一行：会话、Hook 名、读了多少行、发了几个事件；读不到对话记录是 WARN |
 | `app.log` | Mac App | 与 daemon 的连接、每次同步的数量、daemon 自动更新、配对页操作 |
 
-位置：`~/Library/Logs/Agent Status/`。打开方式：“Settings > Daemon”最下方的 Logs 卡片点“Show in Finder”；或在 Console.app 按子系统 `com.huanan.AgentStatus` 筛选（记得勾上 Action › Include Info Messages）。
+位置：`~/Library/Logs/Lumi/`。打开方式：“Settings > Daemon”最下方的 Logs 卡片点“Show in Finder”；或在 Console.app 按子系统 `app.huanan.lumi` 筛选（记得勾上 Action › Include Info Messages）。
 
 每行的样子：`[时间] [级别:进程] [模块] ['trace':请求id] 事件 key=value …`。同一次操作的所有行共用一个 trace id——helper 一次 hook、Mac 一次同步、daemon 处理的对应请求都是同一个，按它 grep 就能把一件事从头看到尾。模块名：`lifecycle`（启动 / 更新）、`agent`（Agent 事件流入）、`convert`（对话记录解析）、`db`、`ipc`（本机连接）、`relay`、`pairing`、`ui`。
 
 日志只记标识、数量、字节数和耗时，不记 Session 正文、工具参数、配对码或任何凭据，可以直接附到问题里。
 
-需要更细的内容（每一帧、每条事件）时，临时把级别调到 debug：daemon 用环境变量 `AGENT_STATUS_LOG_LEVEL=debug`，Mac App 用启动参数 `-AgentStatusLogLevel debug`，helper 在 Hook 命令后加 `--verbose`。单文件超过 5 MB 自动轮转，最多保留 3 份旧的。
+需要更细的内容（每一帧、每条事件）时，临时把级别调到 debug：daemon 用环境变量 `LUMI_LOG_LEVEL=debug`，Mac App 用启动参数 `-LumiLogLevel debug`，helper 在 Hook 命令后加 `--verbose`。单文件超过 5 MB 自动轮转，最多保留 3 份旧的。
 
 仍然说不清时，再补上：
 

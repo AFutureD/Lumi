@@ -30,7 +30,7 @@ flowchart LR
 
 - **Mac**：Relay URL 是 daemon 的启动配置（`Shared.xcconfig` → Info.plist），界面上不可改。配对页、二维码和 daemon Keychain 用的都是它。
 - **iPhone**：没有全局唯一的 Relay。每条 Mac 通道在配对时记下自己的 Relay URL（Keychain），REST / WSS 各用各的地址；一台 iPhone 可以同时连着两个不同 Relay 上的 Mac。
-- **配对时怎么来**：二维码 / 链接 `agentstatus://pair?relay=<https URL>&code=<6 位>` 直接给出；手输时默认内置 Relay（`agent-status-relay.afuture.workers.dev`），Add Mac › Advanced 可改。上次填过的地址只作下次预填（`LocalSettings`），不参与信任。
+- **配对时怎么来**：二维码 / 链接 `lumi://pair?relay=<https URL>&code=<6 位>` 直接给出；手输时默认内置 Relay（`relay.lumi.huanan.app`），Add Mac › Advanced 可改。上次填过的地址只作下次预填（`LocalSettings`），不参与信任。
 - **校验**：`https`、有 host、无 userinfo / query / fragment、host 小写、去尾 `/`、≤ 256 字符；DEBUG 构建额外放行 `http://localhost` / `http://127.0.0.1`（`wrangler dev`）。
 - **Worker 侧也拒绝明文**：非 `https` 的请求一律 `403 https_required`（只放行 loopback，给 `wrangler dev`）。所有凭据都是 bearer token，不能出现在明文连接上；workers.dev 本身不做 http→https 跳转，所以由 Worker 自己拒。
 - **地址不承载信任**：指向攻击者 Relay 的二维码最多让 iPhone 配上一台“假 Mac”，碰不到真 Mac 的通道——所以每个配对界面都显示 Relay host。
@@ -128,15 +128,15 @@ sequenceDiagram
 1. Mac private key + iPhone public key 计算 shared secret。
 2. iPhone private key + Mac public key 得到同一 shared secret。
 3. HKDF-SHA256 派生 32-byte symmetric key。
-4. salt 为 `Agent Status Relay/v1`。
+4. salt 为 `Lumi Relay/v1`。
 5. shared info 包含 `HostID` 和 `DeviceID`，隔离不同设备通道。
 6. `RemoteSessionPayload` 使用 ChaChaPoly 加密和认证，路由头（`HostID`、`DeviceID`、`sequence`、`kind`）作为 additional authenticated data 一起认证。
 
 配对派生（`RelayCryptography`，Swift 与 Relay 的 TS 各算一遍、黄金向量相等）：
 
 - `nonceH`：32 字节随机。
-- `commit = SHA256("Agent Status Relay/pair-commit/v1" ‖ hostPub ‖ nonceH)`。
-- `SAS = SHA256("Agent Status Relay/pair-sas/v1" ‖ hostID ‖ deviceID ‖ hostPub ‖ devicePub ‖ nonceH)` 取前 4 字节 big-endian `mod 1 000 000`，补零 6 位，显示 `482 913`。
+- `commit = SHA256("Lumi Relay/pair-commit/v1" ‖ hostPub ‖ nonceH)`。
+- `SAS = SHA256("Lumi Relay/pair-sas/v1" ‖ hostID ‖ deviceID ‖ hostPub ‖ devicePub ‖ nonceH)` 取前 4 字节 big-endian `mod 1 000 000`，补零 6 位，显示 `482 913`。
 - SAS 不混入 Relay URL（攻击者本来就控制 Relay），也不混入 Device token（那时还不存在）。
 
 每个 routing frame 包含：
@@ -153,7 +153,7 @@ Relay 能看到 routing header、帧大小、连接时间和流量模式；看�
 
 ## 凭据保存
 
-### daemon Keychain（service `com.huanan.AgentStatusDaemon.relay`）
+### daemon Keychain（service `app.huanan.lumi.daemon.relay`）
 
 - Relay URL
 - Host ID

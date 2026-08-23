@@ -184,7 +184,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - **Mac unavailable**：通道断开或 daemon 不可用，且本机没有这台 Mac 的缓存；有缓存时列表照常显示，只在 Macs 页标 Offline。退出 Mac App 不影响。
 - **相机不可用**：扫码页提示去 iOS 设置允许相机；改为手输 6 位码。
 - **配对码不对或已过期**：输入页六格变红、内容保留，Try again；回到 Mac 看一眼新码（[IOS-R-002](#ios-r-002-配对码短时且一次性)）。
-- **Mac 不在线**：码有效，但这台 Mac 没连上 Relay；确认 Mac 上 Agent Status 在运行后 Try again（接着这一次继续）或 Cancel。
+- **Mac 不在线**：码有效，但这台 Mac 没连上 Relay；确认 Mac 上 Lumi 在运行后 Try again（接着这一次继续）或 Cancel。
 - **Mac 拒绝了这次配对**：Mac 点了 Don't match 或 60 秒没点；Start over，在 Mac 上换个新码再来（[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
 - **校验失败**（红色）：Relay 返回的数据不一致，可能有人在中间换钥匙；已中止、没保存任何凭据；Try again（换个网络）或 Cancel，反复出现见[用户摩擦点](../friction-points.md#配对失败)。
 - **Mac 上显示 Unverified**：这台 Mac 在 iPhone 上显示 Online 但 Session 不更新；重新配对。

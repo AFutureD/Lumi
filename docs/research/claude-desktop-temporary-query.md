@@ -1,6 +1,6 @@
 # Claude 桌面 App 的临时 CLI 探测进程（temporary query）
 
-> 用途：解释 agent-status 里成批出现的 `Claude Session · completed` 空会话从哪来，以及为什么用「第一个 Turn」而不是环境变量来判定会话有效。调查日期 2026-08-19，Claude Desktop（含 claude-code 2.1.234）。
+> 用途：解释 Lumi 里成批出现的 `Claude Session · completed` 空会话从哪来，以及为什么用「第一个 Turn」而不是环境变量来判定会话有效。调查日期 2026-08-19，Claude Desktop（含 claude-code 2.1.234）。
 
 ## 现象
 
@@ -52,10 +52,10 @@ claude --output-format stream-json --verbose --input-format stream-json --permis
 
 运行时验证（`ps -Eww` 轮询抓到 4 个探测进程，14:18–14:37）：环境里有 `CLAUDE_CODE_ENTRYPOINT=claude-desktop`、`CLAUDE_AGENT_SDK_VERSION=0.3.234`，**没有** `CLAUDE_CODE_HOST_SESSION_ID`；argv 为 `--output-format stream-json --verbose --input-format stream-json --permission-prompt-tool stdio --setting-sources … --strict-mcp-config --permission-mode default`，无 `--model`。真会话（例如本调查所在的会话）两者都有。
 
-差异只剩 `CLAUDE_CODE_HOST_SESSION_ID` 是否存在，这是桌面 App 内部实现细节，且不覆盖其他来源的空会话（终端 `claude` 启动后直接退出）。因此 agent-status 不用 env 判定。
+差异只剩 `CLAUDE_CODE_HOST_SESSION_ID` 是否存在，这是桌面 App 内部实现细节，且不覆盖其他来源的空会话（终端 `claude` 启动后直接退出）。因此 Lumi 不用 env 判定。
 
-## agent-status 的处理（见 docs/design/agent-hook.md「临时会话」）
+## Lumi 的处理（见 docs/design/agent-hook.md「临时会话」）
 
 - **有效性边界 = 第一个 Turn**。第一个 Turn 之前的会话是临时会话（`SessionSummary.isProvisional`），UI 不显示。
 - **判定时机 = SessionEnd**（SessionStart 时真会话同样还没有 transcript）：Claude `SessionEnd` 且 transcript 未落盘且 daemon 仍记为临时 → helper 产出 `disposition: .discard`，删除 + 墓碑。
-- 历史空会话由 migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉。
+- 历史空会话由 migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉。

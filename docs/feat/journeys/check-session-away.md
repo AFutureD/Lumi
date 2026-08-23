@@ -69,7 +69,7 @@
 ### Mac 不在线
 
 - 用户看到：iPhone 提示“Mac 不在线”——码是对的，但这台 Mac 没连上 Relay。
-- 可执行动作：确认 Mac 上 Agent Status 在运行、“iPhone”页显示 Relay connected，点 Try again（接着这一次继续）；或 Cancel。
+- 可执行动作：确认 Mac 上 Lumi 在运行、“iPhone”页显示 Relay connected，点 Try again（接着这一次继续）；或 Cancel。
 
 ### Mac 拒绝了这次配对
 

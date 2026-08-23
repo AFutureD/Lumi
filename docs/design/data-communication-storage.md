@@ -7,7 +7,7 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 > 两层模型：**Agent 领域**（`SessionSummary` / `TurnSummary` / `TimelineItem`，helper 产出、daemon 存储）与 **Timeline 领域**（`TimelineRow`：tag L1/L2/L3、lane、status，由 `TimelineProjection.rows(from:)` 纯函数投影，不落库）。详见 [Session Timeline 重构方案](session-timeline-redesign.md)。
 
 
-跨进程和跨设备模型由 `AgentStatusTransport` 唯一声明：
+跨进程和跨设备模型由 `Transport` 唯一声明：
 
 - `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力 / 待查看标记（`needsAttention` / `needsReview`）、Notch 归档标记（`hiddenInNotch`：只把 Session 从 Notch 隐藏，Mac / iOS 照常显示；新 prompt 或会话重启时清除）、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
 - `SessionDetail`：一个 Summary、完整或分页 Timeline、下一页游标。
@@ -30,12 +30,12 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 | 位置 | 数据角色 | 保存内容 | 默认路径或介质 |
 | --- | --- | --- | --- |
 | Codex state | 外部只读元数据源 | Thread 标题、主 Session / Subagent 类型和 lineage；不复制整张表 | `${CODEX_HOME:-~/.codex}/state_5.sqlite` 的 `threads` |
-| daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记 | `~/Library/Application Support/Agent Status/sessions.sqlite3` |
-| Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Agent Status Mac/sessions.sqlite3` |
-| iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session、Turn、Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Agent Status/Channels/<hostID>.sqlite3`（App 容器内） |
-| daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `com.huanan.AgentStatusDaemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
-| daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、Mac 点 Match 时钉住的设备公钥 | `~/Library/Application Support/Agent Status/relay-host-state.json`（0600） |
-| iOS Keychain | 通道身份 | 每台 Mac 各自的 Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `com.huanan.AgentStatusIOS.relay`（account `device-channels-v4`） |
+| daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记 | `~/Library/Application Support/Lumi/sessions.sqlite3` |
+| Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Lumi/Mac/sessions.sqlite3` |
+| iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session、Turn、Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
+| daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `app.huanan.lumi.daemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
+| daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、Mac 点 Match 时钉住的设备公钥 | `~/Library/Application Support/Lumi/relay-host-state.json`（0600） |
+| iOS Keychain | 通道身份 | 每台 Mac 各自的 Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `app.huanan.lumi.ios.relay`（account `device-channels-v4`） |
 | Durable Object SQLite（`HostRelay`） | 运维元数据 | Host token hash、设备（公钥、token hash、配对 / 撤销时间）、配对会话（state、承诺、双方公钥与名称、揭示后的 nonce、签发的 Device token）、限流、每设备 Host 序号 | 每个 HostID 一个对象 |
 | Durable Object SQLite（`PairingDirectory`） | 配对码目录 | SHA-256(配对码) → Host / 会话、到期与消费时间、claim 限流 | 全局一个对象 |
 
@@ -48,14 +48,14 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 | 表 | 用途 | 关键规则 |
 | --- | --- | --- |
 | `sessions` | 当前 Session Summary | `id` 主键；按 `last_activity_at` 倒序读取 |
-| `turns` | Turn 聚合（`TurnSummary`：phase、prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage） | `(session_id, turn_id)` 主键；由 `TurnReduction` 从事件归并；随 Session 级联删除（migration `agent-status-v2-turns`） |
+| `turns` | Turn 聚合（`TurnSummary`：phase、prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage） | `(session_id, turn_id)` 主键；由 `TurnReduction` 从事件归并；随 Session 级联删除（migration `lumi-v2-turns`） |
 | `timeline` | Timeline item（Agent 领域消息） | `id` 主键；Session 外键级联删除；按时间与 ID 排序；跨来源同 ID 覆盖 |
 | `processed_events` | 幂等键 | 同一个 Event ID 只应用一次 |
 | `rollout_cursors` | JSONL 增量位置 | 保存文件路径、byte offset、文件大小和 Session ID |
 | `ignored_sessions` | 删除/基线/helper discard tombstone | 阻止后到事件重新创建 Session；仅新的 prompt / SessionStart（未处理过的事件）能复活，重放的事件先被 `processed_events` 拒绝；客户端 `replaceSession` / `mergeSession` 会清该 Session 的本地墓碑（以 daemon 为准） |
 | `metadata` | repository 状态 | 当前保存首次 rollout baseline 标记 |
 
-migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下的空 Claude 会话（`completed`、无 Turn、timeline 只有 session marker）并写墓碑——它们按现在的规则本来不会存在。
+migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下的空 Claude 会话（`completed`、无 Turn、timeline 只有 session marker）并写墓碑——它们按现在的规则本来不会存在。
 
 `summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。Summary 中的 Subagent lineage 包含 Thread source、父 Session ID、深度、昵称、职责、Agent path 和 Subagent kind。日期使用带毫秒的 RFC 3339 UTC（`2026-08-22T00:27:36.266Z`），helper → daemon、daemon ↔ Mac、daemon → Relay → iPhone 和 BLOB 同一精度，同秒内的记录在三端都按时间而不是 id 排序；键稳定排序。
 
@@ -65,7 +65,7 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 
 - daemon、Mac 和 iOS 不按天数或最后活动时间自动清理 Session。
 - daemon 的单条删除和清空历史是业务删除入口；Mac/iOS 随后用新快照收敛。
-- 删除 Agent Status 数据不会删除 Codex rollout 或 Codex 自身历史。
+- 删除 Lumi 数据不会删除 Codex rollout 或 Codex 自身历史。
 - iOS 用户移除一个 Mac 时，删除该通道的凭据、连接和 SQLite 缓存文件；Settings > Clear received data 清空全部通道缓存（不写墓碑、不清 `processed_events`）并重新索取 index。
 - Relay 不保存业务快照，因此没有 Relay 侧 Session 保留期限。
 - 模型配置、内部上下文和消耗指标遵循 Session 的同一保留与删除规则，不单独过期。
@@ -75,7 +75,7 @@ migration `agent-status-v3-sweep-empty-claude-sessions` 一次性清掉此前记
 ### 传输
 
 - 介质：Unix domain socket。
-- 默认路径：`~/Library/Application Support/Agent Status/daemon.sock`。
+- 默认路径：`~/Library/Application Support/Lumi/daemon.sock`。
 - socket 权限：`0600`；父目录权限：`0700`。
 - 编码：`TransportEnvelope<IPCRequest|IPCResponse>` JSON。
 - framing：4-byte big-endian payload 长度 + JSON bytes。

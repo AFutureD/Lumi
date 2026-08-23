@@ -1,4 +1,4 @@
-# Agent Status 设计文档
+# Lumi 设计文档
 
 从[整体架构设计](system-architecture.md)开始；需要改数据链路时，再读[数据、通信与保存设计](data-communication-storage.md)。
 
@@ -35,7 +35,7 @@
 - Relay 不保存 Session 正文；会保存授权、配对、限流和单调序号等运行元数据。
 - 远程业务 payload 在 Mac 端按设备加密，在 iPhone 端解密。
 - iPhone 离线时保留 SQLite 副本，但只有收到当前在线快照后才显示。
-- 跨进程、跨设备 DTO 只在 `Common/AgentStatusTransport` 声明。
+- 跨进程、跨设备 DTO 只在 `Common/Transport` 声明。
 
 ## 术语
 
@@ -55,9 +55,9 @@
 
 - daemon/helper：`CLI/`
 - 公共状态与存储：`Common/`
-- 唯一传输模型：`Common/AgentStatusTransport/`
-- 共享设计系统 token：`Common/Sources/AgentStatusDesignSystem/`；设计交接原件：`design/`
+- 唯一传输模型：`Common/Transport/`
+- 共享设计系统 token：`Common/Sources/DesignSystem/`；设计交接原件：`design/`
 - macOS/iOS：`Apps/`
 - Cloudflare Relay：`Relay/`
 - 产品行为文档：`docs/feat/`
-- 当前实施任务：`docs/developer/tasks/260816T1953-agent-status-v1/TASK.md`
+- 当前实施任务：`docs/developer/tasks/260816T1953-lumi-v1/TASK.md`

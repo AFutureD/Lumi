@@ -1,6 +1,6 @@
-# Agent Status
+# Lumi
 
-Agent Status aggregates multiple Codex Agents and Sessions on one Mac, displays them in an AppKit three-column window and an OpenNook surface, and synchronizes read-only data to UIKit clients through an end-to-end encrypted Cloudflare Relay.
+Lumi aggregates multiple Codex Agents and Sessions on one Mac, displays them in an AppKit three-column window and an OpenNook surface, and synchronizes read-only data to UIKit clients through an end-to-end encrypted Cloudflare Relay.
 
 ## Repository layout
 
@@ -10,6 +10,18 @@ Agent Status aggregates multiple Codex Agents and Sessions on one Mac, displays 
 - `Common/Transport`: independent Foundation-only Swift package; the sole declaration source for cross-process and cross-device DTOs.
 - `Relay`: TypeScript Cloudflare Worker and per-Mac Durable Object.
 - Root: Xcode workspace, CI, scripts, and documentation.
+
+## Names and identifiers
+
+| Part | Name | Identifier | On disk |
+|---|---|---|---|
+| Mac app / iOS app | Lumi | `app.huanan.lumi` | `Lumi.app` |
+| Daemon | Lumen | `app.huanan.lumi.daemon` (LaunchAgent label, codesign identifier) | `Lumi.app/Contents/Resources/Lumen` |
+| Hook helper | Spark | `app.huanan.lumi.helper` (codesign identifier) | installed to `~/Library/Application Support/Lumi/bin/Spark` |
+| Relay | Ray | Worker `lumi-relay` | `https://relay.lumi.huanan.app` |
+| Notch surface | Halo | — | part of the Mac app |
+
+Data lives under `~/Library/Application Support/Lumi` (daemon socket, databases, helper copy), logs under `~/Library/Logs/Lumi`, os_log subsystems `app.huanan.lumi.<daemon|helper|app|ios>`, environment overrides `LUMI_*`, pairing links `lumi://pair?...`. Wording for user-facing text is in [docs/Glossary.md](docs/Glossary.md).
 
 ## Product topology
 
@@ -85,14 +97,14 @@ Relay stores device authorization and operational metadata only. Session payload
 - daemon only begins tracking Sessions created after its initial Codex baseline.
 - External Session content refreshes only at App startup, manual Refresh, and Agent events; deletion and clear-history operations synchronize their results immediately.
 - Users can delete one Session from the macOS toolbar or clear all history in Settings.
-- Deleted Sessions stay deleted in Agent Status even if later local activity arrives.
-- Deleting Agent Status data never deletes Codex data.
+- Deleted Sessions stay deleted in Lumi even if later local activity arrives.
+- Deleting Lumi data never deletes Codex data.
 
 ## macOS packaging
 
 Release builds compile daemon and helper for `arm64` and `x86_64`, combine them as Universal 2 executables, embed and sign them before signing the outer App. After archiving, run `scripts/verify-macos-bundle.sh` before notarization.
 
-The Codex integration installer preserves existing Hooks. Users may need to review and trust the Agent Status definition through Codex `/hooks`.
+The Codex integration installer preserves existing Hooks. Users may need to review and trust the Lumi definition through Codex `/hooks`.
 
 ## Documentation
 
@@ -102,4 +114,4 @@ The Codex integration installer preserves existing Hooks. Users may need to revi
 - [Agent Hook design](docs/design/agent-hook.md)
 - [Product overview](docs/feat/index.md)
 - [Design system handoff](design/README.md) — `design/DESIGN SYSTEM.html` is the source of every colour, type and spacing value; Swift tokens live in `Common/Sources/DesignSystem`
-- [Current implementation task](docs/developer/tasks/260816T1953-agent-status-v1/TASK.md)
+- [Current implementation task](docs/developer/tasks/260816T1953-lumi-v1/TASK.md)

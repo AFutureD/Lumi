@@ -2,14 +2,14 @@
 
 > 验证状态：开发预览。App 已在 macOS 26 上完成编译、启动、Sessions / iPhone / Settings 三种布局的截图核对、Notch 展开、Notch 设置入口、手动刷新、单 Session 删除和本地同步验证；真实 Codex Hook、正式签名、公证与干净机器安装仍待验收。2026-08-18 起主窗口采用 Liquid Glass 重设计（原生工具栏 + Activity 主区 + 右侧 Inspector）。
 
-Agent Status 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 Mail.app 相同的“导航—列表—详情”层级，Notch 用于快速查看当前活动。
+Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 Mail.app 相同的“导航—列表—详情”层级，Notch 用于快速查看当前活动。
 
 ## 模块概览
 
-- **入口**：启动 Agent Status；侧边栏包含“Sessions”“iPhone”“Settings”。
+- **入口**：启动 Lumi；侧边栏包含“Sessions”“iPhone”“Settings”。
 - **前置条件**：macOS 26 或更高版本；daemon 已安装并运行。
-- **主要结果**：用户可从列表查看 Session 标题、Agent 类型和状态，在 Activity 中查看完整活动历史，在右侧 Inspector 中查看 Token / Context / Elapsed 指标、Session 信息、模型配置和消耗；也可按标题过滤列表、手动刷新、删除单个 Session，或清空全部 Agent Status 历史。
-- **只读边界**：查看和删除 Agent Status 中的记录不会审批、终止或修改 Codex Session。
+- **主要结果**：用户可从列表查看 Session 标题、Agent 类型和状态，在 Activity 中查看完整活动历史，在右侧 Inspector 中查看 Token / Context / Elapsed 指标、Session 信息、模型配置和消耗；也可按标题过滤列表、手动刷新、删除单个 Session，或清空全部 Lumi 历史。
+- **只读边界**：查看和删除 Lumi 中的记录不会审批、终止或修改 Codex Session。
 - **相关旅程**：[在 Mac 上跟进一次 Codex Session](../journeys/observe-session-locally.md)。
 
 ## 主窗口布局
@@ -49,7 +49,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
    - 规则引用：[MAC-R-001](#mac-r-001-daemon-决定实时可用性)。
 3. 在中栏选择“Agents”，点击“Install Hook”。
    - 系统反馈：成功或显示安装错误；随后 Codex 卡片显示“Trusted by Codex”和处理项数量。
-   - 数据结果：只追加 Agent Status Hook，不覆盖其他集成；Codex 的信任记录只针对 Agent Status 自己的处理项写入。
+   - 数据结果：只追加 Lumi Hook，不覆盖其他集成；Codex 的信任记录只针对 Lumi 自己的处理项写入。
    - 规则引用：[MAC-R-002](#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)。
 4. 新建一个 Codex Session。
    - 系统反馈：首个受支持 Agent 事件到达后，Session 出现在中栏。
@@ -75,7 +75,7 @@ Mac 主窗口在列表中用 7 pt 状态色点 + 同色状态文字（Completed 
 
 ### 清空全部历史
 
-在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Agent Status 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。最下方的 Logs 卡片显示日志目录（`~/Library/Logs/Agent Status`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。升级 App 后不需要手动 Reinstall：启动时发现运行中的 daemon 版本过期会自动重启它（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
+在“Settings > Daemon”的 Session history 卡片点击“Clear history…”，确认后清空 Lumi 保存的全部 Session 与时间线。Codex 自身历史不受影响。同一面板的 Local service 卡片显示状态、运行时长、活跃/已存 Session 数和 socket 路径；已安装时提供“Reinstall daemon”和“Stop & uninstall”（需确认），未安装时提供“Install & Start daemon”。最下方的 Logs 卡片显示日志目录（`~/Library/Logs/Lumi`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。升级 App 后不需要手动 Reinstall：启动时发现运行中的 daemon 版本过期会自动重启它（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
 
 ### 过滤 Session 列表
 
@@ -118,7 +118,7 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 ### MAC-R-002 安装不替换现有 Hooks
 
 - 条件：用户点击“Install Hook”。
-- 行为：只追加尚不存在的 Agent Status Hook。
+- 行为：只追加尚不存在的 Lumi Hook。
 - 结果：其他集成继续保留。
 - 限制或例外：写入 hooks.json 会让 Codex 已有的信任记录失效，因此安装后立即执行 [MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)。
 
@@ -127,7 +127,7 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 - 条件：新 Session 产生受支持的 Agent 事件。
 - 行为：Activity 整理消息、系统与上下文、reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Summary 展示 Session 元数据、模型配置和消耗指标。模型每开始一次思考就出现一行 REASONING（思考结束不另起一行）；Claude 只落盘签名、没有正文的思考也占一行，内容显示为 `Empty`。
 - 结果：用户能在 Activity 中按发生顺序查看对话与执行上下文，并在 Summary 中查看当前配置和 Token 使用。重复事件不产生重复记录，乱序事件不回退可见状态。
-- 限制或例外：每类最新诊断记录会完整保存来源提供的嵌套内容，其中可能出现路径、凭据、环境信息或工具内容；当前没有内容级脱敏保证。只有 Agent Status 能识别为活动的记录会显示，其他来源事件不会另行保留。
+- 限制或例外：每类最新诊断记录会完整保存来源提供的嵌套内容，其中可能出现路径、凭据、环境信息或工具内容；当前没有内容级脱敏保证。只有 Lumi 能识别为活动的记录会显示，其他来源事件不会另行保留。
 
 ### MAC-R-004 查看不控制 Agent
 
@@ -150,17 +150,17 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 - 原因：按时间自动删除不再属于当前产品规则。
 - 替代规则：[MAC-R-012](#mac-r-012-历史由用户决定删除)。
 
-### MAC-R-007 移除集成只移除 Agent Status
+### MAC-R-007 移除集成只移除 Lumi
 
 - 条件：用户点击“Remove Hook”。
-- 行为：只删除 Agent Status helper 对应的处理项。
+- 行为：只删除 Lumi helper 对应的处理项。
 - 结果：其他 Hook 保留。
 - 限制或例外：daemon 仍可运行；停止全部采集还需停止并卸载 daemon。
 
 ### MAC-R-008 清空历史不修改 Codex
 
 - 条件：用户确认“Clear Session history…”。
-- 行为：清空 Agent Status 保存的全部 Session 与时间线。
+- 行为：清空 Lumi 保存的全部 Session 与时间线。
 - 结果：Mac 和已连接 iPhone 不再显示这些 Session。
 - 限制或例外：Codex 自身 Session 和日志不受影响。
 
@@ -183,11 +183,11 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 - 条件：daemon 第一次建立 Codex 日志基线。
 - 行为：忽略当时已经存在的旧 Session，只接收之后新建的 Session。
 - 结果：首次启用不会突然导入整份 Codex 历史。
-- 限制或例外：已加入 Agent Status 的 Session 后续活动会继续更新，直到用户删除。
+- 限制或例外：已加入 Lumi 的 Session 后续活动会继续更新，直到用户删除。
 
 ### MAC-R-012 历史由用户决定删除
 
-- 条件：Session 已进入 Agent Status。
+- 条件：Session 已进入 Lumi。
 - 行为：系统不按时间主动清理。
 - 结果：Session 保留到用户删除单条或清空全部历史。
 - 限制或例外：删除后，同一 Session 的后续本地活动不会恢复该记录。
@@ -229,7 +229,7 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 
 ### MAC-R-018 Subagent 使用自己的标题与活动
 
-- 条件：Codex 或 Claude Code 为 Main Session 启动一个 Subagent，Agent Status 收到该 Subagent 的身份和任务活动。
+- 条件：Codex 或 Claude Code 为 Main Session 启动一个 Subagent，Lumi 收到该 Subagent 的身份和任务活动。
 - 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随子代理的启动与结束（结束后为 Completed，不会显示为等待输入）。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
 - 补录：升级前记录的 Claude Session 没有子行；选中该 Session 点工具栏 Refresh 会从本机对话记录补出它的 Subagent。
 - 结果：用户在父子层级中能按任务辨认 Subagent，打开详情时只看到该 Subagent 实际开始工作后的活动。
@@ -247,12 +247,12 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 - 条件：Hook 已安装（Codex 或 Claude Code），且 Mac App 启动时自带的 helper 与已安装副本不一致。
 - 行为：启动时自动把 helper 更新为当前版本，并在支持的 Hook 事件有新增时补齐配置；两者都一致时不写任何文件。
 - 结果：升级 App 后 Hook 立即获得新采集能力（如 Claude Subagent 实时子 Session），无需重新点击“Install Hook”。
-- 限制或例外：从未安装过 Hook 时启动不做任何事；配置补齐仍只追加 Agent Status 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。
+- 限制或例外：从未安装过 Hook 时启动不做任何事；配置补齐仍只追加 Lumi 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。
 
 ### MAC-R-021 自动向 Codex 申请 Hook 信任
 
 - 条件：Codex Hook 已安装。发生在点击“Install Hook”之后，以及每次 App 启动时。
-- 行为：向 Codex 询问它当前怎么看待各个处理项，为其中未被信任的 Agent Status 处理项写入信任，然后再问一次以确认结果。整个过程只涉及命令为 Agent Status helper 的处理项，其他工具的 Hook 一律不读取也不改写。
+- 行为：向 Codex 询问它当前怎么看待各个处理项，为其中未被信任的 Lumi 处理项写入信任，然后再问一次以确认结果。整个过程只涉及命令为 Lumi helper 的处理项，其他工具的 Hook 一律不读取也不改写。
 - 结果：用户不必手动审核就能继续收到 Session 事件；“Settings > Agents”的 Codex 卡片显示“Trusted by Codex”和处理项数量。
 - 限制或例外：Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。本机没有 Codex、或 Codex 版本还没有信任机制时不显示这一行。申请失败时卡片改为提示未信任并提供“Authorize”按钮，按钮仍失败则需要用户在 Codex `/hooks` 中手动信任。
 
@@ -285,7 +285,7 @@ Session 状态、活动时间线、模型配置、内部上下文和消耗指标
 
 Notch 消费 Mac 已同步的 Session 与时间线，不创建额外 Session 副本，也不增加新的刷新入口；详细筛选与展示规则见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态)。
 
-删除单个 Session 或清空历史只影响 Agent Status。完整生命周期见[数据流](../data-flows.md#session-状态与时间线)。
+删除单个 Session 或清空历史只影响 Lumi。完整生命周期见[数据流](../data-flows.md#session-状态与时间线)。
 
 ## 相关文档
 

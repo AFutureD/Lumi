@@ -5,15 +5,15 @@
 ## 目录与构建单元
 
 ```text
-agent-status/
-├── AgentStatus.xcworkspace
+lumi/
+├── Lumi.xcworkspace
 ├── Apps/
-│   ├── AgentStatusMac/       # AppKit Xcode App + 本地 Swift Package
-│   └── AgentStatusIOS/       # UIKit Xcode App + 本地 Swift Package
+│   ├── Mac/           # AppKit Xcode App（LumiMac）+ 本地 Swift Package
+│   └── iOS/           # UIKit Xcode App（LumiIOS）+ 本地 Swift Package
 ├── CLI/                      # daemon、helper、daemon runtime SwiftPM
 ├── Common/
-│   ├── AgentStatusTransport/ # Foundation-only 独立 Swift Package
-│   └── Sources/              # Core、Codex、IPC、Remote
+│   ├── Transport/            # Foundation-only 独立 Swift Package
+│   └── Sources/              # Core、Adapters、IPCClient、Remote、DesignSystem、Diagnostics
 ├── Relay/                    # TypeScript Worker + Durable Object
 ├── docs/
 └── scripts/
@@ -42,21 +42,21 @@ Xcode App target 只负责入口、资源、Info.plist、entitlements 和打包�
 ### Swift Packages
 
 ```sh
-swift build --package-path Common/AgentStatusTransport
-swift test --package-path Common/AgentStatusTransport
+swift build --package-path Common/Transport
+swift test --package-path Common/Transport
 swift build --package-path Common
 swift test --package-path Common
 swift build --package-path CLI
 swift test --package-path CLI
-swift test --package-path Apps/AgentStatusMac/AgentStatusMacPackage
+swift test --package-path Apps/Mac/MacPackage
 ```
 
 ### Apps
 
-使用 `AgentStatus.xcworkspace` 中的共享 scheme：
+使用 `Lumi.xcworkspace` 中的共享 scheme：
 
-- `AgentStatusMac`
-- `AgentStatusIOS`
+- `LumiMac`
+- `LumiIOS`
 
 App 的 Relay URL 来自各自 `Config/Shared.xcconfig`，不是运行时用户设置。
 
@@ -95,10 +95,9 @@ Xcode build phase 调用 `scripts/build-embedded-services.sh`：
 
 Cloudflare 配置：
 
-- Worker：`agent-status-relay`
-- Durable Object binding：`HOST_RELAY`
-- class：`HostRelay`
-- SQLite migration tag：`v1`
+- Worker：`lumi-relay`，自定义域名 `relay.lumi.huanan.app`（`workers_dev` 关闭，只有这一个入口）
+- Durable Object binding：`HOST_RELAY` → class `HostRelay`（migration `v1`）；`PAIRING_DIRECTORY` → class `PairingDirectory`（migration `v2`）
+- Rate limit binding：`RATE_LIMITER`（300 req / 60 s，按客户端地址）
 - observability：启用，head sampling 1
 - compatibility date：`2026-08-16`
 
@@ -167,7 +166,7 @@ pnpm exec wrangler deploy
 
 `scripts/check-transport-boundaries.sh` 阻止两类漂移：
 
-1. 在 `AgentStatusTransport` 外重复声明核心 Swift DTO。
+1. 在 `Transport` 外重复声明核心 Swift DTO。
 2. Relay 测试不再消费 Transport Package 的 `transport-v1.json`。
 
 协议变更时先修改 Transport Package 和 fixture，再更新所有消费者。兼容新增字段应保持可选；破坏性改动提升 protocol major。

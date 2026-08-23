@@ -1,7 +1,7 @@
 # Session / Turn 抽象整理（Claude Code Hooks vs Codex Hooks）
 
 > 来源：https://code.claude.com/docs/en/hooks 、 https://learn.chatgpt.com/docs/hooks
-> 用途：agent-status 的数据模型/状态机设计参考。不涉及代码。
+> 用途：Lumi 的数据模型/状态机设计参考。不涉及代码。
 
 ---
 
@@ -153,7 +153,7 @@ Stop(last_assistant_message)   ← 可被 hook 阻断 → 回到 loop 继续
 - `Elicitation` / `ElicitationResult`（MCP 请求用户输入，嵌在工具调用内）
 - `StopFailure`（与 Stop 二选一：API 错误终止）
 - `TaskCreated` / `TaskCompleted`（Turn 内的 TaskCreate 工具副作用）
-- `Notification`（`agent_needs_input` / `agent_completed` / `idle_prompt` 等——**对 agent-status 最有价值的"需要人介入"信号**）
+- `Notification`（`agent_needs_input` / `agent_completed` / `idle_prompt` 等——**对 Lumi 最有价值的"需要人介入"信号**）
 - `MessageDisplay`（文本流式中）
 
 ### 4.3 Codex 独有阶段
@@ -162,7 +162,7 @@ Stop(last_assistant_message)   ← 可被 hook 阻断 → 回到 loop 继续
 
 ---
 
-## 5. 统一抽象（给 agent-status 用的模型草案）
+## 5. 统一抽象（给 Lumi 用的模型草案）
 
 ```
 Session {
