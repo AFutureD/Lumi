@@ -38,12 +38,13 @@ private func item(
     #expect(rows[1].text.contains("7.1s"))
 }
 
-@Test func failedToolResultEscalatesToFailedL3() {
+@Test func failedToolResultBecomesFailedButStaysL2() {
+    // A failed tool is process noise inside the turn: red chip, same tier as RESULT.
     let rows = TimelineProjection.rows(from: [
         item("b", 5, .tool(ToolTimelinePayload(name: "Bash", status: .failed, toolUseID: "tu1"))),
     ])
     #expect(rows[0].tag == .failed)
-    #expect(rows[0].level == .l3)
+    #expect(rows[0].level == .l2)
     #expect(rows[0].lane == .exec)
 }
 
@@ -106,7 +107,8 @@ private func item(
     #expect(rows.map(\.tag) == [.failed, .turnFailed, .turnFailed, .aborted])
     #expect(rows.map(\.lane) == [.exec, .model, .model, .model])
     #expect(rows.map(\.label) == ["FAILED", "FAILED", "FAILED", "ABORTED"])
-    #expect(rows.allSatisfy { $0.level == .l3 })
+    // Only the turn-level rows are phase (L3); the tool failure is process (L2).
+    #expect(rows.map(\.level) == [.l2, .l3, .l3, .l3])
     #expect(rows.map(\.status) == [.failed, .failed, .failed, .cancelled])
 }
 

@@ -109,7 +109,10 @@ typealias DS = DesignSystem
 @Test func darkTiersReadFromTheDarkTable() {
     #expect(TimelineTag.user.tagStyle(.dark).fill == DesignColor(hex: 0x22B856))
     #expect(TimelineTag.turnEnd.tagStyle(.dark).fill == DesignColor(hex: 0x2A8CFF))
-    #expect(TimelineTag.failed.tagStyle(.dark).fill == DesignColor(hex: 0xEE4038))
+    #expect(TimelineTag.turnFailed.tagStyle(.dark).fill == DesignColor(hex: 0xEE4038))
+    // Tool failure is L2: the red tint, not the solid.
+    #expect(TimelineTag.failed.tagStyle(.dark).fill == DesignColor(hex: 0xE5352F).opacity(0.24))
+    #expect(TimelineTag.failed.tagStyle(.light).text == DesignColor(hex: 0xB3261E))
     #expect(TimelineTag.assistant.tagStyle(.dark).text == DesignColor(hex: 0x9DC7FF))
     #expect(TimelineTag.plan.tagStyle(.dark).text == DesignColor(hex: 0xC9AEFB))
     #expect(TimelineTag.session.tagStyle(.dark).ring.alpha == 0.20)

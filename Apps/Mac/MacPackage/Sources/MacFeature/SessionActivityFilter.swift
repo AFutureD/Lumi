@@ -9,9 +9,10 @@ import Foundation
 // L1). A row shows when its tag is selected *and* its level is selected
 // (intersection); inside a dimension the selection is a union. A dimension
 // can never be emptied: deselecting its last item snaps it back to all.
-// Filtering is view-layer only — the lane strip and every count read the
-// full row set; the filter lives in the Activity UI state and resets when
-// the session changes.
+// Filtering is view-layer only: the list and the lane strip both show the
+// filtered rows (one strip column per visible row), while every count in
+// the panels reads the full row set; the filter lives in the Activity UI
+// state and resets when the session changes.
 
 /// The two filter dimensions, one trigger / panel each.
 enum ActivityFilterDimension: String, Hashable, Sendable, CaseIterable {
@@ -185,8 +186,8 @@ extension TimelineAttentionLevel {
 
     var filterDescription: String {
         switch self {
-        case .l3: "Input · turn end · failure"
-        case .l2: "Reply · result · plan · agent"
+        case .l3: "Input · turn end · turn failure"
+        case .l2: "Reply · result · tool failure · plan · agent"
         case .l1: "Thinking · context · tool call"
         }
     }

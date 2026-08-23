@@ -118,7 +118,8 @@ import Transport
     #expect(importance.sections.count == 1 && importance.sections[0].title == nil)
     #expect(importance.options.map(\.id) == ["3", "2", "1"])
     #expect(importance.options.map(\.name) == ["Phase", "Process", "Detail"])
-    #expect(importance.options.map(\.count) == [4, 2, 5])
+    // FAILED (tool) is L2 since 2026-08-24: 3 phase rows, 3 process rows.
+    #expect(importance.options.map(\.count) == [3, 3, 5])
     #expect(importance.options.map(\.isSelected) == [true, true, false])
     #expect(importance.options.allSatisfy { $0.description != nil })
     #expect(importance.rowHeight == DesignSystem.FilterDropdown.Panel.describedRowHeight)
@@ -127,24 +128,6 @@ import Transport
 
     // Unfiltered panels report "all" (no badge).
     #expect(!SessionActivityFilter().categoryPanel(counts: counts).isFiltered)
-}
-
-@Test func activityScrollMapKeepsHiddenRowsColumnsAtZeroHeight() {
-    // Rows: item, two hidden items (height 0, cells kept), item. Top inset 6, gap 4.
-    let map = ActivityScrollMap(
-        rows: [(40, 13), (0, 13), (0, 13), (40, 13)],
-        topInset: 6, spacing: 4
-    )
-    #expect(map.rowCount == 4 && map.columnCount == 4)
-    // Row tops: 6, 46, 46, 46; bottom 86. Column lefts: 0, 17, 34, 51; next 68.
-    #expect(map.rowOfColumn == [0, 1, 2, 3])
-    // A hidden row's column maps onto where the next visible row starts.
-    #expect(map.listOffset(forStripOffset: 17) == 46)
-    #expect(map.listOffset(forStripOffset: 34) == 46)
-    // Past the first row the list is on the last visible row → its column.
-    #expect(map.stripOffset(forListOffset: 46) == 51)
-    #expect(map.stripOffset(forListOffset: 66) == 51 + 8.5)
-    #expect(map.rowIndex(at: 46) == 3)
 }
 
 private func activity(_ tag: TimelineTag, _ index: Int) -> SessionActivityPresentation {

@@ -1463,4 +1463,14 @@ func activityScrollLinkOnlyLetsTheDriverSteer() {
     // Follow-bottom is explicit: both sides go to the end.
     link.scrollStripToEnd()
     #expect(stripRequests.last == 85)
+
+    // Re-filtering rebuilds both sides: the next list report (its relayout,
+    // nobody driving) re-aligns the strip once — row 1 → column 1 (17pt) —
+    // and later reports propagate nothing again.
+    link.rowsDidRefilter()
+    link.map = ActivityScrollMap(rows: Array(repeating: (40, 13), count: 5), topInset: 0, spacing: 4)
+    link.listDidScroll(.init(offset: 40, content: 200, viewport: 200))
+    #expect(stripRequests.last == 17)
+    link.listDidScroll(.init(offset: 0, content: 200, viewport: 200))
+    #expect(stripRequests.last == 17)
 }

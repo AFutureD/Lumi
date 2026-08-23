@@ -46,18 +46,18 @@ public enum TimelineTag: String, Codable, Hashable, Sendable, CaseIterable {
     case assistant
     case plan
     case subagent
+    case failed         // a tool call failed (Exec lane): process noise, not a phase
     // L3 — phase (high attention)
     case user
     case turnEnd
-    case failed         // a tool call failed (Exec lane)
-    case turnFailed     // the turn / agent failed (Model lane); same FAILED chip
+    case turnFailed     // the turn / agent failed (Model lane); same FAILED chip, one tier up
     case aborted
 
     public var level: TimelineAttentionLevel {
         switch self {
         case .session, .compact, .contextGroup, .context, .reasoning, .tool: .l1
-        case .result, .assistant, .plan, .subagent: .l2
-        case .user, .turnEnd, .failed, .turnFailed, .aborted: .l3
+        case .result, .assistant, .plan, .subagent, .failed: .l2
+        case .user, .turnEnd, .turnFailed, .aborted: .l3
         }
     }
 

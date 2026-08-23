@@ -74,10 +74,11 @@ final class SessionActivityState: ObservableObject {
 /// Activity: pinned header (title · count · Category / Importance filters ·
 /// lane strip toggle · User/Model/Exec lane strip) over a chronological list
 /// of `TimelineRow`s. Turn boundaries read from the rows themselves (USER …
-/// TURN END); there is no turn header. The filters narrow the list only —
-/// the strip always draws every row, so what is hidden stays visible as
-/// context. Clicking a lane cell jumps to its row; clicking a row reveals
-/// its detail.
+/// TURN END); there is no turn header. The filters narrow the list and the
+/// strip together: the strip draws one column per visible row, so it is
+/// always the map of what the list shows (the `visible / total` count says
+/// what is hidden). Clicking a lane cell jumps to its row; clicking a row
+/// reveals its detail.
 @MainActor
 struct SessionActivityView: View {
     let presentation: SessionPagePresentation?
@@ -151,7 +152,10 @@ struct SessionActivityView: View {
                 }
             }
             .onChange(of: scrollMapKey, initial: true) { _, _ in
-                state.scrollLink.map = scrollMap(for: all)
+                state.scrollLink.map = scrollMap(for: activities)
+            }
+            .onChange(of: state.filter) { _, _ in
+                state.scrollLink.rowsDidRefilter()
             }
             .onChange(of: activities.count) { previous, current in
                 guard current > previous, state.followsBottom, let last = activities.last else { return }
@@ -166,7 +170,7 @@ struct SessionActivityView: View {
         .environment(\.colorScheme, .light)
     }
 
-    /// The map only depends on row kinds and on which rows the filter hides,
+    /// The map only depends on row kinds and on which rows the filter shows,
     /// so rebuild it when the row set or the filter changes.
     private var scrollMapKey: ActivityScrollMapKey {
         ActivityScrollMapKey(
@@ -177,16 +181,13 @@ struct SessionActivityView: View {
         )
     }
 
-    /// Every row of the session is a map row and a strip column; a row the
-    /// filter hides keeps its strip column but takes no list height, so the
-    /// two sides stay in step around it.
+    /// Every visible row is a map row and a strip column — the list and the
+    /// strip show the same rows, so they pair by index.
     private func scrollMap(for activities: [SessionActivityPresentation]) -> ActivityScrollMap {
-        let filter = state.filter
-        return ActivityScrollMap(
+        ActivityScrollMap(
             rows: activities.map { activity in
                 (
-                    height: !filter.includes(activity) ? 0
-                        : activity.lane == nil
+                    height: activity.lane == nil
                         ? Design.Layout.activityMarkerRowHeight
                         : Design.Layout.activityRowHeight,
                     columnWidth: activity.laneStripColumnWidth
@@ -236,21 +237,19 @@ struct SessionActivityView: View {
                 .accessibilityLabel("Toggle timeline density")
             }
 
-            if !all.isEmpty {
-                // The strip always shows the full session, filter or not.
+            if !visible.isEmpty {
+                // The strip shows exactly the rows the list shows: filtered
+                // rows have no column either.
                 SessionActivityTimeline(
-                    activities: all,
+                    activities: visible,
                     mode: state.timelineMode,
                     link: state.scrollLink
                 ) { activity in
                     // Programmatic: the list goes to the row, the strip stays put.
-                    // A hidden row's cell lands on the nearest visible row,
-                    // without the highlight (that row is not the one clicked).
-                    guard let target = jumpTarget(for: activity, in: all) else { return }
                     withAnimation(.easeInOut(duration: 0.22)) {
-                        proxy.scrollTo(sessionActivityRowID(for: target), anchor: .center)
+                        proxy.scrollTo(sessionActivityRowID(for: activity), anchor: .center)
                     }
-                    if target.id == activity.id { state.highlight(activity.id) }
+                    state.highlight(activity.id)
                 }
             }
         }
@@ -261,18 +260,6 @@ struct SessionActivityView: View {
         .overlay(alignment: .bottom) {
             Design.Color.UI.activityHairline.frame(height: 1)
         }
-    }
-
-    /// The clicked row if the filter shows it; else the next visible row
-    /// after it, else the last visible one before it.
-    private func jumpTarget(
-        for activity: SessionActivityPresentation,
-        in all: [SessionActivityPresentation]
-    ) -> SessionActivityPresentation? {
-        let filter = state.filter
-        if filter.includes(activity) { return activity }
-        guard let index = all.firstIndex(where: { $0.id == activity.id }) else { return nil }
-        return all[index...].first(where: filter.includes) ?? all[..<index].last(where: filter.includes)
     }
 }
 
@@ -519,6 +506,7 @@ final class ActivityScrollLink {
 
     var map = ActivityScrollMap()
     private(set) var driver = Driver.none
+    private var realignsOnNextListReport = false
     private(set) var list = Geometry()
     private(set) var strip = Geometry()
 
@@ -548,7 +536,12 @@ final class ActivityScrollLink {
 
     func listDidScroll(_ geometry: Geometry) {
         list = geometry
-        guard driver == .list else { return }
+        // The list leads while the user scrolls it, and once after the row
+        // set was re-filtered: both sides rebuilt, so the strip re-aligns to
+        // the row now at the list's top edge.
+        let realigns = driver == .none && realignsOnNextListReport
+        guard driver == .list || realigns else { return }
+        realignsOnNextListReport = false
         let target = min(max(map.stripOffset(forListOffset: geometry.offset), 0), strip.range)
         if abs(target - strip.offset) > 0.5 {
             scrollStrip?(target)
@@ -565,6 +558,12 @@ final class ActivityScrollLink {
     }
 
     // MARK: Explicit programmatic moves
+
+    /// The filter changed: list and strip both show a new row set. The next
+    /// list geometry report (its relayout) re-aligns the strip to it.
+    func rowsDidRefilter() {
+        realignsOnNextListReport = true
+    }
 
     /// Follow-bottom: new rows arrived while pinned to the end; both sides show the end.
     func scrollStripToEnd() {

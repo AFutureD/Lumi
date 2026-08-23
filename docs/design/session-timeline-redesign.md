@@ -91,7 +91,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 | `TURN END` | **L3** | Model | Turn 结束 —— **Turn 终点**（Agent 蓝实底） |
 | `TOOL` | L1 | Exec | 工具调用（≡ PreToolUse / assistant `tool_use`），黄色 L1（设计系统 §4.3；本稿早先写 L2，已按代码改正） |
 | `RESULT` | L2 | Exec | 工具结果（≡ PostToolUse / user `tool_result`），与 TOOL 用 toolUseId 配对高亮，**不合并** |
-| `FAILED`（`.failed`） | **L3** | Exec | 工具调用失败（`toolResult.isError`），留在 Exec 与它的 TOOL 相邻 |
+| `FAILED`（`.failed`） | **L2** | Exec | 工具调用失败（`toolResult.isError`），留在 Exec 与它的 TOOL 相邻。2026-08-24 起从 L3 降为 L2：单个工具失败是回合内的过程噪音，红色淡底即可，不该和 USER / TURN END 同档 |
 | `FAILED`（`.turnFailed`） | **L3** | Model | 轮次 / Agent 失败（`turnFailed`、`.error` payload），同一个 FAILED chip，落在 Model 与 TURN END 相邻。泳道跟来源走：工具失败归 Exec，轮次失败归 Model |
 | `ABORTED` | **L3** | Model | 中断（`turnAborted`、含 interrupt / abort / cancel 字样的 `.error`） |
 
@@ -102,7 +102,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 - L1：无底无环，灰字 `rgb(138,138,138)`（dark `.38`）。L2：类目色 14–16% 底 + 深色字 + `.5px` 环。L3：实底 + 白字。色相：Agent 蓝 `#0078F0`（ASSISTANT L2 / TURN END L3）、User 绿 `#1DA84C`、PLAN 紫 `#8E3FE8`、SUBAGENT 橙 `#ED6A0C`、TOOL·RESULT 黄 `#F0B400`、失败红 `#E5352F`。
 - Session 标记行（SESSION / COMPACT）：横跨三泳道、行高 32、L1 样式；CONTEXT（含 ×N）不横跨，落在 User 泳道。
 - **Lane strip**（列表上方）：三行 User / Model / Exec（`TimelineLane.allCases` 顺序，Mac 与 iPhone 同名同序），每个 item 一个 13×13 r3 单元，gap 4，只在所属泳道填色；格子颜色走同色相三档：L1 中性 `#E7E8EC`、L2 淡色（`#DBECFD` / `#EFE4FC` / `#FCE7D8` / `#FDF3D6`）、L3 满饱和实色。空格留白。**列表每一行都有一格**（行 ↔ 格按下标一一对应）：TOOL 与 RESULT 在 Exec 各占一格，Claude 的 `total_tokens_reminder` 上下文也占格（2026-08-22 起；之前两者只进列表不进 strip）。
-- 升级规则：`RESULT.isError` → `FAILED`（L2→L3，**不推 Notch**——单个工具失败是回合内常规噪音，只有轮次失败 / 中断推）；`turnStopped` → 追加 `TURN END`，末条 ASSISTANT 状态点标深蓝 `#0A5FBF`；同屏最多 3 条 L3（先降级已 seen）；L1 不升级；仅 L3 触发 Notch。
+- 升级规则：`RESULT.isError` → `FAILED`（同为 L2，只换红色相，**不推 Notch**——单个工具失败是回合内常规噪音，只有轮次失败 / 中断推）；`turnStopped` → 追加 `TURN END`，末条 ASSISTANT 状态点标深蓝 `#0A5FBF`；同屏最多 3 条 L3（先降级已 seen）；L1 不升级；仅 L3 触发 Notch。
 - **Session 状态五档**（`SessionStatusTone.resolve`，唯一解析器，三端同源；设计系统 §4.1）：Running 蓝 `rgb(0,120,240)`（starting / running / compacting；带 halo 并呼吸）、Waiting 橙（waitingForInput 且 phase 不是 idle：等输入或等审批，人不处理就不会继续）、Completed · unreviewed 绿 `#1DA84C`（Turn 已结束且 `needsReview`，任一端打开即降灰）、Completed 灰 `rgb(110,113,120)`（含 waitingForInput · idle，显示为 Completed）、Failed / Aborted 红 `#E5352F`（failed / interrupted）。设计稿写“等待排到列表最前”，实现保持纯活动时间倒序，不按档位分层。phase 只换状态点与副标题，不换这一档颜色。深色（Notch）对应 `#4C9BFF` / 橙 / `#34C759` / `.34` / `#EE4038`。（原稿写三档、Waiting 绿；2026-08-22 修订为与代码一致的五档。）
 
 ---
@@ -121,7 +121,7 @@ enum ItemStatus { info, started, running, succeeded, failed, cancelled }
 | assistantPlan | `PLAN`(Model, L2) |
 | subagentDelegated / Returned | `SUBAGENT`(Model, L2) 同 agentId 原地更新 |
 | toolCall | `TOOL`(Exec, L1, started) |
-| toolResult ok / isError | `RESULT`(Exec, L2, succeeded) / `FAILED`(`.failed`, Exec, L3) |
+| toolResult ok / isError | `RESULT`(Exec, L2, succeeded) / `FAILED`(`.failed`, Exec, L2) |
 | turnStopped | 追加 `TURN END`(Model, L3) |
 | turnFailed / `.error` | `FAILED`(`.turnFailed`, Model, L3) |
 | turnAborted / 含中断字样的 `.error` | `ABORTED`(Model, L3) |
@@ -197,4 +197,7 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 | 临时会话（2026-08-19 追加） | `SessionSummary.firstTurnAt` / `isProvisional`；Mac 列表、Relay 快照、daemon health 过滤临时会话；Claude `SessionEnd` 时 helper 判定 `never used` → `AgentIngressEvent.disposition = .discard`，仓库删除 + 墓碑并照常发布 | 有效性边界 = 第一个 Turn。桌面 App 的 `withTemporaryQuery` 探测进程（SessionStart→SessionEnd 2 s、无 turn/transcript）从不可见、结束即丢弃；env 签名不作判据（探测进程同样带 `CLAUDE_CODE_ENTRYPOINT=claude-desktop`，见 research）。同时：`apply` 先去重再判墓碑复活（重放的 SessionStart 不再解除墓碑）；客户端 `replaceSnapshot` 清空本地墓碑；Mac 事件队列有序；migration v3 清掉历史空会话 |
 | 三端一致性修订（2026-08-22 追加） | `SessionHierarchy`（Core）统一父子分组：任意深度的子 Agent 并入最上层被列出的祖先，Mac 主窗口 / Notch / iPhone 子项都按 running → waiting → failed → done；`TransportCoding` 日期带毫秒；删除 `AgentKind` / `SessionLifecycle` / `TurnPhase` / `IPCOperation` / `RelayFrameKind` / `RemotePayloadKind` / `TimelinePayload` 的 `.unknown` 兜底（未知值 = 解码错误）；daemon 本地流新增 `summary` 帧，iPhone 的已查看经它到达 Mac 窗口与 Notch；`reingest_session` 跳过已删除子 Agent并把重建结果推给 iPhone；iOS 隐藏会话规则统一为“daemon 的副本更新（`updatedAt` 更新）才回来”，并继续写入缓存；iOS `cache.apply` 进入写队列 | 之前 iOS / Notch 丢孙级子 Agent、同秒记录按 id 排序、iPhone 已查看不回 Mac、隐藏会话三条路径规则不一 |
 | 列表 ↔ 泳道分类对齐（2026-08-22 追加） | `TimelineTag` 新增 `.turnFailed`（FAILED chip、Model 泳道、L3）：`turnEnd(.failed)` 与非中断 `.error` 映射到它，`.failed` 只剩工具失败（Exec）；删除 `SessionActivityPresentation.appearsInLaneStrip`——每行一格，Mac `ActivityScrollMap` 行列按下标配对，TOOL / `total_tokens_reminder` 进 strip；iPhone lane strip 改读 `TimelineLane.allCases`（User / Model / Exec，与 Mac 同名同序，不再是 Input / Tools / Model）；Mac Category 过滤 Model 组加 "Turn failure"，Exec 组 "Failure" 改名 "Tool failure"；Notch 只对 `.turnFailed` / `.aborted` 推失败 toast | 之前 Turn 级失败画在 Exec 泳道、列表有行而 strip 无格、两端泳道中间一行含义相反；SUBAGENT 维持 Model（iOS 交接稿的 tools 泳道不采用）；TOOL 维持 L1（本稿 B.1 原写 L2，以设计系统 §4.3 与代码为准）|
+| 工具失败降为 L2（2026-08-24 追加） | `TimelineTag.failed.level` L3 → L2：chip 变红色淡底（`DesignHue.red` L2 tint）、泳道格变 `red.s200`，Importance 面板里归入 Process 档；`.turnFailed` / `.aborted` 维持 L3 | 失败与中断的区分：工具失败是过程（回合还在继续），回合失败 / 中断是阶段终点；设计档案 `DESIGN SYSTEM.html` 未改（只在同步设计文件时更新），下次同步时把工具 FAILED 行改为 L2 淡底 |
+| 泳道跟随过滤（2026-08-24 追加） | Mac `SessionActivityView` 把过滤后的行同时喂给列表和 `SessionActivityTimeline`，`ActivityScrollMap` 只按可见行建（不再有 0 高度行），`ActivityScrollLink.rowsDidRefilter()` 让下一次列表几何报告把 strip 对齐到顶部行；iPhone 无 Activity 过滤，strip 本就每行一格 | 之前 Mac strip 始终画全量、被过滤掉的行保留格子但 0 高度，点格子落到“最近可见行”；现在列表有几行 strip 就有几格，两端一致 |
+
 验证：Transport 16 / Common 25 / CLI 10 / Mac 21 项测试通过；`xcodebuild` LumiMac 与 IOSFeature 构建成功；用真实 Claude transcript 走 daemon+helper 端到端得到 2 个 Turn、11 对 TOOL/RESULT、标题来自 `custom-title`。
