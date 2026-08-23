@@ -8,10 +8,10 @@
       location = "group:AGENTS.md">
    </FileRef>
    <FileRef
-      location = "group:Common">
+      location = "group:Apps/iOS/LumiIOS.xcodeproj">
    </FileRef>
    <FileRef
-      location = "group:CLI">
+      location = "group:Apps/iOS/IOSPackage">
    </FileRef>
    <FileRef
       location = "group:Apps/Mac/LumiMac.xcodeproj">
@@ -20,9 +20,9 @@
       location = "group:Apps/Mac/MacPackage">
    </FileRef>
    <FileRef
-      location = "group:Apps/iOS/LumiIOS.xcodeproj">
+      location = "group:CLI">
    </FileRef>
    <FileRef
-      location = "group:Apps/iOS/IOSPackage">
+      location = "group:Common">
    </FileRef>
 </Workspace>

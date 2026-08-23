@@ -19,12 +19,15 @@ Your job is trying to add documents in this swift package project.
 ```
 
 
-## 0x01. Content Generation
+## 0x01. Constitution
+
+Unknown
+
+## 0x02. Content Generation
 
 生成内容时，考虑 skill /i-have-adhd 
 
-
-## 0x02. User-Facing Feature Documentation
+## 0x03. User-Facing Feature Documentation
 
 - Any change that adds, removes, or changes user-visible behavior must update `docs/FEAT.md` in the same change.
 - Keep `docs/FEAT.md` focused on what users can do. Lead with the Happy Path, then introduce advanced capabilities progressively as users explore further.
@@ -32,23 +35,12 @@ Your job is trying to add documents in this swift package project.
 - Before adding content, review the complete `docs/FEAT.md`. Improve nearby wording, merge overlapping explanations, and remove stale or redundant content instead of only appending another section.
 - Keep the document concise and user-facing. Avoid implementation details and do not duplicate exhaustive setup or reference material from `README.md`.
 
-
-## 0x03. Glossary
+## 0x04. Glossary
 
 `docs/Glossary.md` is the single source of truth for **what things are called**. It governs wording, not implementation.
 
-### What it contains
-
-- The product name (English only) and how to write it inside Chinese text.
-- The one metaphor the product is built on, and the instruction never to mix in another.
-- The user-facing name of each part of the product (background service, reporter, cross-device transport, notch display).
-- Session status words — the vocabulary users rely on to decide whether to go look.
-- Preferred phrasings for common actions, each paired with the wording to avoid.
-- Tone of voice, and a list of retired or banned words.
-
-### What it must NOT contain
-
-No implementation detail of any kind: no bundle identifiers, file paths, environment variables, module or target names, API shapes, or code samples. If a line would only make sense to someone reading the source, it does not belong here.
+No implementation detail of any kind: no bundle identifiers, file paths, environment variables, module or target names, API shapes, or code samples. 
+If a line would only make sense to someone reading the source, it does not belong here.
 
 ### When to update it
 
@@ -57,4 +49,19 @@ No implementation detail of any kind: no bundle identifiers, file paths, environ
 - Whenever a name is changed or retired, update the entry and move the old name into the banned-words list — do not silently delete it, so the reason stays visible.
 - When `docs/FEAT.md` or any feature doc introduces a term not yet listed, add it to the glossary in the same change.
 
-Invoke the `$i-have-adhd` skill when writing or revising it. Keep it short enough to be read in full every time.
+## 0x05. Design System
+
+Only update [DESIGN SYSTEM](./DESIGN%20SYSTEM.html) when synchronizing design files.
+
+## 0x06. Coding Policy
+
+- Data first.  
+  Before coding, understand where the data comes from, how it is processed and used, and whether it is persisted.
+- Check best practices first.  
+  Start a subagent to review the approach before implementation.
+- Rewrite, don’t patch.  
+  Follow best practices instead of adding workarounds, while providing migrations for persisted data.
+- Design first.  
+  Design intent takes priority over implementation details. Never hide errors or handle failures silently.
+- Keep one source of truth.  
+  Always identify the authoritative data source and remove redundant transformations and processing logic.
