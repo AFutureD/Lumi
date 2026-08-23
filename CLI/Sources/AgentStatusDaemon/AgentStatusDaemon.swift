@@ -17,7 +17,7 @@ enum AgentStatusDaemonMain {
         // start, lands in `daemon.log` (and `errors.log`) as well as stderr.
         let logConfiguration = LogConfiguration.fromEnvironment(
             subsystem: "daemon",
-            standardErrorPrefix: "agent-status-daemon:"
+            standardErrorPrefix: "Lumen:"
         )
         AgentStatusLogging.bootstrap(logConfiguration)
         do {

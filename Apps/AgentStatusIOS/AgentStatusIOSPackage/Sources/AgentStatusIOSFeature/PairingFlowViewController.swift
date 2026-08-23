@@ -172,7 +172,7 @@ final class PairingFlowViewController: UIViewController {
         case .hostOffline:
             show(name: name, host: host, spinner: false, sas: nil, verdict: .neutral("exclamationmark"),
                  title: "Mac 不在线",
-                 body: "配对码有效，但这台 Mac 现在没连上 Relay。确认 Agent Status 正在运行后再试。",
+                 body: "配对码有效，但这台 Mac 现在没连上 Relay。确认 Lumi 正在运行后再试。",
                  primary: ("Try again", { [weak self] in self?.attempt.start() }),
                  secondary: ("Cancel", { [weak self] in self?.cancel() }))
         case .rejected:

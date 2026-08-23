@@ -92,7 +92,7 @@ final class AgentStatusNookController {
         configuration.metrics.edgePadding = 0
         configuration.showsMenuBarExtra = false
         configuration.branding = NookHostBranding(
-            hostName: "Agent Status",
+            hostName: "Lumi",
             hostTagline: "Live Agent Sessions"
         )
         configuration.chromeBehavior = NookChromeBehavior(
@@ -344,13 +344,13 @@ private struct AgentStatusNookTopBar: View {
                     .font(.system(size: NotchMetric.topBarGlyph, weight: .regular))
                     .foregroundStyle(Color(DS.InkDark.brandIcon))
                     .frame(width: NotchMetric.topBarIconBox, height: NotchMetric.topBarIconBox)
-                Text("Agent Status")
+                Text("Lumi")
                     .designText(NotchType.caption)
                     .foregroundStyle(Color.nookSecondary)
             }
             Spacer(minLength: 0)
             HStack(spacing: NotchMetric.topBarTrailingGap) {
-                topBarButton("gearshape", help: "Open Agent Status Settings", action: actions.openMainSettings)
+                topBarButton("gearshape", help: "Open Lumi Settings", action: actions.openMainSettings)
                 topBarButton(
                     appState.keepNookOpen ? "lock.fill" : "lock.open",
                     active: appState.keepNookOpen,
@@ -443,7 +443,7 @@ private struct AgentStatusNookHomeView: View {
                     .foregroundStyle(theme.primaryLabel)
                 Text(model.daemonAvailable
                      ? "Start a Codex or Claude Code Session to see it here."
-                     : "Open Agent Status Settings to check the daemon.")
+                     : "Open Lumi Settings to check Lumen.")
                     .designText(NotchType.caption)
                     .foregroundStyle(theme.tertiaryLabel)
             }

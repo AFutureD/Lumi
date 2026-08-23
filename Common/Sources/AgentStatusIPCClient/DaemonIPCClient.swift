@@ -206,7 +206,7 @@ public enum DaemonEndpoint {
             return override
         }
         return homeDirectory
-            .appendingPathComponent("Library/Application Support/Agent Status", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Lumi", isDirectory: true)
             .appendingPathComponent("daemon.sock")
             .path
     }

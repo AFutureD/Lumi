@@ -11,7 +11,7 @@ public protocol RelayHostCredentialStoring: Sendable {
 }
 
 public struct KeychainRelayHostCredentialStore: RelayHostCredentialStoring {
-    public static let defaultService = "com.huanan.AgentStatusDaemon.relay"
+    public static let defaultService = "app.huanan.lumi.daemon.relay"
     public static let defaultAccount = "host-credentials-v2"
 
     private let store: SecureStore

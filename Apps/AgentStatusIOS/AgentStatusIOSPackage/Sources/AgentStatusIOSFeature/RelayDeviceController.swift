@@ -54,10 +54,10 @@ struct RelayDeviceDependencies: Sendable {
     var persistsCredentials = true
 
     /// Production: `RelayWebSocketClient`, one SQLite file per Mac under
-    /// `Application Support/Agent Status/Channels/<hostID>.sqlite3`.
+    /// `Application Support/Lumi/Channels/<hostID>.sqlite3`.
     static func live(defaultRelayURL: URL = RelayBuildConfiguration.url) -> RelayDeviceDependencies {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Agent Status", isDirectory: true)
+            .appendingPathComponent("Lumi", isDirectory: true)
             .appendingPathComponent("Channels", isDirectory: true)
         return RelayDeviceDependencies(
             defaultRelayURL: defaultRelayURL,
@@ -91,7 +91,7 @@ struct RelayDeviceDependencies: Sendable {
 /// daemon's event stream.
 @MainActor
 final class RelayDeviceController {
-    private let secureStore = SecureStore(service: "com.huanan.AgentStatusIOS.relay")
+    private let secureStore = SecureStore(service: "app.huanan.lumi.ios.relay")
     private let credentialsAccount = "device-channels-v4"
     private let settings: LocalSettings
     private let dependencies: RelayDeviceDependencies

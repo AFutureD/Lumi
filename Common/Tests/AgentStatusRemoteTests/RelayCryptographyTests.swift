@@ -173,8 +173,9 @@ import Testing
 }
 
 @Test func pairingCommitmentAndSASMatchTheGoldenVectors() {
-    // Fixed inputs; expected values computed independently (SHA-256 over the
-    // labelled concatenations in the design doc).
+    // Fixed inputs; expected values computed independently with python3:
+    //   sha256(b"Lumi Relay/pair-commit/v1" + hostPub + nonce)  -> base64
+    //   sha256(b"Lumi Relay/pair-sas/v1" + hostID + deviceID + hostPub + devicePub + nonce)[:4] big-endian % 1_000_000
     let hostID = HostID("host-test-000001")
     let deviceID = DeviceID("device-test-0001")
     let hostPublicKey = Data((1...32).map { UInt8($0) })
@@ -182,7 +183,7 @@ import Testing
     let nonce = Data(repeating: 0xAB, count: 32)
 
     let commit = RelayCryptography.pairingCommitment(hostPublicKey: hostPublicKey, hostNonce: nonce)
-    #expect(commit.base64EncodedString() == "4k1hMg9lS8UO0Qh6H6ZQwQa1hHgx1Dp1M1csccHYig0=")
+    #expect(commit.base64EncodedString() == "bTZyIx77RxZA+32JxLVcmvG2hKWnQhBfiRi88C+Bluo=")
     #expect(RelayCryptography.verifyPairingCommitment(commit, hostPublicKey: hostPublicKey, hostNonce: nonce))
     // A different key or nonce does not open the commitment; neither does a truncated one.
     #expect(!RelayCryptography.verifyPairingCommitment(commit, hostPublicKey: devicePublicKey, hostNonce: nonce))
@@ -193,8 +194,8 @@ import Testing
         hostID: hostID, deviceID: deviceID,
         hostPublicKey: hostPublicKey, devicePublicKey: devicePublicKey, hostNonce: nonce
     )
-    #expect(sas == "440253")
-    #expect(PairingCode.displaySAS(sas) == "440 253")
+    #expect(sas == "060476")
+    #expect(PairingCode.displaySAS(sas) == "060 476")
     // Every input is bound: swapping the device key changes the digits.
     let swapped = RelayCryptography.pairingSAS(
         hostID: hostID, deviceID: deviceID,

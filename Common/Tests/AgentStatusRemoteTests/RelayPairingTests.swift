@@ -50,20 +50,20 @@ import Testing
     let relay = URL(string: "https://agent-status-relay.afuture.workers.dev")!
     let link = PairingLink(relayURL: relay, code: "7KF3QP")
     let url = link.url
-    #expect(url.scheme == "agentstatus")
+    #expect(url.scheme == "lumi")
     #expect(url.host == "pair")
-    #expect(url.absoluteString == "agentstatus://pair?relay=https%3A%2F%2Fagent%2Dstatus%2Drelay%2Eafuture%2Eworkers%2Edev&code=7KF3QP")
+    #expect(url.absoluteString == "lumi://pair?relay=https%3A%2F%2Fagent%2Dstatus%2Drelay%2Eafuture%2Eworkers%2Edev&code=7KF3QP")
     #expect(PairingLink(url: url) == link)
 
     // What a person might paste: un-encoded relay, lowercase code, hyphen.
-    let loose = try #require(URL(string: "agentstatus://pair?relay=https://relay.example.com/&code=7kf-3qp"))
+    let loose = try #require(URL(string: "lumi://pair?relay=https://relay.example.com/&code=7kf-3qp"))
     #expect(PairingLink(url: loose) == PairingLink(relayURL: URL(string: "https://relay.example.com")!, code: "7KF3QP"))
 
     // Not ours / incomplete / insecure relay.
     #expect(PairingLink(url: URL(string: "https://example.com/pair?relay=https://r.example.com&code=7KF3QP")!) == nil)
-    #expect(PairingLink(url: URL(string: "agentstatus://other?relay=https://r.example.com&code=7KF3QP")!) == nil)
-    #expect(PairingLink(url: URL(string: "agentstatus://pair?code=7KF3QP")!) == nil)
-    #expect(PairingLink(url: URL(string: "agentstatus://pair?relay=https://r.example.com")!) == nil)
-    #expect(PairingLink(url: URL(string: "agentstatus://pair?relay=http://r.example.com&code=7KF3QP")!) == nil)
-    #expect(PairingLink(url: URL(string: "agentstatus://pair?relay=https://r.example.com&code=7KF3Q")!) == nil)
+    #expect(PairingLink(url: URL(string: "lumi://other?relay=https://r.example.com&code=7KF3QP")!) == nil)
+    #expect(PairingLink(url: URL(string: "lumi://pair?code=7KF3QP")!) == nil)
+    #expect(PairingLink(url: URL(string: "lumi://pair?relay=https://r.example.com")!) == nil)
+    #expect(PairingLink(url: URL(string: "lumi://pair?relay=http://r.example.com&code=7KF3QP")!) == nil)
+    #expect(PairingLink(url: URL(string: "lumi://pair?relay=https://r.example.com&code=7KF3Q")!) == nil)
 }

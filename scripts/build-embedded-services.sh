@@ -18,7 +18,7 @@ if [[ "${configuration}" == "Release" ]]; then
   architectures=(arm64 x86_64)
 fi
 
-products=(agent-status-daemon agent-status-helper)
+products=(Lumen Spark)
 temporary_root="${DERIVED_FILE_DIR}/AgentStatusEmbeddedServices"
 resource_destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 launch_agent_destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchAgents"
@@ -46,11 +46,15 @@ for product in "${products[@]}"; do
     xcrun lipo -create "${binaries[@]}" -output "${output}"
   fi
   chmod 755 "${output}"
+  case "${product}" in
+    Lumen) identifier="app.huanan.lumi.daemon" ;;
+    Spark) identifier="app.huanan.lumi.helper" ;;
+  esac
   if [[ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" && "${EXPANDED_CODE_SIGN_IDENTITY}" != "-" ]]; then
-    /usr/bin/codesign --force --options runtime --timestamp=none --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "${output}"
+    /usr/bin/codesign --force --options runtime --timestamp=none --identifier "${identifier}" --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "${output}"
   fi
 done
 
 ditto \
-  "${SRCROOT}/AgentStatusMac/LaunchAgents/com.huanan.AgentStatusDaemon.plist" \
-  "${launch_agent_destination}/com.huanan.AgentStatusDaemon.plist"
+  "${SRCROOT}/AgentStatusMac/LaunchAgents/app.huanan.lumi.daemon.plist" \
+  "${launch_agent_destination}/app.huanan.lumi.daemon.plist"

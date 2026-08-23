@@ -10,8 +10,8 @@ import NookApp
     let existing = Data("""
     {"hooks":{"Stop":[{"hooks":[{"type":"command","command":"vibe-island-helper"}]}]},"custom":true}
     """.utf8)
-    let once = try CodexHookInstaller.merging(existing, helperCommand: "'/tmp/agent-status-helper'")
-    let twice = try CodexHookInstaller.merging(once, helperCommand: "'/tmp/agent-status-helper'")
+    let once = try CodexHookInstaller.merging(existing, helperCommand: "'/tmp/Lumi/bin/Spark'")
+    let twice = try CodexHookInstaller.merging(once, helperCommand: "'/tmp/Lumi/bin/Spark'")
     let root = try #require(JSONSerialization.jsonObject(with: twice) as? [String: Any])
     let hooks = try #require(root["hooks"] as? [String: Any])
     let stop = try #require(hooks["Stop"] as? [[String: Any]])
@@ -26,16 +26,16 @@ import NookApp
     let removedStop = try #require(removedHooks["Stop"] as? [[String: Any]])
     #expect(removedRoot["custom"] as? Bool == true)
     #expect(removedStop.count == 1)
-    #expect(!String(data: removed, encoding: .utf8)!.contains("agent-status-helper"))
+    #expect(!String(data: removed, encoding: .utf8)!.contains("Lumi/bin/Spark"))
 }
 
 @Test func claudeSettingsMergeKeepsOtherSettingsAndRefreshesCommand() throws {
     let existing = Data("""
     {"permissions":{"allow":["Bash(ls:*)"]},"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"other-tool"}]}]}}
     """.utf8)
-    let once = try ClaudeHookInstaller.merging(existing, helperCommand: "'/old/agent-status-helper' --agent claude")
+    let once = try ClaudeHookInstaller.merging(existing, helperCommand: "'/old/Lumi/bin/Spark' --agent claude")
     // Reinstalling with a new path refreshes the command instead of appending.
-    let twice = try ClaudeHookInstaller.merging(once, helperCommand: "'/new/agent-status-helper' --agent claude")
+    let twice = try ClaudeHookInstaller.merging(once, helperCommand: "'/new/Lumi/bin/Spark' --agent claude")
     let root = try #require(JSONSerialization.jsonObject(with: twice) as? [String: Any])
     #expect((root["permissions"] as? [String: Any])?["allow"] as? [String] == ["Bash(ls:*)"])
     #expect(root["model"] as? String == "opus")
@@ -44,7 +44,7 @@ import NookApp
     let pre = try #require(hooks["PreToolUse"] as? [[String: Any]])
     #expect(pre.count == 2)
     let text = String(data: twice, encoding: .utf8)!
-    #expect(text.contains("/new/agent-status-helper") && !text.contains("/old/agent-status-helper"))
+    #expect(text.contains("/new/Lumi/bin/Spark") && !text.contains("/old/Lumi/bin/Spark"))
     #expect(text.contains("other-tool"))
 
     let removed = try AgentHookConfigInstaller.removingAgentStatus(from: twice)
@@ -60,7 +60,7 @@ import NookApp
     try manager.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? manager.removeItem(at: dir) }
     let config = dir.appendingPathComponent("settings.json")
-    let installed = dir.appendingPathComponent("bin/agent-status-helper")
+    let installed = dir.appendingPathComponent("Lumi/bin/Spark")
     let bundled = dir.appendingPathComponent("bundled-helper")
     try Data("new-build".utf8).write(to: bundled)
     try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundled.path)
@@ -83,7 +83,7 @@ import NookApp
     #expect(try Data(contentsOf: installed) == Data("new-build".utf8))
 
     // Nothing stale: the config is not rewritten (a rewrite leaves a backup).
-    let backup = config.appendingPathExtension("agent-status-backup")
+    let backup = config.appendingPathExtension("lumi-backup")
     try? manager.removeItem(at: backup)
     try installer.refreshIfStale(helperSourceURL: bundled)
     #expect(!manager.fileExists(atPath: backup.path))
@@ -145,19 +145,19 @@ private func codexHooksList(_ hooks: [(key: String, command: String, hash: Strin
     return #"{"data":[{"cwd":"/tmp","hooks":[\#(entries.joined(separator: ","))]}]}"#
 }
 
-private let agentStatusCommand = "'/Users/me/Library/Application Support/Agent Status/bin/agent-status-helper'"
+private let lumiCommand = "'/Users/me/Library/Application Support/Lumi/bin/Spark'"
 
 @Test func codexHookTrustAuthorizesOnlyOurOwnUntrustedHandlers() {
     let untrustedKey = "/Users/me/.codex/hooks.json:pre_tool_use:0:0"
     let stub = StubCodexAppServer(listResponses: [
         codexHooksList([
-            (untrustedKey, agentStatusCommand, "sha256:aaa", "untrusted"),
-            ("/Users/me/.codex/hooks.json:stop:1:0", agentStatusCommand, "sha256:bbb", "trusted"),
+            (untrustedKey, lumiCommand, "sha256:aaa", "untrusted"),
+            ("/Users/me/.codex/hooks.json:stop:1:0", lumiCommand, "sha256:bbb", "trusted"),
             ("/Users/me/.codex/hooks.json:stop:2:0", "'/Users/me/.vibe-island/bin/vibe-island-bridge'", "sha256:ccc", "untrusted"),
         ]),
         codexHooksList([
-            (untrustedKey, agentStatusCommand, "sha256:aaa", "trusted"),
-            ("/Users/me/.codex/hooks.json:stop:1:0", agentStatusCommand, "sha256:bbb", "trusted"),
+            (untrustedKey, lumiCommand, "sha256:aaa", "trusted"),
+            ("/Users/me/.codex/hooks.json:stop:1:0", lumiCommand, "sha256:bbb", "trusted"),
         ]),
     ])
 
@@ -175,8 +175,8 @@ private let agentStatusCommand = "'/Users/me/Library/Application Support/Agent S
 @Test func codexHookTrustReportsWhatCodexStillRefusesAfterWriting() {
     let key = "/Users/me/.codex/hooks.json:pre_tool_use:0:0"
     let stub = StubCodexAppServer(listResponses: [
-        codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")]),
-        codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")]),
+        codexHooksList([(key, lumiCommand, "sha256:aaa", "untrusted")]),
+        codexHooksList([(key, lumiCommand, "sha256:aaa", "untrusted")]),
     ])
 
     #expect(CodexHookTrustAuthorizer(makeTransport: { stub }).authorize() == .untrusted([key]))
@@ -187,7 +187,7 @@ private let agentStatusCommand = "'/Users/me/Library/Application Support/Agent S
 @Test func codexHookTrustDoesNotMistakeARejectedWriteForAnOlderCodex() {
     let key = "/Users/me/.codex/hooks.json:pre_tool_use:0:0"
     let stub = StubCodexAppServer(
-        listResponses: [codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")])],
+        listResponses: [codexHooksList([(key, lumiCommand, "sha256:aaa", "untrusted")])],
         failure: CodexAppServerError.rpc(code: -32603, message: "config is read-only"),
         failingMethod: "config/batchWrite"
     )
@@ -198,7 +198,7 @@ private let agentStatusCommand = "'/Users/me/Library/Application Support/Agent S
 @Test func codexHookTrustProbeReadsWithoutWriting() {
     let key = "/Users/me/.codex/hooks.json:stop:1:0"
     let stub = StubCodexAppServer(listResponses: [
-        codexHooksList([(key, agentStatusCommand, "sha256:aaa", "untrusted")]),
+        codexHooksList([(key, lumiCommand, "sha256:aaa", "untrusted")]),
     ])
 
     #expect(CodexHookTrustAuthorizer(makeTransport: { stub }).probe() == .untrusted([key]))
@@ -208,7 +208,7 @@ private let agentStatusCommand = "'/Users/me/Library/Application Support/Agent S
 /// The same user-level handler is repeated once per cwd group.
 @Test func codexHookTrustCountsEachHandlerOnce() {
     let entry = """
-    {"key":"/Users/me/.codex/hooks.json:stop:1:0","command":"\(agentStatusCommand)","currentHash":"sha256:aaa","trustStatus":"trusted"}
+    {"key":"/Users/me/.codex/hooks.json:stop:1:0","command":"\(lumiCommand)","currentHash":"sha256:aaa","trustStatus":"trusted"}
     """
     let stub = StubCodexAppServer(listResponses: [
         #"{"data":[{"cwd":"/a","hooks":[\#(entry)]},{"cwd":"/b","hooks":[\#(entry)]}]}"#,
@@ -808,7 +808,7 @@ private func nookSession(
         id: SessionID("session-page"),
         agent: .codex,
         title: "Session page",
-        workspace: "/tmp/agent-status",
+        workspace: "/tmp/lumi",
         lifecycle: .running,
         phase: .responding,
         startedAt: date,
@@ -1162,7 +1162,7 @@ private func flatten(_ node: SessionListNode) -> [SessionSummary] {
 @MainActor
 private func macStoreFixture(client: (any MacDaemonClient)? = nil) throws -> (MacSessionStore, URL) {
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-status-mac-store-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("lumi-mac-store-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let store = if let client {
         MacSessionStore(

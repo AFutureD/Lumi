@@ -144,8 +144,8 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
             method: "initialize",
             params: try JSONSerialization.data(withJSONObject: [
                 "clientInfo": [
-                    "name": "agent-status",
-                    "title": "Agent Status",
+                    "name": "lumi",
+                    "title": "Lumi",
                     "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
                 ],
             ])
@@ -213,11 +213,11 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
 
 // MARK: - Trust state
 
-/// What Codex thinks of the Agent Status handlers in `hooks.json`.
+/// What Codex thinks of the Lumi handlers in `hooks.json`.
 public enum CodexHookTrustState: Equatable, Sendable {
     /// No Codex CLI, or a build with no hook-trust gate — nothing to authorize.
     case unsupported
-    /// Codex sees no Agent Status handler; the integration is not installed.
+    /// Codex sees no Lumi handler; the integration is not installed.
     case noHooks
     case trusted(Int)
     /// Handlers Codex still refuses to run. The user has to finish this in
@@ -241,8 +241,9 @@ public enum CodexHookTrustState: Equatable, Sendable {
 public struct CodexHookTrustAuthorizer: Sendable {
     public typealias TransportFactory = @Sendable () throws -> any CodexAppServerTransport
 
-    /// Handlers are ours when their command invokes this binary.
-    public static let helperMarker = "agent-status-helper"
+    /// Handlers are ours when their command path contains this marker (the
+    /// installed Spark lives under `Application Support/Lumi/bin/`).
+    public static let helperMarker = "Lumi/bin/Spark"
 
     private let makeTransport: TransportFactory
 

@@ -5,7 +5,7 @@ import Foundation
 /// parent's `session_id` plus `agent_id` / `agent_type`, and its transcript is
 /// a sidechain file at `<project>/<session>/subagents/agent-<id>.jsonl` with a
 /// sibling `.meta.json` (`agentType`, `description`, `model`, `spawnDepth`,
-/// `toolUseId`). Agent Status gives each one a derived child session so it can
+/// `toolUseId`). Lumi gives each one a derived child session so it can
 /// hang under its parent like a Codex subagent thread.
 public enum ClaudeSubagentIdentity {
     static let separator = ":agent:"

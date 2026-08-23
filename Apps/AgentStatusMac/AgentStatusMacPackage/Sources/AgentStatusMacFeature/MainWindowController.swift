@@ -25,7 +25,7 @@ final class MainWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Agent Status"
+        window.title = "Lumi"
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .none

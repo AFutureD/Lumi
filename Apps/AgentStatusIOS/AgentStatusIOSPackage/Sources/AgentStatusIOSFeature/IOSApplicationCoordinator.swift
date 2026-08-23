@@ -51,7 +51,7 @@ public final class IOSApplicationCoordinator: NSObject {
         tabs.selectedIndex = 0
     }
 
-    /// `agentstatus://pair?relay=…&code=…` from the system camera or a link:
+    /// `lumi://pair?relay=…&code=…` from the system camera or a link:
     /// opens Add Mac with both fields filled (or hands the link to the sheet
     /// already up) and pairs straight away.
     @discardableResult

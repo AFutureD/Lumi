@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8B41F6442DEDD0D5001A66F9"
-               BuildableName = "AgentStatusIOS.app"
+               BuildableName = "Lumi.app"
                BlueprintName = "AgentStatusIOS"
                ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
             </BuildableReference>
@@ -43,7 +43,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8B41F65B2DEDD0D6001A66F9"
-               BuildableName = "AgentStatusIOS.xctest"
+               BuildableName = "Lumi.xctest"
                BlueprintName = "AgentStatusIOSUITests"
                ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
             </BuildableReference>
@@ -65,7 +65,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8B41F6442DEDD0D5001A66F9"
-            BuildableName = "AgentStatusIOS.app"
+            BuildableName = "Lumi.app"
             BlueprintName = "AgentStatusIOS"
             ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
          </BuildableReference>
@@ -82,7 +82,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8B41F6442DEDD0D5001A66F9"
-            BuildableName = "AgentStatusIOS.app"
+            BuildableName = "Lumi.app"
             BlueprintName = "AgentStatusIOS"
             ReferencedContainer = "container:AgentStatusIOS.xcodeproj">
          </BuildableReference>

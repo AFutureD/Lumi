@@ -10,7 +10,7 @@ import NIOCore
 
 private let log = Logger(label: "agent")
 
-/// `agent-status-helper [--agent codex|claude|auto] [--verbose]`
+/// `Spark [--agent codex|claude|auto] [--verbose]`
 ///
 /// Invoked by Codex / Claude Code hooks with the hook payload on stdin. Reads
 /// the session's transcript increment, reduces hook + transcript into
@@ -44,7 +44,7 @@ enum AgentStatusHelperMain {
 
         var configuration = LogConfiguration.fromEnvironment(
             subsystem: "helper",
-            standardErrorPrefix: "agent-status-helper:",
+            standardErrorPrefix: "Spark:",
             standardErrorMinimumLevel: verbose ? .debug : .warning
         )
         if verbose { configuration.minimumLevel = .debug }

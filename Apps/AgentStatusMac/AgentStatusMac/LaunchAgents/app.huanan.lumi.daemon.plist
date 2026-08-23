@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.huanan.AgentStatusDaemon</string>
+	<string>app.huanan.lumi.daemon</string>
 	<key>BundleProgram</key>
-	<string>Contents/Resources/agent-status-daemon</string>
+	<string>Contents/Resources/Lumen</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>

@@ -144,7 +144,7 @@ public enum RelayCryptography {
     /// them, swap a frame's direction, or replay a sealed body under another
     /// sequence without the tag failing.
     static func routingHeader(hostID: HostID, deviceID: DeviceID, sequence: UInt64, kind: RelayFrameKind) -> Data {
-        Data("Agent Status Relay/v1/frame/\(hostID.rawValue)/\(deviceID.rawValue)/\(sequence)/\(kind.rawValue)".utf8)
+        Data("Lumi Relay/v1/frame/\(hostID.rawValue)/\(deviceID.rawValue)/\(sequence)/\(kind.rawValue)".utf8)
     }
 
     // MARK: - Pairing (code + Numeric Comparison)
@@ -157,11 +157,11 @@ public enum RelayCryptography {
     }
 
     /// The Mac's commitment, published to the Relay before any iPhone shows
-    /// up: `SHA256("Agent Status Relay/pair-commit/v1" ‖ hostPub ‖ nonce)`.
+    /// up: `SHA256("Lumi Relay/pair-commit/v1" ‖ hostPub ‖ nonce)`.
     /// The nonce is revealed only after the daemon has the device's key, so
     /// nobody in the middle can pick a key to match a known SAS.
     public static func pairingCommitment(hostPublicKey: Data, hostNonce: Data) -> Data {
-        var message = Data("Agent Status Relay/pair-commit/v1".utf8)
+        var message = Data("Lumi Relay/pair-commit/v1".utf8)
         message.append(hostPublicKey)
         message.append(hostNonce)
         return Data(SHA256.hash(data: message))
@@ -178,7 +178,7 @@ public enum RelayCryptography {
     }
 
     /// The six-digit Numeric Comparison string both ends show:
-    /// first four bytes of `SHA256("Agent Status Relay/pair-sas/v1" ‖ hostID ‖
+    /// first four bytes of `SHA256("Lumi Relay/pair-sas/v1" ‖ hostID ‖
     /// deviceID ‖ hostPub ‖ devicePub ‖ nonce)` big-endian, mod 1 000 000,
     /// zero-padded. Display it as `XXX XXX`.
     public static func pairingSAS(
@@ -188,7 +188,7 @@ public enum RelayCryptography {
         devicePublicKey: Data,
         hostNonce: Data
     ) -> String {
-        var message = Data("Agent Status Relay/pair-sas/v1".utf8)
+        var message = Data("Lumi Relay/pair-sas/v1".utf8)
         message.append(Data(hostID.rawValue.utf8))
         message.append(Data(deviceID.rawValue.utf8))
         message.append(hostPublicKey)
@@ -218,10 +218,10 @@ public enum RelayCryptography {
             throw RelayCryptographyError.invalidPublicKey
         }
         let secret = try local.sharedSecretFromKeyAgreement(with: peer)
-        let context = Data("Agent Status Relay/v1/\(hostID.rawValue)/\(deviceID.rawValue)".utf8)
+        let context = Data("Lumi Relay/v1/\(hostID.rawValue)/\(deviceID.rawValue)".utf8)
         return secret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("Agent Status Relay/v1".utf8),
+            salt: Data("Lumi Relay/v1".utf8),
             sharedInfo: context,
             outputByteCount: 32
         )

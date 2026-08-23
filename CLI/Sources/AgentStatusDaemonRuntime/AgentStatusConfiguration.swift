@@ -60,7 +60,7 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     ) -> AgentStatusConfiguration {
         let supportDirectory = environment["AGENT_STATUS_SUPPORT_DIRECTORY"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? homeDirectory.appendingPathComponent("Library/Application Support/Agent Status", isDirectory: true)
+            ?? homeDirectory.appendingPathComponent("Library/Application Support/Lumi", isDirectory: true)
         let databasePath = environment["AGENT_STATUS_DATABASE"]
             ?? supportDirectory.appendingPathComponent("sessions.sqlite3").path
         let codexHome = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }

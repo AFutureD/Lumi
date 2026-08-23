@@ -753,7 +753,7 @@ public final class MacSessionStore {
 
     private static func defaultCachePath() -> String {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Agent Status Mac", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Lumi/Mac", isDirectory: true)
             .appendingPathComponent("sessions.sqlite3")
             .path
     }

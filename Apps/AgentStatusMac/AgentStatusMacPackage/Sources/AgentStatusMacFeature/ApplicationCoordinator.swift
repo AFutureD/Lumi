@@ -45,9 +45,6 @@ public final class ApplicationCoordinator: NSObject {
     public func start() {
         installMenu()
         refreshInstalledHooks()
-        // The Relay host moved into the daemon; the app's own registration
-        // (pre-daemon builds) is retired rather than migrated.
-        try? SecureStore(service: "com.huanan.AgentStatusMac.relay").delete(account: "host-credentials-v1")
         _ = relayHost
         store.start()
         daemonAutoUpdater.start()
@@ -73,7 +70,7 @@ public final class ApplicationCoordinator: NSObject {
     /// rewrite of our own: its trust records are keyed by a handler's position
     /// in `hooks.json`, so any tool editing that file silently untrusts ours.
     private func refreshInstalledHooks() {
-        guard let helper = Bundle.main.url(forResource: "agent-status-helper", withExtension: nil) else { return }
+        guard let helper = Bundle.main.url(forResource: "Spark", withExtension: nil) else { return }
         Task.detached(priority: .utility) {
             let codex = CodexHookInstaller()
             for refresh in [
@@ -126,19 +123,19 @@ public final class ApplicationCoordinator: NSObject {
         let menu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Agent Status", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Lumi", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(.separator())
-        let quitItem = appMenu.addItem(withTitle: "Quit Agent Status", action: #selector(terminate), keyEquivalent: "q")
+        let quitItem = appMenu.addItem(withTitle: "Quit Lumi", action: #selector(terminate), keyEquivalent: "q")
         quitItem.target = self
         appItem.submenu = appMenu
         menu.addItem(appItem)
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
-        let mainWindowItem = windowMenu.addItem(withTitle: "Agent Status", action: #selector(showMainWindow), keyEquivalent: "0")
+        let mainWindowItem = windowMenu.addItem(withTitle: "Lumi", action: #selector(showMainWindow), keyEquivalent: "0")
         mainWindowItem.target = self
         windowItem.submenu = windowMenu
         menu.addItem(windowItem)

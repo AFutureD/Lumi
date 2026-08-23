@@ -13,7 +13,7 @@ public struct LogConfiguration: Sendable {
     /// Directory of `<subsystem>.log` and `errors.log`; `nil` writes no files.
     public var directory: URL?
     /// Mirror lines at or above `standardErrorMinimumLevel` to stderr with
-    /// this prefix (`agent-status-daemon:`); `nil` leaves stderr alone.
+    /// this prefix (`Lumen:`); `nil` leaves stderr alone.
     public var standardErrorPrefix: String?
     public var standardErrorMinimumLevel: Logger.Level
     /// A file past this size is rotated (`x.log` → `x.log.1` …).
@@ -49,14 +49,14 @@ public struct LogConfiguration: Sendable {
         URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     }
 
-    /// `~/Library/Logs/Agent Status` — where Console.app's file browser and
+    /// `~/Library/Logs/Lumi` — where Console.app's file browser and
     /// the Mac app's "Show in Finder" both look.
     public static func defaultDirectory(homeDirectory: URL = currentHomeDirectory) -> URL {
-        homeDirectory.appendingPathComponent("Library/Logs/Agent Status", isDirectory: true)
+        homeDirectory.appendingPathComponent("Library/Logs/Lumi", isDirectory: true)
     }
 
     /// Level from `AGENT_STATUS_LOG_LEVEL` (default `info`); directory from
-    /// `AGENT_STATUS_LOG_DIRECTORY` (default `~/Library/Logs/Agent Status`;
+    /// `AGENT_STATUS_LOG_DIRECTORY` (default `~/Library/Logs/Lumi`;
     /// `off` / `0` / `none` disables files). Isolated smoke runs point the
     /// directory at their scratch folder so they never touch the real logs.
     public static func fromEnvironment(

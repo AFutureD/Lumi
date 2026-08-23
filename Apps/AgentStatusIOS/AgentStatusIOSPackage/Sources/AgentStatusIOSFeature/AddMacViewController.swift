@@ -106,7 +106,7 @@ final class AddMacViewController: UIViewController {
         ])
 
         intro.numberOfLines = 0
-        intro.setText("在 Mac 上打开 Agent Status › Pair an iPhone，输入那里显示的 6 位配对码。", style: Metric.intro, color: UIColor(Metric.introInk))
+        intro.setText("在 Mac 上打开 Lumi › Pair an iPhone，输入那里显示的 6 位配对码。", style: Metric.intro, color: UIColor(Metric.introInk))
 
         codeEntry.onChange = { [weak self] _ in self?.codeChanged() }
         codeEntry.onComplete = { [weak self] in self?.continueTapped() }

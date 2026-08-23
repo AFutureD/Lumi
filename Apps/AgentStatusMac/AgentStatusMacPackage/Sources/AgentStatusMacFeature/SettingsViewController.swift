@@ -32,7 +32,7 @@ enum AgentStatusSettingsSection: Int, CaseIterable {
 
     var detailSubtitle: String {
         switch self {
-        case .general: "Choose how Agent Status starts on this Mac."
+        case .general: "Choose how Lumi starts on this Mac."
         case .notch: "Configure the Notch surface, screen, size, and interaction."
         case .daemon: "The local service collects Codex events and writes them to SQLite."
         case .agents: "Manage integrations that send Session events to the daemon."

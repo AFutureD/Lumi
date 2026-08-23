@@ -222,14 +222,14 @@
 			);
 			inputPaths = (
 				"$(SRCROOT)/../../CLI/Package.swift",
-				"$(SRCROOT)/AgentStatusMac/LaunchAgents/com.huanan.AgentStatusDaemon.plist",
+				"$(SRCROOT)/AgentStatusMac/LaunchAgents/app.huanan.lumi.daemon.plist",
 				"$(SRCROOT)/../../scripts/build-embedded-services.sh",
 			);
 			name = "Embed daemon and helper";
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/agent-status-daemon",
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/agent-status-helper",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/com.huanan.AgentStatusDaemon.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Lumen",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Spark",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/app.huanan.lumi.daemon.plist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
@@ -285,8 +285,8 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 8GSN8K4KD9;
-				INFOPLIST_KEY_CFBundleDisplayName = "Agent Status";
-				PRODUCT_BUNDLE_IDENTIFIER = me.afuture.AgentStatusMac;
+				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
+				PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 6.0;
 			};
@@ -300,8 +300,8 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 8GSN8K4KD9;
-				INFOPLIST_KEY_CFBundleDisplayName = "Agent Status";
-				PRODUCT_BUNDLE_IDENTIFIER = me.afuture.AgentStatusMac;
+				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
+				PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 6.0;
 			};

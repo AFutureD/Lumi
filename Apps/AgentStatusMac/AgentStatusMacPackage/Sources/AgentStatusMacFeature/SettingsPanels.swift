@@ -28,9 +28,9 @@ final class SettingsModel: ObservableObject {
 
     let version: String
     let build: String
-    let hookLocation = "~/.codex/hooks.json · agent-status-helper --agent codex"
-    let claudeHookLocation = "~/.claude/settings.json · agent-status-helper --agent claude"
-    /// `~/Library/Logs/Agent Status` — daemon.log, helper.log, app.log and errors.log.
+    let hookLocation = "~/.codex/hooks.json · Spark --agent codex"
+    let claudeHookLocation = "~/.claude/settings.json · Spark --agent claude"
+    /// `~/Library/Logs/Lumi` — daemon.log, helper.log, app.log and errors.log.
     let logDirectory = LogConfiguration.defaultDirectory()
     var logDirectoryDescription: String {
         SessionPagePresentationBuilder.abbreviatedWorkspace(logDirectory.path) ?? logDirectory.path
@@ -174,7 +174,7 @@ final class SettingsModel: ObservableObject {
             if installer.isInstalled() {
                 try installer.uninstall()
             } else {
-                guard let helper = Bundle.main.url(forResource: "agent-status-helper", withExtension: nil) else {
+                guard let helper = Bundle.main.url(forResource: "Spark", withExtension: nil) else {
                     throw CodexHookInstallerError.helperMissing
                 }
                 try installer.install(helperSourceURL: helper)
@@ -210,7 +210,7 @@ final class SettingsModel: ObservableObject {
             if installer.isInstalled() {
                 try installer.uninstall()
             } else {
-                guard let helper = Bundle.main.url(forResource: "agent-status-helper", withExtension: nil) else {
+                guard let helper = Bundle.main.url(forResource: "Spark", withExtension: nil) else {
                     throw CodexHookInstallerError.helperMissing
                 }
                 try installer.install(helperSourceURL: helper)
@@ -224,8 +224,8 @@ final class SettingsModel: ObservableObject {
     func clearHistory() {
         Task {
             guard await confirm(
-                "Clear Agent Status Session history?",
-                "This deletes Agent Status history from the daemon and synced app databases. It does not delete Codex's own files.",
+                "Clear Lumi Session history?",
+                "This deletes Lumi history from the daemon and synced app databases. It does not delete Codex's own files.",
                 "Clear History"
             ) else { return }
             store.clearHistory()
@@ -247,8 +247,8 @@ struct GeneralSettingsPanel: View {
         SettingsPanelScroll {
             SettingsSection(title: "Startup") {
                 SettingsCard {
-                    SettingsRow(title: "Open Agent Status at login") {
-                        Toggle("Open Agent Status at login", isOn: Binding(
+                    SettingsRow(title: "Open Lumi at login") {
+                        Toggle("Open Lumi at login", isOn: Binding(
                             get: { model.loginEnabled },
                             set: { model.setLoginEnabled($0) }
                         ))
@@ -429,7 +429,7 @@ struct AgentsSettingsPanel: View {
             Divider()
             SettingsRow(
                 title: "Hook trust could not be verified",
-                subtitle: "Codex did not answer. Open Codex and run /hooks to check the Agent Status handlers.",
+                subtitle: "Codex did not answer. Open Codex and run /hooks to check the Lumi handlers.",
                 titleFont: AgentStatusDesign.Font.UI.rowTitle
             ) {
                 Button(model.isAuthorizingCodexHooks ? "Checking…" : "Check again") { model.authorizeCodexHooks() }
@@ -444,7 +444,7 @@ struct AboutSettingsPanel: View {
 
     var body: some View {
         SettingsPanelScroll {
-            SettingsSection(title: "Agent Status") {
+            SettingsSection(title: "Lumi") {
                 SettingsCard {
                     SettingsFactRow(label: "Version", value: "\(model.version) (\(model.build))", isMonospaced: true)
                     Divider()
@@ -457,7 +457,7 @@ struct AboutSettingsPanel: View {
                     )
                     Divider()
                     SettingsButtonRow {
-                        Button("About Agent Status") { model.showAbout() }
+                        Button("About Lumi") { model.showAbout() }
                     }
                 }
             }

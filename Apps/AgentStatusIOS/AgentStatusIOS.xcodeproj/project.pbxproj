@@ -383,8 +383,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentStatusIOS/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Agent Status";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Agent Status on your Mac.";
+				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Lumi on your Mac.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait";
@@ -393,7 +393,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = me.afuture.AgentStatusIOS;
+				PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -411,8 +411,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentStatusIOS/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Agent Status";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Agent Status on your Mac.";
+				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown in Lumi on your Mac.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait";
@@ -421,7 +421,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = me.afuture.AgentStatusIOS;
+				PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};

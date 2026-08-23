@@ -437,7 +437,7 @@ public enum SessionPagePresentationBuilder {
         return didTruncate ? trimmed + "…" : trimmed
     }
 
-    /// `~/dev/agent-status` style workspace for headers. With `home` the
+    /// `~/dev/lumi` style workspace for headers. With `home` the
     /// exact home directory is folded; without it any `/Users/<name>` prefix
     /// is (the iPhone cannot know the Mac's home).
     public static func abbreviatedWorkspace(_ workspace: String?, home: String? = nil) -> String? {

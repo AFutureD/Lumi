@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if (( $# != 1 )); then
-  echo "usage: $0 /absolute/path/to/AgentStatusMac.app" >&2
+  echo "usage: $0 /absolute/path/to/Lumi.app" >&2
   exit 64
 fi
 
@@ -12,9 +12,9 @@ if [[ "${app_path}" != /* || ! -d "${app_path}" ]]; then
   exit 64
 fi
 
-daemon_path="${app_path}/Contents/Resources/agent-status-daemon"
-helper_path="${app_path}/Contents/Resources/agent-status-helper"
-launch_agent_path="${app_path}/Contents/Library/LaunchAgents/com.huanan.AgentStatusDaemon.plist"
+daemon_path="${app_path}/Contents/Resources/Lumen"
+helper_path="${app_path}/Contents/Resources/Spark"
+launch_agent_path="${app_path}/Contents/Library/LaunchAgents/app.huanan.lumi.daemon.plist"
 
 for executable in "${daemon_path}" "${helper_path}"; do
   [[ -x "${executable}" ]]

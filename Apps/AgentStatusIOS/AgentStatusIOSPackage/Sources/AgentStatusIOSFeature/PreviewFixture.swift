@@ -64,7 +64,7 @@ enum PreviewFixture {
             reasoningEffort: "medium", clientVersion: "codex-cli 0.48.2", settings: .object([:])
         )))
         add(2, .context(.init(scope: .session, kind: "developer_instructions", summary: "System Instructions · developer instructions")))
-        add(2, .context(.init(scope: .session, kind: "environment_context", summary: "Environment Context · cwd ~/dev/agent-status")))
+        add(2, .context(.init(scope: .session, kind: "environment_context", summary: "Environment Context · cwd ~/dev/lumi")))
         add(5, .message(.init(role: .user, text: "Refactor the transport DTO boundaries so Common no longer imports AppKit")))
         add(10, .reasoning(.init(text: "Inspecting package targets before editing")))
         add(12, .tool(.init(name: "shell", summary: "rg --files Common/Sources", status: .started, toolUseID: "t1")))
@@ -100,7 +100,7 @@ enum PreviewFixture {
 
         let refactorSummary = SessionSummary(
             id: refactor, agent: .codex, title: "Refactor transport DTO boundaries",
-            workspace: "/Users/huanan/dev/agent-status", lifecycle: .running, phase: .executing,
+            workspace: "/Users/huanan/dev/lumi", lifecycle: .running, phase: .executing,
             startedAt: start, updatedAt: now, lastActivityAt: now,
             lineage: SessionLineage(threadSource: "codex-cli", subagentDepth: 0, agentNickname: "transport", agentRole: "primary"),
             firstTurnAt: start.addingTimeInterval(5)
@@ -116,7 +116,7 @@ enum PreviewFixture {
             let sessionID = SessionID(id)
             return SessionDetail(
                 summary: SessionSummary(
-                    id: sessionID, agent: .codexSubagent, title: title, workspace: "/Users/huanan/dev/agent-status",
+                    id: sessionID, agent: .codexSubagent, title: title, workspace: "/Users/huanan/dev/lumi",
                     lifecycle: live ? .running : .completed, phase: live ? phase : .idle,
                     startedAt: started, updatedAt: now, lastActivityAt: live ? now : now.addingTimeInterval(-5),
                     lineage: SessionLineage(parentSessionID: parent, subagentDepth: 1, agentRole: "subagent"),
@@ -131,7 +131,7 @@ enum PreviewFixture {
         let hook = SessionID("01J9EX9Q2HOOKINSTALLFAIL")
         let hookDetail = SessionDetail(
             summary: SessionSummary(
-                id: hook, agent: .claude, title: "Investigate hook install failure", workspace: "/Users/huanan/dev/agent-status",
+                id: hook, agent: .claude, title: "Investigate hook install failure", workspace: "/Users/huanan/dev/lumi",
                 lifecycle: .running, phase: .executing, startedAt: hookStart, updatedAt: now, lastActivityAt: now.addingTimeInterval(-11 * 60),
                 firstTurnAt: hookStart
             ),
@@ -147,7 +147,7 @@ enum PreviewFixture {
         let relay = SessionID("01J9EXRELAYDURABLEOBJECT")
         let relayDetail = SessionDetail(
             summary: SessionSummary(
-                id: relay, agent: .codex, title: "Fix relay durable object lifecycle", workspace: "/Users/huanan/dev/agent-status/Relay",
+                id: relay, agent: .codex, title: "Fix relay durable object lifecycle", workspace: "/Users/huanan/dev/lumi/Relay",
                 lifecycle: .waitingForInput, phase: .waitingForApproval, startedAt: relayStart, updatedAt: now, lastActivityAt: now.addingTimeInterval(-6 * 60),
                 needsAttention: true, firstTurnAt: relayStart
             ),
@@ -177,7 +177,7 @@ enum PreviewFixture {
         let cache = SessionID("01J9EXREBUILDRELAYCACHE")
         let cacheDetail = SessionDetail(
             summary: SessionSummary(
-                id: cache, agent: .codex, title: "Rebuild relay session cache", workspace: "/Users/huanan/dev/agent-status",
+                id: cache, agent: .codex, title: "Rebuild relay session cache", workspace: "/Users/huanan/dev/lumi",
                 lifecycle: .running, phase: .executing, startedAt: cacheStart, updatedAt: now, lastActivityAt: now.addingTimeInterval(-14 * 60),
                 firstTurnAt: cacheStart
             ),
@@ -191,7 +191,7 @@ enum PreviewFixture {
         let migration = SessionID("01J9EXSQLITEMIGRATION")
         let migrationDetail = SessionDetail(
             summary: SessionSummary(
-                id: migration, agent: .claude, title: "Add SQLite migration for timeline items", workspace: "/Users/huanan/dev/agent-status",
+                id: migration, agent: .claude, title: "Add SQLite migration for timeline items", workspace: "/Users/huanan/dev/lumi",
                 lifecycle: .completed, phase: .idle, startedAt: migrationStart, updatedAt: now, lastActivityAt: now.addingTimeInterval(-60 * 60),
                 firstTurnAt: migrationStart
             ),

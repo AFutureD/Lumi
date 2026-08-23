@@ -6,7 +6,7 @@ import ServiceManagement
 /// the same way.
 @MainActor
 final class DaemonServiceManager {
-    private let service = SMAppService.agent(plistName: "com.huanan.AgentStatusDaemon.plist")
+    private let service = SMAppService.agent(plistName: "app.huanan.lumi.daemon.plist")
 
     var status: SMAppService.Status { service.status }
 

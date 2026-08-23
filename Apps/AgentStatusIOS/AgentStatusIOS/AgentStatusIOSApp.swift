@@ -20,7 +20,7 @@ final class AgentStatusIOSApp: UIResponder, UIApplicationDelegate {
         coordinator.resume()
     }
 
-    /// `agentstatus://pair?relay=…&code=…` from the system camera or a link.
+    /// `lumi://pair?relay=…&code=…` from the system camera or a link.
     func application(
         _ app: UIApplication,
         open url: URL,

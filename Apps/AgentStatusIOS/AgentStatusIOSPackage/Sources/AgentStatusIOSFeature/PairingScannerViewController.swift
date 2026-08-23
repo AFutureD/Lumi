@@ -4,7 +4,7 @@ import AgentStatusRemote
 import UIKit
 
 /// Scan Code: full-screen camera with a 252pt viewfinder, caption and a
-/// torch toggle. The first `agentstatus://pair?relay=…&code=…` QR is handed
+/// torch toggle. The first `lumi://pair?relay=…&code=…` QR is handed
 /// to `onLink`; the Add Mac screen fills its two fields from it.
 @MainActor
 final class PairingScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
@@ -23,7 +23,7 @@ final class PairingScannerViewController: UIViewController, AVCaptureMetadataOut
     private var camera: AVCaptureDevice?
     private var consumed = false
 
-    private let defaultCaption = "在 macOS 的 Agent Status 里打开 Pair an iPhone，把二维码放进取景框。"
+    private let defaultCaption = "在 Mac 的 Lumi 里打开 Pair an iPhone，把二维码放进取景框。"
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -209,7 +209,7 @@ final class PairingScannerViewController: UIViewController, AVCaptureMetadataOut
         guard !consumed else { return }
         guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
               let link = PairingLink(url: url, allowInsecureLocalhost: AddMacViewController.allowsInsecureLocalhost) else {
-            setCaption("这不是 Agent Status 的配对码。")
+            setCaption("这不是 Lumi 的配对码。")
             return
         }
         consumed = true
@@ -218,7 +218,7 @@ final class PairingScannerViewController: UIViewController, AVCaptureMetadataOut
 
     private func showCameraDenied() {
         torchButton.isHidden = true
-        setCaption("相机不可用。在 iOS 设置里允许 Agent Status 使用相机后重试。")
+        setCaption("相机不可用。在 iOS 设置里允许 Lumi 使用相机后重试。")
     }
 
     @objc private func toggleTorch() {

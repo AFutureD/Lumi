@@ -10,10 +10,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>CFBundleURLName</key>
-			<string>com.huanan.AgentStatusIOS.pair</string>
+			<string>app.huanan.lumi.pair</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>agentstatus</string>
+				<string>lumi</string>
 			</array>
 		</dict>
 	</array>

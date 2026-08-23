@@ -6,9 +6,9 @@
 // ==========================================
 // Project Identity
 // ==========================================
-PRODUCT_NAME = AgentStatusMac
-PRODUCT_DISPLAY_NAME = Agent Status
-PRODUCT_BUNDLE_IDENTIFIER = com.huanan.AgentStatusMac
+PRODUCT_NAME = Lumi
+PRODUCT_DISPLAY_NAME = Lumi
+PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi
 MARKETING_VERSION = 1.0
 CURRENT_PROJECT_VERSION = 1
 

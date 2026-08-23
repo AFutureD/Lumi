@@ -5,7 +5,7 @@ import os
 /// The one `LogHandler` of the project. Renders
 /// `[<iso-8601 ms>] [<LEVEL>:<subsystem>] [<category>] <message>` where the
 /// message is `['trace':<id>] <event> key=value … [error="…"]`, and fans it
-/// out to `os.Logger` (subsystem `com.huanan.AgentStatus.<subsystem>`,
+/// out to `os.Logger` (subsystem `app.huanan.lumi.<subsystem>`,
 /// category = the logger's label), the per-process file, `errors.log` for
 /// `error` and above, and optionally stderr.
 public struct AgentStatusLogHandler: LogHandler {
@@ -58,7 +58,7 @@ public struct AgentStatusLogHandler: LogHandler {
 /// The process-wide sinks behind every handler: the per-subsystem file, the
 /// shared `errors.log`, stderr. One instance per `bootstrap`.
 public final class LogSinks: @unchecked Sendable {
-    public static let osSubsystemPrefix = "com.huanan.AgentStatus"
+    public static let osSubsystemPrefix = "app.huanan.lumi"
     public static let errorsFileName = "errors.log"
 
     public let configuration: LogConfiguration

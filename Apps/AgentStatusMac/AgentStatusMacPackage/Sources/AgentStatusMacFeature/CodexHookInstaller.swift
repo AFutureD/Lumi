@@ -9,7 +9,7 @@ public enum CodexHookInstallerError: Error, Sendable {
 /// shape that both Codex (`~/.codex/hooks.json`) and Claude Code
 /// (`~/.claude/settings.json`) use. Merges into the existing file, never
 /// duplicates its own handler, and only ever removes handlers that invoke
-/// `agent-status-helper`. Other keys and other tools' hooks are preserved.
+/// Spark (matched by `CodexHookTrustAuthorizer.helperMarker`). Other keys and other tools' hooks are preserved.
 public struct AgentHookConfigInstaller: Sendable {
     public let configURL: URL
     public let installedHelperURL: URL
@@ -49,7 +49,7 @@ public struct AgentHookConfigInstaller: Sendable {
         let merged = try Self.merging(existingData, helperCommand: helperCommand, events: supportedEvents, timeout: timeoutSeconds)
         try manager.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: configURL.path), let existingData {
-            let backup = configURL.appendingPathExtension("agent-status-backup")
+            let backup = configURL.appendingPathExtension("lumi-backup")
             try existingData.write(to: backup, options: .atomic)
         }
         try merged.write(to: configURL, options: .atomic)
@@ -92,7 +92,7 @@ public struct AgentHookConfigInstaller: Sendable {
         let manager = FileManager.default
         let binDirectory = installedHelperURL.deletingLastPathComponent()
         try manager.createDirectory(at: binDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temporaryURL = binDirectory.appendingPathComponent(".agent-status-helper-\(UUID().uuidString)")
+        let temporaryURL = binDirectory.appendingPathComponent(".Spark-\(UUID().uuidString)")
         try manager.copyItem(at: helperSourceURL, to: temporaryURL)
         try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temporaryURL.path)
         if manager.fileExists(atPath: installedHelperURL.path) {
@@ -110,7 +110,7 @@ public struct AgentHookConfigInstaller: Sendable {
             guard let groups = value as? [[String: Any]] else { return false }
             return groups.contains { group in
                 (group["hooks"] as? [[String: Any]])?.contains {
-                    ($0["command"] as? String)?.contains("agent-status-helper") == true
+                    ($0["command"] as? String)?.contains(CodexHookTrustAuthorizer.helperMarker) == true
                 } == true
             }
         }
@@ -119,7 +119,7 @@ public struct AgentHookConfigInstaller: Sendable {
     public func uninstall() throws {
         guard let existingData = try? Data(contentsOf: configURL) else { return }
         let updated = try Self.removingAgentStatus(from: existingData)
-        let backup = configURL.appendingPathExtension("agent-status-backup")
+        let backup = configURL.appendingPathExtension("lumi-backup")
         try existingData.write(to: backup, options: .atomic)
         try updated.write(to: configURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
@@ -147,7 +147,7 @@ public struct AgentHookConfigInstaller: Sendable {
             for index in groups.indices {
                 guard var handlers = groups[index]["hooks"] as? [[String: Any]] else { continue }
                 for handlerIndex in handlers.indices
-                where (handlers[handlerIndex]["command"] as? String)?.contains("agent-status-helper") == true {
+                where (handlers[handlerIndex]["command"] as? String)?.contains(CodexHookTrustAuthorizer.helperMarker) == true {
                     // Refresh the command (path / arguments may have changed).
                     handlers[handlerIndex]["command"] = helperCommand
                     handlers[handlerIndex]["timeout"] = timeout
@@ -180,7 +180,7 @@ public struct AgentHookConfigInstaller: Sendable {
             let retainedGroups = groups.compactMap { group -> [String: Any]? in
                 guard let handlers = group["hooks"] as? [[String: Any]] else { return group }
                 let retainedHandlers = handlers.filter {
-                    ($0["command"] as? String)?.contains("agent-status-helper") != true
+                    ($0["command"] as? String)?.contains(CodexHookTrustAuthorizer.helperMarker) != true
                 }
                 guard !retainedHandlers.isEmpty else { return nil }
                 var retainedGroup = group
@@ -229,7 +229,7 @@ public struct CodexHookInstaller: Sendable {
     }
 
     public static func installedHelperURL(homeDirectory: URL) -> URL {
-        homeDirectory.appendingPathComponent("Library/Application Support/Agent Status/bin/agent-status-helper")
+        homeDirectory.appendingPathComponent("Library/Application Support/Lumi/bin/Spark")
     }
 
     public var hooksURL: URL { inner.configURL }

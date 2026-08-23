@@ -28,7 +28,7 @@ import Testing
 }
 
 @Test func workspaceAbbreviatesAnyMacHome() {
-    #expect(SessionPagePresentationBuilder.abbreviatedWorkspace("/Users/huanan/dev/agent-status") == "~/dev/agent-status")
+    #expect(SessionPagePresentationBuilder.abbreviatedWorkspace("/Users/huanan/dev/lumi") == "~/dev/lumi")
     #expect(SessionPagePresentationBuilder.abbreviatedWorkspace("/Users/huanan") == "~")
     #expect(SessionPagePresentationBuilder.abbreviatedWorkspace("/opt/work") == "/opt/work")
     #expect(SessionPagePresentationBuilder.abbreviatedWorkspace(nil) == nil)

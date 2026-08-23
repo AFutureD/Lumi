@@ -67,7 +67,7 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         emptyLabel.textAlignment = .center
         emptyLabel.textColor = .secondaryLabel
         emptyLabel.font = .design(IOSDS.Typography.body)
-        emptyLabel.text = "No Macs paired\nTap + › Add Device and enter the 6-character code from Agent Status › Pair an iPhone on your Mac."
+        emptyLabel.text = "No Macs paired\nTap + › Add Device and enter the 6-character code from Lumi › Pair an iPhone on your Mac."
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         let background = UIView()
         background.addSubview(emptyLabel)

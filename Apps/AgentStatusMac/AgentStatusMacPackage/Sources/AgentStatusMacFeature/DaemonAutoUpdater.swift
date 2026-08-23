@@ -61,7 +61,7 @@ final class DaemonAutoUpdater {
     }
 
     func start() {
-        guard let bundled = Bundle.main.url(forResource: "agent-status-daemon", withExtension: nil) else {
+        guard let bundled = Bundle.main.url(forResource: "Lumen", withExtension: nil) else {
             return
         }
         Task { [weak self] in

@@ -110,7 +110,7 @@ private func makeLogger(category: String, _ configuration: LogConfiguration) -> 
     let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
     let defaults = LogConfiguration.fromEnvironment(subsystem: "daemon", environment: [:], homeDirectory: home)
     #expect(defaults.minimumLevel == .info)
-    #expect(defaults.directory?.path == "/Users/example/Library/Logs/Agent Status")
+    #expect(defaults.directory?.path == "/Users/example/Library/Logs/Lumi")
 
     let tuned = LogConfiguration.fromEnvironment(
         subsystem: "daemon",

@@ -5,40 +5,40 @@
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:agent-status}/CLI",
-            "name": "Debug agent-status-daemon",
-            "target": "agent-status-daemon",
+            "name": "Debug Lumen",
+            "target": "Lumen",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug agent-status-daemon"
+            "preLaunchTask": "swift: Build Debug Lumen"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:agent-status}/CLI",
-            "name": "Release agent-status-daemon",
-            "target": "agent-status-daemon",
+            "name": "Release Lumen",
+            "target": "Lumen",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release agent-status-daemon"
+            "preLaunchTask": "swift: Build Release Lumen"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:agent-status}/CLI",
-            "name": "Debug agent-status-helper",
-            "target": "agent-status-helper",
+            "name": "Debug Spark",
+            "target": "Spark",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug agent-status-helper"
+            "preLaunchTask": "swift: Build Debug Spark"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:agent-status}/CLI",
-            "name": "Release agent-status-helper",
-            "target": "agent-status-helper",
+            "name": "Release Spark",
+            "target": "Spark",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release agent-status-helper"
+            "preLaunchTask": "swift: Build Release Spark"
         }
     ]
 }

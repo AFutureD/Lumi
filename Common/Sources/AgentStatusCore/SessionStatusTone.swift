@@ -1,6 +1,6 @@
 import AgentStatusTransport
 
-/// A platform-neutral color role shared by every Agent Status client.
+/// A platform-neutral color role shared by every Lumi client.
 ///
 /// Design system §4.1 (Session lifecycle tiers plus a failure state):
 /// - `blue`   — Running: the agent is working (thinking / responding / tool /

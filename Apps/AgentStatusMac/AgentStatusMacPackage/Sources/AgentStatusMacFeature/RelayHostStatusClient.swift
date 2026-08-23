@@ -126,7 +126,7 @@ final class RelayHostStatusClient {
         }
         if store.health == nil, isConnected {
             isConnected = false
-            lastError = store.connectionError ?? "Agent Status daemon is not reachable."
+            lastError = store.connectionError ?? "Lumen is not running."
             notifyObservers()
         }
     }

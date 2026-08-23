@@ -6,9 +6,9 @@
 // ==========================================
 // Project Identity
 // ==========================================
-PRODUCT_NAME = AgentStatusIOS
-PRODUCT_DISPLAY_NAME = Agent Status
-PRODUCT_BUNDLE_IDENTIFIER = com.huanan.AgentStatusIOS
+PRODUCT_NAME = Lumi
+PRODUCT_DISPLAY_NAME = Lumi
+PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi
 MARKETING_VERSION = 1.0
 CURRENT_PROJECT_VERSION = 1
 
@@ -27,7 +27,7 @@ GENERATE_INFOPLIST_FILE = YES
 AGENT_STATUS_RELAY_URL = https:/$()/agent-status-relay.afuture.workers.dev
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
-INFOPLIST_KEY_NSCameraUsageDescription = Scan the pairing code shown in Agent Status on your Mac.
+INFOPLIST_KEY_NSCameraUsageDescription = Scan the pairing code shown in Lumi on your Mac.
 SUPPORTS_MACCATALYST = NO
 
 // ==========================================

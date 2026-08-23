@@ -7,8 +7,8 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "AgentStatusDaemonRuntime", targets: ["AgentStatusDaemonRuntime"]),
-        .executable(name: "agent-status-daemon", targets: ["AgentStatusDaemon"]),
-        .executable(name: "agent-status-helper", targets: ["AgentStatusHelper"]),
+        .executable(name: "Lumen", targets: ["AgentStatusDaemon"]),
+        .executable(name: "Spark", targets: ["AgentStatusHelper"]),
     ],
     dependencies: [
         .package(name: "AgentStatusCommon", path: "../Common"),

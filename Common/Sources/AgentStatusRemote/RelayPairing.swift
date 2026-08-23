@@ -86,10 +86,10 @@ public enum RelayURLValidation {
 }
 
 /// What the Mac's QR code carries and what the system camera hands the app:
-/// `agentstatus://pair?relay=<https URL>&code=<6 chars>`. Nothing secret
+/// `lumi://pair?relay=<https URL>&code=<6 chars>`. Nothing secret
 /// beyond the code itself — the link only fills two fields for the person.
 public struct PairingLink: Hashable, Sendable {
-    public static let scheme = "agentstatus"
+    public static let scheme = "lumi"
     public static let host = "pair"
 
     public let relayURL: URL
@@ -101,7 +101,7 @@ public struct PairingLink: Hashable, Sendable {
     }
 
     /// Parses a scanned or opened URL; the Relay URL is validated and the
-    /// code normalised, so a `nil` means "not an Agent Status pairing link".
+    /// code normalised, so a `nil` means "not a Lumi pairing link".
     public init?(url: URL, allowInsecureLocalhost: Bool = false) {
         guard url.scheme?.lowercased() == Self.scheme,
               url.host?.lowercased() == Self.host,

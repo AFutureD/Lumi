@@ -13,7 +13,7 @@ struct SessionHeaderPresentation: Equatable, Sendable {
     let tone: SessionStatusTone
     /// `Codex` / `Claude`.
     let agentName: String
-    /// `~/dev/agent-status`, or nil when the session has no workspace.
+    /// `~/dev/lumi`, or nil when the session has no workspace.
     let workspace: String?
 }
 
