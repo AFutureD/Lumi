@@ -24,7 +24,7 @@ public extension DesignSystem {
         /// 破坏性 — destructive button label (Red 700); the button stays Bordered.
         public static let destructive = Palette.red.s700
 
-        // macOS screen file (`Agent Status macOS - 完整设计`) extras.
+        // macOS design canvas extras.
 
         /// Subagent child-row title in the Sessions list.
         public static let childTitle = DesignColor(rgb: 60, 60, 67)
@@ -90,7 +90,7 @@ public extension DesignSystem {
         /// Ink on the white primary button.
         public static let onAccentFill = DesignColor(hex: 0x111111)
 
-        // Notch screen file (`Agent Status Notch - 完整设计`) extras.
+        // Notch design canvas extras.
 
         /// Top-bar line icons (gear, lock) stroke.
         public static let icon = DesignColor(white: 1, alpha: 0.62)
@@ -129,7 +129,7 @@ public extension DesignSystem {
         /// 描边 .5px — card outline, secondary-button ring (White 18 %).
         public static let hairline = DesignColor(white: 1, alpha: 0.18)
 
-        // Notch list (`Agent Status Notch - 完整设计` Screen 2) extras.
+        // Notch list (Notch design canvas, Screen 2) extras.
 
         /// Agent tag fill — translucent white, not the mock's opaque
         /// `rgb(40,40,40)`: the panel backdrop is only pure black in the

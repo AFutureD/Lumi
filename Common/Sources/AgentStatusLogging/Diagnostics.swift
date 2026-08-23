@@ -3,7 +3,7 @@ import Logging
 
 /// Where and how much a process logs. Built once at process start
 /// (`fromEnvironment` for the daemon / helper, explicit for the Mac app) and
-/// handed to `AgentStatusLogging.bootstrap`.
+/// handed to `Diagnostics.bootstrap`.
 public struct LogConfiguration: Sendable {
     /// `daemon` / `helper` / `app` / `ios`: the `[LEVEL:subsystem]` column,
     /// the per-process file name and the `os.Logger` subsystem suffix.
@@ -87,14 +87,14 @@ public struct LogConfiguration: Sendable {
 
 /// The process-wide wiring of swift-log: `bootstrap` once at process start,
 /// then every `Logger(label:)` in the process (label = category) renders
-/// through `AgentStatusLogHandler` and carries the current trace id.
+/// through `DiagnosticsLogHandler` and carries the current trace id.
 ///
 /// Business code only writes the message (`event key=value …`); the
 /// timestamp, level, subsystem, category and trace columns are the
 /// handler's. Fields carry identifiers, counts, sizes, kinds and durations —
 /// never Session content, prompts, tool arguments, pairing codes or
 /// credentials.
-public enum AgentStatusLogging {
+public enum Diagnostics {
     /// Calls `LoggingSystem.bootstrap`; swift-log allows this once per
     /// process, so every entry point does it first thing and nothing else
     /// ever does.
@@ -102,7 +102,7 @@ public enum AgentStatusLogging {
         let sinks = LogSinks(configuration: configuration)
         LoggingSystem.bootstrap(
             { label, metadataProvider in
-                AgentStatusLogHandler(category: label, sinks: sinks, metadataProvider: metadataProvider)
+                DiagnosticsLogHandler(category: label, sinks: sinks, metadataProvider: metadataProvider)
             },
             metadataProvider: .traceID
         )
@@ -110,8 +110,8 @@ public enum AgentStatusLogging {
 
     /// The handler factory for a standalone `Logger(label:factory:)` — tests,
     /// and any process that must not touch the global bootstrap.
-    public static func makeHandler(category: String, configuration: LogConfiguration) -> AgentStatusLogHandler {
-        AgentStatusLogHandler(category: category, sinks: LogSinks(configuration: configuration), metadataProvider: .traceID)
+    public static func makeHandler(category: String, configuration: LogConfiguration) -> DiagnosticsLogHandler {
+        DiagnosticsLogHandler(category: category, sinks: LogSinks(configuration: configuration), metadataProvider: .traceID)
     }
 }
 
@@ -149,7 +149,7 @@ public extension Logger.Metadata {
     /// Business fields as a metadata dictionary: `nil` values are dropped,
     /// dates render as ISO-8601, doubles with one decimal, everything else
     /// through `String(describing:)`. Keys render sorted, `trace` first and
-    /// `error` last — see `AgentStatusLogHandler`.
+    /// `error` last — see `DiagnosticsLogHandler`.
     static func fields(_ pairs: KeyValuePairs<String, Any?>) -> Logger.Metadata {
         var metadata: Logger.Metadata = [:]
         for (key, value) in pairs {

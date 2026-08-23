@@ -9,10 +9,10 @@ struct SettingsSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(AgentStatusDesign.Font.UI.section)
+                .font(Design.Font.UI.section)
             content()
         }
-        .frame(maxWidth: AgentStatusDesign.Layout.cardMaximumWidth, alignment: .leading)
+        .frame(maxWidth: Design.Layout.cardMaximumWidth, alignment: .leading)
     }
 }
 
@@ -25,14 +25,14 @@ struct SettingsCard<Content: View>: View {
             content()
         }
         .background(
-            AgentStatusDesign.Color.UI.cardFill,
-            in: RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.cardCornerRadius, style: .continuous)
+            Design.Color.UI.cardFill,
+            in: RoundedRectangle(cornerRadius: Design.Layout.cardCornerRadius, style: .continuous)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.cardCornerRadius, style: .continuous)
-                .strokeBorder(AgentStatusDesign.Color.UI.cardStroke, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: Design.Layout.cardCornerRadius, style: .continuous)
+                .strokeBorder(Design.Color.UI.cardStroke, lineWidth: 0.5)
         }
-        .clipShape(RoundedRectangle(cornerRadius: AgentStatusDesign.Layout.cardCornerRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Layout.cardCornerRadius, style: .continuous))
     }
 }
 
@@ -40,9 +40,9 @@ struct SettingsCard<Content: View>: View {
 struct SettingsRow<Accessory: View>: View {
     let title: String
     var subtitle: String?
-    var minHeight: CGFloat = AgentStatusDesign.Layout.settingsRowMinimumHeight
+    var minHeight: CGFloat = Design.Layout.settingsRowMinimumHeight
     var titleStyle: HierarchicalShapeStyle = .primary
-    var titleFont: Font = AgentStatusDesign.Font.UI.body
+    var titleFont: Font = Design.Font.UI.body
     @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
@@ -53,7 +53,7 @@ struct SettingsRow<Accessory: View>: View {
                     .foregroundStyle(titleStyle)
                 if let subtitle {
                     Text(subtitle)
-                        .font(AgentStatusDesign.Font.UI.caption)
+                        .font(Design.Font.UI.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -76,11 +76,11 @@ struct SettingsFactRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             Text(label)
-                .font(AgentStatusDesign.Font.UI.body)
+                .font(Design.Font.UI.body)
                 .foregroundStyle(.secondary)
                 .fixedSize()
             Text(value)
-                .font(isMonospaced ? AgentStatusDesign.Font.UI.mono : AgentStatusDesign.Font.UI.body)
+                .font(isMonospaced ? Design.Font.UI.mono : Design.Font.UI.body)
                 .foregroundStyle(valueStyle)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -89,7 +89,7 @@ struct SettingsFactRow: View {
                 .help(value)
         }
         .padding(.horizontal, 16)
-        .frame(height: AgentStatusDesign.Layout.factRowHeight)
+        .frame(height: Design.Layout.factRowHeight)
     }
 }
 
@@ -99,7 +99,7 @@ struct SettingsFootnote: View {
 
     var body: some View {
         Text(text)
-            .font(AgentStatusDesign.Font.UI.caption)
+            .font(Design.Font.UI.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -131,9 +131,9 @@ struct SettingsPanelScroll<Content: View>: View {
             VStack(alignment: .leading, spacing: 24) {
                 content()
             }
-            .padding(.top, AgentStatusDetailLayout.topInset)
-            .padding(.horizontal, AgentStatusDetailLayout.horizontalInset)
-            .padding(.bottom, AgentStatusDetailLayout.bottomInset)
+            .padding(.top, DetailLayout.topInset)
+            .padding(.horizontal, DetailLayout.horizontalInset)
+            .padding(.bottom, DetailLayout.bottomInset)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }

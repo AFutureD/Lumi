@@ -118,7 +118,7 @@ public struct AgentHookConfigInstaller: Sendable {
 
     public func uninstall() throws {
         guard let existingData = try? Data(contentsOf: configURL) else { return }
-        let updated = try Self.removingAgentStatus(from: existingData)
+        let updated = try Self.removingLumiHandlers(from: existingData)
         let backup = configURL.appendingPathExtension("lumi-backup")
         try existingData.write(to: backup, options: .atomic)
         try updated.write(to: configURL, options: .atomic)
@@ -170,7 +170,7 @@ public struct AgentHookConfigInstaller: Sendable {
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     }
 
-    public static func removingAgentStatus(from existingData: Data) throws -> Data {
+    public static func removingLumiHandlers(from existingData: Data) throws -> Data {
         guard var root = try JSONSerialization.jsonObject(with: existingData) as? [String: Any] else {
             throw CodexHookInstallerError.invalidRoot
         }
@@ -244,8 +244,8 @@ public struct CodexHookInstaller: Sendable {
         try AgentHookConfigInstaller.merging(existingData, helperCommand: helperCommand, events: supportedEvents)
     }
 
-    public static func removingAgentStatus(from existingData: Data) throws -> Data {
-        try AgentHookConfigInstaller.removingAgentStatus(from: existingData)
+    public static func removingLumiHandlers(from existingData: Data) throws -> Data {
+        try AgentHookConfigInstaller.removingLumiHandlers(from: existingData)
     }
 }
 

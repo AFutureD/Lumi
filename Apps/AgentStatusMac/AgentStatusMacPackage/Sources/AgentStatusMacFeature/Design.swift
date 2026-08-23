@@ -44,7 +44,7 @@ extension NSEdgeInsets {
 /// AppKit / SwiftUI-typed view of the shared design system for the macOS
 /// window. Semantic system colours are preferred wherever they exist; every
 /// other value is read from `DesignSystem` — no literals live here.
-enum AgentStatusDesign {
+enum Design {
     typealias DS = DesignSystem
 
     enum Layout {
@@ -209,7 +209,7 @@ enum AgentIcons {
                 claude.draw(in: rect.insetBy(dx: inset, dy: inset))
                 let stroke = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
                 stroke.lineWidth = 1
-                AgentStatusDesign.Color.cardStroke.setStroke()
+                Design.Color.cardStroke.setStroke()
                 stroke.stroke()
                 return true
             }

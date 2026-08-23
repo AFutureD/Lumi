@@ -160,7 +160,7 @@ public extension DesignSystem {
         public static let agentGlyphLarge: Double = 20
     }
 
-    /// Notch panel metrics (`Agent Status Notch - 完整设计`).
+    /// Notch panel metrics (the Notch design canvas).
     enum Notch {
         public static let compactWidth: Double = 64
         public static let expandedWidth: Double = 520

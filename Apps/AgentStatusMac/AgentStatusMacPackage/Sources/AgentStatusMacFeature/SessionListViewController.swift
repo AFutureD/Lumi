@@ -53,7 +53,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        emptyLabel.font = AgentStatusDesign.Font.body
+        emptyLabel.font = Design.Font.body
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -323,10 +323,10 @@ private final class SessionRowView: NSTableCellView {
         titleLabel.maximumNumberOfLines = 1
         titleLabel.usesSingleLineMode = true
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        timeLabel.font = AgentStatusDesign.Font.caption
-        timeLabel.textColor = AgentStatusDesign.Color.inkTertiary
+        timeLabel.font = Design.Font.caption
+        timeLabel.textColor = Design.Color.inkTertiary
         timeLabel.alignment = .right
-        statusLabel.font = AgentStatusDesign.Font.caption
+        statusLabel.font = Design.Font.caption
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.maximumNumberOfLines = 1
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -335,7 +335,7 @@ private final class SessionRowView: NSTableCellView {
         countPill.wantsLayer = true
         countPill.layer?.cornerRadius = 4
         countPill.layer?.cornerCurve = .continuous
-        countPill.layer?.backgroundColor = AgentStatusDesign.Color.chipFill.cgColor
+        countPill.layer?.backgroundColor = Design.Color.chipFill.cgColor
         countPill.target = self
         countPill.action = #selector(toggle)
         countPill.toolTip = "Show subagents"
@@ -387,15 +387,15 @@ private final class SessionRowView: NSTableCellView {
 
         titleLabel.stringValue = presentation.title
         titleLabel.toolTip = presentation.title
-        titleLabel.font = isChild ? AgentStatusDesign.Font.body : AgentStatusDesign.Font.rowTitle
-        titleLabel.textColor = isChild ? AgentStatusDesign.Color.childTitle : .labelColor
+        titleLabel.font = isChild ? Design.Font.body : Design.Font.rowTitle
+        titleLabel.textColor = isChild ? Design.Color.childTitle : .labelColor
 
         // Tier colour on dot and text; the Completed tier's text reads as
         // tertiary ink while its dot keeps the Completed gray. In-progress
         // tiers carry the breathing halo.
         let tone = presentation.tone
         statusLabel.stringValue = presentation.status
-        statusLabel.textColor = tone == .gray ? AgentStatusDesign.Color.inkTertiary : tone.appKitColor
+        statusLabel.textColor = tone == .gray ? Design.Color.inkTertiary : tone.appKitColor
         statusDot.configure(tone.lightStyle.dot)
         refreshRelativeTime()
 
@@ -412,8 +412,8 @@ private final class SessionRowView: NSTableCellView {
         countPill.attributedTitle = NSAttributedString(
             string: "\(layout.childCount)",
             attributes: [
-                .font: AgentStatusDesign.Font.countBadge,
-                .foregroundColor: AgentStatusDesign.Color.countBadge,
+                .font: Design.Font.countBadge,
+                .foregroundColor: Design.Color.countBadge,
                 .paragraphStyle: {
                     let style = NSMutableParagraphStyle()
                     style.alignment = .center
@@ -438,7 +438,7 @@ private final class SessionRowView: NSTableCellView {
         let x = Self.guideX + 0.5
         let path = NSBezierPath()
         path.lineWidth = 1
-        AgentStatusDesign.Color.elbow.setStroke()
+        Design.Color.elbow.setStroke()
 
         if layoutInfo.level > 0 {
             // Elbow: down from the parent's icon, turning toward this row's title

@@ -6,7 +6,7 @@ import NookApp
 import NookComponents
 import SwiftUI
 
-enum AgentStatusNookAdjustmentDefaults {
+enum HaloAdjustmentDefaults {
     static let compactWidth: CGFloat = DesignSystem.Notch.compactWidth
     static let expandedWidth: CGFloat = DesignSystem.Notch.expandedWidth
     static let expandAnimationDuration: TimeInterval = 0.54
@@ -17,16 +17,16 @@ enum AgentStatusNookAdjustmentDefaults {
 }
 
 /// Actions the Notch surface hands back to the app.
-struct AgentStatusNookActions {
+struct HaloActions {
     var openMainSettings: @MainActor () -> Void = {}
     var showSession: @MainActor (SessionID) -> Void = { _ in }
 }
 
 @MainActor
-final class AgentStatusNookController {
+final class HaloController {
     let appState: AppState
 
-    private let model: AgentStatusNookModel
+    private let model: HaloModel
     private let activityQueue: NookActivityQueue
     private let coordinator: AppCoordinator
     private var activityNotificationsEnabled = false
@@ -39,14 +39,14 @@ final class AgentStatusNookController {
     private var turnCardSurfaceGeneration = 0
     private var turnCardSurfaceTask: Task<Void, Never>?
 
-    /// Matches the turn card's route dwell in `AgentStatusNookModel.showTurnCard`.
+    /// Matches the turn card's route dwell in `HaloModel.showTurnCard`.
     private static let turnCardSurfaceDwell: Duration = .seconds(6)
 
     /// Non-nil only when launched with `-LumiNotchStateLog <path>`.
     private var stateLogger: DebugNotchStateLogger?
 
-    init(store: MacSessionStore, actions: AgentStatusNookActions) {
-        let model = AgentStatusNookModel(store: store)
+    init(store: MacSessionStore, actions: HaloActions) {
+        let model = HaloModel(store: store)
         let activityQueue = NookActivityQueue()
         let appState = AppState()
         appState.replaceAppearancePreferences(
@@ -55,23 +55,23 @@ final class AgentStatusNookController {
 
         // The home closure renders before `coordinator` exists; the box hands
         // the host top bar its keep-open toggle once the coordinator is up.
-        let coordinatorBox = AgentStatusNookCoordinatorBox()
+        let coordinatorBox = HaloCoordinatorBox()
 
         var configuration = NookConfiguration()
         configuration.setHome {
             NookActivityHost(queue: activityQueue) {
-                AgentStatusNookHomeView(model: model, actions: actions, coordinatorBox: coordinatorBox)
+                HaloHomeView(model: model, actions: actions, coordinatorBox: coordinatorBox)
             }
         }
         configuration.setCompactLeading {
-            AgentStatusNookCompactStatus(model: model.compactModel)
+            HaloCompactStatus(model: model.compactModel)
         }
         configuration.setCompactTrailing {
-            AgentStatusNookCompactCount(model: model.compactModel)
+            HaloCompactCount(model: model.compactModel)
         }
         // The chrome's own top bar pads its clusters by the geometric corner
         // clearance (24pt here) and cannot hit the design's `0 14` band, so
-        // the host draws the whole top band itself (`AgentStatusNookTopBar`).
+        // the host draws the whole top band itself (`HaloTopBar`).
         configuration.topBar = NookTopBarConfiguration(
             showsTopBar: false,
             showsSettings: false,
@@ -122,11 +122,11 @@ final class AgentStatusNookController {
         normalized.chromePalette = .dark
         normalized.presentation = .notch
         normalized.compactNotchWidth = normalized.compactNotchWidth
-            ?? AgentStatusNookAdjustmentDefaults.compactWidth
+            ?? HaloAdjustmentDefaults.compactWidth
         normalized.expandedNotchWidth = normalized.expandedNotchWidth
-            ?? AgentStatusNookAdjustmentDefaults.expandedWidth
+            ?? HaloAdjustmentDefaults.expandedWidth
         normalized.expandAnimationDuration = normalized.expandAnimationDuration
-            ?? AgentStatusNookAdjustmentDefaults.expandAnimationDuration
+            ?? HaloAdjustmentDefaults.expandAnimationDuration
         return normalized
     }
 
@@ -192,10 +192,10 @@ final class AgentStatusNookController {
     /// Notch untouched: the session list reflects the new state on its own.
     /// Nothing else expands the Notch.
     private func handleTurnEvents(
-        previous: [AgentStatusNookSession],
-        current: [AgentStatusNookSession]
+        previous: [HaloSession],
+        current: [HaloSession]
     ) {
-        let events = AgentStatusNookActivityDiff.turnEvents(previous: previous, current: current)
+        let events = HaloActivityDiff.turnEvents(previous: previous, current: current)
         var notified = false
         for event in events {
             guard let session = current.first(where: { $0.id == event.sessionID }) else { continue }
@@ -324,7 +324,7 @@ private extension SessionStatusTone {
 
 /// Hands the host top bar the chrome coordinator once it exists.
 @MainActor
-final class AgentStatusNookCoordinatorBox {
+final class HaloCoordinatorBox {
     weak var coordinator: AppCoordinator?
 }
 
@@ -332,9 +332,9 @@ final class AgentStatusNookCoordinatorBox {
 /// padding `0 14`, brand glyph + 11 / Regular `.58` title on the left, gear and
 /// keep-open lock (15px line icons, `.62`) on the right, gaps 10 / 15. The
 /// middle stays empty for the camera.
-private struct AgentStatusNookTopBar: View {
-    let actions: AgentStatusNookActions
-    let coordinatorBox: AgentStatusNookCoordinatorBox
+private struct HaloTopBar: View {
+    let actions: HaloActions
+    let coordinatorBox: HaloCoordinatorBox
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
@@ -382,10 +382,10 @@ private struct AgentStatusNookTopBar: View {
     }
 }
 
-private struct AgentStatusNookHomeView: View {
-    @ObservedObject var model: AgentStatusNookModel
-    let actions: AgentStatusNookActions
-    let coordinatorBox: AgentStatusNookCoordinatorBox
+private struct HaloHomeView: View {
+    @ObservedObject var model: HaloModel
+    let actions: HaloActions
+    let coordinatorBox: HaloCoordinatorBox
     @Environment(\.nookResolvedTheme) private var theme
     /// Measured heights of the list items, so the viewport can end exactly
     /// after the sixth session no matter how tall its rows are.
@@ -393,7 +393,7 @@ private struct AgentStatusNookHomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentStatusNookTopBar(actions: actions, coordinatorBox: coordinatorBox)
+            HaloTopBar(actions: actions, coordinatorBox: coordinatorBox)
             routeBody
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -406,19 +406,19 @@ private struct AgentStatusNookHomeView: View {
                 listBody
             case let .detail(id):
                 if let session = model.session(id) {
-                    AgentStatusNookDetailView(session: session, model: model, actions: actions)
+                    HaloDetailView(session: session, model: model, actions: actions)
                 } else {
                     listBody
                 }
             case let .turnStarted(id):
                 if let session = model.session(id) {
-                    AgentStatusNookTurnStartedCard(session: session, model: model, actions: actions)
+                    HaloTurnStartedCard(session: session, model: model, actions: actions)
                 } else {
                     listBody
                 }
             case let .turnEnded(id):
                 if let session = model.session(id) {
-                    AgentStatusNookTurnEndedCard(session: session, model: model, actions: actions)
+                    HaloTurnEndedCard(session: session, model: model, actions: actions)
                 } else {
                     listBody
                 }
@@ -450,7 +450,7 @@ private struct AgentStatusNookHomeView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, NotchMetric.emptyStateVertical)
         } else {
-            let items = AgentStatusNookSnapshot.listItems(from: model.sessions)
+            let items = HaloSnapshot.listItems(from: model.sessions)
             VStack(spacing: 0) {
                 // The viewport ends exactly after the sixth session (measured
                 // heights — running rows and subagent groups are taller than
@@ -461,13 +461,13 @@ private struct AgentStatusNookHomeView: View {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             Group {
                                 if item.children.isEmpty {
-                                    AgentStatusNookSessionRow(
+                                    HaloSessionRow(
                                         session: item.session,
                                         onOpen: { model.showDetail(item.session.id) },
                                         onArchive: { model.archive(item.session.id) }
                                     )
                                 } else {
-                                    AgentStatusNookSubagentGroupRow(
+                                    HaloSubagentGroupRow(
                                         item: item,
                                         expanded: model.subagentDisclosure.isExpanded(item),
                                         onOpen: { model.showDetail($0) },
@@ -505,7 +505,7 @@ private struct AgentStatusNookHomeView: View {
     /// Top padding + the first six items at their measured heights + the
     /// separators between them. Items not yet measured fall back to the
     /// flat-row height so the first pass is already close.
-    private func listViewportHeight(for items: [AgentStatusNookListItem]) -> Double {
+    private func listViewportHeight(for items: [HaloListItem]) -> Double {
         let visible = items.prefix(NotchMetric.listMaxVisibleRows)
         let flatRow = NotchMetric.rowTop + NotchMetric.timeCellHeight + NotchMetric.rowBottom
         let rows = visible.reduce(0.0) { $0 + (listItemHeights[$1.id] ?? flatRow) }
@@ -520,7 +520,7 @@ private struct AgentStatusNookHomeView: View {
 /// (`SurfaceDark.agentTag`) so it reads over any chrome backdrop,
 /// 9 / Medium `.52` text. The same on every row — a finished turn only
 /// steps down the title and the dot, never the tag.
-private struct AgentStatusNookAgentChip: View {
+private struct HaloAgentChip: View {
     let agent: AgentKind
 
     var body: some View {
@@ -535,7 +535,7 @@ private struct AgentStatusNookAgentChip: View {
 
 /// 8px tier dot with a 3px halo; only in-progress tiers (Running / Waiting)
 /// carry the halo and breathe, Completed and Failed are solid.
-private struct AgentStatusNookStatusDot: View {
+private struct HaloStatusDot: View {
     let tone: SessionStatusTone
     var size: CGFloat = DS.StatusDot.notchSize
 
@@ -551,8 +551,8 @@ private struct AgentStatusNookStatusDot: View {
 /// 22pt archive button on hover once the turn has ended, so the right edges
 /// align and nothing shifts. Running rows carry a second line with the
 /// latest activity (category tag + summary) spanning the full content width.
-private struct AgentStatusNookSessionRow: View {
-    let session: AgentStatusNookSession
+private struct HaloSessionRow: View {
+    let session: HaloSession
     /// The subagent group row provides the outer insets itself.
     var bare = false
     let onOpen: () -> Void
@@ -561,7 +561,7 @@ private struct AgentStatusNookSessionRow: View {
 
     /// The design gives the extra activity line to working (blue-tier) rows
     /// only — waiting and finished rows stay single-line.
-    private var latestActivity: AgentStatusNookActivityRow? {
+    private var latestActivity: HaloActivityRow? {
         session.statusTone == .blue ? session.recentRows.last : nil
     }
 
@@ -569,7 +569,7 @@ private struct AgentStatusNookSessionRow: View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: NotchMetric.rowLineGap) {
                 HStack(spacing: NotchMetric.rowColumnGap) {
-                    AgentStatusNookStatusDot(tone: session.statusTone)
+                    HaloStatusDot(tone: session.statusTone)
 
                     Text(session.title)
                         .designText(NotchType.listTitle)
@@ -579,7 +579,7 @@ private struct AgentStatusNookSessionRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack(spacing: NotchMetric.trailingClusterGap) {
-                        AgentStatusNookAgentChip(agent: session.agent)
+                        HaloAgentChip(agent: session.agent)
                         ZStack(alignment: .trailing) {
                             if hovering && session.turnEnded {
                                 Button(action: onArchive) {
@@ -613,7 +613,7 @@ private struct AgentStatusNookSessionRow: View {
                     // mock stops it at the title column) so the summary's
                     // right edge lines up with the time cell above; indented
                     // by the dot column + gap to keep the left edge aligned.
-                    AgentStatusNookActivityLine(row: latestActivity)
+                    HaloActivityLine(row: latestActivity)
                         .padding(.leading, DS.StatusDot.notchSize + NotchMetric.rowColumnGap)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -635,8 +635,8 @@ private struct AgentStatusNookSessionRow: View {
 /// r3, 9 / Semibold) + one-line summary (11 `.58`). The list promotes L1
 /// hues to their L2 tint so the tiny tag keeps a legible fill (the mock
 /// paints TOOL with the yellow tint); L3 stays solid.
-private struct AgentStatusNookActivityLine: View {
-    let row: AgentStatusNookActivityRow
+private struct HaloActivityLine: View {
+    let row: HaloActivityRow
 
     var body: some View {
         let style = row.tag.hue.tagStyle(row.level == .l1 ? .l2 : row.level, appearance: .dark)
@@ -661,11 +661,11 @@ private struct AgentStatusNookActivityLine: View {
 /// chevron — that toggles the pill group under it. Padding `4 14 5`, 5pt
 /// gaps; strip and pills are indented 17 so they start under the title text.
 /// Running rows open by default, every other tier starts collapsed, and a
-/// user's toggle sticks until the tier changes (`AgentStatusNookSubagentDisclosure`).
+/// user's toggle sticks until the tier changes (`HaloSubagentDisclosure`).
 /// While hovered the row wears the `.07` r10 card inset `2 6 3`, painted
 /// behind the flat geometry so nothing shifts.
-private struct AgentStatusNookSubagentGroupRow: View {
-    let item: AgentStatusNookListItem
+private struct HaloSubagentGroupRow: View {
+    let item: HaloListItem
     let expanded: Bool
     let onOpen: (SessionID) -> Void
     let onArchive: () -> Void
@@ -674,13 +674,13 @@ private struct AgentStatusNookSubagentGroupRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: NotchMetric.subagentRowGap) {
-            AgentStatusNookSessionRow(
+            HaloSessionRow(
                 session: item.session,
                 bare: true,
                 onOpen: { onOpen(item.session.id) },
                 onArchive: onArchive
             )
-            AgentStatusNookSubagentStrip(
+            HaloSubagentStrip(
                 tones: item.subagentTones,
                 label: item.subagentSummary,
                 expanded: expanded,
@@ -688,9 +688,9 @@ private struct AgentStatusNookSubagentGroupRow: View {
             )
             .padding(.leading, NotchMetric.subagentIndent)
             if expanded {
-                AgentStatusNookPillFlow(spacing: NotchMetric.pillFlowGap) {
+                HaloPillFlow(spacing: NotchMetric.pillFlowGap) {
                     ForEach(item.children) { child in
-                        AgentStatusNookSubagentPill(session: child, onOpen: { onOpen(child.id) })
+                        HaloSubagentPill(session: child, onOpen: { onOpen(child.id) })
                     }
                 }
                 .padding(.leading, NotchMetric.subagentIndent)
@@ -720,7 +720,7 @@ private struct AgentStatusNookSubagentGroupRow: View {
 /// the 11 `.58` summary (one line, ellipsis), and a 10 × 6 chevron at the
 /// right edge that turns 180° over .18s while the group is open. The whole
 /// strip is the hit target; only the chevron animates.
-private struct AgentStatusNookSubagentStrip: View {
+private struct HaloSubagentStrip: View {
     let tones: [SessionStatusTone]
     let label: String
     let expanded: Bool
@@ -729,7 +729,7 @@ private struct AgentStatusNookSubagentStrip: View {
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: NotchMetric.subagentStripGap) {
-                AgentStatusNookStackedDots(tones: tones)
+                HaloStackedDots(tones: tones)
                 Text(label)
                     .designText(NotchType.caption)
                     .foregroundStyle(Color.nookSecondary)
@@ -755,7 +755,7 @@ private struct AgentStatusNookSubagentStrip: View {
 /// One 9px dot per subagent in that subagent's tier colour, each wearing a
 /// 1.5px ring in the panel colour so the stack reads as separate dots;
 /// from the second on they overlap the previous by 3 (later dots on top).
-private struct AgentStatusNookStackedDots: View {
+private struct HaloStackedDots: View {
     let tones: [SessionStatusTone]
 
     var body: some View {
@@ -782,8 +782,8 @@ private struct AgentStatusNookStackedDots: View {
 /// Subagent pill: 20 tall, `0 7`, r6, `.13` fill — 5px status dot, name
 /// (11 `.82`, compresses and ellipsizes, never stretches) and the
 /// subagent's **duration** (mono 10 `.44`), not a relative timestamp.
-private struct AgentStatusNookSubagentPill: View {
-    let session: AgentStatusNookSession
+private struct HaloSubagentPill: View {
+    let session: HaloSession
     let onOpen: () -> Void
 
     var body: some View {
@@ -816,7 +816,7 @@ private struct AgentStatusNookSubagentPill: View {
 /// Left-aligned wrapping flow for the pills: content-sized items, `spacing`
 /// gaps on both axes, a new line whenever the next pill would overflow. A
 /// pill wider than the row is capped so its name ellipsizes.
-private struct AgentStatusNookPillFlow: Layout {
+private struct HaloPillFlow: Layout {
     var spacing: Double
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -932,10 +932,10 @@ private struct NookCardHeader<Trailing: View>: View {
 
 /// Turn complete: title + "Turn complete" · elapsed, metric chips, summary
 /// (6 lines), "Jump to Agent".
-private struct AgentStatusNookTurnEndedCard: View {
-    let session: AgentStatusNookSession
-    @ObservedObject var model: AgentStatusNookModel
-    let actions: AgentStatusNookActions
+private struct HaloTurnEndedCard: View {
+    let session: HaloSession
+    @ObservedObject var model: HaloModel
+    let actions: HaloActions
 
     /// Same words as the timeline's TURN END / FAILED / ABORTED rows, and the
     /// same tier as the session tone: aborted is a failure too.
@@ -989,10 +989,10 @@ private struct AgentStatusNookTurnEndedCard: View {
 /// Turn just started: "Turn started" + timer, `Agent · model · ~/cwd`, then
 /// the user's input verbatim (11 / Regular `.78`, up to 6 lines) — plain text,
 /// no card.
-private struct AgentStatusNookTurnStartedCard: View {
-    let session: AgentStatusNookSession
-    @ObservedObject var model: AgentStatusNookModel
-    let actions: AgentStatusNookActions
+private struct HaloTurnStartedCard: View {
+    let session: HaloSession
+    @ObservedObject var model: HaloModel
+    let actions: HaloActions
 
     var body: some View {
         VStack(alignment: .leading, spacing: NotchMetric.cardGap) {
@@ -1031,10 +1031,10 @@ private struct AgentStatusNookTurnStartedCard: View {
 
 // MARK: - 5 Session detail
 
-private struct AgentStatusNookDetailView: View {
-    let session: AgentStatusNookSession
-    @ObservedObject var model: AgentStatusNookModel
-    let actions: AgentStatusNookActions
+private struct HaloDetailView: View {
+    let session: HaloSession
+    @ObservedObject var model: HaloModel
+    let actions: HaloActions
 
     var body: some View {
         VStack(alignment: .leading, spacing: NotchMetric.cardGap) {
@@ -1172,18 +1172,18 @@ enum AgentActivation {
 
 // MARK: - 1 Collapsed bar
 
-private struct AgentStatusNookCompactStatus: View {
-    @ObservedObject var model: AgentStatusNookCompactModel
+private struct HaloCompactStatus: View {
+    @ObservedObject var model: HaloCompactModel
 
     var body: some View {
-        AgentStatusNookStatusDot(tone: model.sessionCount == 0 ? .gray : model.statusTone)
+        HaloStatusDot(tone: model.sessionCount == 0 ? .gray : model.statusTone)
             .frame(width: NotchMetric.compactSlot, height: NotchMetric.compactSlot)
             .accessibilityLabel(model.sessionCount == 0 ? "No active Sessions" : "Active Sessions")
     }
 }
 
-private struct AgentStatusNookCompactCount: View {
-    @ObservedObject var model: AgentStatusNookCompactModel
+private struct HaloCompactCount: View {
+    @ObservedObject var model: HaloCompactModel
 
     var body: some View {
         Text("\(model.sessionCount)")

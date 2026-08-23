@@ -8,7 +8,7 @@ import os
 /// out to `os.Logger` (subsystem `app.huanan.lumi.<subsystem>`,
 /// category = the logger's label), the per-process file, `errors.log` for
 /// `error` and above, and optionally stderr.
-public struct AgentStatusLogHandler: LogHandler {
+public struct DiagnosticsLogHandler: LogHandler {
     public let category: String
     public var metadata: Logging.Logger.Metadata = [:]
     public var logLevel: Logging.Logger.Level

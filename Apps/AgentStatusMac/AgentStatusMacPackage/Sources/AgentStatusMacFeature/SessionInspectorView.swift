@@ -10,16 +10,16 @@ struct SessionInspectorView: View {
     var body: some View {
         ScrollView {
             if let presentation {
-                VStack(alignment: .leading, spacing: AgentStatusDesign.Layout.inspectorSectionSpacing) {
+                VStack(alignment: .leading, spacing: Design.Layout.inspectorSectionSpacing) {
                     metrics(presentation.metrics)
                     ForEach(presentation.summarySections, id: \.kind.rawValue) { section in
                         group(section)
                     }
                 }
-                .padding(.top, AgentStatusDesign.Layout.inspectorInsets.top)
-                .padding(.leading, AgentStatusDesign.Layout.inspectorInsets.left)
-                .padding(.trailing, AgentStatusDesign.Layout.inspectorInsets.right)
-                .padding(.bottom, AgentStatusDesign.Layout.inspectorInsets.bottom)
+                .padding(.top, Design.Layout.inspectorInsets.top)
+                .padding(.leading, Design.Layout.inspectorInsets.left)
+                .padding(.trailing, Design.Layout.inspectorInsets.right)
+                .padding(.bottom, Design.Layout.inspectorInsets.bottom)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
@@ -46,11 +46,11 @@ struct SessionInspectorView: View {
     private func metricCard(label: String, @ViewBuilder value: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             value()
-                .font(AgentStatusDesign.Font.UI.metricValue)
+                .font(Design.Font.UI.metricValue)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(label.uppercased())
-                .font(AgentStatusDesign.Font.UI.metricLabel)
+                .font(Design.Font.UI.metricLabel)
                 .kerning(0.4)
                 .foregroundStyle(.secondary)
         }
@@ -64,17 +64,17 @@ struct SessionInspectorView: View {
     private func group(_ section: SessionSummarySectionPresentation) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(section.title)
-                .font(AgentStatusDesign.Font.UI.group)
+                .font(Design.Font.UI.group)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(section.fields.enumerated()), id: \.offset) { _, field in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Text(field.label)
-                            .font(AgentStatusDesign.Font.UI.caption)
+                            .font(Design.Font.UI.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize()
                         Text(field.value)
-                            .font(field.isMonospaced ? AgentStatusDesign.Font.UI.mono : AgentStatusDesign.Font.UI.caption)
+                            .font(field.isMonospaced ? Design.Font.UI.mono : Design.Font.UI.caption)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)

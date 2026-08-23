@@ -20,7 +20,7 @@ import NookApp
     #expect(stop.count == 2)
     #expect(Set(hooks.keys).isSuperset(of: CodexHookInstaller.supportedEvents))
 
-    let removed = try CodexHookInstaller.removingAgentStatus(from: twice)
+    let removed = try CodexHookInstaller.removingLumiHandlers(from: twice)
     let removedRoot = try #require(JSONSerialization.jsonObject(with: removed) as? [String: Any])
     let removedHooks = try #require(removedRoot["hooks"] as? [String: Any])
     let removedStop = try #require(removedHooks["Stop"] as? [[String: Any]])
@@ -47,7 +47,7 @@ import NookApp
     #expect(text.contains("/new/Lumi/bin/Spark") && !text.contains("/old/Lumi/bin/Spark"))
     #expect(text.contains("other-tool"))
 
-    let removed = try AgentHookConfigInstaller.removingAgentStatus(from: twice)
+    let removed = try AgentHookConfigInstaller.removingLumiHandlers(from: twice)
     let removedRoot = try #require(JSONSerialization.jsonObject(with: removed) as? [String: Any])
     let removedHooks = try #require(removedRoot["hooks"] as? [String: Any])
     #expect(removedHooks.keys.sorted() == ["PreToolUse"])
@@ -273,18 +273,18 @@ func nookAppearanceIsPinnedAndAdjustmentDefaultsAreFilled() {
         keepNookOpen: true
     )
 
-    let normalized = AgentStatusNookController.normalizedAppearancePreferences(original)
+    let normalized = HaloController.normalizedAppearancePreferences(original)
 
     #expect(normalized.chromePalette == .dark)
     #expect(normalized.presentation == .notch)
     #expect(normalized.surfaceStyle == .translucent)
     #expect(normalized.hapticFeedbackEnabled)
     #expect(normalized.keepNookOpen)
-    #expect(normalized.compactNotchWidth == AgentStatusNookAdjustmentDefaults.compactWidth)
-    #expect(normalized.expandedNotchWidth == AgentStatusNookAdjustmentDefaults.expandedWidth)
+    #expect(normalized.compactNotchWidth == HaloAdjustmentDefaults.compactWidth)
+    #expect(normalized.expandedNotchWidth == HaloAdjustmentDefaults.expandedWidth)
     #expect(
         normalized.expandAnimationDuration
-            == AgentStatusNookAdjustmentDefaults.expandAnimationDuration
+            == HaloAdjustmentDefaults.expandAnimationDuration
     )
 }
 
@@ -295,7 +295,7 @@ func nookAppearancePreservesCustomAdjustments() {
     original.expandedNotchWidth = 608
     original.expandAnimationDuration = 0.72
 
-    let normalized = AgentStatusNookController.normalizedAppearancePreferences(original)
+    let normalized = HaloController.normalizedAppearancePreferences(original)
 
     #expect(normalized.compactNotchWidth == 96)
     #expect(normalized.expandedNotchWidth == 608)
@@ -336,8 +336,8 @@ private let nookNow = Date(timeIntervalSince1970: 100)
     ])
 
     // A completed session stays in the list (grey dot, archivable).
-    let visible = AgentStatusNookSnapshot.visibleSummaries(from: [active, completed], now: nookNow)
-    let rows = AgentStatusNookSnapshot.make(summaries: visible, details: [active.id: detail])
+    let visible = HaloSnapshot.visibleSummaries(from: [active, completed], now: nookNow)
+    let rows = HaloSnapshot.make(summaries: visible, details: [active.id: detail])
 
     #expect(rows.map(\.id) == [active.id, completed.id])
     #expect(rows.first?.currentUserMessage == "Current request")
@@ -351,8 +351,8 @@ private let nookNow = Date(timeIntervalSince1970: 100)
     let eligible = [active] + (1...7).map {
         nookSummary(id: "extra-\($0)", lifecycle: .running, phase: .executing, updatedAt: TimeInterval(20 - $0))
     }
-    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: eligible, now: nookNow).count == 8)
-    #expect(AgentStatusNookSnapshot.visibleSummaries(from: eligible, now: nookNow).count == 8)
+    #expect(HaloSnapshot.eligibleSummaries(from: eligible, now: nookNow).count == 8)
+    #expect(HaloSnapshot.visibleSummaries(from: eligible, now: nookNow).count == 8)
 }
 
 @Test func nookSnapshotHidesArchivedStaleAndUnknownSessions() {
@@ -361,21 +361,21 @@ private let nookNow = Date(timeIntervalSince1970: 100)
         .withHiddenInNotch(true)
 
     // Archived sessions leave the Notch entirely: rows and the footer count.
-    #expect(AgentStatusNookSnapshot.eligibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
-    #expect(AgentStatusNookSnapshot.visibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
+    #expect(HaloSnapshot.eligibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
+    #expect(HaloSnapshot.visibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
 
     // The Mac window ignores the flag.
     let hierarchy = SessionListHierarchy.build(from: [active, archived])
     #expect(hierarchy.roots.map(\.summary.id) == [active.id, archived.id])
 
     // Sessions idle for more than seven days drop out; the boundary is exact.
-    let sevenDays = AgentStatusNookSnapshot.maximumSessionAge
+    let sevenDays = HaloSnapshot.maximumSessionAge
     let now = Date(timeIntervalSince1970: sevenDays + 1_000)
     let stale = nookSummary(id: "stale", lifecycle: .waitingForInput, phase: .idle, updatedAt: 999)
     let fresh = nookSummary(id: "fresh", lifecycle: .waitingForInput, phase: .idle, updatedAt: 1_001)
     let boundary = nookSummary(id: "boundary", lifecycle: .waitingForInput, phase: .idle, updatedAt: 1_000)
     #expect(
-        AgentStatusNookSnapshot.eligibleSummaries(from: [stale, fresh, boundary], now: now).map(\.id.rawValue)
+        HaloSnapshot.eligibleSummaries(from: [stale, fresh, boundary], now: now).map(\.id.rawValue)
             == ["fresh"]
     )
 
@@ -390,7 +390,7 @@ private let nookNow = Date(timeIntervalSince1970: 100)
 
     // Store order (newest first) is kept; every parent keeps its children
     // (the list folds them into a count strip), whatever its lifecycle.
-    let visible = AgentStatusNookSnapshot.visibleSummaries(
+    let visible = HaloSnapshot.visibleSummaries(
         from: [running, runningChild, failed, waiting, waitingChild],
         now: nookNow
     )
@@ -401,17 +401,17 @@ private let nookNow = Date(timeIntervalSince1970: 100)
     let parent = nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30)
     let child = hierarchySummary(id: "child", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 28)
     let grandchild = hierarchySummary(id: "grandchild", parentID: "child", depth: 2, updatedAt: 29)
-    let visible = AgentStatusNookSnapshot.visibleSummaries(from: [parent, grandchild, child], now: nookNow)
+    let visible = HaloSnapshot.visibleSummaries(from: [parent, grandchild, child], now: nookNow)
     // The grandchild is not dropped: it folds into the parent's strip, in
     // strip order (running before done), as on the iPhone.
     #expect(visible.map(\.id.rawValue) == ["parent", "grandchild", "child"])
-    let items = AgentStatusNookSnapshot.listItems(from: AgentStatusNookSnapshot.make(summaries: visible, details: [:]))
+    let items = HaloSnapshot.listItems(from: HaloSnapshot.make(summaries: visible, details: [:]))
     #expect(items.count == 1)
     #expect(items[0].children.map(\.id.rawValue) == ["grandchild", "child"])
 }
 
 @Test func nookListItemsOrderSubagentsRunningWaitingFailedDone() {
-    let rows = AgentStatusNookSnapshot.make(
+    let rows = HaloSnapshot.make(
         summaries: [
             nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30),
             hierarchySummary(id: "done", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 29),
@@ -423,7 +423,7 @@ private let nookNow = Date(timeIntervalSince1970: 100)
         details: [:]
     )
 
-    let items = AgentStatusNookSnapshot.listItems(from: rows)
+    let items = HaloSnapshot.listItems(from: rows)
     #expect(items.count == 1)
     #expect(items[0].children.map(\.id.rawValue) == ["running", "older-running", "waiting", "failed", "done"])
     #expect(items[0].subagentTones == [.blue, .blue, .orange, .red, .gray])
@@ -432,19 +432,19 @@ private let nookNow = Date(timeIntervalSince1970: 100)
 
 @Test func nookSubagentDisclosureFollowsTheLifecycleUntilToggled() {
     let parentID = SessionID("parent")
-    func item(_ lifecycle: SessionLifecycle, phase: TurnPhase) -> AgentStatusNookListItem {
-        let rows = AgentStatusNookSnapshot.make(
+    func item(_ lifecycle: SessionLifecycle, phase: TurnPhase) -> HaloListItem {
+        let rows = HaloSnapshot.make(
             summaries: [
                 nookSummary(id: "parent", lifecycle: lifecycle, phase: phase, updatedAt: 30),
                 hierarchySummary(id: "child", parentID: "parent", updatedAt: 29),
             ],
             details: [:]
         )
-        return AgentStatusNookSnapshot.listItems(from: rows)[0]
+        return HaloSnapshot.listItems(from: rows)[0]
     }
     let running = item(.running, phase: .executing)
     let finished = item(.waitingForInput, phase: .idle)
-    var disclosure = AgentStatusNookSubagentDisclosure()
+    var disclosure = HaloSubagentDisclosure()
 
     // Defaults: Running open, everything else collapsed.
     #expect(disclosure.isExpanded(running))
@@ -466,7 +466,7 @@ private let nookNow = Date(timeIntervalSince1970: 100)
 }
 
 @Test func nookListItemsFoldChildrenIntoTheirParentRow() {
-    let rows = AgentStatusNookSnapshot.make(
+    let rows = HaloSnapshot.make(
         summaries: [
             nookSummary(id: "parent", lifecycle: .running, phase: .executing, updatedAt: 30),
             hierarchySummary(id: "child-a", parentID: "parent", updatedAt: 29),
@@ -478,7 +478,7 @@ private let nookNow = Date(timeIntervalSince1970: 100)
         details: [:]
     )
 
-    let items = AgentStatusNookSnapshot.listItems(from: rows)
+    let items = HaloSnapshot.listItems(from: rows)
     #expect(items.map(\.id.rawValue) == ["parent", "flat", "orphan"])
     #expect(items.first?.children.map(\.id.rawValue) == ["child-a", "child-b"])
     #expect(items.dropFirst().allSatisfy { $0.children.isEmpty })
@@ -559,8 +559,8 @@ private func nookRow(
     _ tag: TimelineTag,
     _ text: String = "x",
     toolUseID: String? = nil
-) -> AgentStatusNookActivityRow {
-    AgentStatusNookActivityRow(row: TimelineRow(
+) -> HaloActivityRow {
+    HaloActivityRow(row: TimelineRow(
         id: id,
         sessionID: SessionID("session"),
         turnID: nil,
@@ -579,12 +579,12 @@ private func nookRow(
 }
 
 private func nookSession(
-    _ rows: [AgentStatusNookActivityRow],
+    _ rows: [HaloActivityRow],
     lifecycle: SessionLifecycle = .running,
     id: String = "session",
     parentID: SessionID? = nil
-) -> AgentStatusNookSession {
-    AgentStatusNookSession(
+) -> HaloSession {
+    HaloSession(
         id: SessionID(id),
         title: "Session",
         agent: .codex,
@@ -614,15 +614,15 @@ private func nookSession(
         nookRow("e1", .turnEnd),
         nookRow("f1", .turnFailed),
     ])
-    let events = AgentStatusNookActivityDiff.turnEvents(previous: [before], current: [after])
+    let events = HaloActivityDiff.turnEvents(previous: [before], current: [after])
     #expect(events.map(\.kind) == [.ended, .failed])
     #expect(events.map(\.row.id) == ["e1", "f1"])
 
     let newTurn = nookSession(after.recentRows + [nookRow("u2", .user)])
-    #expect(AgentStatusNookActivityDiff.turnEvents(previous: [after], current: [newTurn]).map(\.kind) == [.started])
+    #expect(HaloActivityDiff.turnEvents(previous: [after], current: [newTurn]).map(\.kind) == [.started])
     // Unchanged rows never re-fire, and unknown sessions are ignored.
-    #expect(AgentStatusNookActivityDiff.turnEvents(previous: [after], current: [after]).isEmpty)
-    #expect(AgentStatusNookActivityDiff.turnEvents(previous: [], current: [after]).isEmpty)
+    #expect(HaloActivityDiff.turnEvents(previous: [after], current: [after]).isEmpty)
+    #expect(HaloActivityDiff.turnEvents(previous: [], current: [after]).isEmpty)
 }
 
 @Test func nookTurnEventsSkipListedSubagentsAndRowBackfills() {
@@ -634,12 +634,12 @@ private func nookSession(
         parentID: parent.id
     )
     // A subagent whose parent is listed is the parent's internal progress.
-    #expect(AgentStatusNookActivityDiff.turnEvents(
+    #expect(HaloActivityDiff.turnEvents(
         previous: [parent, childBefore],
         current: [parent, childAfter]
     ).isEmpty)
     // The same session promoted to top level (parent not listed) notifies.
-    #expect(AgentStatusNookActivityDiff.turnEvents(
+    #expect(HaloActivityDiff.turnEvents(
         previous: [childBefore],
         current: [childAfter]
     ).map(\.kind) == [.ended])
@@ -648,7 +648,7 @@ private func nookSession(
     // not fresh activity — replaying them would re-fire old turn ends.
     let summaryOnly = nookSession([])
     let backfilled = nookSession([nookRow("u1", .user), nookRow("e1", .turnEnd)])
-    #expect(AgentStatusNookActivityDiff.turnEvents(
+    #expect(HaloActivityDiff.turnEvents(
         previous: [summaryOnly],
         current: [backfilled]
     ).isEmpty)
@@ -658,12 +658,12 @@ private func nookSession(
     let toolFailure = nookSession(
         backfilled.recentRows + [nookRow("f1", .failed, toolUseID: "tool-1")]
     )
-    #expect(AgentStatusNookActivityDiff.turnEvents(
+    #expect(HaloActivityDiff.turnEvents(
         previous: [backfilled],
         current: [toolFailure]
     ).isEmpty)
     let turnFailure = nookSession(toolFailure.recentRows + [nookRow("f2", .turnFailed)])
-    #expect(AgentStatusNookActivityDiff.turnEvents(
+    #expect(HaloActivityDiff.turnEvents(
         previous: [toolFailure],
         current: [turnFailure]
     ).map(\.kind) == [.failed])

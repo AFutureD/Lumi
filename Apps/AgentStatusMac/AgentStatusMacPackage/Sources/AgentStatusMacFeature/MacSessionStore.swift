@@ -316,7 +316,7 @@ public final class MacSessionStore {
            ids.allSatisfy({ cachedSnapshotDetails[$0] != nil }) {
             return Dictionary(uniqueKeysWithValues: ids.compactMap { id in
                 guard let detail = cachedSnapshotDetails[id],
-                      let message = AgentStatusNookSnapshot.currentTurnUserMessage(in: detail) else {
+                      let message = HaloSnapshot.currentTurnUserMessage(in: detail) else {
                     return nil
                 }
                 return (id, message)

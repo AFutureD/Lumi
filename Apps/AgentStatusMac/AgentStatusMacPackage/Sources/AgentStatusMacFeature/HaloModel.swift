@@ -5,7 +5,7 @@ import Foundation
 
 /// One line of the Notch's "Recent activity" block: a projected `TimelineRow`
 /// reduced to what the 22pt row needs.
-struct AgentStatusNookActivityRow: Identifiable, Equatable, Sendable {
+struct HaloActivityRow: Identifiable, Equatable, Sendable {
     let id: String
     let tag: TimelineTag
     let label: String
@@ -31,7 +31,7 @@ struct AgentStatusNookActivityRow: Identifiable, Equatable, Sendable {
 }
 
 /// Everything the Notch renders for one Session (list row, turn cards, detail).
-struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
+struct HaloSession: Identifiable, Equatable, Sendable {
     let id: SessionID
     let title: String
     let agent: AgentKind
@@ -51,8 +51,8 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
     let model: String?
     let totalTokens: Int64?
     let contextFraction: Double?
-    /// Newest last; capped by `AgentStatusNookSnapshot.recentRowLimit`.
-    let recentRows: [AgentStatusNookActivityRow]
+    /// Newest last; capped by `HaloSnapshot.recentRowLimit`.
+    let recentRows: [HaloActivityRow]
 
     var statusText: String {
         "\(SessionStatusTone.displayLifecycle(lifecycle: lifecycle, phase: phase).displayName) · \(phase.displayName)"
@@ -122,9 +122,9 @@ struct AgentStatusNookSession: Identifiable, Equatable, Sendable {
 /// (empty for flat rows). Children are ordered running → waiting → failed →
 /// done, newest first inside a bucket — the order of the count strip's
 /// stacked dots and of the expanded pills.
-struct AgentStatusNookListItem: Identifiable, Equatable, Sendable {
-    let session: AgentStatusNookSession
-    var children: [AgentStatusNookSession]
+struct HaloListItem: Identifiable, Equatable, Sendable {
+    let session: HaloSession
+    var children: [HaloSession]
 
     var id: SessionID { session.id }
 
@@ -140,7 +140,7 @@ struct AgentStatusNookListItem: Identifiable, Equatable, Sendable {
 /// lifecycle — Running (blue tier) expanded, everything else collapsed — and
 /// a row the user toggled keeps that choice until its tier changes, at which
 /// point it falls back to the default again.
-struct AgentStatusNookSubagentDisclosure: Equatable, Sendable {
+struct HaloSubagentDisclosure: Equatable, Sendable {
     private struct Override: Equatable, Sendable {
         let expanded: Bool
         /// The parent's tone when the user toggled; a different tone now
@@ -154,7 +154,7 @@ struct AgentStatusNookSubagentDisclosure: Equatable, Sendable {
         tone == .blue
     }
 
-    func isExpanded(_ item: AgentStatusNookListItem) -> Bool {
+    func isExpanded(_ item: HaloListItem) -> Bool {
         isExpanded(id: item.id, tone: item.session.statusTone)
     }
 
@@ -170,14 +170,14 @@ struct AgentStatusNookSubagentDisclosure: Equatable, Sendable {
     }
 
     /// Drops overrides for rows that left the list or whose tier changed.
-    mutating func prune(keeping items: [AgentStatusNookListItem]) {
+    mutating func prune(keeping items: [HaloListItem]) {
         let tones = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.session.statusTone) })
         overrides = overrides.filter { id, override in tones[id] == override.tone }
     }
 }
 
 /// What the expanded Notch is showing.
-enum AgentStatusNookRoute: Equatable, Sendable {
+enum HaloRoute: Equatable, Sendable {
     case list
     case detail(SessionID)
     case turnStarted(SessionID)
@@ -185,7 +185,7 @@ enum AgentStatusNookRoute: Equatable, Sendable {
 }
 
 /// Turn boundary transitions detected between two snapshots.
-struct AgentStatusNookTurnEvent: Equatable, Sendable {
+struct HaloTurnEvent: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case started
         case ended
@@ -195,10 +195,10 @@ struct AgentStatusNookTurnEvent: Equatable, Sendable {
     let sessionID: SessionID
     let kind: Kind
     /// The L3 row that triggered it.
-    let row: AgentStatusNookActivityRow
+    let row: HaloActivityRow
 }
 
-enum AgentStatusNookSnapshot {
+enum HaloSnapshot {
     static let recentRowLimit = 8
     static let maximumSessionAge: TimeInterval = 7 * 86_400
 
@@ -228,13 +228,13 @@ enum AgentStatusNookSnapshot {
     /// session in `sessions` (running → waiting → failed → done); a child
     /// whose parent is not listed (the store promoted it to top level) gets
     /// a flat row of its own.
-    static func listItems(from sessions: [AgentStatusNookSession]) -> [AgentStatusNookListItem] {
-        var items: [AgentStatusNookListItem] = []
+    static func listItems(from sessions: [HaloSession]) -> [HaloListItem] {
+        var items: [HaloListItem] = []
         for session in sessions {
             if let groupID = session.groupID, groupID == items.last?.session.id {
                 items[items.count - 1].children.append(session)
             } else {
-                items.append(AgentStatusNookListItem(session: session, children: []))
+                items.append(HaloListItem(session: session, children: []))
             }
         }
         for index in items.indices where items[index].children.count > 1 {
@@ -251,7 +251,7 @@ enum AgentStatusNookSnapshot {
     static func make(
         summaries: [SessionSummary],
         details: [SessionID: SessionDetail]
-    ) -> [AgentStatusNookSession] {
+    ) -> [HaloSession] {
         let byID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return summaries.map { summary in
             let rootID = SessionHierarchy.rootID(of: summary, in: byID)
@@ -276,7 +276,7 @@ enum AgentStatusNookSnapshot {
             }
             let prompt = currentTurn?.prompt
                 ?? detail.flatMap(currentTurnUserMessage(in:))
-            return AgentStatusNookSession(
+            return HaloSession(
                 id: summary.id,
                 title: summary.title,
                 agent: summary.agent,
@@ -293,7 +293,7 @@ enum AgentStatusNookSnapshot {
                 model: configuredWindow?.model,
                 totalTokens: (usage?.total ?? usage?.last)?.totalTokens,
                 contextFraction: fraction,
-                recentRows: rows.suffix(recentRowLimit).map(AgentStatusNookActivityRow.init(row:))
+                recentRows: rows.suffix(recentRowLimit).map(HaloActivityRow.init(row:))
             )
         }
     }
@@ -318,14 +318,14 @@ enum AgentStatusNookSnapshot {
 }
 
 /// Only L3 rows (USER / TURN END / FAILED / ABORTED) may reach the Notch.
-enum AgentStatusNookActivityDiff {
+enum HaloActivityDiff {
     static func turnEvents(
-        previous: [AgentStatusNookSession],
-        current: [AgentStatusNookSession]
-    ) -> [AgentStatusNookTurnEvent] {
+        previous: [HaloSession],
+        current: [HaloSession]
+    ) -> [HaloTurnEvent] {
         let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
         let listedIDs = Set(current.map(\.id))
-        var events: [AgentStatusNookTurnEvent] = []
+        var events: [HaloTurnEvent] = []
         for session in current {
             // Subagents render inside their group's count strip; their turn
             // boundaries are the parent's internal progress, not notifications.
@@ -357,7 +357,7 @@ enum AgentStatusNookActivityDiff {
 }
 
 @MainActor
-final class AgentStatusNookCompactModel: ObservableObject {
+final class HaloCompactModel: ObservableObject {
     @Published private(set) var statusTone: SessionStatusTone = .gray
     @Published private(set) var sessionCount = 0
 
@@ -372,17 +372,17 @@ final class AgentStatusNookCompactModel: ObservableObject {
 }
 
 @MainActor
-final class AgentStatusNookModel: ObservableObject {
-    @Published private(set) var sessions: [AgentStatusNookSession] = []
+final class HaloModel: ObservableObject {
+    @Published private(set) var sessions: [HaloSession] = []
     /// Parent sessions in the list — the footer text and the compact badge.
     @Published private(set) var listedSessionCount = 0
     @Published private(set) var daemonAvailable = false
-    @Published var route: AgentStatusNookRoute = .list
+    @Published var route: HaloRoute = .list
     /// Per-row subagent group disclosure (lifecycle default + user toggles).
-    @Published private(set) var subagentDisclosure = AgentStatusNookSubagentDisclosure()
-    let compactModel = AgentStatusNookCompactModel()
+    @Published private(set) var subagentDisclosure = HaloSubagentDisclosure()
+    let compactModel = HaloCompactModel()
 
-    var onSnapshot: ((_ previous: [AgentStatusNookSession], _ current: [AgentStatusNookSession], _ initial: Bool) -> Void)?
+    var onSnapshot: ((_ previous: [HaloSession], _ current: [HaloSession], _ initial: Bool) -> Void)?
 
     private weak var store: MacSessionStore?
     private var refreshTask: Task<Void, Never>?
@@ -420,7 +420,7 @@ final class AgentStatusNookModel: ObservableObject {
         cardDismissTask?.cancel()
     }
 
-    func session(_ id: SessionID) -> AgentStatusNookSession? {
+    func session(_ id: SessionID) -> HaloSession? {
         sessions.first { $0.id == id }
     }
 
@@ -438,7 +438,7 @@ final class AgentStatusNookModel: ObservableObject {
     }
 
     /// Turn cards replace the list briefly and fall back to it.
-    func showTurnCard(_ route: AgentStatusNookRoute, dwell: Duration = .seconds(6)) {
+    func showTurnCard(_ route: HaloRoute, dwell: Duration = .seconds(6)) {
         if case .detail = self.route { return }   // never interrupt an open detail
         cardDismissTask?.cancel()
         self.route = route
@@ -453,7 +453,7 @@ final class AgentStatusNookModel: ObservableObject {
 
     /// The count strip was clicked: flip that row's subagent group. The
     /// choice sticks until the row's lifecycle tier changes.
-    func toggleSubagents(of item: AgentStatusNookListItem) {
+    func toggleSubagents(of item: HaloListItem) {
         subagentDisclosure.toggle(id: item.id, tone: item.session.statusTone)
     }
 
@@ -467,7 +467,7 @@ final class AgentStatusNookModel: ObservableObject {
     // MARK: - Loading
 
     private func reload(from store: MacSessionStore, immediate: Bool = false) {
-        let summaries = AgentStatusNookSnapshot.visibleSummaries(from: store.sessions, now: Date())
+        let summaries = HaloSnapshot.visibleSummaries(from: store.sessions, now: Date())
         let nextListedSessionCount = Self.parentCount(of: summaries)
         if listedSessionCount != nextListedSessionCount {
             listedSessionCount = nextListedSessionCount
@@ -493,12 +493,12 @@ final class AgentStatusNookModel: ObservableObject {
                 details = Dictionary(uniqueKeysWithValues: loaded.map { ($0.summary.id, $0) })
             }
             guard !Task.isCancelled, generation == self.refreshGeneration else { return }
-            let next = AgentStatusNookSnapshot.make(summaries: summaries, details: details)
+            let next = HaloSnapshot.make(summaries: summaries, details: details)
             let previous = self.sessions
             let initial = !self.hasLoaded
             if self.sessions != next { self.sessions = next }
             var disclosure = self.subagentDisclosure
-            disclosure.prune(keeping: AgentStatusNookSnapshot.listItems(from: next))
+            disclosure.prune(keeping: HaloSnapshot.listItems(from: next))
             if disclosure != self.subagentDisclosure { self.subagentDisclosure = disclosure }
             self.compactModel.update(statusTone: next.first?.statusTone ?? .gray)
             self.hasLoaded = true
@@ -528,7 +528,7 @@ final class AgentStatusNookModel: ObservableObject {
     }
 
     private func requiresImmediateRefresh(from store: MacSessionStore) -> Bool {
-        let summaries = AgentStatusNookSnapshot.visibleSummaries(from: store.sessions, now: Date())
+        let summaries = HaloSnapshot.visibleSummaries(from: store.sessions, now: Date())
         guard Self.parentCount(of: summaries) == listedSessionCount, summaries.count == sessions.count else { return true }
         let currentByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         return summaries.contains { summary in

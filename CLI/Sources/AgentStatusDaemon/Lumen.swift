@@ -10,16 +10,16 @@ private let log = Logger(label: "lifecycle")
 private let dbLog = Logger(label: "db")
 
 @main
-enum AgentStatusDaemonMain {
+enum LumenMain {
     static func main() async throws {
-        let configuration = AgentStatusConfiguration.default()
+        let configuration = DaemonConfiguration.default()
         // Logging first: everything after this line, including a failing
         // start, lands in `daemon.log` (and `errors.log`) as well as stderr.
         let logConfiguration = LogConfiguration.fromEnvironment(
             subsystem: "daemon",
             standardErrorPrefix: "Lumen:"
         )
-        AgentStatusLogging.bootstrap(logConfiguration)
+        Diagnostics.bootstrap(logConfiguration)
         do {
             try configuration.prepareFileSystem()
         } catch {

@@ -4,7 +4,7 @@ import NookApp
 import SwiftUI
 
 @MainActor
-struct AgentStatusNookSettingsView: View {
+struct HaloSettingsView: View {
     @ObservedObject var appState: AppState
     let showNook: @MainActor () -> Void
     let toggleKeepOpen: @MainActor () -> Void
@@ -52,30 +52,30 @@ struct AgentStatusNookSettingsView: View {
 
             SettingsSection(title: "Adjust") {
                 SettingsCard {
-                    AgentStatusAdjustmentSliderRow(
+                    AdjustmentSliderRow(
                         title: "Compact Width",
                         value: compactWidthBinding,
-                        range: AgentStatusNookAdjustmentDefaults.compactWidthRange,
+                        range: HaloAdjustmentDefaults.compactWidthRange,
                         step: 1,
-                        defaultValue: Double(AgentStatusNookAdjustmentDefaults.compactWidth),
+                        defaultValue: Double(HaloAdjustmentDefaults.compactWidth),
                         valueText: { "\(Int($0.rounded())) pt" }
                     )
                     Divider()
-                    AgentStatusAdjustmentSliderRow(
+                    AdjustmentSliderRow(
                         title: "Expanded Width",
                         value: expandedWidthBinding,
-                        range: AgentStatusNookAdjustmentDefaults.expandedWidthRange,
+                        range: HaloAdjustmentDefaults.expandedWidthRange,
                         step: 4,
-                        defaultValue: Double(AgentStatusNookAdjustmentDefaults.expandedWidth),
+                        defaultValue: Double(HaloAdjustmentDefaults.expandedWidth),
                         valueText: { "\(Int($0.rounded())) pt" }
                     )
                     Divider()
-                    AgentStatusAdjustmentSliderRow(
+                    AdjustmentSliderRow(
                         title: "Expand Animation",
                         value: expandAnimationDurationBinding,
-                        range: AgentStatusNookAdjustmentDefaults.expandAnimationDurationRange,
+                        range: HaloAdjustmentDefaults.expandAnimationDurationRange,
                         step: 0.01,
-                        defaultValue: AgentStatusNookAdjustmentDefaults.expandAnimationDuration,
+                        defaultValue: HaloAdjustmentDefaults.expandAnimationDuration,
                         valueText: { String(format: "%.2f s", $0) }
                     )
                 }
@@ -160,14 +160,14 @@ struct AgentStatusNookSettingsView: View {
     private var compactWidthBinding: Binding<Double> {
         optionalCGFloatPreferenceBinding(
             \.compactNotchWidth,
-            fallback: AgentStatusNookAdjustmentDefaults.compactWidth
+            fallback: HaloAdjustmentDefaults.compactWidth
         )
     }
 
     private var expandedWidthBinding: Binding<Double> {
         optionalCGFloatPreferenceBinding(
             \.expandedNotchWidth,
-            fallback: AgentStatusNookAdjustmentDefaults.expandedWidth
+            fallback: HaloAdjustmentDefaults.expandedWidth
         )
     }
 
@@ -175,7 +175,7 @@ struct AgentStatusNookSettingsView: View {
         Binding(
             get: {
                 appState.appearancePreferences.expandAnimationDuration
-                    ?? AgentStatusNookAdjustmentDefaults.expandAnimationDuration
+                    ?? HaloAdjustmentDefaults.expandAnimationDuration
             },
             set: { next in
                 var preferences = appState.appearancePreferences
@@ -236,12 +236,12 @@ struct AgentStatusNookSettingsView: View {
 
     private func replacePreferences(_ preferences: NookAppearancePreferences) {
         appState.replaceAppearancePreferences(
-            AgentStatusNookController.normalizedAppearancePreferences(preferences)
+            HaloController.normalizedAppearancePreferences(preferences)
         )
     }
 }
 
-private struct AgentStatusAdjustmentSliderRow: View {
+private struct AdjustmentSliderRow: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>
@@ -253,13 +253,13 @@ private struct AgentStatusAdjustmentSliderRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Text(title)
-                    .font(AgentStatusDesign.Font.UI.body)
+                    .font(Design.Font.UI.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     value = defaultValue
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(AgentStatusDesign.Font.UI.caption)
+                        .font(Design.Font.UI.caption)
                         .foregroundStyle(.secondary)
                         .frame(width: 20, height: 20)
                 }
@@ -270,11 +270,11 @@ private struct AgentStatusAdjustmentSliderRow: View {
                 .accessibilityLabel("Reset \(title)")
 
                 Text(valueText(value))
-                    .font(AgentStatusDesign.Font.UI.caption.monospacedDigit())
+                    .font(Design.Font.UI.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(AgentStatusDesign.Color.UI.chipFill, in: Capsule())
+                    .background(Design.Color.UI.chipFill, in: Capsule())
             }
 
             Slider(value: steppedValue, in: range)

@@ -101,10 +101,10 @@ struct SessionActivityView: View {
             ScrollView {
                 if all.isEmpty {
                     Text(presentation == nil ? "" : "No Activity")
-                        .font(AgentStatusDesign.Font.UI.caption)
+                        .font(Design.Font.UI.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, AgentStatusDesign.Layout.activityHorizontalInset)
+                        .padding(.vertical, Design.Layout.activityHorizontalInset)
                 } else if activities.isEmpty {
                     ActivityFilterEmptyState { state.filter.reset() }
                 } else {
@@ -128,7 +128,7 @@ struct SessionActivityView: View {
                         }
                     }
                     .padding(.top, DesignSystem.Spacing.s)
-                    .padding(.bottom, AgentStatusDesign.Layout.activityHorizontalInset)
+                    .padding(.bottom, Design.Layout.activityHorizontalInset)
                 }
             }
             .scrollPosition($listPosition)
@@ -187,13 +187,13 @@ struct SessionActivityView: View {
                 (
                     height: !filter.includes(activity) ? 0
                         : activity.lane == nil
-                        ? AgentStatusDesign.Layout.activityMarkerRowHeight
-                        : AgentStatusDesign.Layout.activityRowHeight,
+                        ? Design.Layout.activityMarkerRowHeight
+                        : Design.Layout.activityRowHeight,
                     columnWidth: activity.laneStripColumnWidth
                 )
             },
             topInset: DesignSystem.Spacing.s,
-            spacing: AgentStatusDesign.Layout.laneCellSpacing
+            spacing: Design.Layout.laneCellSpacing
         )
     }
 
@@ -202,14 +202,14 @@ struct SessionActivityView: View {
         return VStack(alignment: .leading, spacing: DesignSystem.Spacing.mPlus) {
             HStack(spacing: DesignSystem.Spacing.m) {
                 Text("Activity")
-                    .font(AgentStatusDesign.Font.UI.section)
+                    .font(Design.Font.UI.section)
                     .fixedSize()
                 Text(state.filter.isFiltering ? "\(visible.count) / \(all.count)" : "\(all.count)")
-                    .font(AgentStatusDesign.Font.UI.pill.monospacedDigit())
+                    .font(Design.Font.UI.pill.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, DesignSystem.Metrics.countPillHorizontalPadding)
                     .padding(.vertical, DesignSystem.Metrics.countPillVerticalPadding)
-                    .background(AgentStatusDesign.Color.UI.chipFill, in: Capsule())
+                    .background(Design.Color.UI.chipFill, in: Capsule())
                     .accessibilityLabel(state.filter.isFiltering ? "\(visible.count) of \(all.count) shown" : "\(all.count) items")
                 Spacer(minLength: DesignSystem.Spacing.m)
                 ForEach(ActivityFilterDimension.allCases, id: \.self) { dimension in
@@ -227,7 +227,7 @@ struct SessionActivityView: View {
                     Image(systemName: state.timelineMode == .lanes
                         ? "arrow.down.and.line.horizontal.and.arrow.up"
                         : "arrow.up.and.line.horizontal.and.arrow.down")
-                        .font(AgentStatusDesign.Font.UI.caption)
+                        .font(Design.Font.UI.caption)
                         .frame(width: DesignSystem.Icon.toolbar, height: DesignSystem.Spacing.l)
                 }
                 .buttonStyle(.glass)
@@ -254,12 +254,12 @@ struct SessionActivityView: View {
                 }
             }
         }
-        .padding(.horizontal, AgentStatusDesign.Layout.activityHorizontalInset)
+        .padding(.horizontal, Design.Layout.activityHorizontalInset)
         .padding(.vertical, DesignSystem.Spacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .overlay(alignment: .bottom) {
-            AgentStatusDesign.Color.UI.activityHairline.frame(height: 1)
+            Design.Color.UI.activityHairline.frame(height: 1)
         }
     }
 
@@ -341,7 +341,7 @@ private struct ActivityFilterEmptyState: View {
     var body: some View {
         VStack(spacing: E.gap) {
             Text("No messages match the Category and Importance filters")
-                .font(AgentStatusDesign.Font.UI.body)
+                .font(Design.Font.UI.body)
                 .foregroundStyle(Color(F.emptyText))
                 .multilineTextAlignment(.center)
             Button(action: onReset) {
@@ -364,7 +364,7 @@ private struct ActivityFilterEmptyState: View {
 private extension SessionActivityPresentation {
     /// Strip column width: a 13pt cell, or the 4pt bar of a cross-lane marker.
     var laneStripColumnWidth: CGFloat {
-        lane == nil ? AgentStatusDesign.Layout.laneMarkerWidth : AgentStatusDesign.Layout.laneCellSize
+        lane == nil ? Design.Layout.laneMarkerWidth : Design.Layout.laneCellSize
     }
 }
 
@@ -696,8 +696,8 @@ private struct SessionActivityTimeline: View {
 
     private var geometry: LaneStripGeometry {
         LaneStripGeometry(
-            cellSize: AgentStatusDesign.Layout.laneCellSize,
-            spacing: AgentStatusDesign.Layout.laneCellSpacing,
+            cellSize: Design.Layout.laneCellSize,
+            spacing: Design.Layout.laneCellSpacing,
             laneCount: mode == .lanes ? TimelineLane.allCases.count : 1,
             columnWidths: activities.map(\.laneStripColumnWidth)
         )
@@ -707,7 +707,7 @@ private struct SessionActivityTimeline: View {
     private var contentWidth: CGFloat { geometry.contentWidth }
 
     var body: some View {
-        HStack(alignment: .top, spacing: AgentStatusDesign.Layout.activityColumnGap) {
+        HStack(alignment: .top, spacing: Design.Layout.activityColumnGap) {
             VStack(alignment: .trailing, spacing: geometry.spacing) {
                 if mode == .lanes {
                     ForEach(TimelineLane.allCases, id: \.rawValue) { lane in
@@ -717,7 +717,7 @@ private struct SessionActivityTimeline: View {
                     laneLabel("Timeline")
                 }
             }
-            .frame(width: AgentStatusDesign.Layout.laneNameWidth, alignment: .trailing)
+            .frame(width: Design.Layout.laneNameWidth, alignment: .trailing)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 canvas
@@ -760,8 +760,8 @@ private struct SessionActivityTimeline: View {
             for index in columns {
                 let activity = activities[index]
                 let radius = geometry.isMarker(index)
-                    ? AgentStatusDesign.Layout.laneMarkerCornerRadius
-                    : AgentStatusDesign.Layout.laneCellCornerRadius
+                    ? Design.Layout.laneMarkerCornerRadius
+                    : Design.Layout.laneCellCornerRadius
                 for lane in 0 ..< geometry.laneCount where isFilled(activity, lane: lane) {
                     fills[activity.tag, default: Path()].addRoundedRect(
                         in: geometry.rect(index: index, lane: lane),
@@ -891,8 +891,8 @@ private struct SessionActivityTimeline: View {
         Path(
             roundedRect: geometry.rect(index: index, lane: lane),
             cornerRadius: geometry.isMarker(index)
-                ? AgentStatusDesign.Layout.laneMarkerCornerRadius
-                : AgentStatusDesign.Layout.laneCellCornerRadius,
+                ? Design.Layout.laneMarkerCornerRadius
+                : Design.Layout.laneCellCornerRadius,
             style: .continuous
         )
     }
@@ -906,8 +906,8 @@ private struct SessionActivityTimeline: View {
 
     private func laneLabel(_ title: String) -> some View {
         Text(title)
-            .font(AgentStatusDesign.Font.UI.laneName)
-            .foregroundStyle(AgentStatusDesign.Color.UI.inkTertiary)
+            .font(Design.Font.UI.laneName)
+            .foregroundStyle(Design.Color.UI.inkTertiary)
             .frame(height: geometry.cellSize)
     }
 }
@@ -923,35 +923,35 @@ private struct SessionActivityRow: View {
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: AgentStatusDesign.Layout.activityColumnGap) {
+            HStack(spacing: Design.Layout.activityColumnGap) {
                 Text(activity.occurredAt)
-                    .font(AgentStatusDesign.Font.UI.monoSmall)
-                    .foregroundStyle(AgentStatusDesign.Color.UI.inkQuaternary)
+                    .font(Design.Font.UI.monoSmall)
+                    .foregroundStyle(Design.Color.UI.inkQuaternary)
                     .lineLimit(1)
-                    .frame(width: AgentStatusDesign.Layout.activityTimestampWidth, alignment: .leading)
+                    .frame(width: Design.Layout.activityTimestampWidth, alignment: .leading)
 
                 DesignTag(activity.label, style: activity.tag.tagStyle(.light))
-                    .frame(width: AgentStatusDesign.Layout.activityTagWidth)
+                    .frame(width: Design.Layout.activityTagWidth)
 
                 Text(activity.content)
-                    .font(AgentStatusDesign.Font.UI.body)
-                    .foregroundStyle(AgentStatusDesign.Color.UI.inkPrimary)
+                    .font(Design.Font.UI.body)
+                    .foregroundStyle(Design.Color.UI.inkPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: DesignSystem.Typography.tag.size, weight: .semibold))
-                    .foregroundStyle(AgentStatusDesign.Color.UI.chevron)
-                    .frame(width: AgentStatusDesign.Layout.rowChevronSize.width, height: AgentStatusDesign.Layout.rowChevronSize.height)
+                    .foregroundStyle(Design.Color.UI.chevron)
+                    .frame(width: Design.Layout.rowChevronSize.width, height: Design.Layout.rowChevronSize.height)
             }
-            .padding(.horizontal, AgentStatusDesign.Layout.activityHorizontalInset)
+            .padding(.horizontal, Design.Layout.activityHorizontalInset)
             .frame(height: activity.lane == nil
-                ? AgentStatusDesign.Layout.activityMarkerRowHeight
-                : AgentStatusDesign.Layout.activityRowHeight)
+                ? Design.Layout.activityMarkerRowHeight
+                : Design.Layout.activityRowHeight)
             .background(rowBackground)
             .overlay(alignment: .bottom) {
-                AgentStatusDesign.Color.UI.activityHairline.frame(height: 1)
+                Design.Color.UI.activityHairline.frame(height: 1)
             }
             .contentShape(Rectangle())
         }

@@ -1,7 +1,7 @@
 import AgentStatusIPCClient
 import Foundation
 
-public struct AgentStatusConfiguration: Hashable, Sendable {
+public struct DaemonConfiguration: Hashable, Sendable {
     public let supportDirectory: URL
     public let socketPath: String
     public let databasePath: String
@@ -36,7 +36,7 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         rolloutPollIntervalSeconds: Double = 2,
         rolloutWatcherEnabled: Bool = false,
         claudeWatcherEnabled: Bool = true,
-        relayURL: URL = AgentStatusConfiguration.defaultRelayURL,
+        relayURL: URL = DaemonConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
         relayStatePath: String? = nil,
         relayCredentialService: String = KeychainRelayHostCredentialStore.defaultService
@@ -57,7 +57,7 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
     public static func `default`(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> AgentStatusConfiguration {
+    ) -> DaemonConfiguration {
         let supportDirectory = environment["LUMI_SUPPORT_DIRECTORY"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent("Library/Application Support/Lumi", isDirectory: true)
@@ -66,7 +66,7 @@ public struct AgentStatusConfiguration: Hashable, Sendable {
         let codexHome = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent(".codex", isDirectory: true)
 
-        return AgentStatusConfiguration(
+        return DaemonConfiguration(
             supportDirectory: supportDirectory,
             socketPath: DaemonEndpoint.defaultSocketPath(
                 environment: environment,

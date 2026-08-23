@@ -2,14 +2,14 @@ import AppKit
 
 /// Content insets shared by the detail column (Pairing, Settings): `24 28 28`.
 @MainActor
-enum AgentStatusDetailLayout {
+enum DetailLayout {
     static let horizontalInset: CGFloat = 28
     static let topInset: CGFloat = 24
     static let bottomInset: CGFloat = 28
     static let headerToContentSpacing: CGFloat = 18
     static let minimumContentWidth: CGFloat = 344
     static let maximumContentWidth: CGFloat = 900
-    static let minimumColumnWidth = AgentStatusDesign.Layout.detailMinimumWidth
+    static let minimumColumnWidth = Design.Layout.detailMinimumWidth
 
     /// `content.width == min(container − insets, maximumContentWidth)`.
     ///

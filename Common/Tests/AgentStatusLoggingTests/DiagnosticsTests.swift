@@ -16,7 +16,7 @@ private func lines(of url: URL) throws -> [String] {
 
 /// A `Logger` bound to our handler without touching the process-wide bootstrap.
 private func makeLogger(category: String, _ configuration: LogConfiguration) -> Logger {
-    Logger(label: category) { label in AgentStatusLogging.makeHandler(category: label, configuration: configuration) }
+    Logger(label: category) { label in Diagnostics.makeHandler(category: label, configuration: configuration) }
 }
 
 @Test func messageRendersTextThenSortedFieldsWithErrorLastAndTraceFirst() {

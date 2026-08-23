@@ -11,7 +11,7 @@ final class SessionDetailViewController: NSViewController {
     private let renderer = SessionPagePresentationRenderer()
 
     let subheaderAccessory = DetailSubheaderAccessoryController(
-        horizontalInset: AgentStatusDesign.Layout.activityHorizontalInset
+        horizontalInset: Design.Layout.activityHorizontalInset
     )
     private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
     private let agentChip = CapsuleChipView()
@@ -42,7 +42,7 @@ final class SessionDetailViewController: NSViewController {
         split.activity.rootView = makeActivityView()
         split.inspector.rootView = makeInspectorView()
 
-        emptyLabel.font = AgentStatusDesign.Font.body
+        emptyLabel.font = Design.Font.body
         emptyLabel.textColor = .secondaryLabelColor
 
         [split.view, emptyLabel].forEach {
@@ -183,7 +183,7 @@ final class SessionDetailViewController: NSViewController {
         textView.isGrammarCheckingEnabled = false
         textView.isAutomaticLinkDetectionEnabled = false
         textView.drawsBackground = false
-        textView.font = AgentStatusDesign.Font.mono
+        textView.font = Design.Font.mono
         textView.textColor = .labelColor
         textView.textContainerInset = NSSize(width: 10, height: 10)
         textView.string = SessionPagePresentationBuilder.rawData(for: activity.rawItems)
@@ -249,11 +249,11 @@ final class SessionDetailSplitViewController: NSSplitViewController {
         splitView.isVertical = true
 
         let activityItem = NSSplitViewItem(viewController: activityController)
-        activityItem.minimumThickness = AgentStatusDesign.Layout.detailMinimumWidth - 40
+        activityItem.minimumThickness = Design.Layout.detailMinimumWidth - 40
         activityItem.holdingPriority = .defaultLow
 
-        inspectorItem.minimumThickness = AgentStatusDesign.Layout.inspectorWidth
-        inspectorItem.maximumThickness = AgentStatusDesign.Layout.inspectorWidth
+        inspectorItem.minimumThickness = Design.Layout.inspectorWidth
+        inspectorItem.maximumThickness = Design.Layout.inspectorWidth
         inspectorItem.canCollapse = true
         inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         inspectorItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 260)

@@ -2,7 +2,7 @@ import UIKit
 import AgentStatusIOSFeature
 
 @main
-final class AgentStatusIOSApp: UIResponder, UIApplicationDelegate {
+final class LumiIOSApp: UIResponder, UIApplicationDelegate {
     private let coordinator = IOSApplicationCoordinator()
     var window: UIWindow?
 

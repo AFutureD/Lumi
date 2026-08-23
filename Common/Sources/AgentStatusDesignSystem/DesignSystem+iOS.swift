@@ -1,6 +1,6 @@
 import Foundation
 
-// iPhone screen file (`Agent Status iOS - 完整设计`, 393 × 852) — the values
+// iPhone screen file (the iPhone design canvas, 393 × 852) — the values
 // the iOS client cannot take from UIKit itself. System controls (navigation
 // bar, search bar, segmented control, tab bar, inset-grouped lists, sheets)
 // keep their system metrics and system colours; only the product's own

@@ -163,7 +163,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
 
     private func makeTitleItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
         let title = NSTextField(labelWithString: "")
-        title.font = AgentStatusDesign.Font.title
+        title.font = Design.Font.title
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 1
         title.usesSingleLineMode = true
@@ -194,7 +194,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         item.searchField.target = self
         item.searchField.action = #selector(searchChanged(_:))
         item.searchField.delegate = self
-        item.preferredWidthForSearchField = AgentStatusDesign.Layout.sessionListWidth - 28
+        item.preferredWidthForSearchField = Design.Layout.sessionListWidth - 28
         item.resignsFirstResponderWithCancel = true
         item.visibilityPriority = .high
         searchField = item.searchField
@@ -203,7 +203,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
 
     private func makeSettingsLabelItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
         let label = NSTextField(labelWithString: "Settings")
-        label.font = AgentStatusDesign.Font.group
+        label.font = Design.Font.group
         label.textColor = .labelColor
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Settings"
@@ -297,8 +297,8 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         titleLabel.attributedStringValue = NSAttributedString(
             string: text,
             attributes: [
-                .font: AgentStatusDesign.Font.title,
-                .kern: AgentStatusDesign.Font.titleKerning,
+                .font: Design.Font.title,
+                .kern: Design.Font.titleKerning,
                 .foregroundColor: NSColor.labelColor,
                 .paragraphStyle: paragraph,
             ]

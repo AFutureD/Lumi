@@ -12,7 +12,7 @@ enum DebugSnapshotExporter {
         UserDefaults.standard.string(forKey: "LumiSnapshotDirectory").map { URL(fileURLWithPath: $0) }
     }
 
-    static func run(notch: AgentStatusNookController) {
+    static func run(notch: HaloController) {
         guard let directory else { return }
         Task { @MainActor in
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

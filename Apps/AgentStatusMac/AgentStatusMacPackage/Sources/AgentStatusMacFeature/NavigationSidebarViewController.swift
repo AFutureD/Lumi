@@ -85,10 +85,10 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
         switch rows[row] {
         case .section:
             row == 0
-                ? AgentStatusDesign.Layout.sidebarFirstGroupHeight
-                : AgentStatusDesign.Layout.sidebarGroupHeight
+                ? Design.Layout.sidebarFirstGroupHeight
+                : Design.Layout.sidebarGroupHeight
         case .destination:
-            AgentStatusDesign.Layout.sidebarRowHeight
+            Design.Layout.sidebarRowHeight
         }
     }
 
@@ -108,7 +108,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
         case let .section(title):
             let cell = NSTableCellView()
             let label = NSTextField(labelWithString: title)
-            label.font = AgentStatusDesign.Font.group
+            label.font = Design.Font.group
             label.textColor = .secondaryLabelColor
             label.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(label)
@@ -118,7 +118,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
                 label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
                 label.bottomAnchor.constraint(
                     equalTo: cell.bottomAnchor,
-                    constant: -AgentStatusDesign.Layout.sidebarGroupBottomInset
+                    constant: -Design.Layout.sidebarGroupBottomInset
                 ),
             ])
             return cell
@@ -195,15 +195,15 @@ private final class SidebarDestinationCell: NSTableCellView {
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         icon.contentTintColor = .controlAccentColor
         icon.imageScaling = .scaleProportionallyDown
-        label.font = AgentStatusDesign.Font.body
+        label.font = Design.Font.body
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
-        detailLabel.font = AgentStatusDesign.Font.body
+        detailLabel.font = Design.Font.body
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.alignment = .right
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 3.5
-        dot.layer?.backgroundColor = AgentStatusDesign.Color.connected.cgColor
+        dot.layer?.backgroundColor = Design.Color.connected.cgColor
 
         [icon, label, detailLabel, dot].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false

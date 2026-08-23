@@ -3,7 +3,7 @@ import AppKit
 import NookApp
 import SwiftUI
 
-enum AgentStatusSettingsSection: Int, CaseIterable {
+enum SettingsSectionID: Int, CaseIterable {
     case general
     case notch
     case daemon
@@ -46,8 +46,8 @@ enum AgentStatusSettingsSection: Int, CaseIterable {
 final class SettingsNavigationViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private let table = NSTableView()
     private var isSelecting = false
-    private(set) var selectedSection: AgentStatusSettingsSection = .general
-    var onSelection: ((AgentStatusSettingsSection) -> Void)?
+    private(set) var selectedSection: SettingsSectionID = .general
+    var onSelection: ((SettingsSectionID) -> Void)?
 
     override func loadView() {
         view = NSView()
@@ -56,7 +56,7 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
         table.addTableColumn(column)
         table.headerView = nil
         table.style = .plain
-        table.rowHeight = AgentStatusDesign.Layout.settingsNavigationRowHeight
+        table.rowHeight = Design.Layout.settingsNavigationRowHeight
         table.intercellSpacing = NSSize(width: 0, height: 1)
         table.selectionHighlightStyle = .regular
         table.backgroundColor = .clear
@@ -80,7 +80,7 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        AgentStatusSettingsSection.allCases.count
+        SettingsSectionID.allCases.count
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -94,12 +94,12 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let section = AgentStatusSettingsSection(rawValue: row) else { return nil }
+        guard let section = SettingsSectionID(rawValue: row) else { return nil }
         let cell = NSTableCellView()
         let title = NSTextField(labelWithString: section.title)
-        title.font = AgentStatusDesign.Font.rowTitle
+        title.font = Design.Font.rowTitle
         let subtitle = NSTextField(labelWithString: section.subtitle)
-        subtitle.font = AgentStatusDesign.Font.caption
+        subtitle.font = Design.Font.caption
         subtitle.textColor = .secondaryLabelColor
         let labels = NSStackView(views: [title, subtitle])
         labels.orientation = .vertical
@@ -108,7 +108,7 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
         labels.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(labels)
         cell.textField = title
-        let inset = AgentStatusDesign.Layout.listHorizontalInset + AgentStatusDesign.Layout.listRowInset
+        let inset = Design.Layout.listHorizontalInset + Design.Layout.listRowInset
         NSLayoutConstraint.activate([
             labels.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: inset),
             labels.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -inset),
@@ -119,12 +119,12 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !isSelecting,
-              let section = AgentStatusSettingsSection(rawValue: table.selectedRow) else { return }
+              let section = SettingsSectionID(rawValue: table.selectedRow) else { return }
         selectedSection = section
         onSelection?(section)
     }
 
-    func select(_ section: AgentStatusSettingsSection) {
+    func select(_ section: SettingsSectionID) {
         selectedSection = section
         guard isViewLoaded else { return }
         applySelection()
@@ -141,17 +141,17 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
 @MainActor
 final class SettingsDetailViewController: NSViewController {
     private let store: MacSessionStore
-    private let nook: AgentStatusNookController
+    private let nook: HaloController
     private let model: SettingsModel
-    let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: AgentStatusDetailLayout.horizontalInset)
+    let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: DetailLayout.horizontalInset)
     private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
     private let daemonPill = StatusPillView()
     private let hosting = NSHostingController(rootView: AnyView(EmptyView()))
     private var storeObservation: UUID?
 
-    private(set) var selectedSection: AgentStatusSettingsSection = .general
+    private(set) var selectedSection: SettingsSectionID = .general
 
-    init(store: MacSessionStore, nook: AgentStatusNookController) {
+    init(store: MacSessionStore, nook: HaloController) {
         self.store = store
         self.nook = nook
         model = SettingsModel(store: store)
@@ -190,7 +190,7 @@ final class SettingsDetailViewController: NSViewController {
         updateSubheader()
     }
 
-    func select(_ section: AgentStatusSettingsSection) {
+    func select(_ section: SettingsSectionID) {
         guard selectedSection != section else { return }
         selectedSection = section
         guard isViewLoaded else { return }
@@ -203,12 +203,12 @@ final class SettingsDetailViewController: NSViewController {
     }
 
     @ViewBuilder
-    private func panel(for section: AgentStatusSettingsSection) -> some View {
+    private func panel(for section: SettingsSectionID) -> some View {
         switch section {
         case .general:
             GeneralSettingsPanel(model: model)
         case .notch:
-            AgentStatusNookSettingsView(
+            HaloSettingsView(
                 appState: nook.appState,
                 showNook: { [weak nook] in nook?.showNook() },
                 toggleKeepOpen: { [weak nook] in nook?.toggleKeepOpen() }

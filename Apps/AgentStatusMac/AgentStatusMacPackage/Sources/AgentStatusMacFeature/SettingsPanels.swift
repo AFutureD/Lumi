@@ -285,7 +285,7 @@ struct DaemonSettingsPanel: View {
                     if model.daemonRegistered {
                         Button("Reinstall daemon") { model.reinstallDaemon() }
                         Button { model.uninstallDaemon() } label: {
-                            Text("Stop & uninstall").foregroundStyle(AgentStatusDesign.Color.UI.destructiveText)
+                            Text("Stop & uninstall").foregroundStyle(Design.Color.UI.destructiveText)
                         }
                     } else {
                         Button("Install & Start daemon") { model.installDaemon() }
@@ -299,10 +299,10 @@ struct DaemonSettingsPanel: View {
                     SettingsRow(
                         title: historyTitle,
                         subtitle: "History stays in SQLite until you delete it.",
-                        titleFont: AgentStatusDesign.Font.UI.rowTitle
+                        titleFont: Design.Font.UI.rowTitle
                     ) {
                         Button { model.clearHistory() } label: {
-                            Text("Clear history…").foregroundStyle(AgentStatusDesign.Color.UI.destructiveText)
+                            Text("Clear history…").foregroundStyle(Design.Color.UI.destructiveText)
                         }
                     }
                 }
@@ -313,7 +313,7 @@ struct DaemonSettingsPanel: View {
                     SettingsRow(
                         title: model.logDirectoryDescription,
                         subtitle: "daemon.log, helper.log and app.log, plus errors.log with every error from all three. Session content is never written.",
-                        titleFont: AgentStatusDesign.Font.UI.rowTitle
+                        titleFont: Design.Font.UI.rowTitle
                     ) {
                         Button("Show in Finder") { model.revealLogs() }
                     }
@@ -349,15 +349,15 @@ struct AgentsSettingsPanel: View {
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.hookInstalled ? "Codex integration installed" : "Codex integration not installed")
-                                .font(AgentStatusDesign.Font.UI.rowTitle)
+                                .font(Design.Font.UI.rowTitle)
                             Text(model.hookLocation)
-                                .font(AgentStatusDesign.Font.UI.caption)
+                                .font(Design.Font.UI.caption)
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Button { model.toggleCodexHook() } label: {
                             Text(model.hookInstalled ? "Remove Hook" : "Install Hook")
-                                .foregroundStyle(model.hookInstalled ? AgentStatusDesign.Color.UI.destructiveText : .primary)
+                                .foregroundStyle(model.hookInstalled ? Design.Color.UI.destructiveText : .primary)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -380,15 +380,15 @@ struct AgentsSettingsPanel: View {
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.claudeHookInstalled ? "Claude Code integration installed" : "Claude Code integration not installed")
-                                .font(AgentStatusDesign.Font.UI.rowTitle)
+                                .font(Design.Font.UI.rowTitle)
                             Text(model.claudeHookLocation)
-                                .font(AgentStatusDesign.Font.UI.caption)
+                                .font(Design.Font.UI.caption)
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Button { model.toggleClaudeHook() } label: {
                             Text(model.claudeHookInstalled ? "Remove Hook" : "Install Hook")
-                                .foregroundStyle(model.claudeHookInstalled ? AgentStatusDesign.Color.UI.destructiveText : .primary)
+                                .foregroundStyle(model.claudeHookInstalled ? Design.Color.UI.destructiveText : .primary)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -420,7 +420,7 @@ struct AgentsSettingsPanel: View {
             SettingsRow(
                 title: "Codex has not trusted \(keys.count) handler\(keys.count == 1 ? "" : "s")",
                 subtitle: "Sessions stop arriving until these are trusted. If authorizing fails, run /hooks in Codex.",
-                titleFont: AgentStatusDesign.Font.UI.rowTitle
+                titleFont: Design.Font.UI.rowTitle
             ) {
                 Button(model.isAuthorizingCodexHooks ? "Authorizing…" : "Authorize") { model.authorizeCodexHooks() }
                     .disabled(model.isAuthorizingCodexHooks)
@@ -430,7 +430,7 @@ struct AgentsSettingsPanel: View {
             SettingsRow(
                 title: "Hook trust could not be verified",
                 subtitle: "Codex did not answer. Open Codex and run /hooks to check the Lumi handlers.",
-                titleFont: AgentStatusDesign.Font.UI.rowTitle
+                titleFont: Design.Font.UI.rowTitle
             ) {
                 Button(model.isAuthorizingCodexHooks ? "Checking…" : "Check again") { model.authorizeCodexHooks() }
                     .disabled(model.isAuthorizingCodexHooks)

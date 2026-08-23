@@ -10,11 +10,11 @@ private let log = Logger(label: "lifecycle")
 public final class ApplicationCoordinator: NSObject {
     private let store = MacSessionStore()
     private lazy var relayHost = RelayHostStatusClient(store: store)
-    private lazy var notch: AgentStatusNookController = {
-        var actions = AgentStatusNookActions()
+    private lazy var notch: HaloController = {
+        var actions = HaloActions()
         actions.openMainSettings = { [weak self] in self?.showNotchSettings() }
         actions.showSession = { [weak self] sessionID in self?.showSession(sessionID) }
-        return AgentStatusNookController(store: store, actions: actions)
+        return HaloController(store: store, actions: actions)
     }()
     private lazy var mainWindow = MainWindowController(store: store, relayHost: relayHost, nook: notch)
     private lazy var daemonAutoUpdater = DaemonAutoUpdater(store: store)
@@ -24,7 +24,7 @@ public final class ApplicationCoordinator: NSObject {
     }
 
     /// swift-log's bootstrap runs once per process, before anything logs:
-    /// `AgentStatusMacApp.main` calls this first. `app.log` sits next to the
+    /// `LumiMacApp.main` calls this first. `app.log` sits next to the
     /// daemon's; `-LumiLogLevel debug` turns the per-frame lines on
     /// for one launch.
     public static func bootstrapLogging() {
@@ -33,7 +33,7 @@ public final class ApplicationCoordinator: NSObject {
             minimumLevel: UserDefaults.standard.string(forKey: "LumiLogLevel").flatMap(Logger.Level.init(lenient:)) ?? .info,
             directory: LogConfiguration.defaultDirectory()
         )
-        AgentStatusLogging.bootstrap(configuration)
+        Diagnostics.bootstrap(configuration)
         log.info("app_started", metadata: .fields([
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
             "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,

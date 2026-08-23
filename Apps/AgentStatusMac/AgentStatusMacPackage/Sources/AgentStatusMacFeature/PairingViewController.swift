@@ -176,12 +176,12 @@ final class PairingViewController: NSViewController {
             document.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
             document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            contentStack.topAnchor.constraint(equalTo: document.topAnchor, constant: AgentStatusDetailLayout.topInset),
-            contentStack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -AgentStatusDetailLayout.bottomInset),
+            contentStack.topAnchor.constraint(equalTo: document.topAnchor, constant: DetailLayout.topInset),
+            contentStack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -DetailLayout.bottomInset),
             // Unlike the other detail pages there is no reading-width cap: the
             // devices column stretches to the window edge (minus the inset).
-            contentStack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: AgentStatusDetailLayout.horizontalInset),
-            contentStack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -AgentStatusDetailLayout.horizontalInset),
+            contentStack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: DetailLayout.horizontalInset),
+            contentStack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -DetailLayout.horizontalInset),
         ])
         updateContentLayout()
     }
@@ -189,8 +189,8 @@ final class PairingViewController: NSViewController {
     /// Title 22 / 400 with the Relay pill at its right, subtitle 11 / 400,
     /// a 1px rule underneath — inset like the content (28).
     private func makeHeader() -> NSView {
-        titleLabel.font = AgentStatusDesign.Font.title
-        titleLabel.textColor = AgentStatusDesign.Color.inkPrimary
+        titleLabel.font = Design.Font.title
+        titleLabel.textColor = Design.Color.inkPrimary
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
@@ -199,7 +199,7 @@ final class PairingViewController: NSViewController {
         titleRow.alignment = .centerY
         titleRow.spacing = 12
 
-        subtitleLabel.font = AgentStatusDesign.Font.caption
+        subtitleLabel.font = Design.Font.caption
         subtitleLabel.textColor = .tertiaryLabelColor
         subtitleLabel.maximumNumberOfLines = 2
         subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -220,7 +220,7 @@ final class PairingViewController: NSViewController {
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(stack)
         header.addSubview(rule)
-        let inset = AgentStatusDetailLayout.horizontalInset
+        let inset = DetailLayout.horizontalInset
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: inset),
             stack.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -inset),
@@ -243,12 +243,12 @@ final class PairingViewController: NSViewController {
         qrImageView.layer?.cornerRadius = Pairing.qrRadius
         qrImageView.layer?.cornerCurve = .continuous
         qrImageView.layer?.borderWidth = 0.5
-        qrImageView.layer?.borderColor = AgentStatusDesign.Color.cardStroke.cgColor
+        qrImageView.layer?.borderColor = Design.Color.cardStroke.cgColor
         qrImageView.setAccessibilityLabel("Pairing QR code")
 
         let codeCaption = Self.sectionLabel("CODE")
         codeLabel.font = .design(Pairing.code)
-        codeLabel.textColor = AgentStatusDesign.Color.inkPrimary
+        codeLabel.textColor = Design.Color.inkPrimary
         codeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         let codeRow = codeLabel
 
@@ -261,17 +261,17 @@ final class PairingViewController: NSViewController {
 
         let relayLabel = Self.sectionLabel("RELAY")
         relayHostLabel.font = .design(Pairing.relayHost)
-        relayHostLabel.textColor = AgentStatusDesign.Color.inkPrimary
+        relayHostLabel.textColor = Design.Color.inkPrimary
         // One line, never cut: a long Relay host widens the card instead.
         relayHostLabel.lineBreakMode = .byClipping
         relayHostLabel.maximumNumberOfLines = 1
         relayHostLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let expiresCaption = NSTextField(labelWithString: "Expires in")
-        expiresCaption.font = AgentStatusDesign.Font.caption
+        expiresCaption.font = Design.Font.caption
         expiresCaption.textColor = .tertiaryLabelColor
         expiryValueLabel.font = .design(Pairing.expiryValue)
-        expiryValueLabel.textColor = AgentStatusDesign.Color.inkPrimary
+        expiryValueLabel.textColor = Design.Color.inkPrimary
         let expiryRow = NSStackView(views: [expiresCaption, expiryValueLabel])
         expiryRow.orientation = .horizontal
         expiryRow.spacing = 6
@@ -293,7 +293,7 @@ final class PairingViewController: NSViewController {
         topRow.alignment = .top
         topRow.spacing = Pairing.qrGap
 
-        codeHelpLabel.font = AgentStatusDesign.Font.caption
+        codeHelpLabel.font = Design.Font.caption
         codeHelpLabel.textColor = .tertiaryLabelColor
         codeHelpLabel.maximumNumberOfLines = 3
         codeHelpLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -337,7 +337,7 @@ final class PairingViewController: NSViewController {
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: Pairing.pendingIcon, weight: .regular)
         icon.contentTintColor = NSColor(DesignSystem.Semantic.accent)
         pendingTitle.font = .design(Pairing.pendingTitle)
-        pendingTitle.textColor = AgentStatusDesign.Color.inkPrimary
+        pendingTitle.textColor = Design.Color.inkPrimary
         pendingTitle.lineBreakMode = .byTruncatingMiddle
         pendingTitle.alignment = .center
         let titleRow = NSStackView(views: [icon, pendingTitle])
@@ -345,13 +345,13 @@ final class PairingViewController: NSViewController {
         titleRow.alignment = .centerY
         titleRow.spacing = 8
 
-        pendingSubtitle.font = AgentStatusDesign.Font.caption
+        pendingSubtitle.font = Design.Font.caption
         pendingSubtitle.textColor = .tertiaryLabelColor
         pendingSubtitle.alignment = .center
 
         for half in [sasFirstHalf, sasSecondHalf] {
             half.font = .design(Pairing.sas)
-            half.textColor = AgentStatusDesign.Color.inkPrimary
+            half.textColor = Design.Color.inkPrimary
             half.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
         let sasRow = NSStackView(views: [sasFirstHalf, sasSecondHalf])
@@ -360,7 +360,7 @@ final class PairingViewController: NSViewController {
         sasRow.alignment = .firstBaseline
 
         sasHint.font = .design(Pairing.sasHint)
-        sasHint.textColor = AgentStatusDesign.Color.inkSecondary
+        sasHint.textColor = Design.Color.inkSecondary
         sasHint.alignment = .center
         sasHint.maximumNumberOfLines = 3
 
@@ -370,7 +370,7 @@ final class PairingViewController: NSViewController {
         dontMatchButton.controlSize = .large
         dontMatchButton.attributedTitle = NSAttributedString(
             string: "Don't match",
-            attributes: [.foregroundColor: AgentStatusDesign.Color.destructiveText, .font: NSFont.design(Pairing.decisionButton)]
+            attributes: [.foregroundColor: Design.Color.destructiveText, .font: NSFont.design(Pairing.decisionButton)]
         )
         matchButton.target = self
         matchButton.action = #selector(match)
@@ -389,8 +389,8 @@ final class PairingViewController: NSViewController {
         buttons.spacing = Pairing.decisionButtonGap
         buttons.alignment = .centerY
 
-        pendingFootnote.font = AgentStatusDesign.Font.caption
-        pendingFootnote.textColor = AgentStatusDesign.Color.inkQuaternary
+        pendingFootnote.font = Design.Font.caption
+        pendingFootnote.textColor = Design.Color.inkQuaternary
         pendingFootnote.alignment = .center
 
         pendingStack.setViews([titleRow, pendingSubtitle, sasRow, sasHint, buttons, pendingFootnote], in: .center)
@@ -400,7 +400,7 @@ final class PairingViewController: NSViewController {
         pendingStack.setCustomSpacing(6, after: titleRow)
 
         resultTitle.font = .design(Pairing.pendingTitle)
-        resultTitle.textColor = AgentStatusDesign.Color.inkPrimary
+        resultTitle.textColor = Design.Color.inkPrimary
         resultTitle.alignment = .center
         resultBody.font = .design(Pairing.resultBody)
         resultBody.textColor = .tertiaryLabelColor
@@ -438,7 +438,7 @@ final class PairingViewController: NSViewController {
 
     private func configureDevicesColumn() {
         let recordsTitle = NSTextField(labelWithString: "Paired iPhones")
-        recordsTitle.font = AgentStatusDesign.Font.section
+        recordsTitle.font = Design.Font.section
         devicesCountChip.text = "0"
         let titleRow = NSStackView(views: [recordsTitle, devicesCountChip])
         titleRow.orientation = .horizontal
@@ -458,7 +458,7 @@ final class PairingViewController: NSViewController {
         ])
 
         let recordsHelp = NSTextField(wrappingLabelWithString: "配对码 5 分钟有效、只能用一次。Device token 只在这台 Mac 点 Match 之后才签发；Relay 全程拿不到能冒充任何一端的材料。撤销设备会关闭该 iPhone 的通道，历史 Session 仍保留在本机。")
-        recordsHelp.font = AgentStatusDesign.Font.caption
+        recordsHelp.font = Design.Font.caption
         recordsHelp.textColor = .tertiaryLabelColor
         recordsHelp.maximumNumberOfLines = 4
         recordsHelp.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -495,8 +495,8 @@ final class PairingViewController: NSViewController {
 
     private func updateContentLayout() {
         let availableWidth = max(
-            view.bounds.width - (AgentStatusDetailLayout.horizontalInset * 2),
-            AgentStatusDetailLayout.minimumContentWidth
+            view.bounds.width - (DetailLayout.horizontalInset * 2),
+            DetailLayout.minimumContentWidth
         )
         let compact = Self.usesCompactContentLayout(availableWidth: availableWidth)
         guard usesCompactLayout != compact else { return }
@@ -781,7 +781,7 @@ final class PairingViewController: NSViewController {
         devicesCountChip.text = "\(devices.filter { $0.revokedAt == nil && $0.keyVerified }.count)"
         guard !devices.isEmpty else {
             let label = NSTextField(labelWithString: "No iPhone has been paired with this Mac.")
-            label.font = AgentStatusDesign.Font.body
+            label.font = Design.Font.body
             label.textColor = .secondaryLabelColor
             let row = NSStackView(views: [label])
             row.edgeInsets = NSEdgeInsets(top: 0, left: Pairing.deviceRowInset, bottom: 0, right: Pairing.deviceRowInset)
@@ -816,7 +816,7 @@ final class PairingViewController: NSViewController {
         icon.widthAnchor.constraint(equalToConstant: Pairing.deviceIcon + 8).isActive = true
 
         let name = NSTextField(labelWithString: device.name)
-        name.font = AgentStatusDesign.Font.rowTitle
+        name.font = Design.Font.rowTitle
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let tag = StateTagView()
@@ -828,7 +828,7 @@ final class PairingViewController: NSViewController {
 
         let relayHostText = relayHost.pairing.map { RelayURLValidation.displayHost($0.relayURL) } ?? "—"
         let subtitle = NSTextField(labelWithString: isUnverified ? "Key not verified · pair this iPhone again" : relayHostText)
-        subtitle.font = isUnverified ? AgentStatusDesign.Font.caption : .design(Pairing.deviceSubtitle)
+        subtitle.font = isUnverified ? Design.Font.caption : .design(Pairing.deviceSubtitle)
         subtitle.textColor = .tertiaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
         subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -851,7 +851,7 @@ final class PairingViewController: NSViewController {
         action.isBordered = false
         action.attributedTitle = NSAttributedString(
             string: isActive ? "Revoke" : "Remove",
-            attributes: [.foregroundColor: AgentStatusDesign.Color.destructiveText, .font: NSFont.design(Pairing.deviceAction)]
+            attributes: [.foregroundColor: Design.Color.destructiveText, .font: NSFont.design(Pairing.deviceAction)]
         )
         action.heightAnchor.constraint(equalToConstant: Pairing.deviceActionHeight).isActive = true
         action.setContentHuggingPriority(.required, for: .horizontal)
@@ -887,7 +887,7 @@ final class PairingViewController: NSViewController {
         let result = NSMutableAttributedString(string: text, attributes: [
             .font: NSFont.design(Pairing.code),
             .kern: Pairing.code.tracking,
-            .foregroundColor: AgentStatusDesign.Color.inkPrimary,
+            .foregroundColor: Design.Color.inkPrimary,
         ])
         if let hyphen = text.range(of: "-") {
             result.addAttribute(.foregroundColor, value: NSColor(Pairing.codeHyphen), range: NSRange(hyphen, in: text))
@@ -1045,7 +1045,7 @@ private final class PendingCardView: NSView {
 
     private func applyColors() {
         layer?.backgroundColor = NSColor(AdaptiveDesignColor(light: DesignSystem.Surface.card, dark: DesignSystem.SurfaceDark.card)).cgColor
-        layer?.borderColor = (ring.isHidden ? AgentStatusDesign.Color.cardStroke : NSColor(DesignSystem.Pairing.pendingRingInner)).cgColor
+        layer?.borderColor = (ring.isHidden ? Design.Color.cardStroke : NSColor(DesignSystem.Pairing.pendingRingInner)).cgColor
         ring.borderColor = NSColor(DesignSystem.Pairing.pendingRingOuter).cgColor
     }
 }

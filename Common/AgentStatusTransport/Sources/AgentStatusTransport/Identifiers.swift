@@ -21,12 +21,12 @@ public struct ProtocolVersion: Codable, Hashable, Sendable {
     }
 }
 
-public protocol AgentStatusIdentifier: RawRepresentable, Codable, Hashable, Sendable
+public protocol TypedIdentifier: RawRepresentable, Codable, Hashable, Sendable
 where RawValue == String {
     init(rawValue: String)
 }
 
-public extension AgentStatusIdentifier {
+public extension TypedIdentifier {
     init() {
         self.init(rawValue: UUID().uuidString.lowercased())
     }
@@ -36,37 +36,37 @@ public extension AgentStatusIdentifier {
     }
 }
 
-public struct RequestID: AgentStatusIdentifier {
+public struct RequestID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-public struct EventID: AgentStatusIdentifier {
+public struct EventID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-public struct SessionID: AgentStatusIdentifier {
+public struct SessionID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-public struct TurnID: AgentStatusIdentifier {
+public struct TurnID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-public struct TimelineItemID: AgentStatusIdentifier {
+public struct TimelineItemID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-public struct DeviceID: AgentStatusIdentifier {
+public struct DeviceID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-public struct HostID: AgentStatusIdentifier {
+public struct HostID: TypedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }

@@ -11,7 +11,7 @@ final class MainWindowController: NSWindowController {
     private let rootController: RootSplitViewController
     private let toolbarController: MainWindowToolbarController
 
-    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: AgentStatusNookController) {
+    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: HaloController) {
         rootController = RootSplitViewController(store: store, relayHost: relayHost, nook: nook)
         toolbarController = MainWindowToolbarController(
             store: store,
@@ -63,7 +63,7 @@ final class MainWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
     }
 
-    func selectSettings(_ section: AgentStatusSettingsSection) {
+    func selectSettings(_ section: SettingsSectionID) {
         rootController.selectSettings(section)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -80,12 +80,12 @@ enum MainWindowLayoutPreferences {
     private static let sidebarCollapsedKey = "Lumi.Layout.SidebarCollapsed"
 
     static var sessionsListWidth: CGFloat {
-        get { stored(sessionsListWidthKey) ?? AgentStatusDesign.Layout.sessionListWidth }
+        get { stored(sessionsListWidthKey) ?? Design.Layout.sessionListWidth }
         set { defaults.set(Double(newValue), forKey: sessionsListWidthKey) }
     }
 
     static var settingsListWidth: CGFloat {
-        get { stored(settingsListWidthKey) ?? AgentStatusDesign.Layout.settingsListWidth }
+        get { stored(settingsListWidthKey) ?? Design.Layout.settingsListWidth }
         set { defaults.set(Double(newValue), forKey: settingsListWidthKey) }
     }
 
@@ -127,7 +127,7 @@ final class RootSplitViewController: NSSplitViewController {
     var onSelection: ((MainWindowController.Tab) -> Void)?
     var onToolbarStateChange: (() -> Void)?
 
-    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: AgentStatusNookController) {
+    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: HaloController) {
         navigation = NavigationSidebarViewController(store: store, relayHost: relayHost)
         sessionList = SessionListViewController(store: store)
         sessionDetail = SessionDetailViewController(store: store)
@@ -152,22 +152,22 @@ final class RootSplitViewController: NSSplitViewController {
         splitView.dividerStyle = .thin
 
         navigationItem.allowsFullHeightLayout = true
-        navigationItem.minimumThickness = AgentStatusDesign.Layout.sidebarWidth
-        navigationItem.maximumThickness = AgentStatusDesign.Layout.sidebarWidth
+        navigationItem.minimumThickness = Design.Layout.sidebarWidth
+        navigationItem.maximumThickness = Design.Layout.sidebarWidth
         navigationItem.canCollapse = true
         navigationItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         // Holding priorities must stay below the divider-drag (490) and window-resize
         // (500) priorities; ordering alone decides who absorbs width changes.
         navigationItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 261)
 
-        contentListItem.minimumThickness = AgentStatusDesign.Layout.contentListMinimumWidth
-        contentListItem.maximumThickness = AgentStatusDesign.Layout.contentListMaximumWidth
+        contentListItem.minimumThickness = Design.Layout.contentListMinimumWidth
+        contentListItem.maximumThickness = Design.Layout.contentListMaximumWidth
         contentListItem.canCollapse = true
         contentListItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         contentListItem.titlebarSeparatorStyle = .line
         contentListItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 260)
 
-        detailItem.minimumThickness = AgentStatusDesign.Layout.detailMinimumWidth
+        detailItem.minimumThickness = Design.Layout.detailMinimumWidth
         detailItem.holdingPriority = .defaultLow
         // The subheader strip carries its own hairline; no separator under the title.
         detailItem.titlebarSeparatorStyle = .none
@@ -261,7 +261,7 @@ final class RootSplitViewController: NSSplitViewController {
         onSelection?(tab)
     }
 
-    func selectSettings(_ section: AgentStatusSettingsSection) {
+    func selectSettings(_ section: SettingsSectionID) {
         select(.settings)
         settingsNavigation.select(section)
         settingsDetail.select(section)
@@ -278,7 +278,7 @@ final class RootSplitViewController: NSSplitViewController {
                 self.select(.pairing)
             } else if value.hasPrefix("settings") {
                 let name = value.split(separator: ":").last.map(String.init) ?? "general"
-                let section = AgentStatusSettingsSection.allCases.first { $0.title.lowercased() == name } ?? .general
+                let section = SettingsSectionID.allCases.first { $0.title.lowercased() == name } ?? .general
                 self.selectSettings(section)
             }
         }
@@ -298,8 +298,8 @@ final class RootSplitViewController: NSSplitViewController {
         // NSSplitViewController wraps item views; the arranged subview is the wrapper.
         guard splitView.arrangedSubviews.count > 1 else { return }
         let clamped = min(
-            max(width, AgentStatusDesign.Layout.contentListMinimumWidth),
-            AgentStatusDesign.Layout.contentListMaximumWidth
+            max(width, Design.Layout.contentListMinimumWidth),
+            Design.Layout.contentListMaximumWidth
         )
         isApplyingLayout = true
         splitView.setPosition(splitView.arrangedSubviews[1].frame.minX + clamped, ofDividerAt: 1)
@@ -315,7 +315,7 @@ final class RootSplitViewController: NSSplitViewController {
               selectedTab != .pairing else { return }
         guard splitView.arrangedSubviews.count > 1 else { return }
         let width = splitView.arrangedSubviews[1].frame.width
-        guard width >= AgentStatusDesign.Layout.contentListMinimumWidth else { return }
+        guard width >= Design.Layout.contentListMinimumWidth else { return }
         switch selectedTab {
         case .sessions:
             if abs(MainWindowLayoutPreferences.sessionsListWidth - width) >= 1 {

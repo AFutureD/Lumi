@@ -21,8 +21,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		8BC2655C2DEDD3F400F279A4 /* AgentStatusMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentStatusMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		8BC265742DEDD3F500F279A4 /* AgentStatusMac.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentStatusMac.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8BC2655C2DEDD3F400F279A4 /* Lumi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lumi.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8BC265742DEDD3F500F279A4 /* Lumi.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Lumi.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -99,8 +99,8 @@
 		8BC2655D2DEDD3F400F279A4 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8BC2655C2DEDD3F400F279A4 /* AgentStatusMac.app */,
-				8BC265742DEDD3F500F279A4 /* AgentStatusMac.xctest */,
+				8BC2655C2DEDD3F400F279A4 /* Lumi.app */,
+				8BC265742DEDD3F500F279A4 /* Lumi.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -130,7 +130,7 @@
 				8B90D1472DEDD44A00FBD189 /* AgentStatusMacFeature */,
 			);
 			productName = AgentStatusMac;
-			productReference = 8BC2655C2DEDD3F400F279A4 /* AgentStatusMac.app */;
+			productReference = 8BC2655C2DEDD3F400F279A4 /* Lumi.app */;
 			productType = "com.apple.product-type.application";
 		};
 		8BC265732DEDD3F500F279A4 /* AgentStatusMacUITests */ = {
@@ -153,7 +153,7 @@
 			packageProductDependencies = (
 			);
 			productName = AgentStatusMacUITests;
-			productReference = 8BC265742DEDD3F500F279A4 /* AgentStatusMac.xctest */;
+			productReference = 8BC265742DEDD3F500F279A4 /* Lumi.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */

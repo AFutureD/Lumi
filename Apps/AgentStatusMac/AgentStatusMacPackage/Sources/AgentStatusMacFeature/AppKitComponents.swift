@@ -2,11 +2,11 @@ import AgentStatusCore
 import AgentStatusDesignSystem
 import AppKit
 
-/// Row view with a neutral rounded selection (`AgentStatusDesign.Color.selection`),
+/// Row view with a neutral rounded selection (`Design.Color.selection`),
 /// inset from the column edges. Text keeps its normal colours when selected.
 @MainActor
 final class RoundedSelectionRowView: NSTableRowView {
-    var horizontalInset: CGFloat = AgentStatusDesign.Layout.listHorizontalInset
+    var horizontalInset: CGFloat = Design.Layout.listHorizontalInset
     /// Space kept below the pill (rows that carry their own inter-row gap).
     var bottomInset: CGFloat = 0
 
@@ -19,10 +19,10 @@ final class RoundedSelectionRowView: NSTableRowView {
         if !isFlipped { rect.origin.y += bottomInset }
         let path = NSBezierPath(
             roundedRect: rect,
-            xRadius: AgentStatusDesign.Layout.selectionCornerRadius,
-            yRadius: AgentStatusDesign.Layout.selectionCornerRadius
+            xRadius: Design.Layout.selectionCornerRadius,
+            yRadius: Design.Layout.selectionCornerRadius
         )
-        AgentStatusDesign.Color.selection.setFill()
+        Design.Color.selection.setFill()
         path.fill()
     }
 
@@ -132,7 +132,7 @@ final class StatusPillView: NSView {
         layer?.cornerRadius = Metric.height / 2
         layer?.borderWidth = Metric.ring
 
-        label.font = AgentStatusDesign.Font.pill
+        label.font = Design.Font.pill
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
 
@@ -193,7 +193,7 @@ final class CapsuleChipView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 9
         layer?.borderWidth = 0.5
-        label.font = AgentStatusDesign.Font.pill
+        label.font = Design.Font.pill
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
@@ -221,8 +221,8 @@ final class CapsuleChipView: NSView {
     }
 
     private func applyColors() {
-        layer?.backgroundColor = AgentStatusDesign.Color.chipFill.cgColor
-        layer?.borderColor = AgentStatusDesign.Color.chipStroke.cgColor
+        layer?.backgroundColor = Design.Color.chipFill.cgColor
+        layer?.borderColor = Design.Color.chipStroke.cgColor
     }
 }
 
@@ -231,9 +231,9 @@ final class CapsuleChipView: NSView {
 /// top-aligned split-view-item accessory (see `DetailSubheaderAccessoryController`).
 @MainActor
 final class DetailSubheaderView: NSView {
-    static let contentHeight: CGFloat = AgentStatusDesign.Layout.subheaderTopInset
-        + AgentStatusDesign.Layout.pillHeight
-        + AgentStatusDesign.Layout.subheaderBottomInset
+    static let contentHeight: CGFloat = Design.Layout.subheaderTopInset
+        + Design.Layout.pillHeight
+        + Design.Layout.subheaderBottomInset
         + 1
 
     private let stack = NSStackView()
@@ -246,7 +246,7 @@ final class DetailSubheaderView: NSView {
         stack.alignment = .centerY
         stack.spacing = 8
         stack.setHuggingPriority(.defaultLow, for: .horizontal)
-        trailingLabel.font = AgentStatusDesign.Font.caption
+        trailingLabel.font = Design.Font.caption
         trailingLabel.textColor = .tertiaryLabelColor
         trailingLabel.lineBreakMode = .byTruncatingTail
         trailingLabel.maximumNumberOfLines = 1
@@ -262,8 +262,8 @@ final class DetailSubheaderView: NSView {
             heightAnchor.constraint(equalToConstant: Self.contentHeight),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalInset),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: AgentStatusDesign.Layout.subheaderTopInset),
-            stack.heightAnchor.constraint(equalToConstant: AgentStatusDesign.Layout.pillHeight),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: Design.Layout.subheaderTopInset),
+            stack.heightAnchor.constraint(equalToConstant: Design.Layout.pillHeight),
             hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
             hairline.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -275,7 +275,7 @@ final class DetailSubheaderView: NSView {
 
     func setLeadingViews(_ views: [NSView], trailingText: String?, trailingMonospaced: Bool = false) {
         var arranged = views
-        trailingLabel.font = trailingMonospaced ? AgentStatusDesign.Font.mono : AgentStatusDesign.Font.caption
+        trailingLabel.font = trailingMonospaced ? Design.Font.mono : Design.Font.caption
         if let trailingText {
             trailingLabel.stringValue = trailingText
             trailingLabel.toolTip = trailingText
@@ -312,7 +312,7 @@ final class DetailSubheaderAccessoryController: NSSplitViewItemAccessoryViewCont
 /// Rounded card: 14pt radius, hairline stroke, translucent fill, optional shadow.
 @MainActor
 final class CardView: NSView {
-    init(cornerRadius: CGFloat = AgentStatusDesign.Layout.cardCornerRadius, shadow: Bool = false) {
+    init(cornerRadius: CGFloat = Design.Layout.cardCornerRadius, shadow: Bool = false) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = cornerRadius
@@ -338,8 +338,8 @@ final class CardView: NSView {
     }
 
     private func applyColors() {
-        layer?.backgroundColor = AgentStatusDesign.Color.cardFill.cgColor
-        layer?.borderColor = AgentStatusDesign.Color.cardStroke.cgColor
+        layer?.backgroundColor = Design.Color.cardFill.cgColor
+        layer?.borderColor = Design.Color.cardStroke.cgColor
     }
 }
 

@@ -3,14 +3,14 @@ import AgentStatusMacFeature
 
 @main
 @MainActor
-final class AgentStatusMacApp: NSObject, NSApplicationDelegate {
+final class LumiMacApp: NSObject, NSApplicationDelegate {
     private let coordinator = ApplicationCoordinator()
     private var isPreparingToTerminate = false
 
     static func main() {
         ApplicationCoordinator.bootstrapLogging()
         let application = NSApplication.shared
-        let delegate = AgentStatusMacApp()
+        let delegate = LumiMacApp()
         application.delegate = delegate
         application.setActivationPolicy(.regular)
         application.run()

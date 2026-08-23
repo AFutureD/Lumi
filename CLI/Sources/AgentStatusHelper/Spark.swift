@@ -20,7 +20,7 @@ private let log = Logger(label: "agent")
 /// and a monitoring failure must never do that. Problems go to stderr and to
 /// `helper.log`; `--verbose` mirrors every line (debug included) to stderr.
 @main
-enum AgentStatusHelperMain {
+enum SparkMain {
     static func main() {
         let arguments = CommandLine.arguments.dropFirst()
         var selection: HelperAgentSelection = .auto
@@ -48,7 +48,7 @@ enum AgentStatusHelperMain {
             standardErrorMinimumLevel: verbose ? .debug : .warning
         )
         if verbose { configuration.minimumLevel = .debug }
-        AgentStatusLogging.bootstrap(configuration)
+        Diagnostics.bootstrap(configuration)
         let started = ContinuousClock.now
 
         // One hook invocation is one unit of work: its run id leads every
