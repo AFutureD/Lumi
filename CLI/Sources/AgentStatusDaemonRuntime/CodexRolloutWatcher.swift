@@ -18,7 +18,7 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
     private var scannedFileSizes: [String: UInt64] = [:]
-    private static let ignoredExistingSession = SessionID("agent-status-ignored-existing-session")
+    private static let ignoredExistingSession = SessionID("lumi-ignored-existing-session")
 
     public init(
         rootDirectory: URL,

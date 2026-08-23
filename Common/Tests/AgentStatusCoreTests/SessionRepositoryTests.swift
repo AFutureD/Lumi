@@ -682,7 +682,7 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
     try await DatabaseQueue(path: path).write { db in
         try db.execute(
             sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-            arguments: ["agent-status-v3-sweep-empty-claude-sessions"]
+            arguments: ["lumi-v3-sweep-empty-claude-sessions"]
         )
     }
     let reopened = try SQLiteSessionRepository(path: path)

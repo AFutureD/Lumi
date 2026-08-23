@@ -22,7 +22,7 @@ public actor SQLiteSessionRepository: SessionRepository {
         database = try DatabaseQueue(path: path, configuration: configuration)
 
         var migrator = DatabaseMigrator()
-        migrator.registerMigration("agent-status-v1") { db in
+        migrator.registerMigration("lumi-v1") { db in
             try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY NOT NULL,
@@ -58,7 +58,7 @@ public actor SQLiteSessionRepository: SessionRepository {
                 );
                 """)
         }
-        migrator.registerMigration("agent-status-v2-turns") { db in
+        migrator.registerMigration("lumi-v2-turns") { db in
             try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS turns (
                     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -76,7 +76,7 @@ public actor SQLiteSessionRepository: SessionRepository {
         // config-loading probes): completed, no turns, nothing but the two
         // session markers. `summary` is JSON text stored as a BLOB, hence CAST.
         // Foreign keys are off inside migrations, so children go explicitly.
-        migrator.registerMigration("agent-status-v3-sweep-empty-claude-sessions") { db in
+        migrator.registerMigration("lumi-v3-sweep-empty-claude-sessions") { db in
             try db.execute(sql: """
                 CREATE TEMP TABLE sweep AS
                     SELECT id FROM sessions
@@ -98,7 +98,7 @@ public actor SQLiteSessionRepository: SessionRepository {
         // existed so strict decoding keeps working; old sessions were
         // presumably seen, so they start reviewed, and `needsAttention` is
         // re-derived under the same rule (approval / failure only).
-        migrator.registerMigration("agent-status-v4-needs-review") { db in
+        migrator.registerMigration("lumi-v4-needs-review") { db in
             try db.execute(sql: """
                 UPDATE sessions SET summary =
                     CAST(json_set(
@@ -115,7 +115,7 @@ public actor SQLiteSessionRepository: SessionRepository {
         // Backfill `hiddenInNotch` into summaries written before the flag
         // existed so strict decoding keeps working; nothing was archived from
         // the Notch yet, so every session starts visible there.
-        migrator.registerMigration("agent-status-v5-hidden-in-notch") { db in
+        migrator.registerMigration("lumi-v5-hidden-in-notch") { db in
             try db.execute(sql: """
                 UPDATE sessions SET summary =
                     CAST(json_set(
