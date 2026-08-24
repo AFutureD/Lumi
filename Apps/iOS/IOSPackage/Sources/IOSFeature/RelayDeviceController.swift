@@ -397,7 +397,8 @@ final class RelayDeviceChannel {
     /// Sessions hidden on this iPhone (`Delete`), kept out of `sessions` but
     /// still in the cache and still fed by the daemon; one rule on every
     /// path — event, summary, whole session, index — shows a hidden session
-    /// again: its `updatedAt` moved past the moment it was hidden.
+    /// again: its `lastActivityAt` moved past the moment it was hidden
+    /// (real agent activity, not a metadata touch).
     private var hidden: [SessionID: HiddenSession] = [:]
     /// Serialises cache writes against each other (applies, replaces, prunes).
     private var applyQueue: Task<Void, Never>?
@@ -522,7 +523,7 @@ final class RelayDeviceChannel {
 
     func dismiss(_ id: SessionID) {
         guard let detail = sessions.first(where: { $0.summary.id == id }) else { return }
-        hidden[id] = HiddenSession(hiddenAt: detail.summary.updatedAt, detail: detail)
+        hidden[id] = HiddenSession(hiddenAt: detail.summary.lastActivityAt, detail: detail)
         sessions.removeAll { $0.summary.id == id }
         partBuffers[id] = nil
     }
@@ -942,10 +943,10 @@ final class RelayDeviceChannel {
         return false
     }
 
-    /// IOS-R-012: a hidden session comes back once the daemon's copy is
-    /// newer than the one the user hid.
+    /// IOS-R-012: a hidden session comes back once the daemon's copy saw
+    /// agent activity after the moment the user hid it.
     private func revealIfNewer(_ id: SessionID) {
-        guard let entry = hidden[id], entry.detail.summary.updatedAt > entry.hiddenAt else { return }
+        guard let entry = hidden[id], entry.detail.summary.lastActivityAt > entry.hiddenAt else { return }
         hidden[id] = nil
         sessions.removeAll { $0.summary.id == id }
         sessions.append(entry.detail)
@@ -1046,7 +1047,7 @@ final class RelayDeviceChannel {
         // newer (then `install` shows it); otherwise it stays as it is.
         let fetchFull = plan.fetchFull.filter { id in
             guard let entry = hidden[id], let remoteEntry = remote.first(where: { $0.summary.id == id }) else { return true }
-            return remoteEntry.summary.updatedAt > entry.hiddenAt
+            return remoteEntry.summary.lastActivityAt > entry.hiddenAt
         }
         for chunk in stride(from: 0, to: fetchFull.count, by: 20).map({ Array(fetchFull[$0..<min($0 + 20, fetchFull.count)]) }) {
             send(kind: .fetchSession(remaining: Set(chunk)), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: chunk))

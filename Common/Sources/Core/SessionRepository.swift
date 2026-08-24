@@ -65,13 +65,25 @@ public enum SessionReduction {
         applying event: AgentIngressEvent,
         to current: SessionSummary?
     ) -> SessionSummary {
-        let advancesVisibleActivity = event.advancesVisibleActivity
-        let shouldUpdateVisibleState = current == nil
-            || (advancesVisibleActivity && event.occurredAt >= current!.updatedAt)
-        let lifecycle = shouldUpdateVisibleState
+        // Two clocks, one rule: an event may only gate the fields it asserts.
+        //
+        // `lastActivityAt` is the state clock: it moves only when the agent
+        // asserts its state (the event carries lifecycle or phase), and it is
+        // the only guard on lifecycle/phase. A metadata-only event — config
+        // touch, title, diagnostic — can never freeze an earlier state
+        // assertion out, no matter how new its timestamp is.
+        //
+        // `updatedAt` is the record clock: every accepted event advances it,
+        // and it guards metadata (title / workspace / agent) so a stale
+        // straggler does not overwrite a newer value.
+        let assertsState = event.lifecycle != nil || event.phase != nil
+        let shouldUpdateState = current == nil
+            || (assertsState && event.occurredAt >= current!.lastActivityAt)
+        let shouldUpdateMetadata = current == nil || event.occurredAt >= current!.updatedAt
+        let lifecycle = shouldUpdateState
             ? (event.lifecycle ?? current?.lifecycle ?? .starting)
             : (current?.lifecycle ?? .starting)
-        let phase = shouldUpdateVisibleState
+        let phase = shouldUpdateState
             ? (event.phase ?? current?.phase ?? .idle)
             : (current?.phase ?? .idle)
         // Sticky until the human opens the session; `markSessionReviewed`
@@ -100,7 +112,7 @@ public enum SessionReduction {
             && event.timelineItem == nil
         let agent = if isIdentityOnly {
             event.agent
-        } else if shouldUpdateVisibleState {
+        } else if shouldUpdateMetadata {
             if event.lineage == nil,
                event.agent == .codex,
                current?.agent == .codexSubagent {
@@ -114,7 +126,7 @@ public enum SessionReduction {
         let agentName = agent.rawValue
             .replacingOccurrences(of: "_", with: " ")
             .capitalized
-        let title = if isIdentityOnly || shouldUpdateVisibleState {
+        let title = if isIdentityOnly || shouldUpdateMetadata {
             event.title ?? current?.title ?? "\(agentName) Session"
         } else {
             current?.title ?? "\(agentName) Session"
@@ -128,18 +140,20 @@ public enum SessionReduction {
             id: event.sessionID,
             agent: agent,
             title: title,
-            workspace: shouldUpdateVisibleState
+            workspace: shouldUpdateMetadata
                 ? (event.workspace ?? current?.workspace)
                 : current?.workspace,
             lifecycle: lifecycle,
             phase: phase,
             startedAt: min(current?.startedAt ?? event.occurredAt, event.occurredAt),
-            updatedAt: advancesVisibleActivity
-                ? max(current?.updatedAt ?? event.occurredAt, event.occurredAt)
-                : (current?.updatedAt ?? event.occurredAt),
-            lastActivityAt: advancesVisibleActivity
-                ? max(current?.lastActivityAt ?? event.occurredAt, event.occurredAt)
-                : (current?.lastActivityAt ?? event.occurredAt),
+            updatedAt: max(current?.updatedAt ?? event.occurredAt, event.occurredAt),
+            // A session created by a metadata-only event has no activity yet:
+            // seeding the state clock at `.distantPast` keeps the door open
+            // for the backfilled history (older timestamps) to assert the
+            // real state.
+            lastActivityAt: assertsState
+                ? max(current?.lastActivityAt ?? .distantPast, event.occurredAt)
+                : (current?.lastActivityAt ?? .distantPast),
             needsAttention: needsAttention,
             needsReview: needsReview,
             hiddenInNotch: hiddenInNotch,
@@ -199,8 +213,11 @@ public enum TurnReduction {
                 break
             }
         }
-        // A closed turn never regresses to an in-flight phase from a late event.
-        if outcome != nil, event.turn?.outcome == nil, event.timelineItem == nil {
+        // A closed turn never regresses to an in-flight phase from a late
+        // event — a straggling hook, or backfilled history older than the
+        // close (the counters above still fold in, they were never counted).
+        if outcome != nil, event.turn?.outcome == nil,
+           event.timelineItem == nil || (base.endedAt.map { event.occurredAt <= $0 } ?? false) {
             phase = base.phase
         }
 
@@ -230,17 +247,6 @@ public extension AgentIngressEvent {
         case let .message(message)?: return message.role == .user
         case let .sessionMarker(marker)?: return marker.kind == .sessionStarted
         default: return false
-        }
-    }
-}
-
-private extension AgentIngressEvent {
-    var advancesVisibleActivity: Bool {
-        if workspace != nil || lifecycle != nil || phase != nil { return true }
-        guard let payload = timelineItem?.payload else { return false }
-        return switch payload {
-        case .message, .reasoning, .tool, .plan, .subagent, .error, .sessionMarker, .turnEnd: true
-        case .context, .config, .modelConfiguration, .internalContext, .usageMetrics: false
         }
     }
 }

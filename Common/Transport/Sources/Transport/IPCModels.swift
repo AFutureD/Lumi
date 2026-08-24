@@ -127,6 +127,10 @@ public enum IPCOperation: Hashable, Sendable {
     case getRolloutCursor
     case saveRolloutCursor
     case reingestSession
+    /// The helper found a session the daemon has no cursor for and a history
+    /// too large to replay inside a hook: the daemon rebuilds it off the hook
+    /// path, from the given transcript / rollout file.
+    case backfillSession
     case relayStatus
     case relayRevokeDevice
     case relayRemoveDevice
@@ -151,6 +155,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .getRolloutCursor: "get_rollout_cursor"
         case .saveRolloutCursor: "save_rollout_cursor"
         case .reingestSession: "reingest_session"
+        case .backfillSession: "backfill_session"
         case .relayStatus: "relay_status"
         case .relayRevokeDevice: "relay_revoke_device"
         case .relayRemoveDevice: "relay_remove_device"
@@ -181,6 +186,7 @@ extension IPCOperation: Codable {
         case "get_rollout_cursor": .getRolloutCursor
         case "save_rollout_cursor": .saveRolloutCursor
         case "reingest_session": .reingestSession
+        case "backfill_session": .backfillSession
         case "relay_status": .relayStatus
         case "relay_revoke_device": .relayRevokeDevice
         case "relay_remove_device": .relayRemoveDevice

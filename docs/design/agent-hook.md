@@ -140,6 +140,8 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 4. `ingest_batch`（每 200 条一帧，超时 5s）→ 成功后 `save_rollout_cursor`。
 5. 任何失败写 stderr，**仍以 0 退出**。
 
+hook 进程是实时通道，且受 agent 的 hook 超时约束，不做无界工作：daemon 没有该文件的游标（冷启动）且文件超过 1 MiB 时，第 3 步跳过整本回放，改发 `backfill_session` 把历史交给 daemon 的串行回填队列（父 transcript 与 subagent sidechain 同一规则）。此时 hook 以 `richSourceAvailable=false` 摊开自己的 prompt / tool 行占位——回填靠同一套稳定 item ID 覆盖它们；`SessionEnd` 的“从未使用即丢弃”启发式在委托回填时不生效，避免误删真会话。
+
 ## 稳定 ID
 
 - Hook Event ID：`hook:` / `claude-hook:` + SHA-256(raw stdin)。rollout/transcript Event ID：`rollout:` / `claude-transcript:` + SHA-256(path + byteOffset + line)。
@@ -190,10 +192,11 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 - 读取复用 `RichSourceReader`（cursor 增量、32 MiB 尾部截断、open Turn 归属），事件幂等去重，与 helper 共享同一 cursor——两路并发读同一增量时靠 processed event 去重收敛。
 - 文件尺寸未变化的路径跳过（同 rollout watcher 的 `scannedFileSizes`）。
 - Session 一旦被标记 Interrupted 便退出活跃集，不再被轮询。
+- watcher 与 `backfill_session` 回填队列共用同一段追平例程（`RichSourceCatchUp`：取游标 → 读 → 应用 → 存游标；从字节 0 读时不继承最新 Turn ID，由历史自己的 Turn 标记归属）。两路并发最多重复读一段增量，靠事件幂等收敛。
 
 ## Codex state 元数据
 
-daemon 与 Hook helper 以只读方式打开 `${CODEX_HOME:-~/.codex}/state_5.sqlite`，用 `threads.id` 与 rollout / Hook 的 Session ID 关联。数据库不可用或查不到记录时，事件处理继续进行：首次未知身份使用 Codex 默认值，已经同步过的 Subagent 类型和 lineage 不会被普通 rollout 事件降级。watcher 会周期比对已纳入 Lumi 的 Session，只同步变化的标题、Agent 类型和 Subagent 关系；每次实际变化使用新的幂等事件，因此 `A → B → A` 仍可正确回退。这类身份更新不推进 `updatedAt` 或 `lastActivityAt`，不会改变活动排序。
+daemon 与 Hook helper 以只读方式打开 `${CODEX_HOME:-~/.codex}/state_5.sqlite`，用 `threads.id` 与 rollout / Hook 的 Session ID 关联。数据库不可用或查不到记录时，事件处理继续进行：首次未知身份使用 Codex 默认值，已经同步过的 Subagent 类型和 lineage 不会被普通 rollout 事件降级。watcher 会周期比对已纳入 Lumi 的 Session，只同步变化的标题、Agent 类型和 Subagent 关系；每次实际变化使用新的幂等事件，因此 `A → B → A` 仍可正确回退。这类身份更新推进记录时钟 `updatedAt`（同步可见）但不推进状态时钟 `lastActivityAt`，不会改变活动排序。
 
 | `threads` 字段 | 可用维度 | 当前处理 |
 | --- | --- | --- |

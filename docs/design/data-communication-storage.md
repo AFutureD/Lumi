@@ -90,6 +90,7 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 | `ingest` | 提交一个归一化事件 | 短连接请求 |
 | `ingest_batch` | helper 一次提交一批事件（每帧 ≤200 条） | 短连接请求 |
 | `get_rollout_cursor` / `save_rollout_cursor` | helper 读取 / 推进 transcript 游标（游标由 daemon 持有） | 短连接请求 |
+| `backfill_session` | helper 冷启动遇到无游标且历史过大（> 1 MiB）的 Session：把 `{sessionID, path}` 交给 daemon 的串行回填队列后立即返回 `accepted`。队列从游标（无则字节 0）读整个 rich source、逐事件应用（幂等去重、状态时钟拦截过期状态）、存游标；游标建立前的重复请求由队列去重 | 短连接请求 |
 | `list_sessions` | 查询全部 Summary（对账索引） | 短连接请求 |
 | `get_session` | 分页查询一个 Session 的 Timeline（全量只按单 Session 传输） | 短连接请求 |
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
@@ -137,7 +138,7 @@ Mac Session 内容只有三种外部刷新入口，全量同步只按单 Session
 2. **手动 Refresh**：同一段对账；索引一致时不拉取任何 Session。
 3. **Agent 事件**：从持久订阅流收到事件，50ms 合并后增量写入缓存。
 
-删除和清空先做乐观本地写（本地墓碑 / 清空，UI 立即收敛），再发 IPC，随后一次对账向 daemon 的权威状态收敛——若 daemon 侧删除失败，对账会把 Session 拉回来。诊断类事件（不推进 `updatedAt`）不改变 summary，离线期间的纯诊断漂移对账不追，由下一个推进事件愈合。
+删除和清空先做乐观本地写（本地墓碑 / 清空，UI 立即收敛），再发 IPC，随后一次对账向 daemon 的权威状态收敛——若 daemon 侧删除失败，对账会把 Session 拉回来。诊断类事件推进 `updatedAt` 但不推进 `lastActivityAt`：对账能看到漂移并收敛 summary，活动排序不受影响。
 
 ## 远程同步流程
 
@@ -205,8 +206,11 @@ iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）：本�
 - rollout Event ID：对文件路径、byte offset 和 JSONL 行做 SHA-256。
 - `processed_events` 拒绝相同 Event ID。
 - `processed_events` 先拒绝重复输入；普通 Timeline 使用唯一 Event 派生 ID，诊断 Timeline 使用稳定类别 ID并以最新记录替换旧值。
-- 早于当前 `updatedAt` 的事件仍可贡献 `startedAt` 和 Timeline，但不能回退标题、lifecycle 或 phase。
-- 模型配置、内部上下文和消耗指标会写入 Timeline，但不推进 Session 的 `updatedAt`、`lastActivityAt` 或注意力状态。
+- Summary 上有两个时钟，事件只能约束它声明的字段：
+  - `lastActivityAt` 是状态时钟：只被携带 lifecycle / phase 的事件推进，也只有它守门 lifecycle / phase——纯元数据事件（config、标题、诊断）无论多新都不能替更早的状态事件封门。由元数据事件创建的 Session 以 `.distantPast` 起步，等回填的历史来声明真实状态。
+  - `updatedAt` 是记录时钟：任何被接受的事件都推进（单调 max），守门元数据（标题 / workspace / agent）的 last-writer-wins，并作为同步新旧的依据。
+- 早于状态时钟的事件仍可贡献 `startedAt` 和 Timeline，但不能回退 lifecycle 或 phase；早于记录时钟的事件不能回退标题 / workspace。
+- 模型配置、内部上下文和消耗指标会写入 Timeline 并推进 `updatedAt`（同步可见），但不推进 `lastActivityAt`，因此不影响活动排序与注意力状态。
 - 同一诊断类别只有时间不早于现有记录的新事件才能替换；批次乱序不会让旧诊断覆盖新值。
 - Timeline 按 `occurredAt`、`id` 稳定排序。
 

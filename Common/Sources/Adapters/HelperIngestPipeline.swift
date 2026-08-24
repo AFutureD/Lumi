@@ -10,6 +10,9 @@ public protocol HelperDaemonPort: Sendable {
     func saveRolloutCursor(_ cursor: RolloutCursor) throws
     /// Summary + turns as the daemon holds them; the timeline page is not needed.
     func session(sessionID: SessionID) throws -> SessionDetail?
+    /// Hands a history to the daemon's backfill worker: the daemon reads the
+    /// rich source itself, off the hook path.
+    func requestBackfill(sessionID: SessionID, path: String) throws
 }
 
 public enum HelperAgentSelection: String, Sendable {
@@ -68,6 +71,11 @@ public struct HelperIngestPipeline: Sendable {
     public var claudeAdapter: ClaudeAdapter
     /// Safety valve for a resumed multi-megabyte transcript.
     public var maximumIncrementBytes: Int
+    /// A hook is a real-time channel with an external kill timeout: when the
+    /// daemon has no cursor for the source (cold start) and the file is
+    /// bigger than this, the history is handed to the daemon's backfill
+    /// worker instead of being replayed inline.
+    public var maximumInlineHistoryBytes: Int
 
     public init(
         port: any HelperDaemonPort,
@@ -75,7 +83,8 @@ public struct HelperIngestPipeline: Sendable {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         codexAdapter: CodexAdapter = CodexAdapter(),
         claudeAdapter: ClaudeAdapter = ClaudeAdapter(),
-        maximumIncrementBytes: Int = 32 * 1024 * 1024
+        maximumIncrementBytes: Int = 32 * 1024 * 1024,
+        maximumInlineHistoryBytes: Int = 1024 * 1024
     ) {
         self.port = port
         self.environment = environment
@@ -83,6 +92,7 @@ public struct HelperIngestPipeline: Sendable {
         self.codexAdapter = codexAdapter
         self.claudeAdapter = claudeAdapter
         self.maximumIncrementBytes = maximumIncrementBytes
+        self.maximumInlineHistoryBytes = maximumInlineHistoryBytes
     }
 
     public func run(hookData: Data, agent selection: HelperAgentSelection = .auto) throws -> HelperIngestReport {
@@ -108,18 +118,29 @@ public struct HelperIngestPipeline: Sendable {
         var richAvailable = false
         var cursorToSave: RolloutCursor?
         var childCursorsToSave: [RolloutCursor] = []
+        var historyDelegated = false
         if let richPath, FileManager.default.isReadableFile(atPath: richPath) {
             richAvailable = true
             report.richSourcePath = richPath
             do {
-                let (events, cursor, lines) = try readIncrement(
+                switch try readIncrement(
                     path: richPath,
                     sessionID: sessionID,
                     adapter: adapter
-                )
-                batch.append(contentsOf: events)
-                cursorToSave = cursor
-                report.richSourceLinesRead = lines
+                ) {
+                case let .increment(events, cursor, lines):
+                    batch.append(contentsOf: events)
+                    cursorToSave = cursor
+                    report.richSourceLinesRead = lines
+                case let .delegatedToDaemon(bytes):
+                    // With the increment deferred, the hook must tell the
+                    // whole story itself: its prompt / tool rows are the only
+                    // live rows until the daemon's backfill upserts over them
+                    // (both sides use the same stable item ids).
+                    richAvailable = false
+                    historyDelegated = true
+                    report.notes.append("history_delegated_to_daemon bytes=\(bytes)")
+                }
             } catch {
                 report.warnings.append("rich_source_read_failed path=\(richPath) error=\(error)")
             }
@@ -144,9 +165,14 @@ public struct HelperIngestPipeline: Sendable {
             if let childPath, FileManager.default.isReadableFile(atPath: childPath) {
                 childRichAvailable = true
                 do {
-                    let (events, cursor, _) = try readIncrement(path: childPath, sessionID: childID, adapter: adapter)
-                    batch.append(contentsOf: events)
-                    if let cursor { childCursorsToSave.append(cursor) }
+                    switch try readIncrement(path: childPath, sessionID: childID, adapter: adapter) {
+                    case let .increment(events, cursor, _):
+                        batch.append(contentsOf: events)
+                        if let cursor { childCursorsToSave.append(cursor) }
+                    case let .delegatedToDaemon(bytes):
+                        childRichAvailable = false
+                        report.notes.append("subagent_history_delegated_to_daemon bytes=\(bytes)")
+                    }
                 } catch {
                     report.warnings.append("subagent_transcript_read_failed path=\(childPath) error=\(error)")
                 }
@@ -177,7 +203,9 @@ public struct HelperIngestPipeline: Sendable {
                 ? childRichAvailable
                 : richAvailable
         )
-        if provider == .claude, report.hookEventName == "SessionEnd", !richAvailable {
+        // A delegated history means the daemon is about to prove the session
+        // was used — the discard heuristic must not race it.
+        if provider == .claude, report.hookEventName == "SessionEnd", !richAvailable, !historyDelegated {
             options.sessionNeverUsed = sessionNeverUsed(sessionID)
             if options.sessionNeverUsed {
                 report.notes.append("session_discarded_never_used")
@@ -249,12 +277,25 @@ public struct HelperIngestPipeline: Sendable {
 
     // MARK: - Increment reading
 
+    enum IncrementRead {
+        case increment(events: [AgentIngressEvent], cursor: RolloutCursor?, lines: Int)
+        /// Cold start on a large history: the daemon rebuilds it, this hook
+        /// invocation ships only its own events.
+        case delegatedToDaemon(bytes: UInt64)
+    }
+
     func readIncrement(
         path: String,
         sessionID: SessionID,
         adapter: any AgentAdapter
-    ) throws -> ([AgentIngressEvent], RolloutCursor?, Int) {
+    ) throws -> IncrementRead {
         let existing = try port.rolloutCursor(path: path)
+        if existing == nil,
+           let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.uint64Value,
+           size > UInt64(maximumInlineHistoryBytes) {
+            try port.requestBackfill(sessionID: sessionID, path: path)
+            return .delegatedToDaemon(bytes: size)
+        }
         let turns = try port.session(sessionID: sessionID)?.turns ?? []
         let read = try RichSourceReader.read(
             path: path,
@@ -265,8 +306,8 @@ public struct HelperIngestPipeline: Sendable {
             maximumBytes: maximumIncrementBytes
         )
         guard read.lines > 0 || read.cursor.byteOffset != existing?.byteOffset else {
-            return ([], nil, 0)
+            return .increment(events: [], cursor: nil, lines: 0)
         }
-        return (read.events, read.cursor, read.lines)
+        return .increment(events: read.events, cursor: read.cursor, lines: read.lines)
     }
 }

@@ -436,7 +436,9 @@ import Testing
     #expect(roundTripped.title == "Hypatia · docs_review")
     #expect(roundTripped.agent == .codexSubagent)
     #expect(roundTripped.lineage?.parentSessionID == SessionID("parent-session"))
-    #expect(roundTripped.updatedAt == date)
+    // Identity churn moves the record clock (sync must see it) but never the
+    // state clock that drives activity ordering.
+    #expect(roundTripped.updatedAt >= date)
     #expect(roundTripped.lastActivityAt == date)
     #expect(capture.events.map(\.title) == [
         "Hypatia · docs_review",
@@ -620,4 +622,85 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     await watcher.scanOnce()
     let untouched = try await repository.sessionDetail(id: parked, cursor: nil, limit: 100)
     #expect(untouched?.summary.lifecycle == .waitingForInput)
+}
+
+@Test func backfillQueueRebuildsAColdSessionAndYieldsToNewerHookState() async throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-backfill-\(UUID().uuidString)", isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-project", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let sid = SessionID("bbbb2222-0000-0000-0000-000000000001")
+    let transcript = projectDir.appendingPathComponent("\(sid.rawValue).jsonl")
+    try Data("""
+    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:00:00Z","cwd":"/tmp/project","message":{"role":"user","content":"Do the thing"}}
+    {"type":"assistant","sessionId":"\(sid.rawValue)","timestamp":"2026-08-20T09:00:05Z","message":{"role":"assistant","model":"claude-opus-4-7","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}
+
+    """.utf8).write(to: transcript)
+
+    // The cold session was first seen through a hook: newer wall-clock state
+    // already sits in the store before the history lands.
+    let repository = InMemorySessionRepository()
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("hook-stop"), sessionID: sid, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 1_787_300_000), workspace: "/tmp/project",
+        lifecycle: .waitingForInput, phase: .idle
+    ))
+
+    let queue = TranscriptBackfillQueue(repository: repository)
+    await queue.enqueue(sessionID: sid, path: transcript.path)
+    await queue.flush()
+
+    let detail = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    // History is in: timeline rows, the turn, and an advanced cursor.
+    #expect(detail?.timeline.contains { if case .message = $0.payload { true } else { false } } == true)
+    #expect(detail?.turns.first?.id == TurnID("p1"))
+    #expect(detail?.turns.first?.outcome == .completed)
+    let cursor = try await repository.rolloutCursor(path: transcript.path)
+    #expect((cursor?.byteOffset ?? 0) > 0)
+    // The hook's newer state assertion still wins over the replayed history.
+    #expect(detail?.summary.lifecycle == .waitingForInput)
+    #expect(detail?.summary.lastActivityAt == Date(timeIntervalSince1970: 1_787_300_000))
+
+    // Re-enqueueing is idempotent: everything dedupes, nothing regresses.
+    let applied = detail?.timeline.count
+    await queue.enqueue(sessionID: sid, path: transcript.path)
+    await queue.flush()
+    let again = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    #expect(again?.timeline.count == applied)
+}
+
+@Test func backfillQueueHealsASessionCreatedByAMetadataOnlyEvent() async throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-backfill-\(UUID().uuidString)", isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-project", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let sid = SessionID("bbbb2222-0000-0000-0000-000000000002")
+    let transcript = projectDir.appendingPathComponent("\(sid.rawValue).jsonl")
+    try Data("""
+    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:00:00Z","cwd":"/tmp/project","message":{"role":"user","content":"Do the thing"}}
+    {"type":"assistant","sessionId":"\(sid.rawValue)","timestamp":"2026-08-20T09:00:05Z","message":{"role":"assistant","model":"claude-opus-4-7","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}
+
+    """.utf8).write(to: transcript)
+
+    // The stuck-Running shape: a metadata-only hook (no lifecycle) created
+    // the session with a fresh wall-clock timestamp.
+    let repository = InMemorySessionRepository()
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("hook-config"), sessionID: sid, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 1_787_300_000), workspace: "/tmp/project"
+    ))
+
+    let queue = TranscriptBackfillQueue(repository: repository)
+    await queue.enqueue(sessionID: sid, path: transcript.path)
+    await queue.flush()
+
+    // The replayed history's final state lands despite its older timestamps.
+    let detail = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    #expect(detail?.summary.lifecycle == .waitingForInput)
+    #expect(detail?.summary.phase == .idle)
+    #expect(detail?.summary.workspace == "/tmp/project")
 }

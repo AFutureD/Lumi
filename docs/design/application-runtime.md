@@ -107,7 +107,7 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 - 之后：`session_message` 事件通过与 daemon 相同的 `apply` 归约进缓存与内存（经同一写队列，和整 Session 替换保持顺序）；`session_info` / `session_removed` 直接落地；未知 Session 的事件触发一次整取。
 - 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、任一 presence `online`（含 Host 重连）、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
 - 列表始终显示缓存；Mac 离线只在 Macs 页标 Offline + 上次同步 + Relay host；没有缓存且离线时才显示 `Mac unavailable`。
-- 本机隐藏（详情 Delete）的 Session 继续在后台进缓存；事件 / summary / 整取 / index 任一路径带来更新的副本（`updatedAt` 超过隐藏时刻）就重新显示。
+- 本机隐藏（详情 Delete）的 Session 继续在后台进缓存；事件 / summary / 整取 / index 任一路径带来真实的新活动（`lastActivityAt` 超过隐藏时刻）就重新显示——纯元数据变化（改标题、配置）不会唤回。
 - 凭据被 Relay 拒绝（握手 401 / 403、close `4003`）：通道进入 Revoked 态，不再重连；Macs 页该 Mac 显示 Revoked，列表空态提示重新配对；缓存保留。重新配对同一台 Mac 复用 Device ID。
 
 ### UIKit 结构

@@ -164,4 +164,13 @@ struct IPCDaemonPort: HelperDaemonPort {
         }
         return response.session
     }
+
+    func requestBackfill(sessionID: SessionID, path: String) throws {
+        let response = try client.request(
+            IPCRequest(operation: .backfillSession, sessionID: sessionID, path: path),
+            socketPath: socketPath,
+            timeout: .seconds(1)
+        )
+        if let failure = response.failure { throw failure }
+    }
 }

@@ -20,6 +20,7 @@ public actor DaemonService {
     private let executableHash: String
     private var relayConnected = false
     private var relay: RelayHostService?
+    private var backfill: TranscriptBackfillQueue?
     public nonisolated let subscriptions: DaemonSubscriptionHub
 
     public init(
@@ -47,6 +48,11 @@ public actor DaemonService {
     /// `relay_*` operations are served from it.
     public func attachRelay(_ relay: RelayHostService) {
         self.relay = relay
+    }
+
+    /// The worker `backfill_session` hands histories to.
+    public func attachBackfill(_ backfill: TranscriptBackfillQueue) {
+        self.backfill = backfill
     }
 
     /// The same health the `health` IPC answers with.
@@ -199,6 +205,24 @@ public actor DaemonService {
                     }
                 } else {
                     payload = failure(code: "missing_session_id", message: "The reingest request has no id.")
+                }
+            case .backfillSession:
+                if let id = envelope.payload.sessionID, let path = envelope.payload.path {
+                    if let backfill {
+                        await backfill.enqueue(sessionID: id, path: path)
+                        agentLog.info("session_backfill_queued", metadata: .fields([
+                            "session": id.rawValue,
+                            "path": path,
+                        ]))
+                        payload = IPCResponse(status: .accepted)
+                    } else {
+                        payload = failure(
+                            code: "backfill_unavailable",
+                            message: "The daemon runs without a backfill worker."
+                        )
+                    }
+                } else {
+                    payload = failure(code: "missing_session_id", message: "The backfill request needs a session id and a path.")
                 }
             case .relayStatus:
                 payload = IPCResponse(status: .ok, relay: await relayStatus())

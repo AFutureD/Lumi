@@ -278,7 +278,14 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     public let lifecycle: SessionLifecycle
     public let phase: TurnPhase
     public let startedAt: Date
+    /// Record clock: when any accepted event last touched this session —
+    /// state, metadata, or a timeline append. Monotonic; drives sync
+    /// freshness and metadata last-writer-wins.
     public let updatedAt: Date
+    /// State clock: when the agent last asserted its state (an event carrying
+    /// lifecycle or phase). Guards lifecycle/phase against stale stragglers
+    /// and drives every "recent activity" surface — sorting, aging, duration.
+    /// `.distantPast` until the first state assertion.
     public let lastActivityAt: Date
     public let needsAttention: Bool
     /// The finished turn has not been looked at yet: set when a turn ends,

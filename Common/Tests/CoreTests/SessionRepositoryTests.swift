@@ -61,8 +61,102 @@ import Testing
     #expect(updated.title == "[macOS] Session list and detail")
     #expect(updated.lifecycle == current.lifecycle)
     #expect(updated.phase == current.phase)
-    #expect(updated.updatedAt == current.updatedAt)
+    // The record clock moves (sync must see the rename); the state clock
+    // does not (a rename is not agent activity).
+    #expect(updated.updatedAt == titleUpdate.occurredAt)
     #expect(updated.lastActivityAt == current.lastActivityAt)
+}
+
+@Test func reducerNeverLetsMetadataEventsFreezeOutOlderStateAssertions() {
+    let base = Date(timeIntervalSince1970: 1_000)
+    // Mid-replay snapshot: the session looks running because the replay
+    // stopped halfway through history.
+    let midReplay = SessionReduction.summary(
+        applying: AgentIngressEvent(
+            eventID: EventID("replay-mid"),
+            sessionID: SessionID("stuck"),
+            agent: .claude,
+            occurredAt: base,
+            lifecycle: .running,
+            phase: .thinking
+        ),
+        to: nil
+    )
+    // A metadata-only hook (ConfigChange: workspace + context item, no
+    // lifecycle) lands two days later.
+    let afterConfig = SessionReduction.summary(
+        applying: AgentIngressEvent(
+            eventID: EventID("config-change"),
+            sessionID: midReplay.id,
+            agent: .claude,
+            occurredAt: base.addingTimeInterval(172_800),
+            workspace: "/tmp/workspace",
+            timelineItem: TimelineItem(
+                id: TimelineItemID("config"),
+                sessionID: midReplay.id,
+                occurredAt: base.addingTimeInterval(172_800),
+                payload: .config(ConfigTimelinePayload(kind: "config_change", summary: "settings.json"))
+            )
+        ),
+        to: midReplay
+    )
+    #expect(afterConfig.lifecycle == .running)
+    #expect(afterConfig.workspace == "/tmp/workspace")
+    #expect(afterConfig.updatedAt == base.addingTimeInterval(172_800))
+    #expect(afterConfig.lastActivityAt == base)
+
+    // The rest of the history arrives (transcript turn end, still older than
+    // the config touch) and must land: the state clock, not the record
+    // clock, guards it.
+    let healed = SessionReduction.summary(
+        applying: AgentIngressEvent(
+            eventID: EventID("replay-end"),
+            sessionID: midReplay.id,
+            agent: .claude,
+            occurredAt: base.addingTimeInterval(60),
+            lifecycle: .waitingForInput,
+            phase: .idle
+        ),
+        to: afterConfig
+    )
+    #expect(healed.lifecycle == .waitingForInput)
+    #expect(healed.phase == .idle)
+    #expect(healed.lastActivityAt == base.addingTimeInterval(60))
+    #expect(healed.updatedAt == base.addingTimeInterval(172_800))
+}
+
+@Test func reducerSeedsTheStateClockOpenForSessionsCreatedByMetadataEvents() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    // A metadata-only event creates the session (cold daemon: the hook lands
+    // before any history exists).
+    let created = SessionReduction.summary(
+        applying: AgentIngressEvent(
+            eventID: EventID("config-first"),
+            sessionID: SessionID("cold"),
+            agent: .claude,
+            occurredAt: now,
+            workspace: "/tmp/workspace"
+        ),
+        to: nil
+    )
+    #expect(created.lifecycle == .starting)
+    #expect(created.lastActivityAt == .distantPast)
+
+    // The daemon backfills history with older timestamps; the state must
+    // still land.
+    let backfilled = SessionReduction.summary(
+        applying: AgentIngressEvent(
+            eventID: EventID("history-end"),
+            sessionID: created.id,
+            agent: .claude,
+            occurredAt: now.addingTimeInterval(-3_600),
+            lifecycle: .waitingForInput,
+            phase: .idle
+        ),
+        to: created
+    )
+    #expect(backfilled.lifecycle == .waitingForInput)
+    #expect(backfilled.lastActivityAt == now.addingTimeInterval(-3_600))
 }
 
 @Test func reducerPreservesKnownSubagentIdentityWhenCodexStateIsUnavailable() {
@@ -140,7 +234,9 @@ import Testing
 
     let result = SessionReduction.summary(applying: diagnostic, to: current)
     #expect(result.lifecycle == .waitingForInput)
-    #expect(result.updatedAt == visibleDate)
+    // The record clock sees the diagnostic (sync must ship it); the state
+    // clock — what every "recent activity" surface sorts by — does not.
+    #expect(result.updatedAt == diagnosticDate)
     #expect(result.lastActivityAt == visibleDate)
 }
 

@@ -43,6 +43,11 @@ final class MemoryDaemonPort: HelperDaemonPort, @unchecked Sendable {
     func rolloutCursor(path: String) throws -> RolloutCursor? { cursors[path] }
     func saveRolloutCursor(_ cursor: RolloutCursor) throws { cursors[cursor.path] = cursor }
 
+    private(set) var backfillRequests: [(sessionID: SessionID, path: String)] = []
+    func requestBackfill(sessionID: SessionID, path: String) throws {
+        backfillRequests.append((sessionID, path))
+    }
+
     func session(sessionID: SessionID) throws -> SessionDetail? {
         if let sessionLookupError { throw sessionLookupError }
         return detail(sessionID)
@@ -449,4 +454,59 @@ private func hook(_ fields: [String: Any]) -> Data {
     // Identity helpers round-trip.
     #expect(ClaudeSubagentIdentity.parse(childID)?.agentID == agentID)
     #expect(ClaudeSubagentIdentity.transcriptPath(parentTranscriptPath: transcript.path, parent: SessionID(session), agentID: agentID) == agentTranscript.path)
+}
+
+@Test func coldStartWithALargeHistoryDelegatesTheReplayToTheDaemon() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    let prompt = "prompt-cold"
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    let transcript = projectDir.appendingPathComponent("\(session).jsonl")
+    let lines: [[String: Any]] = [
+        ["type": "user", "uuid": "u1", "sessionId": session, "promptId": prompt, "timestamp": "2026-08-18T14:35:28.342Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "long history"]],
+        ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-08-18T14:35:33.000Z",
+         "message": ["role": "assistant", "model": "claude-opus-4-7", "stop_reason": "end_turn", "content": [["type": "text", "text": "Done."]]]],
+    ]
+    try lines.map { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8)! }.joined(separator: "\n").appending("\n")
+        .write(to: transcript, atomically: true, encoding: .utf8)
+
+    let port = MemoryDaemonPort()
+    // A threshold below the fixture's size: any cold read counts as "large".
+    let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home, maximumInlineHistoryBytes: 16)
+    let base: [String: Any] = [
+        "session_id": session, "transcript_path": transcript.path, "cwd": "/tmp/proj", "prompt_id": prompt,
+    ]
+
+    let report = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop", "last_assistant_message": "Done."]) { $1 }))
+
+    // The history goes to the daemon: one backfill request, nothing read
+    // inline, no cursor claimed.
+    #expect(port.backfillRequests.count == 1)
+    #expect(port.backfillRequests.first?.sessionID == SessionID(session))
+    #expect(port.backfillRequests.first?.path == transcript.path)
+    #expect(report.richSourceLinesRead == 0)
+    #expect(try port.rolloutCursor(path: transcript.path) == nil)
+    #expect(report.notes.contains { $0.hasPrefix("history_delegated_to_daemon") })
+
+    // The hook's own state still lands immediately.
+    let detail = try #require(port.detail(SessionID(session)))
+    #expect(detail.summary.lifecycle == .waitingForInput)
+
+    // A SessionEnd on the same cold session must not discard it while the
+    // backfill is pending. It re-requests the backfill (the daemon's queue
+    // dedupes) because the cursor still does not exist.
+    let end = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 }))
+    #expect(!end.notes.contains("session_discarded_never_used"))
+    #expect(port.ignored.isEmpty)
+    #expect(port.backfillRequests.count == 2)
+
+    // Once the daemon owns a cursor, the same file is back to inline
+    // increments and no further backfill is requested.
+    try port.saveRolloutCursor(RolloutCursor(path: transcript.path, byteOffset: 0, fileSize: 0, sessionID: SessionID(session)))
+    let warm = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "again"]) { $1 }))
+    #expect(warm.richSourceLinesRead == 2)
+    #expect(port.backfillRequests.count == 2)
 }

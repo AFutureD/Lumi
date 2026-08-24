@@ -227,7 +227,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
 
         // Newest activity first; the hierarchy keeps subagents under their
         // parent in this same order.
-        let sorted = store.sessions.sorted { $0.updatedAt > $1.updatedAt }
+        let sorted = store.sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
         let updated = SessionListHierarchy.filtering(sorted, query: filterText)
         let changed = updated != displayedSessions
         displayedSessions = updated
@@ -310,7 +310,7 @@ private final class SessionRowView: NSTableCellView {
     private let statusLabel = NSTextField(labelWithString: "")
     private let countPill = NSButton(frame: .zero)
     private var layoutInfo = Layout(level: 0, hasChildren: false, isExpanded: false, childCount: 0, isLastSibling: true)
-    private var updatedAt = Date()
+    private var lastActivityAt = Date()
 
     var onToggle: (() -> Void)?
 
@@ -382,7 +382,7 @@ private final class SessionRowView: NSTableCellView {
     func configure(with session: SessionSummary, layout: Layout) {
         let presentation = SessionListRowPresentation(session: session)
         layoutInfo = layout
-        updatedAt = session.updatedAt
+        lastActivityAt = session.lastActivityAt
         let isChild = layout.level > 0
 
         titleLabel.stringValue = presentation.title
@@ -426,7 +426,7 @@ private final class SessionRowView: NSTableCellView {
     }
 
     func refreshRelativeTime() {
-        timeLabel.stringValue = SessionRelativeTimeFormatter.string(from: updatedAt)
+        timeLabel.stringValue = SessionRelativeTimeFormatter.string(from: lastActivityAt)
     }
 
     @objc private func toggle() {

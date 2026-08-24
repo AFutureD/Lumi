@@ -86,6 +86,12 @@ enum LumenMain {
             )
             : nil
         if let relay { await service.attachRelay(relay) }
+        // Histories the helper refuses to replay inside a hook land here.
+        let backfill = TranscriptBackfillQueue(
+            repository: repository,
+            onEvent: { subscriptions.publish($0) }
+        )
+        await service.attachBackfill(backfill)
 
         do {
             try await watcher?.prepareInitialBaseline()

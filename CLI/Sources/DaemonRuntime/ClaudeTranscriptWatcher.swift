@@ -104,37 +104,25 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         guard let fileSize = (attributes?[.size] as? NSNumber)?.uint64Value else { return }
         guard needsScan(path: path, fileSize: fileSize) else { return }
 
-        let cursor = try await repository.rolloutCursor(path: path)
-        let turns = try await repository.sessionDetail(id: summary.id, cursor: nil, limit: 1)?.turns ?? []
-        let read = try RichSourceReader.read(
-            path: path,
+        let report = try await RichSourceCatchUp.run(
+            repository: repository,
             sessionID: summary.id,
+            path: path,
             adapter: adapter,
-            fromOffset: cursor?.byteOffset ?? 0,
-            initialTurnID: (turns.last(where: { $0.isOpen }) ?? turns.last)?.id,
-            maximumBytes: maximumIncrementBytes
+            maximumBytes: maximumIncrementBytes,
+            onEvent: onEvent
         )
-        var applied = 0
-        for event in read.events {
-            if try await repository.apply(event) {
-                applied += 1
-                onEvent(event)
-            }
-        }
-        if read.lines > 0 || read.cursor.byteOffset != cursor?.byteOffset {
-            try await repository.saveRolloutCursor(read.cursor)
-        }
-        if read.lines > 0 {
+        if report.lines > 0 {
             // The hook-less tail: whatever reached the transcript without a
             // hook (interrupts, late output) is visible only through this line.
             log.info("transcript_scanned", metadata: .fields([
                 "session": summary.id.rawValue,
                 "path": path,
-                "from": cursor?.byteOffset ?? 0,
-                "to": read.cursor.byteOffset,
-                "lines": read.lines,
-                "events": read.events.count,
-                "applied": applied,
+                "from": report.fromOffset,
+                "to": report.toOffset,
+                "lines": report.lines,
+                "events": report.events,
+                "applied": report.applied,
             ]))
         }
         markScanned(path: path, fileSize: fileSize)
