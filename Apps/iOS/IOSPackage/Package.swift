@@ -22,6 +22,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Remote", package: "Common"),
                 .product(name: "Core", package: "Common"),
+                .product(name: "Persistence", package: "Common"),
                 .product(name: "DesignSystem", package: "Common"),
                 .product(name: "Transport", package: "Transport"),
             ]

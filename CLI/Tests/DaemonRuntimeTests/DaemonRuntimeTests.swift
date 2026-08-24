@@ -704,3 +704,303 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     #expect(detail?.summary.phase == .idle)
     #expect(detail?.summary.workspace == "/tmp/project")
 }
+
+// MARK: - DaemonEventSubscriber over the real socket
+
+private final class StreamCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [AgentIngressEvent] = []
+    private var healthCount = 0
+    private var disconnectCount = 0
+
+    func append(_ event: AgentIngressEvent) {
+        lock.lock(); events.append(event); lock.unlock()
+    }
+    func recordHealth() {
+        lock.lock(); healthCount += 1; lock.unlock()
+    }
+    func recordDisconnect() {
+        lock.lock(); disconnectCount += 1; lock.unlock()
+    }
+    var snapshot: (events: [AgentIngressEvent], health: Int, disconnects: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (events, healthCount, disconnectCount)
+    }
+}
+
+private func waitUntil(
+    _ comment: Comment,
+    timeout: Duration = .seconds(5),
+    _ condition: @Sendable () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() {
+        try #require(ContinuousClock.now < deadline, comment)
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
+@Test func eventSubscriberStreamsFramesInOrderAndSeesTheServerDisconnect() async throws {
+    let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
+    defer { try? FileManager.default.removeItem(atPath: socketPath) }
+    let repository = InMemorySessionRepository()
+    let hub = DaemonSubscriptionHub()
+    let service = DaemonService(
+        repository: repository, socketPath: socketPath, executableHash: "test-hash", subscriptions: hub
+    )
+    let server = DaemonServer(socketPath: socketPath, service: service)
+    try server.start()
+
+    let capture = StreamCapture()
+    let subscriber = DaemonEventSubscriber()
+    try subscriber.start(
+        socketPath: socketPath,
+        onEvent: { capture.append($0) },
+        onSummary: { _ in },
+        onHealth: { _ in capture.recordHealth() },
+        onDisconnect: { capture.recordDisconnect() }
+    )
+    // The subscribe ack carries a health frame.
+    try await waitUntil("subscribe ack health") { capture.snapshot.health >= 1 }
+
+    for index in 1...2 {
+        hub.publish(AgentIngressEvent(
+            eventID: EventID("stream-\(index)"),
+            sessionID: SessionID("stream-session"),
+            agent: .codex,
+            occurredAt: Date(timeIntervalSince1970: Double(index))
+        ))
+    }
+    try await waitUntil("both events") { capture.snapshot.events.count == 2 }
+    #expect(capture.snapshot.events.map(\.eventID) == [EventID("stream-1"), EventID("stream-2")])
+
+    server.shutdown()
+    try await waitUntil("server disconnect") { capture.snapshot.disconnects == 1 }
+    #expect(subscriber.isRunning == false)
+    #expect(capture.snapshot.disconnects == 1)
+}
+
+@Test func eventSubscriberStopsCleanlyAndCanStartAgain() async throws {
+    let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
+    defer { try? FileManager.default.removeItem(atPath: socketPath) }
+    let repository = InMemorySessionRepository()
+    let service = DaemonService(repository: repository, socketPath: socketPath, executableHash: "test-hash")
+    let server = DaemonServer(socketPath: socketPath, service: service)
+    try server.start()
+    defer { server.shutdown() }
+
+    let capture = StreamCapture()
+    let subscriber = DaemonEventSubscriber()
+    let start = { @Sendable in
+        try subscriber.start(
+            socketPath: socketPath,
+            onEvent: { _ in },
+            onSummary: { _ in },
+            onHealth: { _ in capture.recordHealth() },
+            onDisconnect: { capture.recordDisconnect() }
+        )
+    }
+    try start()
+    try await waitUntil("first health") { capture.snapshot.health >= 1 }
+    subscriber.stop()
+    try await waitUntil("stop disconnect") { capture.snapshot.disconnects == 1 }
+    #expect(subscriber.isRunning == false)
+
+    // The read loop's exit must not clobber a restarted connection.
+    try start()
+    try await waitUntil("second health") { capture.snapshot.health >= 2 }
+    #expect(subscriber.isRunning == true)
+    subscriber.stop()
+    try await waitUntil("second disconnect") { capture.snapshot.disconnects == 2 }
+}
+
+// MARK: - POSIX DaemonServer semantics over the real socket
+
+private func makeSocketServer(
+    outboundByteBudget: Int = 64 << 20,
+    hub: DaemonSubscriptionHub = DaemonSubscriptionHub()
+) throws -> (server: DaemonServer, service: DaemonService, hub: DaemonSubscriptionHub, socketPath: String) {
+    let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
+    let service = DaemonService(
+        repository: InMemorySessionRepository(),
+        socketPath: socketPath,
+        executableHash: "test-hash",
+        subscriptions: hub
+    )
+    let server = DaemonServer(socketPath: socketPath, service: service, outboundByteBudget: outboundByteBudget)
+    try server.start()
+    return (server, service, hub, socketPath)
+}
+
+private func rawUnixConnect(_ socketPath: String) -> Int32 {
+    let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    precondition(descriptor >= 0)
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    let path = socketPath.utf8CString
+    withUnsafeMutableBytes(of: &address.sun_path) { destination in
+        path.withUnsafeBytes { destination.copyBytes(from: $0) }
+    }
+    let result = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    precondition(result == 0)
+    return descriptor
+}
+
+@Test func oneConnectionRunsRequestsConcurrentlyAndAnswersEveryRequestID() async throws {
+    let (server, _, _, socketPath) = try makeSocketServer()
+    defer { server.shutdown() }
+
+    let connection = try FrameConnection.connect(socketPath: socketPath, deadline: ContinuousClock.now + .seconds(5))
+    defer { connection.close() }
+    let requestIDs = (1...5).map { RequestID(rawValue: "req-\($0)") }
+    for requestID in requestIDs {
+        let body = try TransportCoding.makeEncoder().encode(
+            TransportEnvelope(requestID: requestID, payload: IPCRequest(operation: .health))
+        )
+        try connection.writeFrame(body, deadline: ContinuousClock.now + .seconds(5))
+    }
+    var answered: Set<String> = []
+    for _ in requestIDs {
+        let frame = try connection.readFrame(deadline: ContinuousClock.now + .seconds(5))
+        let envelope = try TransportCoding.makeDecoder().decode(TransportEnvelope<IPCResponse>.self, from: frame)
+        #expect(envelope.payload.status == .ok)
+        answered.insert(envelope.requestID.rawValue)
+    }
+    #expect(answered == Set(requestIDs.map(\.rawValue)))
+}
+
+@Test func aMalformedFrameGetsAnErrorFrameAndTheConnectionStaysUsable() async throws {
+    let (server, _, _, socketPath) = try makeSocketServer()
+    defer { server.shutdown() }
+
+    let connection = try FrameConnection.connect(socketPath: socketPath, deadline: ContinuousClock.now + .seconds(5))
+    defer { connection.close() }
+    try connection.writeFrame(Data("not-json".utf8), deadline: ContinuousClock.now + .seconds(5))
+    let errorFrame = try connection.readFrame(deadline: ContinuousClock.now + .seconds(5))
+    let errorEnvelope = try TransportCoding.makeDecoder().decode(TransportEnvelope<IPCResponse>.self, from: errorFrame)
+    #expect(errorEnvelope.payload.failure?.code == "malformed_request")
+
+    let body = try TransportCoding.makeEncoder().encode(
+        TransportEnvelope(payload: IPCRequest(operation: .health))
+    )
+    try connection.writeFrame(body, deadline: ContinuousClock.now + .seconds(5))
+    let frame = try connection.readFrame(deadline: ContinuousClock.now + .seconds(5))
+    let envelope = try TransportCoding.makeDecoder().decode(TransportEnvelope<IPCResponse>.self, from: frame)
+    #expect(envelope.payload.status == .ok)
+}
+
+@Test func anOversizedInboundHeaderDropsOnlyThatConnection() async throws {
+    let (server, _, _, socketPath) = try makeSocketServer()
+    defer { server.shutdown() }
+
+    let descriptor = rawUnixConnect(socketPath)
+    defer { close(descriptor) }
+    var header = UInt32(LengthPrefixedFrameCodec.maximumFrameLength + 1).bigEndian
+    let written = withUnsafeBytes(of: &header) { write(descriptor, $0.baseAddress, 4) }
+    #expect(written == 4)
+    var entry = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+    #expect(poll(&entry, 1, 5000) == 1)
+    var probe: UInt8 = 0
+    #expect(read(descriptor, &probe, 1) == 0)
+
+    let response = try DaemonIPCClient().request(IPCRequest(operation: .health), socketPath: socketPath)
+    #expect(response.status == .ok)
+}
+
+@Test func aSubscriberThatStopsReadingIsDroppedWithoutStallingTheOthers() async throws {
+    let hub = DaemonSubscriptionHub()
+    let (server, _, _, socketPath) = try makeSocketServer(outboundByteBudget: 4096, hub: hub)
+    defer { server.shutdown() }
+
+    let capture = StreamCapture()
+    let healthy = DaemonEventSubscriber()
+    try healthy.start(
+        socketPath: socketPath,
+        onEvent: { capture.append($0) },
+        onSummary: { _ in },
+        onHealth: { _ in capture.recordHealth() },
+        onDisconnect: { capture.recordDisconnect() }
+    )
+    try await waitUntil("healthy subscriber ack") { capture.snapshot.health >= 1 }
+
+    let stalled = try FrameConnection.connect(socketPath: socketPath, deadline: ContinuousClock.now + .seconds(5))
+    defer { stalled.close() }
+    let subscribe = try TransportCoding.makeEncoder().encode(
+        TransportEnvelope(payload: IPCRequest(operation: .subscribe))
+    )
+    try stalled.writeFrame(subscribe, deadline: ContinuousClock.now + .seconds(5))
+    _ = try stalled.readFrame(deadline: ContinuousClock.now + .seconds(5))
+
+    // The stalled client stops reading, so its kernel buffer fills, its
+    // writer blocks, and the padded frames overflow its 4KiB budget. The
+    // publishes are paced so the healthy subscriber's queue keeps draining.
+    let padding = String(repeating: "x", count: 2048)
+    for index in 1...30 {
+        hub.publish(AgentIngressEvent(
+            eventID: EventID("burst-\(index)"),
+            sessionID: SessionID("burst"),
+            agent: .codex,
+            occurredAt: Date(timeIntervalSince1970: Double(index)),
+            timelineItem: TimelineItem(
+                id: TimelineItemID("burst-item-\(index)"),
+                sessionID: SessionID("burst"),
+                occurredAt: Date(timeIntervalSince1970: Double(index)),
+                payload: .message(MessageTimelinePayload(role: .assistant, text: padding))
+            )
+        ))
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try await waitUntil("healthy subscriber got the burst") { capture.snapshot.events.count == 30 }
+
+    // The server dropped the stalled connection: drain whatever the kernel
+    // buffered, then hit the close.
+    #expect(throws: DaemonIPCClientError.self) {
+        while true {
+            _ = try stalled.readFrame(deadline: ContinuousClock.now + .seconds(5))
+        }
+    }
+    #expect(capture.snapshot.disconnects == 0)
+}
+
+@Test func shutdownUnblocksWaitAndRemovesTheSocketFile() async throws {
+    let (server, _, _, socketPath) = try makeSocketServer()
+    let capture = StreamCapture()
+    let subscriber = DaemonEventSubscriber()
+    try subscriber.start(
+        socketPath: socketPath,
+        onEvent: { _ in },
+        onSummary: { _ in },
+        onHealth: { _ in capture.recordHealth() },
+        onDisconnect: { capture.recordDisconnect() }
+    )
+    try await waitUntil("subscriber ack") { capture.snapshot.health >= 1 }
+
+    let waitReturned = StreamCapture()
+    let waiter = Thread {
+        try? server.wait()
+        waitReturned.recordDisconnect()
+    }
+    waiter.start()
+    server.shutdown()
+    try await waitUntil("wait() returned") { waitReturned.snapshot.disconnects == 1 }
+    #expect(!FileManager.default.fileExists(atPath: socketPath))
+    try await waitUntil("subscriber saw the shutdown") { capture.snapshot.disconnects == 1 }
+}
+
+@Test func startThrowsWhenTheSocketPathHoldsARegularFile() throws {
+    let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
+    defer { try? FileManager.default.removeItem(atPath: socketPath) }
+    FileManager.default.createFile(atPath: socketPath, contents: Data("x".utf8))
+    let service = DaemonService(
+        repository: InMemorySessionRepository(),
+        socketPath: socketPath,
+        executableHash: "test-hash"
+    )
+    let server = DaemonServer(socketPath: socketPath, service: service)
+    #expect(throws: DaemonServerError.self) { try server.start() }
+}

@@ -223,7 +223,7 @@
 			inputPaths = (
 				"$(SRCROOT)/../../CLI/Package.swift",
 				"$(SRCROOT)/LumiMac/LaunchAgents/app.huanan.lumi.daemon.plist",
-				"$(SRCROOT)/../../scripts/build-embedded-services.sh",
+				"$(SRCROOT)/../../scripts/macos-bundle.sh",
 			);
 			name = "Embed daemon and helper";
 			outputPaths = (
@@ -233,7 +233,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
-			shellScript = "\"$SRCROOT/../../scripts/build-embedded-services.sh\"\n";
+			shellScript = "\"$SRCROOT/../../scripts/macos-bundle.sh\" build\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

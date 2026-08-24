@@ -10,6 +10,7 @@ let package = Package(
     ],
     products: [
         .library(name: "Core", targets: ["Core"]),
+        .library(name: "Persistence", targets: ["Persistence"]),
         .library(name: "Adapters", targets: ["Adapters"]),
         .library(name: "IPCClient", targets: ["IPCClient"]),
         .library(name: "Remote", targets: ["Remote"]),
@@ -19,7 +20,6 @@ let package = Package(
     dependencies: [
         .package(path: "Transport"),
         .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.10.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.101.3"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/apple/swift-service-context.git", from: "1.0.0"),
         .package(
@@ -38,6 +38,13 @@ let package = Package(
         .target(
             name: "Core",
             dependencies: [
+                .product(name: "Transport", package: "Transport"),
+            ]
+        ),
+        .target(
+            name: "Persistence",
+            dependencies: [
+                "Core",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Transport", package: "Transport"),
             ]
@@ -47,7 +54,6 @@ let package = Package(
             dependencies: [
                 "Core",
                 "Diagnostics",
-                .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Transport", package: "Transport"),
             ]
         ),
@@ -56,9 +62,6 @@ let package = Package(
             dependencies: [
                 "Diagnostics",
                 .product(name: "Transport", package: "Transport"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOFoundationCompat", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
             ]
         ),
         .target(
@@ -82,6 +85,7 @@ let package = Package(
             name: "CoreTests",
             dependencies: [
                 "Core",
+                "Persistence",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Transport", package: "Transport"),
                 .product(name: "Testing", package: "swift-testing"),

@@ -106,9 +106,10 @@ flowchart LR
 ```mermaid
 flowchart TD
     Transport["Transport<br/>Foundation only"]
-    Core["Core<br/>GRDB + Reducer"]
+    Core["Core<br/>Reducer + Repository 协议"]
+    Persistence["Persistence<br/>GRDB repository"]
     Codex["Adapters<br/>Adapter"]
-    IPC["IPCClient<br/>SwiftNIO"]
+    IPC["IPCClient<br/>POSIX socket"]
     Remote["Remote<br/>CryptoKit + URLSession + Keychain"]
     Design["DesignSystem<br/>颜色 / 字号 / 间距 token"]
     CLI["CLI daemon/helper"]
@@ -119,17 +120,21 @@ flowchart TD
     Transport --> Codex
     Transport --> IPC
     Transport --> Remote
+    Core --> Persistence
     Core --> Codex
     Core --> CLI
+    Persistence --> CLI
     Codex --> CLI
     IPC --> CLI
     Transport --> Design
     Core --> Design
     Core --> Mac
+    Persistence --> Mac
     IPC --> Mac
     Remote --> Mac
     Design --> Mac
     Core --> IOS
+    Persistence --> IOS
     Remote --> IOS
     Design --> IOS
 ```
@@ -138,7 +143,7 @@ flowchart TD
 
 - `Transport` 只依赖 Foundation。
 - Session、Timeline、IPC 和 Relay routing DTO 不在 Package 外重复声明。
-- `Core` 拥有 reducer 与 GRDB repository，不依赖 AppKit/UIKit。
+- `Core` 拥有 reducer 与 repository 协议，不依赖 GRDB 与 AppKit/UIKit；GRDB 实现单独放在 `Persistence`，只有真正持久化的进程（daemon、App 缓存）链接它。helper 读取 Codex 状态库走系统 SQLite3，不引入 GRDB。
 - `DesignSystem` 承载设计系统 L1 基础规范（颜色、字号、间距、圆角、关键尺寸、消息类别标签与状态色梯度），只依赖 Foundation（SwiftUI 适配放在 `#if canImport(SwiftUI)`）；macOS、Notch、iOS 视图不写颜色 / 字号 literal，只引用这里的 token。设计交接原件归档在仓库根目录 `design/`（`DESIGN SYSTEM.html` 为唯一取值来源）。
 - App 创建 ViewModel 或控制器状态，但不重新声明传输层业务对象。
 - Relay 通过共享 golden JSON 校验 routing frame，不解析 `RemoteSessionPayload`。

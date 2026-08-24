@@ -102,7 +102,7 @@ Relay stores device authorization and operational metadata only. Session payload
 
 ## macOS packaging
 
-Release builds compile daemon and helper for `arm64` and `x86_64`, combine them as Universal 2 executables, embed and sign them before signing the outer App. After archiving, run `scripts/verify-macos-bundle.sh` before notarization.
+Builds compile daemon and helper for `arm64` only; Release strips their symbol tables, then embeds and signs them before signing the outer App. After archiving, run `scripts/macos-bundle.sh verify <app path>` before notarization.
 
 The Codex integration installer preserves existing Hooks. Users may need to review and trust the Lumi definition through Codex `/hooks`.
 

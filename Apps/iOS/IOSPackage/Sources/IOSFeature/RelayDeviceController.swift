@@ -1,4 +1,5 @@
 import Core
+import Persistence
 import Remote
 import Transport
 import Foundation

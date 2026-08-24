@@ -13,7 +13,7 @@ lumi/
 ├── CLI/                      # daemon、helper、daemon runtime SwiftPM
 ├── Common/
 │   ├── Transport/            # Foundation-only 独立 Swift Package
-│   └── Sources/              # Core、Adapters、IPCClient、Remote、DesignSystem、Diagnostics
+│   └── Sources/              # Core、Persistence、Adapters、IPCClient、Remote、DesignSystem、Diagnostics
 ├── Relay/                    # TypeScript Worker + Durable Object
 ├── docs/
 └── scripts/
@@ -30,7 +30,6 @@ Xcode App target 只负责入口、资源、Info.plist、entitlements 和打包�
 | Swift | 6.2 |
 | Xcode | 稳定版 26；当前本机验证为 26.6 |
 | GRDB | 7.10.0 exact |
-| SwiftNIO | 2.101.3 exact |
 | Swift Testing | `swift-6.2.4-RELEASE` revision |
 | OpenNook | `https://github.com/AFutureD/opennook.git`，固定 revision `7b0ca6ca251885aecec5834b374ef4dc0907bd8f` |
 | Relay | TypeScript 5.9.3、Wrangler 4.123.0、pnpm 11.19.0 |
@@ -72,21 +71,21 @@ pnpm run deploy:dry-run
 
 ## macOS 嵌入式服务
 
-Xcode build phase 调用 `scripts/build-embedded-services.sh`：
+macOS 产物只有一个脚本 `scripts/macos-bundle.sh`，两个子命令。
 
-1. Debug 只编译当前 architecture。
-2. Release 分别编译 `arm64`、`x86_64`。
-3. 使用 `lipo -create` 合并 Universal 2 daemon/helper。
-4. 复制到 App `Contents/Resources/`。
-5. 复制 LaunchAgent plist 到 `Contents/Library/LaunchAgents/`。
-6. 有签名 identity 时先签 daemon/helper，再由 Xcode 签外层 App。
+Xcode build phase 调用 `scripts/macos-bundle.sh build`：
+
+1. 单次 `swift build` 编出 daemon/helper，仅 arm64（本机架构），Release 只切换 `--configuration release`。
+2. 复制到 App `Contents/Resources/`；Release 下随即 `strip -Sx`（Xcode 的 strip 流程只覆盖主程序，嵌入二进制的符号表只能在这里去掉）。
+3. 复制 LaunchAgent plist 到 `Contents/Library/LaunchAgents/`。
+4. 有签名 identity 时先签 daemon/helper，再由 Xcode 签外层 App。
 
 嵌套 executable 使用 Hardened Runtime。正式发布顺序必须是：内层二进制签名 → App 签名 → Developer ID 验证 → 公证 → Staple。
 
-`scripts/verify-macos-bundle.sh` 检查：
+归档后运行 `scripts/macos-bundle.sh verify <app path>` 检查：
 
-- daemon/helper 同时包含 arm64 和 x86_64。
-- 两个 executable 独立 codesign verify 通过。
+- daemon/helper 包含 arm64。
+- 两个 executable 带 Hardened Runtime 标志，且独立 codesign verify 通过。
 - LaunchAgent plist 可解析。
 - App deep signature 通过。
 - Gatekeeper `spctl` 通过。
@@ -139,6 +138,8 @@ pnpm exec wrangler deploy
 ### daemon/helper
 
 - owner-only Unix socket。
+- socket 服务端并发语义：单连接并发请求乱序应答、malformed 帧不断连、入站超限帧只断本连接、停读订阅者按出站字节预算断开且不影响其他订阅者、shutdown 解除 `wait()` 并清理 socket 文件、占用路径报错。
+- 订阅流（真 socket）：subscribe ack 带 health、事件有序、服务端断开回调恰好一次、stop 后可重启。
 - daemon 缺失和坏 stdin。
 - `list_sessions` 索引 + 分页 `get_session` 重组出与仓库一致的 Session；超限响应变成 `response_too_large` 失败帧。
 - 单事件流多 Session 复用。

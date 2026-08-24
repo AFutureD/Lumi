@@ -1,4 +1,5 @@
 import Core
+import Persistence
 import IPCClient
 import Diagnostics
 import Logging

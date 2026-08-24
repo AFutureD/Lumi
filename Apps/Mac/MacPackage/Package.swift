@@ -26,6 +26,7 @@ let package = Package(
             dependencies: [
                 .product(name: "IPCClient", package: "Common"),
                 .product(name: "Core", package: "Common"),
+                .product(name: "Persistence", package: "Common"),
                 .product(name: "DesignSystem", package: "Common"),
                 .product(name: "Diagnostics", package: "Common"),
                 .product(name: "Remote", package: "Common"),

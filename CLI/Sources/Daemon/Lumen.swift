@@ -3,6 +3,7 @@ import Core
 import DaemonRuntime
 import Diagnostics
 import Logging
+import Persistence
 import Remote
 import Foundation
 

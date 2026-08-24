@@ -124,7 +124,8 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 | --- | --- |
 | daemon repository | Swift actor + GRDB `DatabaseQueue` |
 | daemon service | Swift actor |
-| Unix socket server | 单线程 NIO event loop；每个 client channel 有 pipeline |
+| Unix socket server | POSIX：一条 accept 线程；每连接一条读线程 + 一条写线程（有界出站队列，超限断连） |
+| Unix socket client | POSIX 阻塞调用（非阻塞 fd + poll deadline）；订阅流有专用读线程 |
 | daemon subscription hub | `NSLock` 保护 subscriber 字典 |
 | rollout watcher | 单个 Task + lock 保护文件尺寸缓存 |
 | Mac/iOS controllers | `@MainActor` |
@@ -133,7 +134,7 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 | WebSocket client | Swift actor 包装 `URLSessionWebSocketTask` |
 | Durable Object | Cloudflare 单对象串行事件模型 |
 
-UI 控制器不直接跨线程操作 GRDB 或 NIO。阻塞的本地 IPC request 放入 detached Task，结果回到 Main Actor。
+UI 控制器不直接跨线程操作 GRDB 或 socket。阻塞的本地 IPC request 放入 detached Task，结果回到 Main Actor。
 
 ## 状态传播
 

@@ -6,7 +6,6 @@ import Logging
 import Transport
 import Darwin
 import Foundation
-import NIOCore
 
 private let log = Logger(label: "agent")
 

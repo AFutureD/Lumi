@@ -11,7 +11,7 @@
 3. [Agent Hook 设计](agent-hook.md)：Hook 安装、helper、rollout watcher、事件归一化和敏感数据边界。
 4. [Relay、配对与安全设计](relay-pairing-security.md)：Cloudflare Durable Object、配对、E2EE、序号和撤销。
 5. [App 与运行时设计](application-runtime.md)：macOS、Notch、iOS、缓存、刷新和并发边界。
-6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Universal 2、Relay 部署和 CI。
+6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Relay 部署和 CI。
 7. [日志设计](logging.md)：三端共用的分级 / 分类 / 结构化字段，文件位置、错误汇总、Relay 的 JSON 行，以及什么永远不进日志。
 
 ## 设计状态
@@ -19,7 +19,7 @@
 | 范围 | 当前状态 | 关键边界 |
 | --- | --- | --- |
 | Agent | 已实现 Codex 与 Claude Code（含各自的 Subagent） | `AgentAdapter` 允许以后增加其他 Agent |
-| 本地服务 | 已实现 | 每台 Mac 一个 daemon、一个 Unix socket、一个 NIO event loop |
+| 本地服务 | 已实现 | 每台 Mac 一个 daemon、一个 Unix socket（POSIX 实现，无第三方网络栈） |
 | macOS | 已实现开发预览 | AppKit 主界面；OpenNook/SwiftUI 只负责 Notch 和 Notch 设置内容 |
 | iOS | 已实现开发预览 | UIKit，只读；每台 Mac 一个独立通道和 SQLite 文件 |
 | Relay | 已部署开发版本 | TypeScript Worker + 每台 Mac 一个 Durable Object |

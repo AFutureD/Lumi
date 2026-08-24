@@ -2,6 +2,7 @@ import Transport
 import Foundation
 import Testing
 @testable import Core
+@testable import Persistence
 
 /// The mirror-side primitives added for index-first sync, asserted against
 /// both repository implementations.

@@ -1,6 +1,6 @@
 import Transport
 import Foundation
-import GRDB
+import SQLite3
 
 public struct CodexThreadIdentity: Hashable, Sendable {
     public let sessionID: SessionID
@@ -99,8 +99,11 @@ public extension CodexThreadIdentityProviding {
     }
 }
 
+/// Reads Codex's own `state_5.sqlite` through the system SQLite3 library.
+/// A connection is opened read-only per lookup: every lookup sees the latest
+/// committed state, and the helper never holds Codex's database open.
 public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unchecked Sendable {
-    private let database: DatabaseQueue?
+    private let databasePath: String
     private let sessionIndexPath: String
     private let indexLock = NSLock()
     private var indexCache: SessionIndexCache?
@@ -113,9 +116,7 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
         databasePath: String = CodexThreadIdentityStore.defaultDatabasePath(),
         sessionIndexPath: String? = nil
     ) {
-        var configuration = Configuration()
-        configuration.readonly = true
-        database = try? DatabaseQueue(path: databasePath, configuration: configuration)
+        self.databasePath = databasePath
         self.sessionIndexPath = sessionIndexPath
             ?? URL(fileURLWithPath: databasePath)
                 .deletingLastPathComponent()
@@ -124,40 +125,59 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
     }
 
     public func identity(for sessionID: SessionID) -> CodexThreadIdentity? {
-        guard let database else { return nil }
-        let threadNames = threadNames()
-        return try? database.read { db in
-            try Row.fetchOne(
-                db,
-                sql: """
-                    SELECT id, title, first_user_message, has_user_event,
-                           thread_source, agent_nickname, agent_role, agent_path, source
-                    FROM threads WHERE id = ? LIMIT 1
-                    """,
-                arguments: [sessionID.rawValue]
-            ).map { Self.identity(from: $0, threadName: threadNames[sessionID.rawValue]) }
-        }
+        identities(for: [sessionID])[sessionID]
     }
 
     public func identities(for sessionIDs: [SessionID]) -> [SessionID: CodexThreadIdentity] {
-        guard let database, !sessionIDs.isEmpty else { return [:] }
+        guard !sessionIDs.isEmpty, let database = openDatabase() else { return [:] }
+        defer { sqlite3_close_v2(database) }
+
+        let placeholders = Array(repeating: "?", count: sessionIDs.count).joined(separator: ",")
+        let sql = """
+            SELECT id, title, first_user_message, has_user_event,
+                   thread_source, agent_nickname, agent_role, agent_path, source
+            FROM threads WHERE id IN (\(placeholders))
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { return [:] }
+        defer { sqlite3_finalize(statement) }
+        for (index, sessionID) in sessionIDs.enumerated() {
+            sqlite3_bind_text(statement, Int32(index + 1), sessionID.rawValue, -1, sqliteTransient)
+        }
+
         let threadNames = threadNames()
-        return (try? database.read { db in
-            let placeholders = Array(repeating: "?", count: sessionIDs.count).joined(separator: ",")
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT id, title, first_user_message, has_user_event,
-                           thread_source, agent_nickname, agent_role, agent_path, source
-                    FROM threads WHERE id IN (\(placeholders))
-                    """,
-                arguments: StatementArguments(sessionIDs.map(\.rawValue))
+        var identities: [SessionID: CodexThreadIdentity] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let id = Self.columnText(statement, 0) else { continue }
+            let identity = Self.identity(
+                id: id,
+                title: Self.columnText(statement, 1),
+                firstUserMessage: Self.columnText(statement, 2),
+                hasUserEvent: sqlite3_column_int64(statement, 3) == 1,
+                threadSource: Self.columnText(statement, 4),
+                agentNickname: Self.columnText(statement, 5),
+                agentRole: Self.columnText(statement, 6),
+                agentPath: Self.columnText(statement, 7),
+                source: Self.columnText(statement, 8) ?? "",
+                threadName: threadNames[id]
             )
-            return Dictionary(uniqueKeysWithValues: rows.map {
-                let identity = Self.identity(from: $0, threadName: threadNames[$0["id"] as String])
-                return (identity.sessionID, identity)
-            })
-        }) ?? [:]
+            identities[identity.sessionID] = identity
+        }
+        return identities
+    }
+
+    private func openDatabase() -> OpaquePointer? {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(databasePath, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close_v2(database)
+            return nil
+        }
+        sqlite3_busy_timeout(database, 500)
+        return database
+    }
+
+    private static func columnText(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+        sqlite3_column_text(statement, index).map { String(cString: $0) }
     }
 
     /// Latest `thread_name` per thread id from `session_index.jsonl`. The file
@@ -200,13 +220,18 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
         return codexHome.appendingPathComponent("state_5.sqlite").path
     }
 
-    private static func identity(from row: Row, threadName: String?) -> CodexThreadIdentity {
-        let sessionID = SessionID(row["id"] as String)
-        let title = row["title"] as String?
-        let firstUserMessage = row["first_user_message"] as String?
-        let hasUserEvent = (row["has_user_event"] as Int64?) == 1
-        let threadSource = row["thread_source"] as String?
-        let source: String = row["source"]
+    private static func identity(
+        id: String,
+        title: String?,
+        firstUserMessage: String?,
+        hasUserEvent: Bool,
+        threadSource: String?,
+        agentNickname: String?,
+        agentRole: String?,
+        agentPath: String?,
+        source: String,
+        threadName: String?
+    ) -> CodexThreadIdentity {
         let subagent = subagentMetadata(from: source)
         let isSubagent = threadSource == "subagent"
             || subagent.parentID != nil
@@ -217,16 +242,13 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
             && CodexThreadIdentity.nonEmpty(title)
                 == CodexThreadIdentity.nonEmpty(firstUserMessage)
         return CodexThreadIdentity(
-            sessionID: sessionID,
+            sessionID: SessionID(id),
             title: title,
             threadName: threadName,
             threadSource: threadSource,
-            agentNickname: CodexThreadIdentity.nonEmpty(row["agent_nickname"] as String?)
-                ?? subagent.nickname,
-            agentRole: CodexThreadIdentity.nonEmpty(row["agent_role"] as String?)
-                ?? subagent.role,
-            agentPath: CodexThreadIdentity.nonEmpty(row["agent_path"] as String?)
-                ?? subagent.path,
+            agentNickname: CodexThreadIdentity.nonEmpty(agentNickname) ?? subagent.nickname,
+            agentRole: CodexThreadIdentity.nonEmpty(agentRole) ?? subagent.role,
+            agentPath: CodexThreadIdentity.nonEmpty(agentPath) ?? subagent.path,
             parentSessionID: subagent.parentID.map(SessionID.init),
             subagentDepth: subagent.depth,
             subagentKind: subagent.kind,
@@ -253,6 +275,9 @@ public final class CodexThreadIdentityStore: CodexThreadIdentityProviding, @unch
         return SubagentMetadata(kind: subagent["other"] as? String)
     }
 }
+
+/// SQLITE_TRANSIENT: have SQLite copy bound text before the call returns.
+private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 private struct SessionIndexCache {
     var size: UInt64

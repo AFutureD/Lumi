@@ -3,6 +3,7 @@ import Foundation
 import GRDB
 import Testing
 @testable import Core
+@testable import Persistence
 
 @Test func reducerIsIdempotentAndRejectsOlderStateRegression() async throws {
     let repository = InMemorySessionRepository()

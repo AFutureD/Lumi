@@ -17,6 +17,7 @@ CURRENT_PROJECT_VERSION = 1
 // ==========================================
 MACOSX_DEPLOYMENT_TARGET = 26.0
 ALWAYS_SEARCH_USER_PATHS = NO
+ARCHS = arm64
 
 // ==========================================
 // Info PLIST
