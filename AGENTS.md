@@ -23,11 +23,44 @@ Your job is trying to add documents in this swift package project.
 
 Unknown
 
-## 0x02. Content Generation
+
+## 0x02. Policy
+
+### Document Policy
+
+- Rewrite documentation, don’t patch it.  
+  Rework the structure and logic as a whole. Keep the main flow concise and easy to scan, with necessary details placed where they don’t interrupt reading.
+
+### Coding Policy
+
+- Understand the data first.  
+  Before coding, understand where the data comes from, how it is transformed and used, and whether it is persisted.
+
+- Review before implementation.  
+  Start a subagent to check the proposed approach against best practices.
+
+- Rewrite instead of patching.  
+  Prefer a clean implementation over workarounds, while safely migrating persisted data.
+
+- Preserve the design intent.  
+  Let the design guide implementation choices. Never hide errors or fail silently.
+
+- Maintain one source of truth.  
+  Identify the authoritative data source and eliminate redundant state, transformations, and processing.
+
+- Document contracts and boundaries.  
+  Focus on data definitions, transformations, architecture, protocols, and module boundaries. Keep implementation details secondary.
+
+- Make behavior observable.  
+  Add structured logs at responsibility boundaries and key processing points. Without logs, issues cannot be traced or diagnosed.
+
+
+## 0x03. Content Generation
 
 生成内容时，考虑 skill /i-have-adhd 
 
-## 0x03. User-Facing Feature Documentation
+
+## 0x04. User-Facing Feature Documentation
 
 - Any change that adds, removes, or changes user-visible behavior must update `docs/FEAT.md` in the same change.
 - Keep `docs/FEAT.md` focused on what users can do. Lead with the Happy Path, then introduce advanced capabilities progressively as users explore further.
@@ -35,7 +68,8 @@ Unknown
 - Before adding content, review the complete `docs/FEAT.md`. Improve nearby wording, merge overlapping explanations, and remove stale or redundant content instead of only appending another section.
 - Keep the document concise and user-facing. Avoid implementation details and do not duplicate exhaustive setup or reference material from `README.md`.
 
-## 0x04. Glossary
+
+## 0x05. Glossary
 
 `docs/Glossary.md` is the single source of truth for **what things are called**. It governs wording, not implementation.
 
@@ -49,19 +83,7 @@ If a line would only make sense to someone reading the source, it does not belon
 - Whenever a name is changed or retired, update the entry and move the old name into the banned-words list — do not silently delete it, so the reason stays visible.
 - When `docs/FEAT.md` or any feature doc introduces a term not yet listed, add it to the glossary in the same change.
 
-## 0x05. Design System
+
+## 0x06. Design System
 
 Only update [DESIGN SYSTEM](./DESIGN%20SYSTEM.html) when synchronizing design files.
-
-## 0x06. Coding Policy
-
-- Data first.  
-  Before coding, understand where the data comes from, how it is processed and used, and whether it is persisted.
-- Check best practices first.  
-  Start a subagent to review the approach before implementation.
-- Rewrite, don’t patch.  
-  Follow best practices instead of adding workarounds, while providing migrations for persisted data.
-- Design first.  
-  Design intent takes priority over implementation details. Never hide errors or handle failures silently.
-- Keep one source of truth.  
-  Always identify the authoritative data source and remove redundant transformations and processing logic.
