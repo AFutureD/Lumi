@@ -119,6 +119,7 @@ public struct HelperIngestPipeline: Sendable {
         var cursorToSave: RolloutCursor?
         var childCursorsToSave: [RolloutCursor] = []
         var historyDelegated = false
+        var currentTurnID: TurnID?
         if let richPath, FileManager.default.isReadableFile(atPath: richPath) {
             richAvailable = true
             report.richSourcePath = richPath
@@ -128,10 +129,11 @@ public struct HelperIngestPipeline: Sendable {
                     sessionID: sessionID,
                     adapter: adapter
                 ) {
-                case let .increment(events, cursor, lines):
+                case let .increment(events, cursor, lines, turnID):
                     batch.append(contentsOf: events)
                     cursorToSave = cursor
                     report.richSourceLinesRead = lines
+                    currentTurnID = turnID
                 case let .delegatedToDaemon(bytes):
                     // With the increment deferred, the hook must tell the
                     // whole story itself: its prompt / tool rows are the only
@@ -142,6 +144,10 @@ public struct HelperIngestPipeline: Sendable {
                     report.notes.append("history_delegated_to_daemon bytes=\(bytes)")
                 }
             } catch {
+                // A failed read contributed nothing: fall back to hook-only
+                // for this invocation rather than suppressing the hook's turn
+                // and items on the promise of transcript data that never came.
+                richAvailable = false
                 report.warnings.append("rich_source_read_failed path=\(richPath) error=\(error)")
             }
         } else if let richPath {
@@ -166,7 +172,7 @@ public struct HelperIngestPipeline: Sendable {
                 childRichAvailable = true
                 do {
                     switch try readIncrement(path: childPath, sessionID: childID, adapter: adapter) {
-                    case let .increment(events, cursor, _):
+                    case let .increment(events, cursor, _, _):
                         batch.append(contentsOf: events)
                         if let cursor { childCursorsToSave.append(cursor) }
                     case let .delegatedToDaemon(bytes):
@@ -201,7 +207,8 @@ public struct HelperIngestPipeline: Sendable {
         var options = HookIngestOptions(
             richSourceAvailable: root.string("agent_id") != nil && ClaudeAdapter.isRealSubagent(root)
                 ? childRichAvailable
-                : richAvailable
+                : richAvailable,
+            currentTurnID: currentTurnID
         )
         // A delegated history means the daemon is about to prove the session
         // was used — the discard heuristic must not race it.
@@ -278,7 +285,10 @@ public struct HelperIngestPipeline: Sendable {
     // MARK: - Increment reading
 
     enum IncrementRead {
-        case increment(events: [AgentIngressEvent], cursor: RolloutCursor?, lines: Int)
+        /// `currentTurnID` is the Turn the read left open (or last named) —
+        /// seeded from the daemon's turns, advanced by the increment itself —
+        /// so the hook events ingested right after attach to the right Turn.
+        case increment(events: [AgentIngressEvent], cursor: RolloutCursor?, lines: Int, currentTurnID: TurnID?)
         /// Cold start on a large history: the daemon rebuilds it, this hook
         /// invocation ships only its own events.
         case delegatedToDaemon(bytes: UInt64)
@@ -306,8 +316,8 @@ public struct HelperIngestPipeline: Sendable {
             maximumBytes: maximumIncrementBytes
         )
         guard read.lines > 0 || read.cursor.byteOffset != existing?.byteOffset else {
-            return .increment(events: [], cursor: nil, lines: 0)
+            return .increment(events: [], cursor: nil, lines: 0, currentTurnID: read.finalTurnID)
         }
-        return .increment(events: read.events, cursor: read.cursor, lines: read.lines)
+        return .increment(events: read.events, cursor: read.cursor, lines: read.lines, currentTurnID: read.finalTurnID)
     }
 }

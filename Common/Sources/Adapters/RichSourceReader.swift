@@ -59,6 +59,9 @@ public struct RichSourceRead: Sendable {
     /// daemon has accepted `events`.
     public var cursor: RolloutCursor
     public var lines: Int
+    /// Turn left open (or last named) after this read — the seed for hook
+    /// events ingested right after the increment.
+    public var finalTurnID: TurnID?
 }
 
 /// Reads complete JSONL lines of a transcript / rollout from a byte offset and
@@ -84,7 +87,9 @@ public enum RichSourceReader {
         var offset = requestedOffset
         if fileSize < offset { offset = 0 }   // truncated / rewritten
         let unchanged = RolloutCursor(path: path, byteOffset: offset, fileSize: fileSize, sessionID: sessionID)
-        guard fileSize > offset else { return RichSourceRead(events: [], cursor: unchanged, lines: 0) }
+        guard fileSize > offset else {
+            return RichSourceRead(events: [], cursor: unchanged, lines: 0, finalTurnID: initialTurnID)
+        }
 
         var state = RolloutReadState()
         state.currentTurnID = initialTurnID
@@ -165,7 +170,8 @@ public enum RichSourceReader {
                 fileSize: fileSize,
                 sessionID: sessionID
             ),
-            lines: lines
+            lines: lines,
+            finalTurnID: state.currentTurnID
         )
     }
 

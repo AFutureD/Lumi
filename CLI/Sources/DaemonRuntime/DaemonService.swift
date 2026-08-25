@@ -190,10 +190,17 @@ public actor DaemonService {
                             sessionID: id,
                             generation: String(Int64(now.timeIntervalSince1970 * 1000))
                         )
-                        // Synced iPhones get the rebuilt sessions whole; the
-                        // Mac that asked takes `report.detail` from this reply.
+                        // Synced iPhones get the rebuilt sessions whole. The
+                        // Mac that asked gets only the completion signal
+                        // (summary + turns) and pages the rebuilt timeline
+                        // back itself: a whole session with full tool content
+                        // does not fit one IPC frame.
                         await relay?.sessionsRebuilt(report.rebuiltSessionIDs)
-                        payload = IPCResponse(status: .ok, session: report.detail)
+                        payload = IPCResponse(status: .ok, session: SessionDetail(
+                            summary: report.detail.summary,
+                            turns: report.detail.turns,
+                            timeline: []
+                        ))
                     } catch SessionReingestError.sessionNotFound {
                         payload = failure(code: "session_not_found", message: "The session is no longer retained.")
                     } catch SessionReingestError.richSourceUnavailable {

@@ -136,6 +136,7 @@ public struct CodexAdapter: AgentAdapter {
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
                     summary: AdapterText.summary(ofToolInput: root["tool_input"]),
+                    content: root.jsonValue("tool_input"),
                     status: .started,
                     toolUseID: toolUseID
                 )),
@@ -151,6 +152,7 @@ public struct CodexAdapter: AgentAdapter {
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
                     summary: AdapterText.excerpt(Self.responseText(root["tool_response"])),
+                    content: root.jsonValue("tool_response"),
                     status: failed ? .failed : .succeeded,
                     toolUseID: toolUseID
                 )),
@@ -384,6 +386,7 @@ public struct CodexAdapter: AgentAdapter {
                 timeline: .tool(ToolTimelinePayload(
                     name: name,
                     summary: AdapterText.summary(ofToolInput: input),
+                    content: input.flatMap { try? JSONValue(jsonObject: $0) },
                     status: .started,
                     toolUseID: callID
                 )),
@@ -400,6 +403,7 @@ public struct CodexAdapter: AgentAdapter {
                 timeline: .tool(ToolTimelinePayload(
                     name: resolvedName,
                     summary: AdapterText.excerpt(output),
+                    content: output.map(JSONValue.string),
                     status: failed ? .failed : .succeeded,
                     durationMilliseconds: duration,
                     toolUseID: callID
@@ -751,6 +755,7 @@ public struct CodexAdapter: AgentAdapter {
                             name: name.isEmpty ? "MCP tool" : name,
                             summary: AdapterText.excerpt(Self.responseText(item["result"]))
                                 ?? AdapterText.summary(ofToolInput: item["arguments"]),
+                            content: item.jsonValue(keys: ["arguments", "result"]),
                             status: item.string("status") == "failed" ? .failed : .succeeded,
                             durationMilliseconds: Self.itemDuration(item["duration"]),
                             toolUseID: item.string("id")
@@ -767,6 +772,7 @@ public struct CodexAdapter: AgentAdapter {
                         timeline: .tool(ToolTimelinePayload(
                             name: kind,
                             summary: AdapterText.excerpt(item.string("query")),
+                            content: item.jsonValue("query"),
                             status: .succeeded,
                             toolUseID: item.string("id")
                         )),
@@ -781,6 +787,7 @@ public struct CodexAdapter: AgentAdapter {
                         timeline: .tool(ToolTimelinePayload(
                             name: "Apply patch",
                             summary: AdapterText.excerpt(item.dictionary("changes")?.keys.sorted().joined(separator: ", ")),
+                            content: item.jsonValue("changes"),
                             status: item.string("status") == "failed" ? .failed : .succeeded,
                             toolUseID: item.string("id")
                         )),
@@ -795,6 +802,7 @@ public struct CodexAdapter: AgentAdapter {
                         timeline: .tool(ToolTimelinePayload(
                             name: "View image",
                             summary: AdapterText.excerpt(item.string("path")),
+                            content: item.jsonValue("path"),
                             status: .succeeded,
                             toolUseID: item.string("id")
                         )),

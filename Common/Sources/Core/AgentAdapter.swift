@@ -58,10 +58,16 @@ public struct HookIngestOptions: Hashable, Sendable {
     /// holds the session as provisional (no Turn ever) and no transcript was
     /// written: the adapter then emits a discard instead of a session end.
     public var sessionNeverUsed: Bool
+    /// The Turn the transcript reader holds open (or last held) for this
+    /// session, set by the pipeline from the increment it just read. With the
+    /// rich source available, hook events attach to this Turn — the hook's
+    /// own `prompt_id` changes on injected resumes and would mint ghost Turns.
+    public var currentTurnID: TurnID?
 
-    public init(richSourceAvailable: Bool = false, sessionNeverUsed: Bool = false) {
+    public init(richSourceAvailable: Bool = false, sessionNeverUsed: Bool = false, currentTurnID: TurnID? = nil) {
         self.richSourceAvailable = richSourceAvailable
         self.sessionNeverUsed = sessionNeverUsed
+        self.currentTurnID = currentTurnID
     }
 
     public static let hookOnly = HookIngestOptions(richSourceAvailable: false)

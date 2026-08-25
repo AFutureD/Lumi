@@ -218,7 +218,7 @@ Activity 标题右侧有两枚下拉按钮：**Category**（按消息类别，�
 - 条件：Sessions 页面存在一个或多个 Session，用户选择其中一条。
 - 行为：列表行显示 Agent 图标、Session 标题、相对时间和“状态色点 + 生命周期 · Turn 阶段”；Subagent 不缩进，用左侧引导线挂在父级下。Subagent 默认收起；点击父级行任意位置或子项数量标记切换展开/收起（也支持键盘左右方向键），展开状态在本次 App 运行期间保留。详情固定为 Activity 主区 + Inspector：Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间），其下 Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
 - 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的活动记录与指标。
-- 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示；父 Session 还没有 Turn（通常不显示）但已有可见 Subagent 时，父级照常显示，选中它点 Refresh 即可从对话记录补全。Activity 的系统与上下文记录可能包含凭据、环境信息或工具内容；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
+- 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示；父 Session 还没有 Turn（通常不显示）但已有可见 Subagent 时，父级照常显示，选中它点 Refresh 即可从对话记录补全。Activity 记录（含工具的完整输入与输出、系统与上下文内容）可能包含凭据、环境信息；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
 
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 

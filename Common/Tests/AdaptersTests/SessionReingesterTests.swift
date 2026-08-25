@@ -16,6 +16,7 @@ private func hookData(_ fields: [String: Any]) -> Data {
 private func claudeTranscript(session: String, prompt: String) -> [[String: Any]] {
     [
         ["type": "user", "uuid": "u1", "sessionId": session, "promptId": prompt, "timestamp": "2026-08-19T06:42:07.000Z", "cwd": "/tmp/proj",
+         "origin": ["kind": "human"],
          "message": ["role": "user", "content": "commit"]],
         ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-08-19T06:43:52.000Z",
          "message": ["role": "assistant", "model": "claude-opus-4-7", "stop_reason": "tool_use", "content": [
@@ -63,10 +64,12 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     let repository = InMemorySessionRepository()
     let adapter = ClaudeAdapter()
     let base: [String: Any] = ["session_id": session, "cwd": "/tmp/proj", "transcript_path": path]
-    func apply(_ fields: [String: Any], at timestamp: String? = nil, rich: Bool = true) async throws {
+    // `turn` mirrors the pipeline: with the rich source readable it hands the
+    // adapter the Turn the transcript reader holds open.
+    func apply(_ fields: [String: Any], at timestamp: String? = nil, rich: Bool = true, turn: TurnID? = nil) async throws {
         var merged = base.merging(fields) { $1 }
         if let timestamp { merged["timestamp"] = timestamp }
-        for event in try adapter.events(fromHookData: hookData(merged), options: HookIngestOptions(richSourceAvailable: rich)) {
+        for event in try adapter.events(fromHookData: hookData(merged), options: HookIngestOptions(richSourceAvailable: rich, currentTurnID: turn)) {
             _ = try await repository.apply(event)
         }
     }
@@ -74,12 +77,12 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     // stop leaves the session stuck in running/thinking.
     try await apply(["hook_event_name": "SessionStart", "source": "startup"], at: "2026-08-19T06:40:00Z")
     try await apply(["hook_event_name": "UserPromptSubmit", "prompt_id": "p1", "prompt": "commit"], at: "2026-08-19T06:42:07Z")
-    try await apply(["hook_event_name": "SubagentStart", "prompt_id": "p1", "agent_id": "a1", "agent_type": "Explore"], at: "2026-08-19T06:42:20Z")
-    try await apply(["hook_event_name": "SubagentStop", "prompt_id": "p1", "agent_id": "a1", "agent_type": "Explore"], at: "2026-08-19T06:43:00Z")
+    try await apply(["hook_event_name": "SubagentStart", "prompt_id": "p1", "agent_id": "a1", "agent_type": "Explore"], at: "2026-08-19T06:42:20Z", turn: TurnID("p1"))
+    try await apply(["hook_event_name": "SubagentStop", "prompt_id": "p1", "agent_id": "a1", "agent_type": "Explore"], at: "2026-08-19T06:43:00Z", turn: TurnID("p1"))
     let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
     for event in live.events { _ = try await repository.apply(event) }
     try await repository.saveRolloutCursor(live.cursor)
-    try await apply(["hook_event_name": "Stop", "prompt_id": "p1", "last_assistant_message": "Committed."], at: "2026-08-19T06:43:58Z")
+    try await apply(["hook_event_name": "Stop", "prompt_id": "p1", "last_assistant_message": "Committed."], at: "2026-08-19T06:43:58Z", turn: TurnID("p1"))
     _ = try await repository.apply(AgentIngressEvent(
         eventID: EventID("stray"), sessionID: sid, turnID: TurnID("p1"), agent: .claude,
         occurredAt: ISO8601DateFormatter().date(from: "2026-08-19T06:44:01Z")!, lifecycle: .running, phase: .thinking

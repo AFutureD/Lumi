@@ -437,7 +437,7 @@ import Testing
     let context = RolloutRecordContext(path: "/tmp/session.jsonl", byteOffset: 0, sessionID: SessionID("session-1"))
 
     let prompt = Data("""
-    {"type":"user","sessionId":"session-1","promptId":"p1","timestamp":"2026-08-20T09:44:42Z","message":{"role":"user","content":"Do the thing"}}
+    {"type":"user","sessionId":"session-1","promptId":"p1","timestamp":"2026-08-20T09:44:42Z","origin":{"kind":"human"},"message":{"role":"user","content":"Do the thing"}}
     """.utf8)
     let promptEvents = try adapter.events(fromRolloutLine: prompt, context: context, state: &state)
     #expect(promptEvents.last?.lifecycle == .running)

@@ -157,14 +157,18 @@ public final class MacSessionStore {
         }
         Task {
             do {
+                // The rebuild replays the whole transcript before replying.
                 let response = try await request(
                     IPCRequest(operation: .reingestSession, sessionID: sessionID),
-                    extendedTimeout: true
+                    timeoutSeconds: 60
                 )
                 if let failure = response.failure { throw failure }
-                // The rebuild is not streamed; the returned detail is the
-                // wiped-and-rebuilt session.
-                if let detail = response.session, let cache {
+                // The rebuild is not streamed, and the reply is only the
+                // completion signal (summary + turns): the rebuilt timeline
+                // is paged back here — whole, unlike a mid-rebuild snapshot,
+                // and within the frame limit, unlike a single-frame detail.
+                if response.session != nil, let cache,
+                   let detail = try await fetchFullDetail(id: sessionID) {
                     try await cache.replaceSession(detail)
                     cachedSnapshotDetails = nil
                     convertLog.info("session_refreshed", metadata: .fields([
@@ -417,13 +421,15 @@ public final class MacSessionStore {
         while !done {
             let response = try await request(
                 IPCRequest(operation: .getSession, sessionID: id, cursor: cursor, limit: limit),
-                extendedTimeout: true
+                timeoutSeconds: 15
             )
             if let failure = response.failure {
                 if failure.code == "session_not_found" { return nil }
-                if failure.code == "response_too_large", limit > 25 {
+                // Full tool content can make even a small page overflow the
+                // frame; shrink all the way down to one item per page.
+                if failure.code == "response_too_large", limit > 1 {
                     log.warning("session_page_too_large", metadata: .fields(["session": id.rawValue, "limit": limit]))
-                    limit = 25
+                    limit = max(1, limit / 8)
                     continue
                 }
                 throw failure
@@ -638,14 +644,14 @@ public final class MacSessionStore {
         }
     }
 
-    private func request(_ request: IPCRequest, extendedTimeout: Bool = false) async throws -> IPCResponse {
+    private func request(_ request: IPCRequest, timeoutSeconds: Int64 = 2) async throws -> IPCResponse {
         let client = client
         let socketPath = socketPath
         return try await Task.detached {
             try client.request(
                 request,
                 socketPath: socketPath,
-                timeoutSeconds: extendedTimeout ? 15 : 2
+                timeoutSeconds: timeoutSeconds
             )
         }.value
     }

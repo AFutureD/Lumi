@@ -105,6 +105,7 @@ private func hook(_ fields: [String: Any]) -> Data {
     // Transcript catches up: user record + assistant thinking + tool_use.
     let lines: [[String: Any]] = [
         ["type": "user", "uuid": "u1", "sessionId": session, "promptId": prompt, "timestamp": "2026-08-18T14:35:28.342Z", "cwd": "/tmp/proj",
+         "origin": ["kind": "human"],
          "message": ["role": "user", "content": "list files\n\n<system-reminder>be brief</system-reminder>"]],
         ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-08-18T14:35:30.000Z",
          "message": ["role": "assistant", "model": "claude-opus-4-7", "content": [
@@ -125,7 +126,7 @@ private func hook(_ fields: [String: Any]) -> Data {
         ["type": "attachment", "uuid": "at1", "sessionId": session, "timestamp": "2026-08-18T14:35:32.000Z",
          "attachment": ["type": "auto_mode", "bypass": true, "steerOnly": true]],
         ["type": "assistant", "uuid": "a2", "sessionId": session, "timestamp": "2026-08-18T14:35:33.000Z",
-         "message": ["role": "assistant", "model": "claude-opus-4-7", "content": [["type": "text", "text": "Two files."]]]],
+         "message": ["role": "assistant", "model": "claude-opus-4-7", "stop_reason": "end_turn", "content": [["type": "text", "text": "Two files."]]]],
     ]
     let handle = try FileHandle(forWritingTo: transcript)
     try handle.seekToEnd()
@@ -397,6 +398,14 @@ private func hook(_ fields: [String: Any]) -> Data {
     let port = MemoryDaemonPort()
     let pipeline = HelperIngestPipeline(port: port, environment: [:], homeDirectory: home)
     let base: [String: Any] = ["session_id": session, "transcript_path": transcript.path, "cwd": "/tmp/proj", "prompt_id": "p1"]
+    let parentPrompt: [String: Any] = [
+        "type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1",
+        "timestamp": "2026-08-19T09:29:24.900Z", "cwd": "/tmp/proj",
+        "origin": ["kind": "human"],
+        "message": ["role": "user", "content": "spawn an agent"],
+    ]
+    try (String(data: JSONSerialization.data(withJSONObject: parentPrompt), encoding: .utf8)! + "\n")
+        .write(to: transcript, atomically: true, encoding: .utf8)
     _ = try pipeline.run(hookData: hook(base.merging([
         "hook_event_name": "UserPromptSubmit", "prompt": "spawn an agent", "timestamp": "2026-08-19T09:29:25.000Z",
     ]) { $1 }))

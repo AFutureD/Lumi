@@ -6,8 +6,13 @@ import Foundation
 /// Reduces Claude Code hook payloads and transcript JSONL records
 /// (`~/.claude/projects/<slug>/<session>.jsonl`) into Agent-domain events.
 ///
-/// Turn identity is Claude's `prompt_id` (hooks) / `promptId` (transcript
-/// user records). Transcript records without one belong to the current turn.
+/// Turn boundaries are content-driven, not `prompt_id`-driven: a human
+/// prompt (`origin.kind == "human"`; any plain prompt text on a subagent
+/// transcript) opens a Turn, and the closing assistant record's terminal
+/// `stop_reason` ends it. Injected resumes — task notifications, queued
+/// companion prompts — carry fresh `promptId`s but stay inside the Turn
+/// they resumed. The opening record's `promptId` still names the Turn so
+/// hook-fallback events land on the same id.
 public struct ClaudeAdapter: AgentAdapter {
     public let agentKind: AgentKind = .claude
 
@@ -39,13 +44,22 @@ public struct ClaudeAdapter: AgentAdapter {
             ? ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: agentID!)
             : parentSessionID
         let agent: AgentKind = isSubagent ? .claudeSubagent : .claude
-        // The hook's `prompt_id` is the parent's turn; a subagent's own turn id
-        // only comes from its transcript.
-        let turnID = isSubagent ? nil : root.string("prompt_id").map(TurnID.init)
+        let rich = options.richSourceAvailable
+        // Hook events attach to the Turn the transcript reader holds open
+        // (`options.currentTurnID`): the hook's `prompt_id` changes on every
+        // injected resume (task notifications), so using it as the turn id
+        // would mint ghost Turns. `prompt_id` remains the hook-only fallback —
+        // when no transcript read produced a turn (`currentTurnID == nil`) and
+        // none is readable at all (`!rich`, e.g. SubagentStart firing before
+        // the child transcript exists still finds the parent's turn above) —
+        // and on the first prompt of a session it matches the transcript's
+        // `promptId`. A subagent's own turn id only comes from its transcript.
+        let turnID: TurnID? = isSubagent
+            ? nil
+            : (options.currentTurnID ?? (rich ? nil : root.string("prompt_id").map(TurnID.init)))
         let subagentLineage = isSubagent
             ? ClaudeSubagentIdentity.lineage(parent: parentSessionID, agentType: root.string("agent_type"), meta: nil)
             : nil
-        let rich = options.richSourceAvailable
 
         func event(
             lifecycle: SessionLifecycle? = nil,
@@ -143,11 +157,14 @@ public struct ClaudeAdapter: AgentAdapter {
             )]
 
         case "UserPromptSubmit":
+            // Turn opening (and the prompt) belongs to the transcript when it
+            // is readable: this hook also fires for injected resumes, whose
+            // text must not overwrite the human prompt of the open Turn.
             let prompt = root.string("prompt")
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
-                turn: turnUpdate(phase: .thinking, prompt: prompt),
+                turn: rich ? nil : turnUpdate(phase: .thinking, prompt: prompt),
                 timeline: rich ? nil : prompt.map { .message(MessageTimelinePayload(role: .user, text: $0)) },
                 itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) }
             )]
@@ -159,6 +176,7 @@ public struct ClaudeAdapter: AgentAdapter {
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
                     summary: AdapterText.summary(ofToolInput: root["tool_input"]),
+                    content: root.jsonValue("tool_input"),
                     status: .started,
                     toolUseID: toolUseID
                 )),
@@ -174,6 +192,7 @@ public struct ClaudeAdapter: AgentAdapter {
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
                     summary: AdapterText.excerpt(CodexAdapter.responseText(result)),
+                    content: root.jsonValue(keys: ["tool_result", "tool_response"]),
                     status: failed ? .failed : .succeeded,
                     toolUseID: toolUseID
                 )),
@@ -187,6 +206,7 @@ public struct ClaudeAdapter: AgentAdapter {
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
                     summary: AdapterText.excerpt(root.string("error")) ?? "failed",
+                    content: root.jsonValue("error"),
                     status: .failed,
                     toolUseID: toolUseID
                 )),
@@ -242,6 +262,11 @@ public struct ClaudeAdapter: AgentAdapter {
             return events
 
         case "Stop":
+            // Closes the current Turn even when the terminal transcript record
+            // has not been flushed by hook time — the watcher skips a parked
+            // session, so the hook is the only guaranteed close. When the
+            // transcript record was (or is later) read, both sides target the
+            // same Turn and turn-end item id, so the close is idempotent.
             let last = root.string("last_assistant_message")
             return [event(
                 lifecycle: .waitingForInput,
@@ -252,6 +277,8 @@ public struct ClaudeAdapter: AgentAdapter {
             )]
 
         case "StopFailure":
+            // Same close-guarantee as Stop: the transcript's API-error record
+            // may lag the hook, and a failed session is not polled again.
             let message = [root.string("error_type"), root.string("error_message")].compactMap { $0 }.joined(separator: " · ")
             return [event(
                 lifecycle: .failed,
@@ -384,8 +411,13 @@ public struct ClaudeAdapter: AgentAdapter {
             data: Data("\(context.path):\(context.byteOffset):".utf8) + data,
             prefix: "claude-transcript:"
         )
-        if let prompt = root.string("promptId"), !prompt.isEmpty {
-            state.currentTurnID = TurnID(prompt)
+        // A Turn opens on a prompt, not on `promptId`: injected resumes (task
+        // notifications, queued companion prompts) carry fresh promptIds but
+        // stay inside the Turn they resumed. The opening record's promptId
+        // still names the Turn so hook-fallback events land on the same id.
+        let opensTurn = recordType == "user" && Self.opensTurn(root, isSubagentSession: subagentSessionID != nil)
+        if opensTurn {
+            state.currentTurnID = TurnID(root.string("promptId") ?? root.string("uuid") ?? stableID)
         }
         let turnID = state.currentTurnID
         let workspace = root.string("cwd")
@@ -436,6 +468,10 @@ public struct ClaudeAdapter: AgentAdapter {
             var index = 0
             func next() -> String { defer { index += 1 }; return ":\(index)" }
 
+            // Only the first plain prompt text of an opening record writes the
+            // Turn's prompt and claims the stable prompt item id; any further
+            // text block is its own row.
+            var turnClaimed = false
             let blocks = Self.blocks(message["content"])
             for block in blocks {
                 switch block.type {
@@ -477,15 +513,17 @@ public struct ClaudeAdapter: AgentAdapter {
                             suffix: next()
                         ))
                     } else {
+                        let claims = opensTurn && !turnClaimed
+                        turnClaimed = turnClaimed || claims
                         events.append(makeEvent(
                             lifecycle: .running,
                             phase: .thinking,
-                            turn: turnID.map {
+                            turn: claims ? turnID.map {
                                 TurnSummary(id: $0, sessionID: sessionID, phase: .thinking, prompt: trimmed, startedAt: occurredAt)
-                            },
+                            } : nil,
                             timeline: .message(MessageTimelinePayload(role: .user, text: trimmed)),
                             suffix: next(),
-                            itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) },
+                            itemID: claims ? turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) } : nil,
                             includeWorkspace: true
                         ))
                     }
@@ -496,6 +534,9 @@ public struct ClaudeAdapter: AgentAdapter {
                         || (root.dictionary("toolUseResult")?.bool("interrupted") == true)
                     let output = CodexAdapter.responseText(block.raw["content"])
                         ?? root.dictionary("toolUseResult")?.string("stdout")
+                    var raw: [String: JSONValue] = [:]
+                    if let value = block.raw.jsonValue("content") { raw["content"] = value }
+                    if let value = root.jsonValue("toolUseResult") { raw["toolUseResult"] = value }
                     let name = toolUseID.flatMap { state.toolNames[$0] } ?? "Tool"
                     if let toolUseID { state.openToolUseIDs.removeAll { $0 == toolUseID } }
                     events.append(makeEvent(
@@ -504,6 +545,7 @@ public struct ClaudeAdapter: AgentAdapter {
                         timeline: .tool(ToolTimelinePayload(
                             name: name,
                             summary: AdapterText.excerpt(output),
+                            content: raw.isEmpty ? nil : .object(raw),
                             status: failed ? .failed : .succeeded,
                             toolUseID: toolUseID
                         )),
@@ -529,12 +571,18 @@ public struct ClaudeAdapter: AgentAdapter {
             var index = 0
             func next() -> String { defer { index += 1 }; return ":\(index)" }
             let model = message.string("model")
-            // The transcript's own turn boundary: the final assistant message
-            // of a turn carries a non-tool stop reason. Emitting the turn end
-            // here keeps the state correct even when the Stop hook is missed
-            // or overridden, and lets a rebuild from the transcript alone
-            // land on waiting_for_input instead of an open turn.
-            let endsTurn = Self.turnEndingStopReasons.contains(message.string("stop_reason") ?? "")
+            // The transcript's own turn boundary: the final assistant record
+            // of a turn carries a terminal stop_reason — `end_turn` normally;
+            // truncation, refusal, or a synthetic API-error record (top-level
+            // `error` such as rate_limit / server_error, written with
+            // stop_reason "stop_sequence") abnormally. Emitting the turn end
+            // here keeps the state correct even when the Stop hook is missed,
+            // and lets a rebuild from the transcript alone land on
+            // waiting_for_input instead of an open turn.
+            let stopReason = message.string("stop_reason")
+            let apiError = root.string("error")
+            let endsTurn = stopReason.map { !Self.continuingStopReasons.contains($0) } ?? false
+            let turnFailed = endsTurn && (apiError != nil || Self.abnormalStopReasons.contains(stopReason ?? ""))
             var lastText: String?
 
             for block in Self.blocks(message["content"]) {
@@ -574,6 +622,7 @@ public struct ClaudeAdapter: AgentAdapter {
                         timeline: .tool(ToolTimelinePayload(
                             name: name,
                             summary: AdapterText.summary(ofToolInput: block.raw["input"]),
+                            content: block.raw.jsonValue("input"),
                             status: .started,
                             toolUseID: toolUseID
                         )),
@@ -586,9 +635,14 @@ public struct ClaudeAdapter: AgentAdapter {
             }
 
             if endsTurn {
+                let outcome: TurnOutcome = turnFailed ? .failed : .completed
+                let failureMessage = [apiError, lastText].compactMap { $0 }.joined(separator: " · ")
                 // A subagent never waits for input: its final message completes it.
+                let lifecycle: SessionLifecycle = turnFailed
+                    ? .failed
+                    : (subagentSessionID == nil ? .waitingForInput : .completed)
                 events.append(makeEvent(
-                    lifecycle: subagentSessionID == nil ? .waitingForInput : .completed,
+                    lifecycle: lifecycle,
                     phase: .idle,
                     turn: turnID.map {
                         TurnSummary(
@@ -597,11 +651,14 @@ public struct ClaudeAdapter: AgentAdapter {
                             phase: .idle,
                             startedAt: occurredAt,
                             endedAt: occurredAt,
-                            outcome: .completed,
+                            outcome: outcome,
                             lastAssistantMessage: lastText
                         )
                     },
-                    timeline: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: lastText)),
+                    timeline: .turnEnd(TurnEndTimelinePayload(
+                        outcome: outcome,
+                        message: turnFailed ? (failureMessage.isEmpty ? nil : failureMessage) : lastText
+                    )),
                     suffix: ":end",
                     itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
                 ))
@@ -689,12 +746,36 @@ public struct ClaudeAdapter: AgentAdapter {
 
     // MARK: - Helpers
 
-    /// Claude Code forks an internal query after every Stop (a few seconds
-    /// later) that fires `SubagentStop` with an empty `agent_type`, no paired
-    /// `SubagentStart` and no subagent transcript. It is not a subagent of the
-    /// session; folding it in would flip a finished turn back to running.
-    /// `tool_use` continues the turn; anything else the API returns ends it.
-    static let turnEndingStopReasons: Set<String> = ["end_turn", "stop_sequence", "max_tokens", "refusal"]
+    /// `stop_reason` values after which the same turn continues: the tool
+    /// loop (`tool_use`, `tool_deferred`) or a paused server-tool loop the
+    /// harness resumes on its own (`pause_turn`). Any other stop reason is
+    /// terminal and ends the turn.
+    static let continuingStopReasons: Set<String> = ["tool_use", "tool_deferred", "pause_turn"]
+
+    /// Terminal `stop_reason` values that end a turn abnormally: the output
+    /// was truncated or refused. Independent of these, a terminal record with
+    /// a top-level `error` (rate_limit, server_error, …) fails the turn it
+    /// ends.
+    static let abnormalStopReasons: Set<String> = ["max_tokens", "refusal", "model_context_window_exceeded"]
+
+    /// A Turn opens on a prompt. On the main session that is a human one —
+    /// `origin.kind == "human"` (slash commands included); injected resumes
+    /// carry other kinds or none, and an interrupt marker closes a Turn, so it
+    /// never opens one even if a future Claude Code stamps it as human. A
+    /// subagent transcript has no human origin: its seed and follow-up
+    /// prompts are plain user text records, told apart from injected content
+    /// and interrupt markers by their text.
+    static func opensTurn(_ root: [String: Any], isSubagentSession: Bool) -> Bool {
+        let texts = blocks(root.dictionary("message")?["content"]).compactMap { block -> String? in
+            guard block.type == "text", let text = block.text else { return nil }
+            return splitSystemReminders(text).0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard isSubagentSession else {
+            return root.dictionary("origin")?.string("kind") == "human"
+                && !texts.contains(where: interruptMarkers.contains)
+        }
+        return texts.contains { !$0.isEmpty && !interruptMarkers.contains($0) && injectedKind($0) == nil }
+    }
 
     /// Transcript user-text markers Claude Code writes when the user presses
     /// stop. An interrupt fires no Stop hook, so these are the only turn-end
@@ -704,6 +785,10 @@ public struct ClaudeAdapter: AgentAdapter {
         "[Request interrupted by user for tool use]",
     ]
 
+    /// Claude Code forks an internal query after every Stop (a few seconds
+    /// later) that fires `SubagentStop` with an empty `agent_type`, no paired
+    /// `SubagentStart` and no subagent transcript. It is not a subagent of the
+    /// session; folding it in would flip a finished turn back to running.
     public static func isRealSubagent(_ root: [String: Any]) -> Bool {
         guard let type = root.string("agent_type") else { return false }
         return !type.trimmingCharacters(in: .whitespaces).isEmpty

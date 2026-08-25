@@ -29,13 +29,13 @@ flowchart LR
 
 1. 判定 provider（`--agent codex|claude`，否则按 `CLAUDE_PROJECT_DIR`、`transcript_path`、`prompt_id`/`turn_id` 启发式）。
 2. 定位该 Session 的 rich source（Claude 用 hook 的 `transcript_path`；Codex 在 `CODEX_HOME/sessions` 按文件名后缀 `-<session>.jsonl` 由新到旧查找）。
-3. 向 daemon 取该文件的 cursor 与该 Session 的 summary + 已知 Turn（`get_session limit:1`；当前开放 Turn 作为无 `turn_id` 记录的归属），读增量、逐行 reduce。
-4. reduce hook 本身；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 边界 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。Claude `SessionEnd` 且 rich source 不存在时，先判定「临时会话」（见下节）。
+3. 向 daemon 取该文件的 cursor 与该 Session 的 summary + 已知 Turn（`get_session limit:1`；最后开放（否则最近）的 Turn 播种 `currentTurnID`），读增量、逐行 reduce。
+4. reduce hook 本身，带上增量读取结束时的 `currentTurnID`（hook 事件挂到这个 Turn，见「Turn 边界」）；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 收口 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。Claude `SessionEnd` 且 rich source 不存在时，先判定「临时会话」（见下节）。
 5. `ingest_batch` 一次发送，成功后再 `save_rollout_cursor`。
 
 ## 临时会话（第一个 Turn 之前）
 
-**有效性边界 = 第一个 Turn**（首次 `UserPromptSubmit` / transcript 首条 user 记录 / Codex `task_started`）。`SessionStart` 之后、第一个 Turn 之前的 Session 是 **临时会话**：`SessionSummary.isProvisional = lifecycle == .starting && firstTurnAt == nil`（`firstTurnAt` 由 reducer 在首个带 turnID 的事件时写入，之后不变；`resume` / `compact` 重发 `SessionStart` 会把 lifecycle 重置为 `starting`，但 `firstTurnAt` 已有值，所以不算临时）。
+**有效性边界 = 第一个 Turn**（transcript 首条 human prompt 记录 / hook-only 兜底的首次 `UserPromptSubmit` / Codex `task_started`）。`SessionStart` 之后、第一个 Turn 之前的 Session 是 **临时会话**：`SessionSummary.isProvisional = lifecycle == .starting && firstTurnAt == nil`（`firstTurnAt` 由 reducer 在首个带 turnID 的事件时写入，之后不变；`resume` / `compact` 重发 `SessionStart` 会把 lifecycle 重置为 `starting`，但 `firstTurnAt` 已有值，所以不算临时）。
 
 - **可见性**：临时会话在主窗口列表、Notch、Relay/iOS 快照里一律不出现（Mac `MacSessionStore` 过滤，daemon `health.activeSessionCount` 同口径）；它仍留在 daemon 与 Mac cache 里，等第一个 Turn 到来时连同 `session_started` marker 一起显示。唯一例外（`SessionSummary.visible`）：被某个可见 Subagent 引用为 parent 的临时会话照常显示——隐藏它会让子代理孤悬在顶层，也没法选中它做 `reingest_session` 修复（历史数据里曾有子代理 rollout 继承的 `session_meta` 给父级建出空壳的情况）。
 - **存在性**：Claude `SessionEnd` 到达时，helper 若发现 transcript 从未落盘且 daemon 仍把该 Session 记为临时（或根本没有）→ 这不是会话，`ClaudeAdapter` 产出 `AgentIngressEvent(disposition: .discard)` 代替 `session_ended`；仓库删除该 Session 并写入 `ignored_sessions` 墓碑，事件照常发布，Mac cache 跑同一段代码收敛。daemon 查询失败时不判定（宁可留下空会话也不误删）。判定只能在 SessionEnd 做：真会话的 SessionStart 同样早于 transcript 创建。Codex 不适用（rollout 从 Session 开始就存在）。
@@ -44,7 +44,7 @@ flowchart LR
 
 ## 重算（`reingest_session`）
 
-Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_session`，把返回的 detail 写入本地缓存，再做一次按 Session 的对账。daemon 侧 `SessionReingester`（`Common/Adapters`）：
+Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_session`；应答只是完成信号（重建后的 summary + turns，timeline 为空——带工具全文的整本 timeline 装不进单个 IPC 帧），Mac 收到后按页取回完整 timeline 写入本地缓存（页超限时逐级缩小到每页 1 条），再做一次按 Session 的对账。daemon 侧 `SessionReingester`（`Common/Adapters`）：
 
 1. 取该 Session 现有 summary + 全部 timeline；按 `rollout_cursors.session_id` 找到 rich source（找不到时按 agent 用 `RichSourceLocator` 搜 `~/.claude/projects` / `~/.codex/sessions`；仍找不到 → `rich_source_unavailable`，不动数据）。
 2. `RichSourceReader` 从 offset 0 全量读（不截尾），逐行经 ClaudeAdapter / CodexAdapter 归约。
@@ -73,21 +73,53 @@ Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_sess
 
 安装是幂等的：如果某事件组已经包含 `Spark`，不会重复追加。卸载只过滤包含 Lumi helper 的 handler；同组其他 handler 和其他顶层配置保留。
 
-## Hook 事件映射（Codex 与 Claude 同构）
+## Turn 边界
 
-Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId`）。`rich` = 该 Session 的 transcript/rollout 可读。
+Turn = 一次人类提问到一次收口。两个 agent 的边界信号不同。
+
+**Codex**：rollout 自带显式 Turn 记录——`task_started` / `turn_context` 携带 `turn_id` 开 Turn，`task_complete` / `turn_aborted` 收口；hook 的 `turn_id` 与之同名，两路天然落在同一 Turn。
+
+**Claude**：transcript 是边界的唯一权威，按内容判定；`prompt_id` 不参与——注入式续跑（task notification、排队补发的伴随 prompt）每次都携带新 `prompt_id`，按它建 Turn 会给每次续跑多造一个幽灵 Turn。
+
+- **开**：user 记录且 `origin.kind == "human"`（斜杠命令也算；中断标记即使带 human origin 也只收口，不开）。子代理 transcript 没有 human origin：种子与追加的普通 prompt 文本（非注入标签、非中断标记、非工具结果）即开 Turn。
+- **命名**：开 Turn 的记录以自己的 `promptId`（缺则 `uuid`）作 TurnID。首个 prompt 的 hook `prompt_id` 与它一致，hook 兜底自然落在同一 Turn。
+- **归属**：开与收之间的所有记录——包括带新 `promptId` 的注入式续跑——都归当前 Turn。增量读取以 daemon 已存的最后开放（否则最近一个）Turn 播种 `RolloutReadState.currentTurnID`。
+- **收**：assistant 记录的终态 `stop_reason`，按下表分类。用户中断（Esc）不发任何 hook，收口靠 transcript 的中断标记（见映射表）。
+
+| `stop_reason` | 判定 | 结果 |
+| --- | --- | --- |
+| `tool_use` / `tool_deferred` | 继续：工具循环 | 不收口 |
+| `pause_turn` | 继续：server-tool 循环暂停，harness 自动续跑 | 不收口 |
+| 缺失 | 流式中间记录 | 不收口 |
+| `end_turn`；无 `error` 的 `stop_sequence` | 正常收口 | Waiting For Input（子代理 Completed）/ Idle；Turn `outcome=completed` + `lastAssistantMessage`；`turnEnd(completed, text)` |
+| 顶层 `error` 非空（harness 写的 API 错误记录：`rate_limit` / `server_error` / `authentication_failed` …，伴随 `stop_sequence`） | 异常收口 | Failed / Idle；Turn `outcome=failed`；`turnEnd(failed, error · text)` |
+| `max_tokens` / `refusal` / `model_context_window_exceeded` | 异常收口：截断或拒答 | 同上 |
+| 其他未知值 | 视为正常收口（「会继续」是显式枚举） | 同 `end_turn` |
+
+hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
+
+- hook 事件不自带 Turn 身份：统一挂到 pipeline 从增量读取带回的 `HookIngestOptions.currentTurnID`；只有完全没有 transcript 数据可用（`currentTurnID` 为空且非 rich——文件未落盘、读失败降级、冷启动委托回填）才退回 `prompt_id`。
+- rich 时 `UserPromptSubmit` 不建 Turn、不写 prompt——它对注入式续跑同样触发，其文本不能覆盖人类 prompt；开 Turn 全部交给 transcript。
+- `Stop` / `StopFailure` 始终收口当前 Turn：终态记录可能晚于 hook 落盘，而停在 waitingForInput·idle 或 failed 的 Session 不再被 watcher 轮询，hook 是唯一有保证的收口。两路 turnEnd 落同一 item id（`turn_end:<s>:<turn>`）与同一 outcome，先后到达幂等。
+
+已知取舍：
+
+- 早于 `origin` 字段的历史 transcript（旧版 Claude Code 所写）回放时开不出 Turn；不为旧数据保留启发式兜底。
+- steering（Turn 进行中用户再输入）开新 Turn，旧 Turn 不再收口——与 `prompt_id` 时代一致。
+
+## Hook 事件映射（Codex 与 Claude 同构）
 
 | Hook | lifecycle | phase | Turn | Timeline item |
 | --- | --- | --- | --- | --- |
 | `SessionStart(source, model)` | Starting | Idle | — | `sessionMarker(sessionStarted)` |
-| `UserPromptSubmit(prompt)` | Running | Thinking | 建 Turn：prompt/startedAt | 非 rich：`message(user)` |
+| `UserPromptSubmit(prompt)` | Running | Thinking | 非 rich：建 Turn（prompt/startedAt）；rich 归 transcript（见「Turn 边界」） | 非 rich：`message(user)` |
 | `PreToolUse(tool_name, tool_use_id, tool_input)` | Running | Executing | toolCallCount+1（由 item 推导） | 非 rich：`tool(started, toolUseID)` |
 | `PostToolUse` / `PostToolUseFailure` | Running | Thinking | — | 非 rich：`tool(succeeded/failed, toolUseID)` |
 | `PermissionRequest` | Waiting For Input | Waiting For Approval | — | **无**（权限不进 Timeline） |
 | `PermissionDenied`（Claude） | Running | Thinking | — | 无 |
 | `SubagentStart/Stop(agent_id, agent_type)` | Running | Subagent Running / Thinking | subagentCount | `subagent(started/completed)`；Claude `agent_type` 为空的 SubagentStart/Stop 整体忽略（Claude Code 在每个 Stop 后 ≈3 s 内部 fork 一次查询，只发 SubagentStop、无 SubagentStart、无 subagent transcript；不是会话的子代理，若纳入会把已完成的 Turn / Session 改回 running）。**Claude 子代理同时得到一个派生子 Session** `<parent>:agent:<agent_id>`（`ClaudeSubagentIdentity`）：Start → 子 Session running/thinking、Stop → completed/idle，lineage.parentSessionID = 父；helper 在每个带 `agent_id` 的 hook 上增量读 `<project>/<session>/subagents/agent-<id>.jsonl`（sidechain transcript，`agent_transcript_path` 或由父 transcript 路径推出）灌进子 Session 的 timeline，并用旁边 `.meta.json` 的 `description` / `agentType` 当标题与 lineage；子代理内部触发的 hook（带 `agent_id` 的 PreToolUse 等）只驱动子 Session。sidechain 记录永不进父 Session |
-| `Stop(last_assistant_message)` | Waiting For Input | Idle | endedAt/outcome=completed/lastAssistantMessage | `turnEnd(completed, message)` |
-| `StopFailure`（Claude） | Failed | Idle | outcome=failed | `turnEnd(failed, error)` |
+| `Stop(last_assistant_message)` | Waiting For Input | Idle | 收口当前 Turn：endedAt/outcome=completed/lastAssistantMessage | `turnEnd(completed, message)` |
+| `StopFailure`（Claude） | Failed | Idle | 收口当前 Turn：outcome=failed | `turnEnd(failed, error_type · error_message)` |
 | `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
 | `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)`；Claude 且会话仍临时（无 Turn、无 transcript）→ 改为 `disposition: .discard`（删除 + 墓碑，无 item） |
 | `InstructionsLoaded`（Claude） | — | — | — | `context(instructions)` |
@@ -97,6 +129,8 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 未知 Hook 事件返回空数组。
 
 ## transcript / rollout 事件映射
+
+工具行统一携带两份数据：`summary` 是活动列表行的一行摘要（首个非空行、160 字符截断），`content` 是来源原始输入 / 输出的全文（started 存完整输入，succeeded / failed 存完整结果），Raw Data 视图据此完整展示。下表 cell 里的「摘要」都只指 `summary`。内容不做脱敏：daemon、Mac 缓存和已配对 iPhone 持有的是完整数据，按高敏感数据保护。
 
 **Codex rollout**（`RolloutReadState.currentTurnID` 由 `task_started` / `turn_context` 的 `turn_id` 设定，其余记录归入当前 Turn）：
 
@@ -116,15 +150,15 @@ Turn 标识：Codex `turn_id`；Claude `prompt_id`（transcript 中为 `promptId
 | `thread_settings_applied` / `token_count` | `modelConfiguration` + `config(thread_settings)` / `usageMetrics` |
 | `sub_agent_activity` | `subagent(...)`，ID `subagent:<session>:<agent_thread_id>:<phase>` |
 
-**Claude transcript**（`currentTurnID` 由 user 记录的 `promptId` 设定；`isSidechain: true` 记录忽略）：
+**Claude transcript**（Turn 的开/收/归属见「Turn 边界」。`isSidechain: true` 记录忽略——父 Session 通过 SubagentStart/Stop 展示子代理；sidechain 记录只在读 `subagents/agent-*.jsonl` 时归派生子 Session）：
 
 | record / block | 结果 |
 | --- | --- |
-| `user` 字符串或 `text` block | `message(user)`；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 等标签块为 `context(<tag>)` |
+| `user` 字符串或 `text` block | `message(user)`；开 Turn 的记录以首个普通文本写 Turn.prompt 并占稳定 prompt item id（`user_prompt:<s>:<turn>`），其余文本是独立行；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 等标签块为 `context(<tag>)` |
 | `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
-| `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)` |
+| `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)`；content = 原始 `content` block + 顶层 `toolUseResult` 全文 |
 | `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
-| `assistant` `stop_reason` ∈ {`end_turn`, `stop_sequence`, `max_tokens`, `refusal`} | Turn 结束：Waiting For Input / Idle + Turn `endedAt/outcome=completed/lastAssistantMessage` + `turnEnd`（ID `turn_end:<s>:<turn>`，与 Stop hook 同一行）。transcript 自己就能收口，Stop hook 丢失或被后到事件覆盖时下一次读增量即自愈；`tool_use` 不结束 Turn |
+| `assistant` 终态 `stop_reason` / 顶层 `error` | Turn 收口，正常/异常分类见「Turn 边界」的表；`turnEnd` ID `turn_end:<s>:<turn>`，与 Stop/StopFailure hook 落同一行，Stop hook 丢失时下一次读增量自愈 |
 | `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |
 | `attachment` / `system` / `summary` | `context(…)`；attachment 中的运行模式类（`auto_mode` / `plan_mode` / `plan_mode_exit` / `command_permissions`）改为 `config(…)` |
 | `custom-title` | Session 标题 |
@@ -244,30 +278,6 @@ Subagent 新格式通过 `source.subagent.thread_spawn.parent_thread_id` 建立�
 
 未列出的 record 默认忽略。Session 标题、Codex / Codex Subagent 类型和 Subagent lineage 来自上面的 `threads` 元数据，不从 `UserPromptSubmit` 或 `user_message` 派生。
 
-## 隐私边界
-
-Adapter 只把以下内容放进产品模型：
-
-- 用户与 Assistant 可见消息。
-- 工具名称、简要状态和可用时长。
-- 计划步骤和状态。
-- 子 Agent 名称、标识和状态。
-- 可展示错误。
-- Session 工作目录和时间。
-- Codex 权威标题、Thread 来源，以及 Subagent 的父 Session、深度、昵称、职责和路径。
-- 模型、provider、reasoning effort、客户端版本和线程设置。
-- reasoning、基础指令、Turn 上下文、世界状态和压缩历史。
-- 单次与累计 Token 使用、上下文窗口和 rate-limit 状态。
-
-模型配置、内部上下文和消耗指标按来源类别保留最新记录；用户活动 Timeline 继续保留完整事件历史。
-
-敏感数据边界：
-
-- `turn_context`、`world_state`、reasoning 和 compacted payload 会保留完整嵌套内容；其中可能包含路径、凭据、环境信息、基础指令或被压缩进去的工具内容。
-- 当前没有内容级脱敏、密钥识别或字段递归过滤；daemon、Mac 缓存和已配对 iPhone 都必须按高敏感数据保护。
-- 普通 tool call/result record 不单独映射，结构化 Plan 除外；但相同文本仍可能出现在已保留的内部上下文或压缩历史中。
-- 未建模 record 和完整原始 JSONL 文件不会被另外保存进产品模型。
-
 ## Adapter 扩展
 
 `AgentAdapter` 要求新 Agent 实现两个入口：
@@ -295,7 +305,7 @@ events(fromRolloutLine:context:state:) -> [AgentIngressEvent]  // state: current
 | 乱序输入 | reducer 不回退可见状态 | reducer 不回退可见状态 |
 | 日志只有半行 | 不适用 | 保留旧 offset，等待换行完成 |
 | 用户删除 Session | 后续被动事件被 tombstone 拒绝；**新的用户 prompt / SessionStart 会让 Session 重新出现** | 同左 |
-| daemon 未启动时 hook 到达 | helper 记 stderr、退出 0；该 hook 丢失 | 下次 hook 时按 cursor 补读增量（Turn 边界类 hook 不可补） |
+| daemon 未启动时 hook 到达 | helper 记 stderr、退出 0；该 hook 丢失 | 下次 hook 时按 cursor 补读增量（Claude 的 Turn 开/收由 transcript 自愈；Codex 的 Turn 边界类 hook 不可补） |
 
 ## 当前限制
 

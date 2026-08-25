@@ -31,7 +31,11 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     }
 
     public let name: String
+    /// One-line rendering for the activity list row.
     public let summary: String?
+    /// The complete raw input (started) or result (succeeded / failed) as it
+    /// appeared at the source — what the Raw Data view shows.
+    public let content: JSONValue?
     public let status: Status
     public let durationMilliseconds: Int64?
     public let toolUseID: String?
@@ -39,12 +43,14 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     public init(
         name: String,
         summary: String? = nil,
+        content: JSONValue? = nil,
         status: Status,
         durationMilliseconds: Int64? = nil,
         toolUseID: String? = nil
     ) {
         self.name = name
         self.summary = summary
+        self.content = content
         self.status = status
         self.durationMilliseconds = durationMilliseconds
         self.toolUseID = toolUseID
@@ -56,6 +62,7 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case name
         case summary
+        case content
         case status
         case durationMilliseconds
         case toolUseID
@@ -65,6 +72,7 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        content = try c.decodeIfPresent(JSONValue.self, forKey: .content)
         status = try c.decode(Status.self, forKey: .status)
         durationMilliseconds = try c.decodeIfPresent(Int64.self, forKey: .durationMilliseconds)
         toolUseID = try c.decodeIfPresent(String.self, forKey: .toolUseID)

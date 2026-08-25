@@ -523,7 +523,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     defer { try? FileManager.default.removeItem(at: home) }
     let path = projectDir.appendingPathComponent("\(session).jsonl").path
     let records: [[String: Any]] = [
-        ["type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1", "timestamp": "2026-08-19T06:42:07.000Z", "cwd": "/tmp/proj",
+        ["type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1", "timestamp": "2026-08-19T06:42:07.000Z", "cwd": "/tmp/proj", "origin": ["kind": "human"],
          "message": ["role": "user", "content": "hi"]],
         ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-08-19T06:42:10.000Z",
          "message": ["role": "assistant", "model": "claude-opus-4-7", "stop_reason": "end_turn", "content": [["type": "text", "text": "Hello."]]]],
@@ -573,7 +573,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     let sid = SessionID("aaaa1111-0000-0000-0000-000000000001")
     let transcript = projectDir.appendingPathComponent("\(sid.rawValue).jsonl")
     try Data("""
-    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:44:42Z","message":{"role":"user","content":"Do the thing"}}
+    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:44:42Z","origin":{"kind":"human"},"message":{"role":"user","content":"Do the thing"}}
 
     """.utf8).write(to: transcript)
 
@@ -634,7 +634,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     let sid = SessionID("bbbb2222-0000-0000-0000-000000000001")
     let transcript = projectDir.appendingPathComponent("\(sid.rawValue).jsonl")
     try Data("""
-    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:00:00Z","cwd":"/tmp/project","message":{"role":"user","content":"Do the thing"}}
+    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:00:00Z","cwd":"/tmp/project","origin":{"kind":"human"},"message":{"role":"user","content":"Do the thing"}}
     {"type":"assistant","sessionId":"\(sid.rawValue)","timestamp":"2026-08-20T09:00:05Z","message":{"role":"assistant","model":"claude-opus-4-7","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}
 
     """.utf8).write(to: transcript)
@@ -681,7 +681,7 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
     let sid = SessionID("bbbb2222-0000-0000-0000-000000000002")
     let transcript = projectDir.appendingPathComponent("\(sid.rawValue).jsonl")
     try Data("""
-    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:00:00Z","cwd":"/tmp/project","message":{"role":"user","content":"Do the thing"}}
+    {"type":"user","sessionId":"\(sid.rawValue)","promptId":"p1","timestamp":"2026-08-20T09:00:00Z","cwd":"/tmp/project","origin":{"kind":"human"},"message":{"role":"user","content":"Do the thing"}}
     {"type":"assistant","sessionId":"\(sid.rawValue)","timestamp":"2026-08-20T09:00:05Z","message":{"role":"assistant","model":"claude-opus-4-7","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}
 
     """.utf8).write(to: transcript)
