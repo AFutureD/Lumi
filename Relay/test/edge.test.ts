@@ -20,42 +20,43 @@ describe("edge gates", () => {
     }
   });
 
-  it("rate limits one client address at the edge before any object is reached", { timeout: 30_000 }, async () => {
+  it("rate limits one client address at the edge before any object is reached", { timeout: 60_000 }, async () => {
     // Limit is 300/min per bucket (wrangler.jsonc); a bogus host path would
     // otherwise instantiate a Durable Object per request.
-    const headers = { "cf-connecting-ip": "198.51.100.250" };
-    let limited: Response | null = null;
-    for (let attempt = 0; attempt < 301; attempt += 1) {
-      const response = await SELF.fetch("https://example.com/health", { headers });
-      if (response.status === 429) {
-        limited = response;
-        break;
-      }
-      expect(response.status).toBe(200);
-    }
-    expect(limited).not.toBeNull();
-    expect(await limited?.json()).toEqual({ error: "rate_limited" });
+    const limited = await hammerUntilLimited("198.51.100.250");
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
 
     // A different address is unaffected.
     const other = await SELF.fetch("https://example.com/health", { headers: { "cf-connecting-ip": "198.51.100.251" } });
     expect(other.status).toBe(200);
   });
 
-  it("buckets IPv6 clients by /64 at the edge", { timeout: 30_000 }, async () => {
-    const headers = { "cf-connecting-ip": "2001:db8:ed9e:1::1" };
-    let limited = false;
-    for (let attempt = 0; attempt < 300; attempt += 1) {
-      const response = await SELF.fetch("https://example.com/health", { headers });
-      if (response.status === 429) {
-        limited = true;
-        break;
+  it("buckets IPv6 clients by /64 at the edge", { timeout: 60_000 }, async () => {
+    // Trip the bucket from one address; a sibling in the same /64 must then
+    // be limited too, while a neighbouring /64 stays clean. An epoch reset
+    // between the trip and the probe clears the bucket, so trip again.
+    for (let round = 0; round < 3; round += 1) {
+      await hammerUntilLimited("2001:db8:ed9e:1::1");
+      const sibling = await SELF.fetch("https://example.com/health", { headers: { "cf-connecting-ip": "2001:db8:ed9e:1:ffff::9" } });
+      if (sibling.status === 429) {
+        const neighbour = await SELF.fetch("https://example.com/health", { headers: { "cf-connecting-ip": "2001:db8:ed9e:2::1" } });
+        expect(neighbour.status).toBe(200);
+        return;
       }
     }
-    expect(limited).toBe(false);
-    // The 301st request from another address in the same /64 trips it.
-    const sibling = await SELF.fetch("https://example.com/health", { headers: { "cf-connecting-ip": "2001:db8:ed9e:1:ffff::9" } });
-    expect(sibling.status).toBe(429);
-    const neighbour = await SELF.fetch("https://example.com/health", { headers: { "cf-connecting-ip": "2001:db8:ed9e:2::1" } });
-    expect(neighbour.status).toBe(200);
+    throw new Error("sibling address in the same /64 was never rate limited");
   });
 });
+
+// The simulated limiter counts within wall-clock epochs, so a fixed-length
+// request loop can straddle an epoch boundary and never trip; how many 200s
+// precede the 429 is timing-dependent, only the 429 itself is guaranteed.
+async function hammerUntilLimited(address: string): Promise<Response> {
+  const headers = { "cf-connecting-ip": address };
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const response = await SELF.fetch("https://example.com/health", { headers });
+    if (response.status === 429) return response;
+    expect(response.status).toBe(200);
+  }
+  throw new Error(`rate limiter never returned 429 for ${address} within 1000 requests`);
+}
