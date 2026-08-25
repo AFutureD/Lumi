@@ -107,7 +107,9 @@ jobs:
             -destination "platform=macOS" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             -skipMacroValidation \
-            -only-testing:MacFeatureTests
+            -only-testing:MacFeatureTests \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=-
 
   macos:
     name: Sign, notarize, and create appcast
