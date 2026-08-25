@@ -153,7 +153,7 @@ public extension DesignSystem {
         public static let error = AdaptiveDesignColor(light: Palette.red.s600, dark: Palette.redDark.d500)
         /// PLAN 紫.
         public static let plan = AdaptiveDesignColor(light: Palette.purple.s600, dark: Palette.purpleDark.d500)
-        /// SUBAGENT 橙 — subagent messages, `subagentRunning` phase.
+        /// SUBAGENT 橙 — subagent messages.
         public static let subagent = AdaptiveDesignColor(light: Palette.orange.s600, dark: Palette.orangeDark.d500)
         /// TOOL · RESULT 黄 — Exec lane tool calls and results.
         public static let tool = AdaptiveDesignColor(light: Palette.yellow.s600, dark: Palette.yellowDark.d500)

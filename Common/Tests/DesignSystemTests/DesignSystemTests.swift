@@ -157,7 +157,6 @@ typealias DS = DesignSystem
 @Test func turnPhasesOnlyChangeTheDot() {
     #expect(TurnPhase.thinking.dotStyle().breathes && TurnPhase.thinking.dotHue == .blue)
     #expect(TurnPhase.waitingForApproval.dotHue == .green)
-    #expect(TurnPhase.subagentRunning.dotHue == .orange)
     #expect(TurnPhase.compacting.dotHue == .neutral && TurnPhase.compacting.dotForm == .breathing)
     #expect(TurnPhase.idle.dotForm == .solid)
 }

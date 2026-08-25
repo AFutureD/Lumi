@@ -142,7 +142,7 @@ Stop(last_assistant_message)   ← 可被 hook 阻断 → 回到 loop 继续
 | 子代理 | `SubagentStart/Stop` | `SubagentStart/Stop` | Stop 两端可阻断 |
 | 结束 | `Stop` | `Stop` | 两端可阻断（强制继续） |
 
-建议 Turn 状态枚举：`submitted → thinking ⇄ tool_running ⇄ waiting_permission ⇄ subagent_running → (compacting) → stopped | failed`
+建议 Turn 状态枚举：`submitted → thinking ⇄ tool_running ⇄ waiting_permission → (compacting) → stopped | failed`（子代理执行归入 tool_running/executing，不再单列状态）
 
 ### 4.2 Claude 独有阶段
 
@@ -176,8 +176,9 @@ Session {
 Turn {
   id (claude.prompt_id | codex.turn_id), number?, prompt,
   state: submitted | thinking | tool_running | waiting_permission
-       | waiting_user_input(elicitation, claude) | subagent_running
+       | waiting_user_input(elicitation, claude)
        | compacting | stopped | failed(claude StopFailure)
+       // 子代理执行不单列状态：SubagentStart 视作一次 tool_running/executing
   toolCalls: ToolCall[]        // tool_use_id 主键
   subagents: Session[]         // agent_id
   finalMessage?, error?
@@ -198,7 +199,7 @@ ToolCall {
 | PreToolUse | Turn.state=tool_running，新增 ToolCall |
 | PermissionRequest | Turn.state=waiting_permission |
 | PostToolUse / PostToolUseFailure | ToolCall 完成，Turn.state=thinking |
-| SubagentStart / SubagentStop | 子 Session 建/结，Turn.state=subagent_running/thinking |
+| SubagentStart / SubagentStop | 子 Session 建/结，Turn.state=executing/thinking |
 | PreCompact / PostCompact | state=compacting / 恢复 |
 | Stop | Turn.state=stopped，Session.state=idle |
 | StopFailure (Claude) | Turn.state=failed |

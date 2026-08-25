@@ -116,7 +116,6 @@ public enum TurnPhase: Hashable, Sendable {
     case executing
     case responding
     case waitingForApproval
-    case subagentRunning
     case compacting
 
     public var rawValue: String {
@@ -126,7 +125,6 @@ public enum TurnPhase: Hashable, Sendable {
         case .executing: "executing"
         case .responding: "responding"
         case .waitingForApproval: "waiting_for_approval"
-        case .subagentRunning: "subagent_running"
         case .compacting: "compacting"
         }
     }
@@ -142,7 +140,6 @@ extension TurnPhase: Codable {
         case "executing": .executing
         case "responding": .responding
         case "waiting_for_approval": .waitingForApproval
-        case "subagent_running": .subagentRunning
         case "compacting": .compacting
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown turn phase: \(value)")
         }

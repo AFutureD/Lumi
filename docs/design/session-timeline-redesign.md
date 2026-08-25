@@ -39,7 +39,8 @@ Session {
 Turn {
   id (claude prompt_id | codex turn_id), index, sessionId, prompt, startedAt, endedAt?
   phase: submitted | thinking | responding | toolRunning | waitingPermission
-       | subagentRunning | compacting | stopped | failed | aborted
+       | compacting | stopped | failed | aborted
+       // subagentRunning 已于 2026-08-25 退役：子代理执行归入 toolRunning/executing
   context: [TurnContext]
   messages: [TurnMessage]
   usage?, permissionEvents[]        // 元数据，不进 Timeline
@@ -59,7 +60,7 @@ Turn {
 | `turnFailed(errorType, msg)` / `turnAborted` | StopFailure(Claude) | `turn_aborted` |
 | `permissionRequested/Decided`、`usage` | PermissionRequest / — | — / `token_count`（**元数据**） |
 
-Turn phase 转换集中在 Helper 的 `TurnStateMachine`：`submitted →thinking→ toolRunning ⇄ thinking → responding → stopped`；`permissionRequested→waitingPermission`；`subagentDelegated→subagentRunning`；`turnFailed/aborted→failed/aborted`。
+Turn phase 转换集中在 Helper 的 `TurnStateMachine`：`submitted →thinking→ toolRunning ⇄ thinking → responding → stopped`；`permissionRequested→waitingPermission`；`subagentDelegated→executing`（原 `subagentRunning`，已退役）；`turnFailed/aborted→failed/aborted`。
 
 ### A.3 传输
 `AgentIngressEvent` 携带 `sessionLifecycle? / turnPhase? / sessionMessage? / turnMessage?`（替代直接塞 `timelineItem`）。daemon 存 `sessions / turns / turn_messages / session_messages`。**Timeline 行由 `TimelineProjection`（Common，纯函数）按 §C 投影，不落库。**
@@ -180,7 +181,7 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 
 | 方案 | 实现 | 说明 |
 |---|---|---|
-| A 层 Session / Turn 模型 | `Transport`：`SessionLifecycle` +`compacting`；`TurnPhase` +`subagentRunning`/`compacting`；新增 `TurnSummary`/`TurnOutcome`；`SessionDetail.turns`；`AgentKind` +`claude`/`claudeSubagent` | 增量式扩展，旧数据可解码 |
+| A 层 Session / Turn 模型 | `Transport`：`SessionLifecycle` +`compacting`；`TurnPhase` +`compacting`（`subagentRunning` 曾短暂存在，2026-08-25 并入 `executing`）；新增 `TurnSummary`/`TurnOutcome`；`SessionDetail.turns`；`AgentKind` +`claude`/`claudeSubagent` | 增量式扩展，旧数据可解码 |
 | A 层消息 | `TimelinePayload` 新增 `.reasoning` `.context(scope: session|turn)` `.sessionMarker` `.turnEnd`；`ToolTimelinePayload.toolUseID` | 保留 `.modelConfiguration`/`.usageMetrics`/`.internalContext` 作为元数据或历史数据 |
 | daemon 表 `turns / turn_messages / session_messages` | 只新增 `turns` 表；消息仍存 `timeline`（Session 级消息 `turnID == nil`） | 语义相同、迁移更小 |
 | A→B `TimelineProjection` | `Transport/TimelineProjection.swift`（`TimelineTag`/`TimelineLane`/`TimelineAttentionLevel`/`TimelineRow`） | 含 SUBAGENT 原地更新、TURN END 追加并把末条 ASSISTANT 标为 succeeded、RESULT 从配对 TOOL 补名、同时间戳排序 marker→context→user→其他 |

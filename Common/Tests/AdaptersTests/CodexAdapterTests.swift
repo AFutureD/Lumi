@@ -490,3 +490,121 @@ struct FixedThreadIdentities: CodexThreadIdentityProviding {
     #expect(reasoning.map(\.0) == ["", "Real thought"])
     #expect(reasoning.allSatisfy { $0.1 == .thinking })
 }
+
+// MARK: - item_completed (0.149+ channel switch)
+
+private func rolloutLine(
+    _ adapter: CodexAdapter,
+    _ json: String,
+    offset: UInt64,
+    state: inout RolloutReadState
+) throws -> [AgentIngressEvent] {
+    try adapter.events(
+        fromRolloutLine: Data(json.utf8),
+        context: RolloutRecordContext(path: "/tmp/rollout.jsonl", byteOffset: offset, sessionID: SessionID("session-1")),
+        state: &state
+    )
+}
+
+@Test func itemCompletedCarriesMessagesToolsAndSubagents() throws {
+    let adapter = CodexAdapter()
+    var state = RolloutReadState()
+
+    _ = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-9"}}
+    """, offset: 0, state: &state)
+
+    let user = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:01Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"um-1","content":[{"type":"text","text":"取一个中文名"}]}}}
+    """, offset: 1, state: &state)
+    #expect(user.first?.phase == .thinking)
+    #expect(user.first?.turn?.prompt == "取一个中文名")
+    #expect(user.first?.timelineItem?.payload == .message(MessageTimelinePayload(role: .user, text: "取一个中文名")))
+    #expect(user.first?.timelineItem?.id == TimelineItemIDs.userPrompt(SessionID("session-1"), turnID: TurnID("turn-9")))
+
+    let assistant = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:02Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"msg-1","phase":"commentary","content":[{"type":"Text","text":"我先看看仓库"}]}}}
+    """, offset: 2, state: &state)
+    #expect(assistant.first?.phase == .responding)
+    #expect(assistant.first?.timelineItem?.payload == .message(MessageTimelinePayload(role: .assistant, text: "我先看看仓库")))
+
+    let reasoning = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:03Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Reasoning","id":"rs-1","summary_text":["Planning the rename"],"raw_content":[]}}}
+    """, offset: 3, state: &state)
+    #expect(reasoning.first?.timelineItem?.payload == .reasoning(ReasoningTimelinePayload(text: "Planning the rename")))
+
+    let mcp = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:04Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","id":"exec-1","server":"node_repl","tool":"js","status":"failed","result":{"content":[{"type":"text","text":"Ambiguous"}]},"duration":{"secs":1,"nanos":349344500}}}}
+    """, offset: 4, state: &state)
+    guard case let .tool(mcpTool)? = mcp.first?.timelineItem?.payload else {
+        Issue.record("Expected an MCP tool payload")
+        return
+    }
+    #expect(mcpTool.name == "node_repl/js")
+    #expect(mcpTool.status == .failed)
+    #expect(mcpTool.durationMilliseconds == 1349)
+
+    let patch = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:05Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange","id":"exec-2","status":"completed","changes":{"/tmp/a.swift":{}},"stdout":"","stderr":""}}}
+    """, offset: 5, state: &state)
+    guard case let .tool(patchTool)? = patch.first?.timelineItem?.payload else {
+        Issue.record("Expected a patch tool payload")
+        return
+    }
+    #expect(patchTool.name == "Apply patch")
+    #expect(patchTool.status == .succeeded)
+
+    let subagent = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:06Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"SubAgentActivity","id":"call-1","kind":"started","agent_thread_id":"thread-2","agent_path":"/root/review"}}}
+    """, offset: 6, state: &state)
+    #expect(subagent.first?.phase == .executing)
+    #expect(subagent.first?.timelineItem?.payload == .subagent(SubagentTimelinePayload(
+        name: "/root/review", agentSessionID: "thread-2", status: .started
+    )))
+
+    let plan = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:07Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Plan","id":"turn-9-plan","text":"# 改名计划"}}}
+    """, offset: 7, state: &state)
+    #expect(plan.first?.timelineItem?.payload == .plan(PlanTimelinePayload(explanation: "# 改名计划", steps: [])))
+
+    // The response_item call/output pair owns execution rows; the compaction
+    // marker stays with the top-level `compacted` record.
+    let exec = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:08Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-3","command":"ls","exit_code":0,"status":"completed"}}}
+    """, offset: 8, state: &state)
+    let compaction = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:09Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction","id":"cc-1"}}}
+    """, offset: 9, state: &state)
+    #expect(exec.isEmpty)
+    #expect(compaction.isEmpty)
+}
+
+@Test func channelArbitrationPrefersItemsOverLegacyEventTwins() throws {
+    let adapter = CodexAdapter()
+    var state = RolloutReadState()
+
+    // Item first: the legacy event twin of the same family is suppressed.
+    let item = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:00Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"msg-1","content":[{"type":"Text","text":"来自 item"}]}}}
+    """, offset: 0, state: &state)
+    let legacy = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"来自 event"}}
+    """, offset: 1, state: &state)
+    #expect(item.count == 1)
+    #expect(legacy.isEmpty)
+
+    // Legacy first (0.148 flow): it emits, and a later higher-priority item
+    // is still admitted.
+    let event = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:02Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"event 推理"}}
+    """, offset: 2, state: &state)
+    let laterItem = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:03Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Reasoning","id":"rs-1","summary_text":["item 推理"]}}}
+    """, offset: 3, state: &state)
+    let laterEvent = try rolloutLine(adapter, """
+    {"timestamp":"2026-08-25T10:00:04Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"被抑制"}}
+    """, offset: 4, state: &state)
+    #expect(event.count == 1)
+    #expect(laterItem.count == 1)
+    #expect(laterEvent.isEmpty)
+}

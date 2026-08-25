@@ -15,6 +15,22 @@ public struct CodexAdapter: AgentAdapter {
         self.threads = threads
     }
 
+    /// A user-visible fact that more than one rollout channel can carry:
+    /// `item_completed` items from 0.149, their `event_msg` twins before.
+    /// Within one family, the first channel to emit wins for the rest of the
+    /// read (channels never coexist per file, so this is protection, not
+    /// selection — see §3.3 of docs/research/codex-event-mapping.md).
+    enum FactFamily: String {
+        case assistantMessage
+        case userMessage
+        case reasoning
+        case subagentActivity
+        case mcpCall
+        case fileChange
+        case webSearch
+        case imageView
+    }
+
     // MARK: - Hooks
 
     public func events(fromHookData data: Data, options: HookIngestOptions) throws -> [AgentIngressEvent] {
@@ -150,7 +166,7 @@ public struct CodexAdapter: AgentAdapter {
             let agentID = root.string("agent_id") ?? eventID.rawValue
             return [event(
                 lifecycle: .running,
-                phase: .subagentRunning,
+                phase: .executing,
                 timeline: .subagent(SubagentTimelinePayload(
                     name: root.string("agent_type") ?? "Subagent",
                     agentSessionID: root.string("agent_id"),
@@ -392,6 +408,36 @@ public struct CodexAdapter: AgentAdapter {
             )
         }
 
+        func admit(_ family: FactFamily, _ priority: Int) -> Bool {
+            let seen = state.channelPriorities[family.rawValue] ?? Int.min
+            guard priority >= seen else { return false }
+            state.channelPriorities[family.rawValue] = priority
+            return true
+        }
+
+        // Shared by `event_msg/sub_agent_activity` and
+        // `item_completed(SubAgentActivity)`; the field names coincide.
+        func subagentActivity(_ fields: [String: Any]) -> [AgentIngressEvent] {
+            let kind = fields.string("kind") ?? "started"
+            let status: SubagentTimelinePayload.Status = switch kind {
+            case "completed", "stopped": .completed
+            case "failed": .failed
+            case "waiting": .waiting
+            default: .started
+            }
+            let agentID = fields.string("agent_thread_id") ?? fields.string("event_id") ?? fields.string("id") ?? "\(context.byteOffset)"
+            return [makeEvent(
+                lifecycle: .running,
+                phase: status == .started ? .executing : .thinking,
+                timeline: .subagent(SubagentTimelinePayload(
+                    name: fields.string("agent_path") ?? "Subagent",
+                    agentSessionID: fields.string("agent_thread_id"),
+                    status: status
+                )),
+                itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: status == .started ? "started" : (status == .waiting ? "waiting" : "stopped"))
+            )]
+        }
+
         if recordType == "inter_agent_communication_metadata",
            payload.bool("trigger_turn") == true {
             return [makeEvent(lifecycle: .running, phase: .thinking)]
@@ -465,7 +511,8 @@ public struct CodexAdapter: AgentAdapter {
                 return [makeEvent(lifecycle: .running, phase: .thinking, turn: turn)]
 
             case "user_message":
-                guard let message = payload.string("message"), !message.isEmpty else { return [] }
+                guard let message = payload.string("message"), !message.isEmpty,
+                      admit(.userMessage, 0) else { return [] }
                 return [makeEvent(
                     lifecycle: .running,
                     phase: .thinking,
@@ -477,7 +524,8 @@ public struct CodexAdapter: AgentAdapter {
                 )]
 
             case "agent_message":
-                guard let message = payload.string("message"), !message.isEmpty else { return [] }
+                guard let message = payload.string("message"), !message.isEmpty,
+                      admit(.assistantMessage, 0) else { return [] }
                 return [makeEvent(
                     lifecycle: .running,
                     phase: .responding,
@@ -485,7 +533,8 @@ public struct CodexAdapter: AgentAdapter {
                 )]
 
             case "agent_reasoning":
-                guard let text = payload.string("text"), !text.isEmpty else { return [] }
+                guard let text = payload.string("text"), !text.isEmpty,
+                      admit(.reasoning, 0) else { return [] }
                 return [makeEvent(
                     lifecycle: .running,
                     phase: .thinking,
@@ -602,9 +651,11 @@ public struct CodexAdapter: AgentAdapter {
                 )]
 
             case "patch_apply_begin":
+                guard admit(.fileChange, 0) else { return [] }
                 return [toolCall(name: "Apply patch", callID: payload.string("call_id"), input: payload.dictionary("changes")?.keys.sorted().joined(separator: ", "))]
 
             case "patch_apply_end":
+                guard admit(.fileChange, 0) else { return [] }
                 return [toolResult(
                     name: nil,
                     callID: payload.string("call_id"),
@@ -626,11 +677,13 @@ public struct CodexAdapter: AgentAdapter {
                 )]
 
             case "mcp_tool_call_begin":
+                guard admit(.mcpCall, 0) else { return [] }
                 let invocation = payload.dictionary("invocation")
                 let name = [invocation?.string("server"), invocation?.string("tool")].compactMap { $0 }.joined(separator: "/")
                 return [toolCall(name: name.isEmpty ? "MCP tool" : name, callID: payload.string("call_id"), input: invocation?["arguments"])]
 
             case "mcp_tool_call_end":
+                guard admit(.mcpCall, 0) else { return [] }
                 let invocation = payload.dictionary("invocation")
                 let name = [invocation?.string("server"), invocation?.string("tool")].compactMap { $0 }.joined(separator: "/")
                 return [toolResult(
@@ -642,30 +695,143 @@ public struct CodexAdapter: AgentAdapter {
                 )]
 
             case "sub_agent_activity":
-                let kind = payload.string("kind") ?? "started"
-                let status: SubagentTimelinePayload.Status = switch kind {
-                case "completed", "stopped": .completed
-                case "failed": .failed
-                case "waiting": .waiting
-                default: .started
+                guard admit(.subagentActivity, 0) else { return [] }
+                return subagentActivity(payload)
+
+            case "item_completed":
+                guard let item = payload.dictionary("item"), let itemType = item.string("type") else { return [] }
+                let rowID = item.string("id").map { TimelineItemID("codex_item:\(sessionID.rawValue):\($0)") }
+                switch itemType {
+                case "AgentMessage":
+                    guard let text = Self.messageText(item["content"]), !text.isEmpty,
+                          admit(.assistantMessage, 1) else { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .responding,
+                        timeline: .message(MessageTimelinePayload(role: .assistant, text: text)),
+                        itemID: rowID
+                    )]
+
+                case "UserMessage":
+                    guard let text = Self.messageText(item["content"]), !text.isEmpty,
+                          admit(.userMessage, 1) else { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        turn: turnID.map {
+                            TurnSummary(id: $0, sessionID: sessionID, phase: .thinking, prompt: text, startedAt: occurredAt)
+                        },
+                        timeline: .message(MessageTimelinePayload(role: .user, text: text)),
+                        itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) } ?? rowID
+                    )]
+
+                case "Reasoning":
+                    let summary = (item["summary_text"] as? [String])?
+                        .filter { !$0.isEmpty }.joined(separator: "\n\n")
+                    guard let text = Self.messageText(item["raw_content"]) ?? summary, !text.isEmpty,
+                          admit(.reasoning, 1) else { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        timeline: .reasoning(ReasoningTimelinePayload(text: text)),
+                        itemID: rowID
+                    )]
+
+                case "SubAgentActivity":
+                    guard admit(.subagentActivity, 1) else { return [] }
+                    return subagentActivity(item)
+
+                case "McpToolCall":
+                    guard admit(.mcpCall, 1) else { return [] }
+                    let name = [item.string("server"), item.string("tool")].compactMap { $0 }.joined(separator: "/")
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        timeline: .tool(ToolTimelinePayload(
+                            name: name.isEmpty ? "MCP tool" : name,
+                            summary: AdapterText.excerpt(Self.responseText(item["result"]))
+                                ?? AdapterText.summary(ofToolInput: item["arguments"]),
+                            status: item.string("status") == "failed" ? .failed : .succeeded,
+                            durationMilliseconds: Self.itemDuration(item["duration"]),
+                            toolUseID: item.string("id")
+                        )),
+                        itemID: rowID
+                    )]
+
+                case "Extension":
+                    let kind = item.string("kind") ?? "Extension"
+                    if kind == "web.search", !admit(.webSearch, 1) { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        timeline: .tool(ToolTimelinePayload(
+                            name: kind,
+                            summary: AdapterText.excerpt(item.string("query")),
+                            status: .succeeded,
+                            toolUseID: item.string("id")
+                        )),
+                        itemID: rowID
+                    )]
+
+                case "FileChange":
+                    guard admit(.fileChange, 1) else { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        timeline: .tool(ToolTimelinePayload(
+                            name: "Apply patch",
+                            summary: AdapterText.excerpt(item.dictionary("changes")?.keys.sorted().joined(separator: ", ")),
+                            status: item.string("status") == "failed" ? .failed : .succeeded,
+                            toolUseID: item.string("id")
+                        )),
+                        itemID: rowID
+                    )]
+
+                case "ImageView":
+                    guard admit(.imageView, 1) else { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        timeline: .tool(ToolTimelinePayload(
+                            name: "View image",
+                            summary: AdapterText.excerpt(item.string("path")),
+                            status: .succeeded,
+                            toolUseID: item.string("id")
+                        )),
+                        itemID: rowID
+                    )]
+
+                case "Plan":
+                    guard let text = item.string("text"), !text.isEmpty else { return [] }
+                    return [makeEvent(
+                        lifecycle: .running,
+                        phase: .thinking,
+                        timeline: .plan(PlanTimelinePayload(explanation: text, steps: [])),
+                        itemID: rowID
+                    )]
+
+                case "CommandExecution", "DynamicToolCall", "CollabAgentToolCall", "ContextCompaction":
+                    // The `response_item` call/output pair stays the sole
+                    // source of execution rows and the top-level `compacted`
+                    // record of the compaction marker. These items use an
+                    // unrelated id scheme (`exec-<uuid>` vs `call_…`), so
+                    // they cannot upsert the same rows, and an incremental
+                    // read boundary between call and item would turn
+                    // arbitration into duplicate rows.
+                    return []
+
+                default:
+                    return []
                 }
-                let agentID = payload.string("agent_thread_id") ?? payload.string("event_id") ?? "\(context.byteOffset)"
-                return [makeEvent(
-                    lifecycle: .running,
-                    phase: status == .started ? .subagentRunning : .thinking,
-                    timeline: .subagent(SubagentTimelinePayload(
-                        name: payload.string("agent_path") ?? "Subagent",
-                        agentSessionID: payload.string("agent_thread_id"),
-                        status: status
-                    )),
-                    itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: status == .started ? "started" : (status == .waiting ? "waiting" : "stopped"))
-                )]
 
             case "web_search_begin", "image_generation_begin":
+                if type == "web_search_begin", !admit(.webSearch, 0) { return [] }
                 let name = type == "web_search_begin" ? "Web search" : "Image generation"
                 return [toolCall(name: name, callID: payload.string("call_id"), input: payload.string("query"))]
 
             case "web_search_end", "image_generation_end", "view_image_tool_call":
+                if type == "web_search_end", !admit(.webSearch, 0) { return [] }
+                if type == "view_image_tool_call", !admit(.imageView, 0) { return [] }
                 let name = type == "web_search_end" ? "Web search" : (type == "image_generation_end" ? "Image generation" : "View image")
                 return [toolResult(
                     name: name,
@@ -700,37 +866,11 @@ public struct CodexAdapter: AgentAdapter {
                     duration: nil
                 )]
 
-            case "message":
-                // Assistant / plain user messages arrive as `event_msg` too;
-                // only the injected instruction blocks are new information.
-                let role = payload.string("role") ?? ""
-                let text = Self.messageText(payload["content"])
-                guard let text, !text.isEmpty else { return [] }
-                if role == "developer" {
-                    return [makeEvent(
-                        timeline: .context(ContextTimelinePayload(
-                            kind: "developer_instructions",
-                            summary: AdapterText.excerpt(text),
-                            content: .string(text)
-                        )),
-                        suffix: ":context"
-                    )]
-                }
-                if role == "user", let kind = Self.injectedContextKind(text) {
-                    return [makeEvent(
-                        timeline: .context(ContextTimelinePayload(
-                            kind: kind,
-                            summary: AdapterText.excerpt(text.replacingOccurrences(of: "<\(kind)>", with: "")),
-                            content: .string(text)
-                        )),
-                        suffix: ":context"
-                    )]
-                }
-                return []
-
-            case "reasoning":
-                // `event_msg.agent_reasoning` carries the readable text; the
-                // response item is the encrypted duplicate.
+            case "message", "reasoning", "agent_message":
+                // Message bodies come from the `event_msg` channel
+                // (`user_message` / `agent_message` / `agent_reasoning`); the
+                // response items are duplicates, injected instruction blocks,
+                // or inter-agent frames that stay out of the Timeline.
                 return []
 
             default:
@@ -789,6 +929,13 @@ public struct CodexAdapter: AgentAdapter {
         return nil
     }
 
+    /// `{secs, nanos}` duration dictionaries used by `item_completed` items.
+    static func itemDuration(_ value: Any?) -> Int64? {
+        guard let dictionary = value as? [String: Any],
+              let secs = dictionary.int64("secs") else { return nil }
+        return secs * 1_000 + (dictionary.int64("nanos") ?? 0) / 1_000_000
+    }
+
     static func outputIndicatesFailure(_ value: Any?) -> Bool {
         if let dictionary = value as? [String: Any] {
             if dictionary.containsFailure { return true }
@@ -802,17 +949,6 @@ public struct CodexAdapter: AgentAdapter {
             return outputIndicatesFailure(object)
         }
         return false
-    }
-
-    /// `<environment_context>` / `<user_instructions>` / `# AGENTS.md …` blocks.
-    static func injectedContextKind(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("<"), let close = trimmed.firstIndex(of: ">") {
-            let tag = trimmed[trimmed.index(after: trimmed.startIndex)..<close]
-            if !tag.contains(" "), !tag.hasPrefix("/") { return String(tag) }
-        }
-        if trimmed.hasPrefix("# AGENTS.md") { return "agents_md" }
-        return nil
     }
 
     static func plan(from input: String?) -> PlanTimelinePayload? {

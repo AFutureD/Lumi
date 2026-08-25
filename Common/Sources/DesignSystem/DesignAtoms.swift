@@ -246,14 +246,13 @@ public extension TurnPhase {
         switch self {
         case .thinking, .responding, .executing: .blue
         case .waitingForApproval: .green
-        case .subagentRunning: .orange
         case .compacting, .idle: .neutral
         }
     }
 
     var dotForm: DesignStatusDotForm {
         switch self {
-        case .thinking, .responding, .executing, .waitingForApproval, .subagentRunning, .compacting: .breathing
+        case .thinking, .responding, .executing, .waitingForApproval, .compacting: .breathing
         case .idle: .solid
         }
     }

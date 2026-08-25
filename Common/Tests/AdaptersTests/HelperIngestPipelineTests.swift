@@ -363,7 +363,7 @@ private func hook(_ fields: [String: Any]) -> Data {
     _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "hi"]) { $1 }))
     // A real subagent: agent_type present, start/stop paired.
     _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SubagentStart", "agent_id": "a1", "agent_type": "Explore"]) { $1 }))
-    #expect(port.detail(SessionID(session))?.summary.phase == .subagentRunning)
+    #expect(port.detail(SessionID(session))?.summary.phase == .executing)
     _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SubagentStop", "agent_id": "a1", "agent_type": "Explore"]) { $1 }))
     _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "Stop", "last_assistant_message": "done"]) { $1 }))
 
@@ -424,7 +424,7 @@ private func hook(_ fields: [String: Any]) -> Data {
     #expect(child.turns.first?.prompt == "Output the word \"hi\" 4 times")
     // The parent keeps its SUBAGENT row and stays on its own turn.
     let parent = try #require(port.detail(SessionID(session)))
-    #expect(parent.summary.phase == .subagentRunning)
+    #expect(parent.summary.phase == .executing)
     #expect(parent.turns.count == 1)
 
     // The agent answers and stops; SubagentStop carries the transcript path.

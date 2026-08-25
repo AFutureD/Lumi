@@ -207,7 +207,7 @@ public struct ClaudeAdapter: AgentAdapter {
             }
             var events = [event(
                 lifecycle: .running,
-                phase: .subagentRunning,
+                phase: .executing,
                 timeline: .subagent(SubagentTimelinePayload(
                     name: root.string("agent_type") ?? "Subagent",
                     agentSessionID: childSessionID?.rawValue,

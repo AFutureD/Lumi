@@ -28,17 +28,23 @@ public struct RolloutReadState: Hashable, Sendable {
     /// with the ingestion moment can leave it later than every event that
     /// follows in the file, which then reads as out of order.
     public var lastTimestamp: Date?
+    /// Channel arbitration: fact family → highest source priority that has
+    /// produced rows in this read. Once a family emitted from a higher
+    /// priority source, records from lower ones are dropped entirely.
+    public var channelPriorities: [String: Int]
 
     public init(
         currentTurnID: TurnID? = nil,
         toolNames: [String: String] = [:],
         openToolUseIDs: [String] = [],
-        lastTimestamp: Date? = nil
+        lastTimestamp: Date? = nil,
+        channelPriorities: [String: Int] = [:]
     ) {
         self.currentTurnID = currentTurnID
         self.toolNames = toolNames
         self.openToolUseIDs = openToolUseIDs
         self.lastTimestamp = lastTimestamp
+        self.channelPriorities = channelPriorities
     }
 }
 

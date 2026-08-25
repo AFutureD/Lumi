@@ -126,6 +126,25 @@ public actor SQLiteSessionRepository: SessionRepository {
                 WHERE json_extract(CAST(summary AS TEXT), '$.hiddenInNotch') IS NULL;
                 """)
         }
+        // The `subagent_running` turn phase was retired in favour of
+        // `executing`; rewrite stored summaries so strict decoding keeps
+        // working. Turn rows carry the phase too.
+        migrator.registerMigration("lumi-v6-retire-subagent-running") { db in
+            try db.execute(sql: """
+                UPDATE sessions SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.phase', 'executing'
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.phase') = 'subagent_running';
+                UPDATE turns SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.phase', 'executing'
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.phase') = 'subagent_running';
+                """)
+        }
         try migrator.migrate(database)
     }
 
