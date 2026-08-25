@@ -68,7 +68,7 @@ dbLog.error("apply_failed", metadata: .fields(["session": id, "error": error]))
 | `convert` | 纯数据转换：adapter 归一化、坏记录、Session 重建、给 iPhone 切片 | `rich_source_line_rejected`、`session_reingested`、`index_prepared`、`session_prepared` |
 | `db` | SQLite 仓库 / 缓存读写 | `session_deleted`、`history_cleared`、`cache_open_failed`、`event_apply_failed` |
 | `ipc` | 本机 Unix socket：请求、事件流、编解码 | `ipc_listening`、`ipc_handled`、`ipc_request`、`ipc_stream_connected`、`ipc_operation_failed`、`reconciled` |
-| `relay` | Relay WebSocket / REST、设备列表、推送、序号 | `relay_connected`、`relay_ws_sent`、`relay_rest`、`devices_refreshed`、`request_received`、`events_pushed`、`sequence_healed` |
+| `relay` | Relay WebSocket / REST、设备列表、推送、序号 | `relay_connected`、`relay_ws_sent`、`relay_rest`、`devices_refreshed`、`request_received`、`events_pushed`、`sequence_healed`、`push_sent`、`push_send_failed`、`push_summary_lookup_failed`（APNs 通知只记设备与结果，不记文本） |
 | `pairing` | 配对状态机（daemon 与 Mac 页面） | `pairing_started` → `pairing_device_submitted` → `pairing_revealed` → `pairing_approved` / `pairing_rejected` / `pairing_expired`；`pairing_page_*` |
 | `ui` | App 的用户操作 | `logs_revealed` |
 

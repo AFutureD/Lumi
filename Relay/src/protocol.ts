@@ -38,6 +38,26 @@ export interface PairingClaim {
   code: string;
 }
 
+export interface PushTokenUpdate {
+  token: string;
+  environment: "production" | "development";
+}
+
+export interface NotificationSend {
+  /** Omitted means every paired, non-revoked device. */
+  deviceIDs?: string[];
+  /** The session's title. */
+  title: string;
+  /** The session's state word (Completed / Failed / Interrupted). */
+  subtitle: string;
+  sessionID?: string;
+  collapseID?: string;
+}
+
+export const MAX_NOTIFICATION_TITLE_CHARS = 120;
+export const MAX_NOTIFICATION_SUBTITLE_CHARS = 60;
+export const MAX_NOTIFICATION_DEVICES = 32;
+
 export class RequestValidationError extends Error {}
 
 export function isValidIdentifier(value: string): boolean {
@@ -157,6 +177,53 @@ export function parsePairingClaim(value: unknown): PairingClaim {
   const code = requiredString(value.code, "code");
   if (code.length > 32) throw new RequestValidationError("Invalid code length.");
   return { code };
+}
+
+export function parsePushTokenUpdate(value: unknown): PushTokenUpdate {
+  if (!isRecord(value)) throw new RequestValidationError("Push token update must be an object.");
+  const token = requiredString(value.token, "token");
+  // APNs tokens are hex (32 bytes today); the bound leaves room to grow.
+  if (!/^[0-9a-f]{16,200}$/iu.test(token)) throw new RequestValidationError("Invalid token.");
+  if (value.environment !== "production" && value.environment !== "development") {
+    throw new RequestValidationError("environment must be production or development.");
+  }
+  return { token, environment: value.environment };
+}
+
+export function parseNotificationSend(value: unknown): NotificationSend {
+  if (!isRecord(value)) throw new RequestValidationError("Notification must be an object.");
+  const title = requiredString(value.title, "title");
+  const subtitle = requiredString(value.subtitle, "subtitle");
+  if (title.length > MAX_NOTIFICATION_TITLE_CHARS) throw new RequestValidationError("Title is too long.");
+  if (subtitle.length > MAX_NOTIFICATION_SUBTITLE_CHARS) throw new RequestValidationError("Subtitle is too long.");
+  const sessionID = optionalString(value.sessionID, "sessionID");
+  if (sessionID !== undefined && sessionID.length > 200) throw new RequestValidationError("Invalid sessionID.");
+  // The collapse ID travels as an APNs header (64-byte cap there); the charset
+  // keeps header injection off the table.
+  const collapseID = optionalString(value.collapseID, "collapseID");
+  if (collapseID !== undefined && !/^[A-Za-z0-9._:-]{1,64}$/u.test(collapseID)) {
+    throw new RequestValidationError("Invalid collapseID.");
+  }
+  let deviceIDs: string[] | undefined;
+  if (value.deviceIDs !== undefined && value.deviceIDs !== null) {
+    if (!Array.isArray(value.deviceIDs) || value.deviceIDs.length === 0
+      || value.deviceIDs.length > MAX_NOTIFICATION_DEVICES) {
+      throw new RequestValidationError("Invalid deviceIDs.");
+    }
+    deviceIDs = value.deviceIDs.map((entry) => {
+      if (typeof entry !== "string" || !isValidIdentifier(entry)) {
+        throw new RequestValidationError("Invalid deviceIDs entry.");
+      }
+      return entry;
+    });
+  }
+  return {
+    ...(deviceIDs === undefined ? {} : { deviceIDs }),
+    title,
+    subtitle,
+    ...(sessionID === undefined ? {} : { sessionID }),
+    ...(collapseID === undefined ? {} : { collapseID }),
+  };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

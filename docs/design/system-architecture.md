@@ -14,7 +14,7 @@ Lumi 使用“daemon 唯一权威、客户端持久缓存、Relay 不透明转�
 
 - v1 不支持从 iPhone 审批、输入、终止或控制 Agent。
 - v1 不实现 Claude、Pi 或其他 Agent Adapter。
-- 当前不实现 APNs。
+- APNs 只承载短通知（Session 标题 + 状态词，明文经 Relay 转发、不落存储）；Session 内容仍只走端到端加密通道。
 - Relay 不是 Session 数据库，也不承担长期重放。
 - 线上只传数据层记录（`SessionSummary` / `TurnSummary` / `TimelineItem` / `AgentIngressEvent` / `DaemonHealth` / index 条目），不传展示层结果。
 

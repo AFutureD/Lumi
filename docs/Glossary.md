@@ -45,6 +45,15 @@ Activity 里每条记录的 chip 标签，以及 Category 过滤面板里的名�
 | TOOL | Tool call | 工具调用 |
 | RESULT | Tool result | 工具结果 |
 
+## 推送提醒
+
+| 场景 | 界面写法 | 含义 |
+| --- | --- | --- |
+| iPhone 设置行 | Push notifications | 通知权限的三态入口（Allow / Allowed / Not allowed） |
+| 文档叫法 | 推送提醒 | Session 回合结束、失败或中断时发到 iPhone 的系统通知 |
+
+通知本身没有新词：标题就是 Session 标题，副标题是它的状态（Completed / Failed / Interrupted，与状态胶囊同一套词）。
+
 ## 软件更新
 
 | 场景 | 界面写法 | 含义 |

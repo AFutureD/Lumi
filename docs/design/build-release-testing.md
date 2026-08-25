@@ -196,7 +196,7 @@ Release Environment 保存 Developer ID p12、p12 密码、App Store Connect p8 
 4. 物理 iPhone 摄像头配对、前后台和弱网恢复。
 5. 第二个更高 build 从旧版通过 Sparkle 完成替换、重启、helper/daemon 刷新；并验证超大 Session、长连接和 Durable Object 重启。
 
-APNs 不属于当前发布门槛；它是后续独立能力。
+APNs 推送已接入：Debug 构建走 sandbox（entitlement `aps-environment: development`），App Store 导出重签名后自动变 production；Relay 侧凭证是 `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_PRIVATE_KEY` 三个 wrangler secret 加 `APNS_TOPIC` 变量。真机推送验收（sandbox 与 TestFlight production）计入上面的待验收清单。
 
 ## 相关文档
 

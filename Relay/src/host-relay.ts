@@ -2,14 +2,17 @@ import { DurableObject } from "cloudflare:workers";
 import { bearerToken, hashCredential, randomCredential, timingSafeStringEqual } from "./crypto";
 import { elapsedMs, loggerForEnv, shortID, traceID, type Logger } from "./log";
 import type { PairingDirectory } from "./pairing-directory";
+import { sendPush, type APNSEnvironment } from "./apns";
 import {
   MAX_WEBSOCKET_MESSAGE_BYTES,
   RequestValidationError,
   isRecord,
+  parseNotificationSend,
   parsePairingDecision,
   parsePairingDeviceSubmission,
   parsePairingReveal,
   parsePairingSessionCreate,
+  parsePushTokenUpdate,
   parseRelayRoutingFrame,
   readLimitedJSON,
 } from "./protocol";
@@ -30,6 +33,9 @@ interface DeviceRow {
   token_hash: string;
   paired_at: number;
   revoked_at: number | null;
+  apns_token: string | null;
+  apns_environment: string | null;
+  apns_updated_at: number | null;
 }
 
 interface MetadataRow {
@@ -125,8 +131,27 @@ export class HostRelay extends DurableObject<Env> {
         );
         ${RATE_LIMITS_TABLE}
       `);
+      this.migrate();
       return Promise.resolve();
     });
+  }
+
+  /**
+   * `CREATE TABLE IF NOT EXISTS` never touches an existing table, so column
+   * additions go through here: bump the version in metadata, run the `ALTER`s
+   * for every step the stored version has not seen. A fresh object walks the
+   * same path — the base tables above are version 1.
+   */
+  private migrate(): void {
+    const version = Number(this.metadata("schema_version") ?? "1");
+    if (version < 2) {
+      this.ctx.storage.sql.exec(`
+        ALTER TABLE devices ADD COLUMN apns_token TEXT;
+        ALTER TABLE devices ADD COLUMN apns_environment TEXT;
+        ALTER TABLE devices ADD COLUMN apns_updated_at INTEGER;
+      `);
+    }
+    if (version < 2) this.setMetadata("schema_version", "2");
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -157,8 +182,16 @@ export class HostRelay extends DurableObject<Env> {
       if (request.method === "GET" && segments[3] === "devices" && segments.length === 4) {
         return await this.listDevices(request);
       }
+      if (segments[3] === "devices" && segments[4] && segments[5] === "push-token" && segments.length === 6) {
+        if (request.method === "PUT") return await this.updatePushToken(request, segments[4]);
+        if (request.method === "DELETE") return await this.clearPushToken(request, segments[4]);
+        return json({ error: "not_found" }, 404);
+      }
       if (request.method === "DELETE" && segments[3] === "devices" && segments[4]) {
         return await this.revokeDevice(request, segments[4]);
+      }
+      if (request.method === "POST" && segments[3] === "notifications" && segments.length === 4) {
+        return await this.sendNotifications(request, hostID);
       }
       if (request.method === "GET" && segments[3] === "ws") {
         return await this.openWebSocket(request, hostID);
@@ -617,8 +650,10 @@ export class HostRelay extends DurableObject<Env> {
     if (purge) {
       rows = this.ctx.storage.sql.exec("DELETE FROM devices WHERE id = ?", deviceID).rowsWritten;
     } else {
+      // A revoked device keeps its row but loses its push token with its
+      // sockets — revocation means no channel of any kind.
       rows = this.ctx.storage.sql.exec(
-        "UPDATE devices SET revoked_at = ? WHERE id = ?",
+        "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_environment = NULL, apns_updated_at = NULL WHERE id = ?",
         Date.now(),
         deviceID,
       ).rowsWritten;
@@ -629,6 +664,106 @@ export class HostRelay extends DurableObject<Env> {
     }
     this.log.info(purge ? "device_purged" : "device_revoked", { deviceID, rows, socketsClosed: sockets.length });
     return new Response(null, { status: 204 });
+  }
+
+  /** `PUT …/devices/:id/push-token` — the iPhone registers its APNs token. */
+  private async updatePushToken(request: Request, deviceID: string): Promise<Response> {
+    if (!(await this.authorizeDevice(request, deviceID))) return json({ error: "unauthorized" }, 401);
+    const input = parsePushTokenUpdate(await readLimitedJSON(request));
+    this.ctx.storage.sql.exec(
+      "UPDATE devices SET apns_token = ?, apns_environment = ?, apns_updated_at = ? WHERE id = ?",
+      input.token,
+      input.environment,
+      Date.now(),
+      deviceID,
+    );
+    this.log.info("device_push_token_updated", { deviceID, environment: input.environment });
+    return new Response(null, { status: 204 });
+  }
+
+  /** `DELETE …/devices/:id/push-token` — best-effort cleanup when the iPhone unpairs. */
+  private async clearPushToken(request: Request, deviceID: string): Promise<Response> {
+    if (!(await this.authorizeDevice(request, deviceID))) return json({ error: "unauthorized" }, 401);
+    this.ctx.storage.sql.exec(
+      "UPDATE devices SET apns_token = NULL, apns_environment = NULL, apns_updated_at = NULL WHERE id = ?",
+      deviceID,
+    );
+    this.log.info("device_push_token_cleared", { deviceID });
+    return new Response(null, { status: 204 });
+  }
+
+  /**
+   * `POST …/notifications` — the daemon hands over a short plaintext alert and
+   * the relay forwards it to APNs. The text exists only in this request's
+   * memory: it is never stored and never logged. An `unregistered` outcome
+   * (APNs 410, or the `BadDeviceToken` an environment mismatch produces)
+   * drops the token; the device re-registers on its next launch.
+   */
+  private async sendNotifications(request: Request, hostID: string): Promise<Response> {
+    if (!(await this.authorizeHost(request))) return json({ error: "unauthorized" }, 401);
+    enforceRateLimit(this.ctx.storage.sql, "notifications:send", 120, 60_000);
+    const input = parseNotificationSend(await readLimitedJSON(request));
+    const { APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY, APNS_TOPIC } = this.env;
+    if (!APNS_KEY_ID || !APNS_TEAM_ID || !APNS_PRIVATE_KEY || !APNS_TOPIC) {
+      this.log.error("notifications_unconfigured", {});
+      return json({ error: "apns_not_configured" }, 503);
+    }
+    const credentials = { keyID: APNS_KEY_ID, teamID: APNS_TEAM_ID, privateKeyPEM: APNS_PRIVATE_KEY };
+
+    const startedAt = Date.now();
+    const targets = input.deviceIDs
+      ? input.deviceIDs.map((id) => this.deviceRow(id) ?? id)
+      : this.ctx.storage.sql.exec<DeviceRow>(
+        "SELECT * FROM devices WHERE revoked_at IS NULL ORDER BY paired_at DESC",
+      ).toArray();
+
+    const results: Array<{ deviceID: string; status: string }> = [];
+    for (const target of targets) {
+      if (typeof target === "string" || target.revoked_at !== null) {
+        results.push({ deviceID: typeof target === "string" ? target : target.id, status: "revoked" });
+        continue;
+      }
+      if (target.apns_token === null || target.apns_environment === null) {
+        results.push({ deviceID: target.id, status: "no_token" });
+        continue;
+      }
+      const outcome = await sendPush(credentials, {
+        topic: APNS_TOPIC,
+        environment: target.apns_environment as APNSEnvironment,
+        deviceToken: target.apns_token,
+        title: input.title,
+        subtitle: input.subtitle,
+        hostID,
+        ...(input.sessionID === undefined ? {} : { sessionID: input.sessionID }),
+        ...(input.collapseID === undefined ? {} : { collapseID: input.collapseID }),
+      });
+      if (outcome.status === "unregistered") {
+        this.ctx.storage.sql.exec(
+          "UPDATE devices SET apns_token = NULL, apns_environment = NULL, apns_updated_at = NULL WHERE id = ?",
+          target.id,
+        );
+      }
+      this.log.info("notification_result", {
+        deviceID: target.id,
+        status: outcome.status,
+        environment: target.apns_environment,
+        apnsID: outcome.status === "sent" ? outcome.apnsID : undefined,
+        httpStatus: outcome.status === "failed" ? outcome.httpStatus : undefined,
+        reason: outcome.status === "failed" ? outcome.reason : undefined,
+        titleChars: input.title.length,
+        subtitleChars: input.subtitle.length,
+        ms: elapsedMs(startedAt),
+      });
+      results.push({ deviceID: target.id, status: outcome.status });
+    }
+    return json({ results });
+  }
+
+  private deviceRow(deviceID: string): DeviceRow | null {
+    return this.ctx.storage.sql.exec<DeviceRow>(
+      "SELECT * FROM devices WHERE id = ?",
+      deviceID,
+    ).toArray()[0] ?? null;
   }
 
   private async openWebSocket(request: Request, hostID: string): Promise<Response> {

@@ -13,6 +13,10 @@ final class NotificationAuthorization {
 
     private(set) var state: State = .notDetermined
     var onChange: (() -> Void)?
+    /// Fired on every refresh that finds the permission granted (including
+    /// the moment the person taps Allow), so the coordinator can register
+    /// for remote notifications; registration is idempotent.
+    var onAuthorized: (() -> Void)?
 
     init() {
         NotificationCenter.default.addObserver(
@@ -35,6 +39,9 @@ final class NotificationAuthorization {
         if next != state {
             state = next
             onChange?()
+        }
+        if next == .authorized {
+            onAuthorized?()
         }
     }
 

@@ -12,7 +12,7 @@ Session content is opaque to the Worker and is not written to persistent storage
 
 Every request is rate limited at the edge per client address (IPv6 per /64) through the `RATE_LIMITER` binding in `wrangler.jsonc` before it can reach a Durable Object, and plain `http://` is refused outside loopback. Pairing-code claims are limited again inside the directory, per source and globally.
 
-APNs is not part of the current implementation.
+APNs alerts are forwarded through `POST /v1/hosts/:h/notifications`: the daemon sends a short plaintext title and subtitle (the session's state word), the Durable Object signs an ES256 provider JWT (`APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_PRIVATE_KEY` secrets, `APNS_TOPIC` var) and posts to APNs — sandbox or production per the token each device registered via `PUT /v1/hosts/:h/devices/:d/push-token`. The alert text is never stored and never logged; a 410 (or `BadDeviceToken`) drops the stored token, and the device re-registers on its next launch or foregrounding — the iPhone re-reports its token unconditionally every time it starts, precisely so a token the Relay dropped on its own comes back without re-pairing.
 
 ## Local verification
 

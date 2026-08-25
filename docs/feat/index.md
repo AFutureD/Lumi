@@ -34,6 +34,8 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 一台 iPhone 可以连接多台 Mac；一台 Mac 也可以授权多台 iPhone。iPhone 的 Sessions Tab 把所有 Mac 的 Session 合并成一条列表（可按 Mac、状态多选过滤，可搜索），子 Agent 折叠成父 Session 下的计数条、点开成标签；详情分 Activity（三泳道时间线）和 Info（指标与 Session 信息）。只读，不提供审批、终止、输入或其他远程控制；收到的内容缓存在本机（每台 Mac 一个数据库），启动即显示，Mac 离线也能翻看，只有 Mac 上的 daemon 是数据源。
 
+允许通知权限后，Session 回合结束、失败或被中断时 iPhone 会收到系统推送——App 不在前台也能知道哪个 Session 需要回来看，点通知直接落在它的详情页。
+
 [查看模块详情](modules/iphone-live-view.md)
 
 ### 软件更新

@@ -152,7 +152,7 @@ Mac 在 Cached 状态仍展示本地内容并标记 daemon 不可用；iOS 同�
 ## 当前限制
 
 - iOS 把每个 Session 的完整 `SessionDetail` 载入内存；超大历史的懒加载待做。
-- iOS 没有后台推送或 APNs 唤醒。
+- iOS 有 APNs 提醒（回合结束 / 失败 / 中断），但没有后台静默唤醒：通知只提示、不触发后台同步，数据在下次进前台时对账。
 - iOS 当前只展示，不发送 Agent 操作。
 - Mac 主窗口和 Notch 已做开发运行验证，正式分发行为仍取决于签名、公证和干净机器 LaunchAgent 验收。
 

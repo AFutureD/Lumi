@@ -105,6 +105,7 @@ final class SessionDetailViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         relay.markReviewed(hostID: hostID, id: sessionID)
+        PushNotificationRouting.removeDelivered(hostID: hostID, sessionID: sessionID)
     }
 
     private func update() {

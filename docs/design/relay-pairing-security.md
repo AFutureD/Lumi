@@ -50,6 +50,9 @@ flowchart LR
 | `DELETE` | `/v1/hosts/:h/pairing-sessions/:s` | Host secret 或 sessionID | 任一端取消 |
 | `GET` | `/v1/hosts/:h/devices` | Host secret | 列出设备、公钥、配对与撤销时间 |
 | `DELETE` | `/v1/hosts/:h/devices/:d` | Host secret | 撤销单台设备并关闭其 socket；加 `?purge=1` 则删除这条记录（Mac 在 Revoked 行点 Remove，daemon 同时忘掉钉住的钥匙） |
+| `PUT` | `/v1/hosts/:h/devices/:d/push-token` | Device token | iPhone 注册 / 更新 APNs token：`{token, environment}`（environment 是 `production` / `development`，跟随构建的 aps-environment） |
+| `DELETE` | `/v1/hosts/:h/devices/:d/push-token` | Device token | iPhone 解绑时尽力清掉自己的 APNs token |
+| `POST` | `/v1/hosts/:h/notifications` | Host secret | daemon 请求推送：`{deviceIDs?, title, subtitle, sessionID?, collapseID?}`（title 是 Session 标题，subtitle 是状态词）→ 每台设备一个结果（`sent` / `no_token` / `revoked` / `unregistered` / `failed`）；Relay 签 ES256 provider JWT 后转发 APNs，文本不落存储不落日志 |
 | `GET` | `/v1/hosts/:h/ws` | Host secret / Device token | 升级 Host 或 Device WebSocket |
 
 非法状态跳转一律 `409 invalid_state`。sessionID 是 128 bit 随机 base64url，既是会话 ID 也是 iPhone 在这次配对里的 capability（timing-safe 比较）。
@@ -182,7 +185,7 @@ Keychain 项由 daemon 进程自己创建，因此 daemon 在该项 ACL 内，�
 `HostRelay`（每 HostID 一个）：
 
 - Host token hash
-- `devices`：Device ID、名称、公钥、token hash、配对与撤销时间
+- `devices`：Device ID、名称、公钥、token hash、配对与撤销时间、APNs token 与环境（schema v2 迁移新增；撤销或 APNs 报 410 时清空）
 - `pairing_sessions`：state、commit、Host 公钥与名称、reveal 后的 nonce、设备 ID / 名称 / 公钥、approve 后的 Device token hash 与明文 token（留给 iPhone 下一次轮询领取，只有 sessionID 持有者可读；会话到期后由 alarm 连整行删除）、创建 / 到期 / 更新时间
 - 每个设备最后 Host sequence
 - 基于来源地址 hash 的限流窗口
@@ -193,6 +196,8 @@ Keychain 项由 daemon 进程自己创建，因此 daemon 在该项 ACL 内，�
 - claim 限流窗口
 
 Relay 不持久化帧 nonce、ciphertext、Session、Timeline 或用户消息。配对过程中它额外看到 hostName、设备名、两把公钥、承诺和揭示后的 nonce；拿不到任何一端的私钥，算不出通道密钥，Host secret 只有 hash。
+
+推送通知是唯一的明文例外：daemon 把一条短通知（Session 标题 + 状态词，各有长度上限）以明文交给 Relay 转发 APNs。它只存在于该请求的内存里——不写存储，日志只记设备、结果、环境和文本长度，从不记文本本身。接受这个例外是产品决策：通知要在锁屏上可读，就必须让 APNs（也因此让 Relay）看到这几十个字；Session 的完整内容仍然只走端到端加密通道。
 
 ## 序号与重连
 
@@ -219,7 +224,7 @@ Host WSS 属于 daemon：Mac App 退出不影响在线状态；daemon 被 launch
 
 Mac 使用 Host secret 撤销一个 Device ID：
 
-1. Durable Object 写入 `revoked_at`。
+1. Durable Object 写入 `revoked_at`，同时清空该设备的 APNs token——撤销即断推送。
 2. 关闭该设备所有 WSS，close code `4003`。
 3. 后续 Device token 鉴权失败（WSS 握手 401）。
 4. 其他设备授权和连接保持不变。
@@ -261,7 +266,7 @@ iPhone 本地“Remove”只删除自己的 Keychain 通道、SQLite 缓存文�
 | 设备被撤销 | 持久 revoked_at + 主动关闭 socket；iPhone 识别 401 / 4003 进入 Revoked 态并停止重连 | 需重新配对才能恢复（复用 Device ID） |
 | 大 Session | 2 MiB message 上限 | 载荷按单 Session 发送、明文 zlib 压缩、超预算按 timeline 分片；超大单条 item 只在 Relay 副本中省略 |
 | 资源滥用 | 边缘按地址限流（300/分钟，IPv6 按 /64）先于任何 DO；注册 / 建会话 / claim 限流；一 Host 一活会话；ID 正则；body / 消息上限 | 单个地址仍可在限额内用随机 HostID 实例化空 DO（≤ 300/分钟）；大规模分布式洪水交给 Cloudflare DDoS 防护 / 仪表盘里的 WAF 规则；`GET session` 轮询只受边缘限流 |
-| 手机后台更新 | 当前无 APNs | App 未运行时没有通用唤醒通知 |
+| 手机后台更新 | APNs 只做提醒（alert push） | 没有静默唤醒 / 后台同步；通知文本对 Relay 明文可见（见上文“明文例外”），daemon 离线时没有提醒来源 |
 
 ## 相关文档
 

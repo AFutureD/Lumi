@@ -69,11 +69,11 @@ final class SettingsViewController: UIViewController, UICollectionViewDelegate {
     private var notificationFooter: String {
         switch notifications.state {
         case .notDetermined:
-            "还没请求过权限。点这一行弹出系统授权弹窗；通知由 Relay 推送，只在 Session 需要你处理或结束时到达。"
+            "还没请求过权限。点这一行弹出系统授权弹窗；通知由 Relay 推送，只在 Session 回合结束、失败或中断时到达。"
         case .authorized:
-            "已授权。点这一行跳转 iOS 设置里的通知选项；通知由 Relay 推送，只在 Session 需要你处理或结束时到达。"
+            "已授权。点这一行跳转 iOS 设置里的通知选项；通知由 Relay 推送，只在 Session 回合结束、失败或中断时到达。"
         case .denied:
-            "已被拒绝，系统不再弹窗。点这一行跳转 iOS 设置开启；通知由 Relay 推送，只在 Session 需要你处理或结束时到达。"
+            "已被拒绝，系统不再弹窗。点这一行跳转 iOS 设置开启；通知由 Relay 推送，只在 Session 回合结束、失败或中断时到达。"
         }
     }
 

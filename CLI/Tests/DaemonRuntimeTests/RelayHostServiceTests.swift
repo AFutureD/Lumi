@@ -493,3 +493,52 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
     await harness.service.stop()
 }
+
+@Test func hostAlertsAPairedButDisconnectedIPhoneOverAPNs() async throws {
+    let harness = RelayHarness()
+    let base = Date()
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    // Start the host only: the device is paired (listed by the relay) but
+    // never opens a socket — exactly the case push notifications exist for.
+    await harness.service.start()
+
+    let event = AgentIngressEvent(
+        eventID: EventID("turn-end"), sessionID: SessionID("a"), agent: .codex, occurredAt: Date(),
+        timelineItem: TimelineItem(
+            id: TimelineItemID("a-end"), sessionID: SessionID("a"), occurredAt: Date(),
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "Shipped."))
+        )
+    )
+    _ = try await harness.repository.apply(event)
+    harness.hub.publish(event)
+    for _ in 0..<300 where await harness.rest.sentNotifications.isEmpty {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let sent = await harness.rest.sentNotifications
+    #expect(sent.count == 1)
+    #expect(sent.first?.title == "a")
+    #expect(sent.first?.subtitle == "Completed")
+    #expect(sent.first?.sessionID == SessionID("a"))
+    await harness.service.stop()
+}
+
+@Test func hostNeverAlertsForReplayedOldEvents() async throws {
+    let harness = RelayHarness()
+    let base = Date().addingTimeInterval(-3_600)
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    await harness.service.start()
+
+    // A backfill replays a turn end from an hour ago: no alert.
+    let event = AgentIngressEvent(
+        eventID: EventID("old-end"), sessionID: SessionID("a"), agent: .codex, occurredAt: base,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("a-old-end"), sessionID: SessionID("a"), occurredAt: base,
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "Long done."))
+        )
+    )
+    _ = try await harness.repository.apply(event)
+    harness.hub.publish(event)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(await harness.rest.sentNotifications.isEmpty)
+    await harness.service.stop()
+}

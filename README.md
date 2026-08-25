@@ -90,7 +90,7 @@ pnpm test
 pnpm exec wrangler deploy
 ```
 
-Relay stores device authorization and operational metadata only. Session payloads are encrypted for each paired device and are never written to Durable Object storage, KV, D1, or R2. APNs is intentionally outside the current implementation scope.
+Relay stores device authorization and operational metadata only. Session payloads are encrypted for each paired device and are never written to Durable Object storage, KV, D1, or R2. The one plaintext exception is push notifications: the daemon hands the Relay a short alert (session title plus its state word) that is forwarded to APNs and never stored or logged.
 
 ## Session data behavior
 

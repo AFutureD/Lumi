@@ -106,6 +106,68 @@ public struct RelayPairingDeviceNotice: Hashable, Sendable {
     }
 }
 
+// MARK: - Push notifications
+
+/// Which APNs endpoint the device's token belongs to. Debug builds run under
+/// the `development` aps-environment (sandbox); App Store re-signing flips the
+/// entitlement to `production`.
+public enum RelayPushEnvironment: String, Codable, Hashable, Sendable {
+    case production
+    case development
+}
+
+/// `POST /v1/hosts/:h/notifications` — a short plaintext alert the Relay
+/// forwards to APNs. Unlike session frames this is not sealed: the Relay sees
+/// the text, forwards it, and never stores or logs it.
+public struct RelayPushNotification: Codable, Hashable, Sendable {
+    /// `nil` targets every paired, non-revoked device.
+    public let deviceIDs: [DeviceID]?
+    /// The session's title.
+    public let title: String
+    /// The session's state word (Completed / Failed / Interrupted), shown as
+    /// the small line under the title.
+    public let subtitle: String
+    public let sessionID: SessionID?
+    public let collapseID: String?
+
+    public init(
+        deviceIDs: [DeviceID]? = nil,
+        title: String,
+        subtitle: String,
+        sessionID: SessionID? = nil,
+        collapseID: String? = nil
+    ) {
+        self.deviceIDs = deviceIDs
+        self.title = title
+        self.subtitle = subtitle
+        self.sessionID = sessionID
+        self.collapseID = collapseID
+    }
+}
+
+public enum RelayPushDeliveryStatus: String, Codable, Hashable, Sendable {
+    case sent
+    /// The device never registered a token, or its token was dropped.
+    case noToken = "no_token"
+    /// The device is revoked or unknown to the Relay.
+    case revoked
+    /// APNs no longer accepts the token; the Relay dropped it and the device
+    /// re-registers on its next launch.
+    case unregistered
+    /// Transient APNs failure; the token stays.
+    case failed
+}
+
+public struct RelayPushResult: Codable, Hashable, Sendable {
+    public let deviceID: DeviceID
+    public let status: RelayPushDeliveryStatus
+
+    public init(deviceID: DeviceID, status: RelayPushDeliveryStatus) {
+        self.deviceID = deviceID
+        self.status = status
+    }
+}
+
 public struct RelayRESTClient: Sendable {
     public let baseURL: URL
     private let session: URLSession
@@ -236,6 +298,53 @@ public struct RelayRESTClient: Sendable {
             method: "DELETE",
             bearerToken: hostSecret
         ) as EmptyResponse
+    }
+
+    // MARK: Push notifications
+
+    /// Device side: registers (or replaces) the device's APNs token with the
+    /// Mac's Relay. `deviceToken` is the pairing bearer token, not the APNs one.
+    public func updatePushToken(
+        hostID: HostID,
+        deviceID: DeviceID,
+        apnsToken: String,
+        environment: RelayPushEnvironment,
+        deviceToken: String
+    ) async throws {
+        struct Body: Encodable {
+            let token: String
+            let environment: RelayPushEnvironment
+        }
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/devices/\(deviceID.rawValue)/push-token",
+            method: "PUT",
+            bearerToken: deviceToken,
+            body: Body(token: apnsToken, environment: environment)
+        ) as EmptyResponse
+    }
+
+    /// Device side: best-effort cleanup when the device unpairs.
+    public func deletePushToken(hostID: HostID, deviceID: DeviceID, deviceToken: String) async throws {
+        _ = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/devices/\(deviceID.rawValue)/push-token",
+            method: "DELETE",
+            bearerToken: deviceToken
+        ) as EmptyResponse
+    }
+
+    /// Host side: asks the Relay to forward one alert to APNs.
+    public func sendPushNotification(
+        hostID: HostID,
+        notification: RelayPushNotification,
+        hostSecret: String
+    ) async throws -> [RelayPushResult] {
+        let response: PushResultsResponse = try await send(
+            path: "/v1/hosts/\(hostID.rawValue)/notifications",
+            method: "POST",
+            bearerToken: hostSecret,
+            body: notification
+        )
+        return response.results
     }
 
     private func send<ResponseBody: Decodable>(
@@ -524,6 +633,7 @@ public actor RelayWebSocketClient {
 
 private struct EmptyResponse: Codable {}
 private struct StateResponse: Codable { let state: PairingSessionState }
+private struct PushResultsResponse: Codable { let results: [RelayPushResult] }
 private struct DeviceListResponse: Codable { let devices: [RelayDeviceRecord] }
 private struct RelayErrorBody: Decodable { let error: String }
 /// `{type:"presence",online}`, `{type:"error",code,sequence,lastSequence,deviceID}`,

@@ -69,6 +69,14 @@ public actor RelayHostService {
     private var activeDevices: Set<DeviceID> = []
     private var subscriptionID: UUID?
     private var pendingEvents: [AgentIngressEvent] = []
+    /// Push cooldown bookkeeping: when each session last alerted. Pruned on
+    /// every drain — entries older than the cooldown are dead weight.
+    private var lastPushAt: [SessionID: Date] = [:]
+    /// Alert-worthy events waiting for the single push task. One task drains
+    /// them in arrival order; overlapping tasks would race the cooldown reads
+    /// across suspension points and send duplicates.
+    private var pendingPushEvents: [PushNotificationPolicy.NotableEvent] = []
+    private var pushTask: Task<Void, Never>?
     private var eventFlushTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -148,6 +156,9 @@ public actor RelayHostService {
         stopped = true
         if let subscriptionID { subscriptions.unsubscribe(subscriptionID) }
         subscriptionID = nil
+        pushTask?.cancel()
+        pushTask = nil
+        pendingPushEvents = []
         reconnectTask?.cancel()
         reconnectTask = nil
         await cancelLivePairing(notifyRelay: false)
@@ -744,11 +755,94 @@ public actor RelayHostService {
         let events = pendingEvents
         pendingEvents = []
         guard !events.isEmpty else { return }
+        // Before the active-device gate: alerts target every paired device
+        // (the Relay does not know which are suspended), so they must not
+        // depend on a live socket; foreground devices suppress the banner
+        // client-side.
+        evaluatePush(events)
         guard !activeDevices.isEmpty else {
             log.debug("relay_events_dropped_no_devices", metadata: .fields(["events": events.count]))
             return
         }
         enqueue(.events(events))
+    }
+
+    // MARK: - Push notifications
+
+    /// Turn-level alerts to paired iPhones, via the Relay's plaintext
+    /// notification endpoint (`PushNotificationPolicy` decides which events
+    /// qualify). REST, not the serial send loop: an alert has no place in the
+    /// frame sequence and must not wait behind a large sync.
+    private func evaluatePush(_ events: [AgentIngressEvent]) {
+        guard credentials != nil, devices.contains(where: { $0.revokedAt == nil }) else { return }
+        let notable = PushNotificationPolicy.notableEvents(events, now: Date())
+        guard !notable.isEmpty else { return }
+        pendingPushEvents.append(contentsOf: notable)
+        guard pushTask == nil else { return }
+        pushTask = Task { [weak self] in
+            await self?.drainPushQueue()
+        }
+    }
+
+    private func drainPushQueue() async {
+        while !Task.isCancelled, !pendingPushEvents.isEmpty {
+            let notable = pendingPushEvents
+            pendingPushEvents = []
+            await sendPush(for: notable)
+        }
+        pushTask = nil
+    }
+
+    private func sendPush(for notable: [PushNotificationPolicy.NotableEvent]) async {
+        // One index read answers both questions: each session's summary, and
+        // whether a subagent's parent is still retained.
+        let summaries: [SessionID: SessionSummary]
+        do {
+            let all = try await repository.listSessions(limit: Self.indexLimit)
+            summaries = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        } catch {
+            // Swallowing this would either drop an expected alert or turn a
+            // transient error into a spurious subagent push; say so and send
+            // nothing — the next notable event is the retry.
+            log.warning("push_summary_lookup_failed", metadata: .fields(["events": notable.count, "error": error]))
+            return
+        }
+        let now = Date()
+        lastPushAt = lastPushAt.filter { now.timeIntervalSince($0.value) < PushNotificationPolicy.cooldown }
+        let candidates = PushNotificationPolicy.candidates(
+            notable: notable,
+            summaries: summaries,
+            retainedParents: Set(summaries.keys),
+            lastPushAt: lastPushAt,
+            now: now
+        )
+        guard !candidates.isEmpty, let credentials else { return }
+        for candidate in candidates {
+            lastPushAt[candidate.sessionID] = now
+            do {
+                let results = try await rest.sendPushNotification(
+                    hostID: credentials.hostID,
+                    notification: RelayPushNotification(
+                        title: candidate.title,
+                        subtitle: candidate.subtitle,
+                        sessionID: candidate.sessionID,
+                        collapseID: PushNotificationPolicy.collapseID(for: candidate.sessionID)
+                    ),
+                    hostSecret: credentials.hostSecret
+                )
+                // The alert text is content and stays out of the log; the
+                // per-device outcomes are what a delivery question needs.
+                log.info("push_sent", metadata: .fields([
+                    "session": candidate.sessionID.rawValue,
+                    "results": results.map { "\($0.deviceID.rawValue):\($0.status.rawValue)" }.sorted().joined(separator: ","),
+                ]))
+            } catch {
+                log.warning("push_send_failed", metadata: .fields([
+                    "session": candidate.sessionID.rawValue,
+                    "error": error,
+                ]))
+            }
+        }
     }
 
     private func pushHealthIfChanged() async {

@@ -1,7 +1,11 @@
 import Remote
 import Transport
 import Foundation
+import os
 import UIKit
+import UserNotifications
+
+private let pushLog = os.Logger(subsystem: "app.huanan.lumi", category: "push")
 
 /// Owns the Relay controller and the three tabs (Sessions / Macs / Settings).
 @MainActor
@@ -34,6 +38,10 @@ public final class IOSApplicationCoordinator: NSObject {
         }
         window.rootViewController = tabs
         window.makeKeyAndVisible()
+        UNUserNotificationCenter.current().delegate = self
+        notifications.onAuthorized = {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
         relay.start()
         Task { await notifications.refresh() }
     }
@@ -41,6 +49,29 @@ public final class IOSApplicationCoordinator: NSObject {
     public func resume() {
         relay.start()
         Task { await notifications.refresh() }
+    }
+
+    // MARK: - Push notifications
+
+    /// The APNs token from the app delegate, hex-encoded, forwarded to every
+    /// paired Mac's Relay.
+    public func updatePushToken(_ token: Data) {
+        relay.updatePushToken(token.map { String(format: "%02x", $0) }.joined())
+    }
+
+    public func pushRegistrationFailed(_ error: Error) {
+        pushLog.warning("push_registration_failed: \(String(describing: error), privacy: .public)")
+    }
+
+    private func openSession(hostID: HostID, sessionID: SessionID) {
+        tabs.presentedViewController?.dismiss(animated: false)
+        tabs.selectedIndex = 0
+        guard let navigation = tabs.viewControllers?.first as? UINavigationController else { return }
+        navigation.popToRootViewController(animated: false)
+        navigation.pushViewController(
+            SessionDetailViewController(relay: relay, hostID: hostID, sessionID: sessionID),
+            animated: false
+        )
     }
 
     // MARK: - Navigation
@@ -82,5 +113,29 @@ public final class IOSApplicationCoordinator: NSObject {
             sheet.prefersGrabberVisible = true
         }
         (tabs.presentedViewController ?? tabs).present(navigation, animated: true)
+    }
+}
+
+extension IOSApplicationCoordinator: UNUserNotificationCenterDelegate {
+    /// In the foreground the live view is already on screen: no banner.
+    public nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        []
+    }
+
+    /// Tapping a banner lands on the session it names.
+    public nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard let target = PushNotificationRouting.session(in: response.notification.request.content.userInfo) else {
+            pushLog.warning("push_tap_without_session_payload")
+            return
+        }
+        await MainActor.run {
+            openSession(hostID: target.hostID, sessionID: target.sessionID)
+        }
     }
 }

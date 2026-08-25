@@ -153,6 +153,55 @@ final class RelayDeviceController {
 
     func start() {
         for channel in channels.values { channel.start() }
+        reportPushToken()
+    }
+
+    // MARK: - Push token
+
+    /// The APNs token this launch registered, hex-encoded. Reported to every
+    /// paired Mac's Relay so the daemon can alert this iPhone while the app
+    /// is suspended.
+    private var apnsToken: String?
+    /// One chain per Mac: push-token PUTs and the unpair DELETE run in
+    /// arrival order. Without this a DELETE could land before an in-flight
+    /// PUT and leave the Relay holding a token for an unpaired device — or
+    /// two PUTs after a token rotation could land out of order.
+    private var pushTokenTasks: [HostID: Task<Void, Never>] = [:]
+
+    func updatePushToken(_ token: String) {
+        apnsToken = token
+        reportPushToken()
+    }
+
+    /// Re-reports the token to every paired Mac, unconditionally: the PUT is
+    /// idempotent and cheap, and the Relay may have dropped the token on its
+    /// own (revocation, APNs said the token is dead) — an "already reported"
+    /// cache would never notice that and leave pushes silently dead.
+    private func reportPushToken() {
+        for hostID in channelOrder { reportPushToken(to: hostID) }
+    }
+
+    private func reportPushToken(to hostID: HostID) {
+        guard let token = apnsToken, let credentials = channels[hostID]?.credentials else { return }
+        enqueuePushTokenOperation(for: hostID) {
+            // Failures are logged by the REST client; the next foreground
+            // start() is the retry.
+            try? await RelayRESTClient(baseURL: credentials.relayURL).updatePushToken(
+                hostID: credentials.hostID,
+                deviceID: credentials.deviceID,
+                apnsToken: token,
+                environment: RelayBuildConfiguration.apnsEnvironment,
+                deviceToken: credentials.deviceToken
+            )
+        }
+    }
+
+    private func enqueuePushTokenOperation(for hostID: HostID, _ operation: @escaping @Sendable () async -> Void) {
+        let previous = pushTokenTasks[hostID]
+        pushTokenTasks[hostID] = Task {
+            await previous?.value
+            await operation()
+        }
     }
 
     /// Ask every Mac for its index again (pull-to-refresh, `Refresh list`).
@@ -209,6 +258,7 @@ final class RelayDeviceController {
         settings.setLastSync(nil, for: credentials.hostID)
         try saveCredentials()
         channel.start()
+        reportPushToken(to: credentials.hostID)
         notify()
     }
 
@@ -223,6 +273,17 @@ final class RelayDeviceController {
         guard let channel = channels.removeValue(forKey: hostID) else { return }
         channelOrder.removeAll { $0 == hostID }
         channel.cancelTasks()
+        // Best-effort: ask the Relay to forget the APNs token. Queued behind
+        // any in-flight PUT for this host so the delete is what lands last;
+        // revoking on the Mac clears it server-side anyway.
+        let credentials = channel.credentials
+        enqueuePushTokenOperation(for: hostID) {
+            try? await RelayRESTClient(baseURL: credentials.relayURL).deletePushToken(
+                hostID: credentials.hostID,
+                deviceID: credentials.deviceID,
+                deviceToken: credentials.deviceToken
+            )
+        }
         Task { await channel.stop(removeLocalData: true) }
         settings.setLastSync(nil, for: hostID)
         try? saveCredentials()

@@ -23,7 +23,7 @@
 | macOS | 已实现开发预览 | AppKit 主界面；OpenNook/SwiftUI 只负责 Notch 和 Notch 设置内容 |
 | iOS | 已实现开发预览 | UIKit，只读；每台 Mac 一个独立通道和 SQLite 文件 |
 | Relay | 已部署开发版本 | TypeScript Worker + 每台 Mac 一个 Durable Object |
-| 推送 | 未实现 | APNs 不在当前范围 |
+| 推送 | 已实现 | 回合结束 / 失败 / 中断经 Relay 转发 APNs；通知文本明文、不落存储 |
 | 发布 | 部分验证 | Developer ID、公证和干净机器安装仍待验收 |
 
 ## 核心约束

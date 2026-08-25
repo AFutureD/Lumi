@@ -41,8 +41,13 @@
       "new_sqlite_classes": ["PairingDirectory"]
     }
   ],
+  // APNs credentials (key ID, team ID, .p8 private key) are secrets:
+  // `wrangler secret put APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY`.
+  // Never mirror them here — a var with the same name would overwrite the
+  // secret on deploy.
   "vars": {
-    "LOG_LEVEL": "info"
+    "LOG_LEVEL": "info",
+    "APNS_TOPIC": "app.huanan.lumi"
   },
   "observability": {
     "enabled": true,

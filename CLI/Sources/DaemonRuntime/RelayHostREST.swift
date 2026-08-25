@@ -20,6 +20,11 @@ public protocol RelayHostREST: Sendable {
     func devices(hostID: HostID, hostSecret: String) async throws -> [PairedDevice]
     func revoke(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws
     func removeDevice(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws
+    func sendPushNotification(
+        hostID: HostID,
+        notification: RelayPushNotification,
+        hostSecret: String
+    ) async throws -> [RelayPushResult]
 }
 
 public struct LiveRelayHostREST: RelayHostREST {
@@ -71,6 +76,14 @@ public struct LiveRelayHostREST: RelayHostREST {
 
     public func removeDevice(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws {
         try await client.removeDevice(hostID: hostID, deviceID: deviceID, hostSecret: hostSecret)
+    }
+
+    public func sendPushNotification(
+        hostID: HostID,
+        notification: RelayPushNotification,
+        hostSecret: String
+    ) async throws -> [RelayPushResult] {
+        try await client.sendPushNotification(hostID: hostID, notification: notification, hostSecret: hostSecret)
     }
 }
 
@@ -188,5 +201,19 @@ public actor InMemoryRelayHostREST: RelayHostREST {
 
     public func removeDevice(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws {
         pairedDevices.removeAll { $0.id == deviceID }
+    }
+
+    /// Notifications the service asked the Relay to forward, in send order.
+    public private(set) var sentNotifications: [RelayPushNotification] = []
+
+    public func sendPushNotification(
+        hostID: HostID,
+        notification: RelayPushNotification,
+        hostSecret: String
+    ) async throws -> [RelayPushResult] {
+        sentNotifications.append(notification)
+        return pairedDevices.filter { $0.revokedAt == nil }.map {
+            RelayPushResult(deviceID: $0.id, status: .sent)
+        }
     }
 }

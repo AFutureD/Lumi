@@ -10,7 +10,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - **Mac 入口**：侧边栏“iPhone”显示 6 位配对码和二维码，并在这里按 Match 批准某台 iPhone。
 - **前置条件**：Mac 的 daemon 和 Relay 可用（Mac App 只在配对时需要打开）；配对码 5 分钟内使用。
 - **主要结果**：Sessions 把所有 Mac 的 Session 合并成一条列表；Macs 显示每台 Mac 的在线状态和它的 Relay 地址。
-- **隐私提示**：已配对 iPhone 会通过端到端加密通道收到 Session 的完整副本，并缓存在本机（每台 Mac 一个数据库）；配对凭据进 Keychain（[IOS-R-010](#ios-r-010-session-内容缓存在本机)）。
+- **隐私提示**：已配对 iPhone 会通过端到端加密通道收到 Session 的完整副本，并缓存在本机（每台 Mac 一个数据库）；配对凭据进 Keychain（[IOS-R-010](#ios-r-010-session-内容缓存在本机)）。唯一的例外是推送提醒的标题和状态：以明文经 Relay 转发，不落存储（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）。
 
 ## 配对并查看
 
@@ -71,7 +71,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ## Settings
 
-- **Push notifications**：随系统权限三态显示。未请求过显示蓝色 Allow，点击弹系统授权；已允许显示绿点 + Allowed，已拒绝显示灰点 + Not allowed，点击都跳到 iOS 系统设置。当前 Relay 尚未接入推送，授权后也不会收到通知。
+- **Push notifications**：随系统权限三态显示。未请求过显示蓝色 Allow，点击弹系统授权；已允许显示绿点 + Allowed，已拒绝显示灰点 + Not allowed，点击都跳到 iOS 系统设置。允许后，App 不在前台时也能收到 Session 的关键提醒（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）。
 - **About**：Version、Clear received data（清空本机缓存的全部 Session，随后自动从每台 Mac 重新取回）。
 
 ## 规则
@@ -177,6 +177,13 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 行为：扫码时 Relay 地址随二维码带过来；手输时默认用内置 Relay，Add Mac › Advanced 可填自托管地址（只收 https，留空即内置，填过一次下次预填）。配对成功后这条通道一直用当时选定的 Relay。
 - 结果：同一台 iPhone 可以同时连着不同 Relay 上的 Mac；Macs 列表每行都写出这台 Mac 的 Relay 地址。
 - 限制或例外：Relay 地址不代表可信——填错或扫到别人的二维码最多配上一台“别人的 Mac”，碰不到你自己的 Mac；配对前后都看一眼界面上的 Relay 地址。Mac 侧的 Relay 地址仍由构建配置决定，App 内不可改。
+
+### IOS-R-016 关键时刻推送提醒
+
+- 条件：iPhone 允许了通知权限，且至少配对了一台 Mac。
+- 行为：Session 回合结束、失败或被中断时，Mac 的 daemon 让 Relay 向这台 iPhone 发一条系统通知：标题是 Session 标题（过长时截断并加省略号），副标题是它的状态（Completed / Failed / Interrupted，与列表状态胶囊同一套词）；同一 Session 的多条提醒在通知中心叠成一组。App 在前台时不弹横幅——列表本来就在实时更新。
+- 结果：App 挂起或未打开也能第一时间知道哪个 Session 需要回来看；点通知直接落在那个 Session 的详情页，打开即视为已查看（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)），这个 Session 已送达的通知同时清掉。
+- 限制或例外：通知的标题和状态以明文经 Relay 转发（Relay 不保存也不记录），Session 的完整内容仍走端到端加密通道；子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）；在 Mac 上撤销这台 iPhone 后提醒立即停止；回合开始不提醒。Mac 离线（daemon 没在跑）时没有提醒来源。
 
 ## 空状态与故障
 

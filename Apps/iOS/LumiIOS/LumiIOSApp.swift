@@ -20,6 +20,20 @@ final class LumiIOSApp: UIResponder, UIApplicationDelegate {
         coordinator.resume()
     }
 
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        coordinator.updatePushToken(deviceToken)
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        coordinator.pushRegistrationFailed(error)
+    }
+
     /// `lumi://pair?relay=…&code=…` from the system camera or a link.
     func application(
         _ app: UIApplication,
