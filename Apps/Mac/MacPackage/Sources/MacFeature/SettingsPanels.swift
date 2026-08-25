@@ -242,6 +242,7 @@ final class SettingsModel: ObservableObject {
 
 struct GeneralSettingsPanel: View {
     @ObservedObject var model: SettingsModel
+    @ObservedObject var softwareUpdates: SoftwareUpdateController
 
     var body: some View {
         SettingsPanelScroll {
@@ -257,6 +258,23 @@ struct GeneralSettingsPanel: View {
                     }
                     Divider()
                     SettingsFootnote(text: "The daemon is managed independently in Daemon settings.")
+                }
+            }
+            SettingsSection(title: "Software Updates") {
+                SettingsCard {
+                    SettingsRow(title: "Automatically check for updates") {
+                        Toggle(
+                            "Automatically check for updates",
+                            isOn: Binding(
+                                get: { softwareUpdates.automaticallyChecksForUpdates },
+                                set: { softwareUpdates.setAutomaticallyChecksForUpdates($0) }
+                            )
+                        )
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                    Divider()
+                    SettingsFootnote(text: "Lumi asks before downloading or installing an update.")
                 }
             }
         }
@@ -441,6 +459,7 @@ struct AgentsSettingsPanel: View {
 
 struct AboutSettingsPanel: View {
     @ObservedObject var model: SettingsModel
+    @ObservedObject var softwareUpdates: SoftwareUpdateController
 
     var body: some View {
         SettingsPanelScroll {
@@ -452,11 +471,13 @@ struct AboutSettingsPanel: View {
                     Divider()
                     SettingsFactRow(
                         label: "Updates",
-                        value: "No automatic update channel is configured for this build.",
+                        value: softwareUpdates.automaticallyChecksForUpdates ? "Stable · Automatic checks on" : "Stable · Automatic checks off",
                         valueStyle: .secondary
                     )
                     Divider()
                     SettingsButtonRow {
+                        Button("Check for Updates…") { softwareUpdates.checkForUpdates() }
+                            .disabled(!softwareUpdates.canCheckForUpdates)
                         Button("About Lumi") { model.showAbout() }
                     }
                 }

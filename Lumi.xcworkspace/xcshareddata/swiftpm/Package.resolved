@@ -1,5 +1,5 @@
 {
-  "originHash" : "ab5f4dfa07a27307ce1fdfce133be033576f39a10463a1369002add91bc6f1dc",
+  "originHash" : "5f2e004ec020582f17c17fa2b7c8c79c9993c06dbd2595707bb6e999a0aacd80",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -16,6 +16,15 @@
       "location" : "https://github.com/AFutureD/opennook.git",
       "state" : {
         "revision" : "e4c51a4d161d12ce91aac360706dc818c0c3a96d"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a",
+        "version" : "2.9.6"
       }
     },
     {

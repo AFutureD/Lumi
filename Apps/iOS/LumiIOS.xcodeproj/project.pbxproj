@@ -31,6 +31,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				LumiIOS.xctestplan,
 			);
 			target = 8B41F6442DEDD0D5001A66F9 /* LumiIOS */;
 		};
@@ -38,6 +39,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Debug.xcconfig,
+				ExportOptions.AppStore.plist,
 				Release.xcconfig,
 				Shared.xcconfig,
 				Tests.xcconfig,

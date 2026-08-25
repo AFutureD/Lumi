@@ -18,6 +18,7 @@ let package = Package(
             url: "https://github.com/AFutureD/opennook.git",
             revision: "e4c51a4d161d12ce91aac360706dc818c0c3a96d"
         ),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
         .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "swift-6.2.4-RELEASE"),
     ],
     targets: [
@@ -33,6 +34,7 @@ let package = Package(
                 .product(name: "Transport", package: "Transport"),
                 .product(name: "NookApp", package: "opennook"),
                 .product(name: "NookComponents", package: "opennook"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             resources: [
                 .copy("Resources/codex.svg"),

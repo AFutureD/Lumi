@@ -16,7 +16,13 @@ public final class ApplicationCoordinator: NSObject {
         actions.showSession = { [weak self] sessionID in self?.showSession(sessionID) }
         return HaloController(store: store, actions: actions)
     }()
-    private lazy var mainWindow = MainWindowController(store: store, relayHost: relayHost, nook: notch)
+    private let softwareUpdates = SoftwareUpdateController()
+    private lazy var mainWindow = MainWindowController(
+        store: store,
+        relayHost: relayHost,
+        nook: notch,
+        softwareUpdates: softwareUpdates
+    )
     private lazy var daemonAutoUpdater = DaemonAutoUpdater(store: store)
 
     public override init() {
@@ -43,6 +49,11 @@ public final class ApplicationCoordinator: NSObject {
     }
 
     public func start() {
+        // Debug builds must not attach to the production update feed: a started
+        // updater would prompt on second launch and offer to replace the dev app.
+        #if !DEBUG
+        softwareUpdates.start()
+        #endif
         installMenu()
         refreshInstalledHooks()
         _ = relayHost
@@ -124,6 +135,7 @@ public final class ApplicationCoordinator: NSObject {
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Lumi", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(softwareUpdates.makeCheckForUpdatesMenuItem())
         appMenu.addItem(.separator())
         let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self

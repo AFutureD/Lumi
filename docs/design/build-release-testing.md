@@ -31,7 +31,8 @@ Xcode App target 只负责入口、资源、Info.plist、entitlements 和打包�
 | Xcode | 稳定版 26；当前本机验证为 26.6 |
 | GRDB | 7.10.0 exact |
 | Swift Testing | `swift-6.2.4-RELEASE` revision |
-| OpenNook | `https://github.com/AFutureD/opennook.git`，固定 revision `7b0ca6ca251885aecec5834b374ef4dc0907bd8f` |
+| OpenNook | `https://github.com/AFutureD/opennook.git`，固定 revision `e4c51a4d161d12ce91aac360706dc818c0c3a96d` |
+| Sparkle | `https://github.com/sparkle-project/Sparkle`，exact `2.9.6` |
 | Relay | TypeScript 5.9.3、Wrangler 4.123.0、pnpm 11.19.0 |
 
 各 SwiftPM Package 提交自己的 `Package.resolved`；Relay 提交 `pnpm-lock.yaml`。
@@ -71,24 +72,24 @@ pnpm run deploy:dry-run
 
 ## macOS 嵌入式服务
 
-macOS 产物只有一个脚本 `scripts/macos-bundle.sh`，两个子命令。
+macOS 产物只有一个脚本 `scripts/macos-bundle.sh`，由 build phase 和 tag 发布共用。
 
 Xcode build phase 调用 `scripts/macos-bundle.sh build`：
 
 1. 单次 `swift build` 编出 daemon/helper，仅 arm64（本机架构），Release 只切换 `--configuration release`。
 2. 复制到 App `Contents/Resources/`；Release 下随即 `strip -Sx`（Xcode 的 strip 流程只覆盖主程序，嵌入二进制的符号表只能在这里去掉）。
 3. 复制 LaunchAgent plist 到 `Contents/Library/LaunchAgents/`。
-4. 有签名 identity 时先签 daemon/helper，再由 Xcode 签外层 App。
+4. 有签名 identity 时先签 daemon/helper，再由 Xcode 签 Sparkle 嵌套组件与外层 App；Developer ID 使用 secure timestamp。
 
-嵌套 executable 使用 Hardened Runtime。正式发布顺序必须是：内层二进制签名 → App 签名 → Developer ID 验证 → 公证 → Staple。
+嵌套 executable 使用 Hardened Runtime。正式发布顺序是：内层二进制签名 → Sparkle/XPC 与 App 签名 → Developer ID 预检 → App 公证与 Staple → DMG 签名、公证与 Staple → Gatekeeper 验证 → Sparkle feed 签名。App 先于 DMG Staple，保证从 DMG 拖出的副本离线也能通过 Gatekeeper。
 
-归档后运行 `scripts/macos-bundle.sh verify <app path>` 检查：
+发布脚本提供三个发布子命令：
 
-- daemon/helper 包含 arm64。
-- 两个 executable 带 Hardened Runtime 标志，且独立 codesign verify 通过。
-- LaunchAgent plist 可解析。
-- App deep signature 通过。
-- Gatekeeper `spctl` 通过。
+- `verify-signed <app>`：公证前检查 Developer ID、Team、secure timestamp、Hardened Runtime、所有 Mach-O 嵌套签名、arm64 daemon/helper 与 LaunchAgent plist。
+- `package-dmg <app> <dmg> [identity]`：创建带 Applications 链接的 UDZO DMG，并用 Developer ID + secure timestamp 签名。
+- `verify-notarized <app> <dmg>`：Staple 后检查 ticket、签名、Gatekeeper，并挂载 DMG 验证其中的 App。
+
+Sparkle 使用同一个 `SPUStandardUpdaterController` 提供 App 菜单和 Settings 入口。App 固定读取 GitHub 最新正式 Release 的 `appcast.xml`，要求签名 feed，并在解包前按当前安全设置验证更新包的来源和完整性；DMG 是 Sparkle enclosure，ZIP 只供手动下载。自动检查首次不启用，第二次启动先询问；自动下载/安装始终关闭。
 
 ## Relay 发布
 
@@ -109,14 +110,26 @@ pnpm exec wrangler deploy
 
 发布后至少检查 `GET /health` 返回 `status: ok` 和 `protocolMajor: 1`。
 
-## CI 分层
+## Tag 发布 Workflow
 
-| Job | 平台 | 验证内容 |
+`.github/workflows/release.yml` 只有 `push.tags: v*` 入口，没有 branch、PR、schedule 或手动触发。`Config/Version.xcconfig` 是 macOS/iOS 的版本权威；tag 必须等于 `v<MARKETING_VERSION>`，Mac 的 `CURRENT_PROJECT_VERSION` 必须大于上一版 appcast。两端的 Team ID 都从对应 scheme 的有效 Release build settings 读取，不另存为 Secret 或 Variable。
+
+| Job | 平台 | 职责 |
 | --- | --- | --- |
-| `common` | macOS 26 | Common、Transport build/test、DTO 边界和 golden fixture |
-| `cli` | macOS 26 | daemon/helper build/test、本地真实 socket smoke chain |
-| `relay` | Ubuntu 24.04 | pnpm lock、types、tsc、eslint、Vitest、Wrangler dry-run |
-| `apps` | macOS 26 | package resolve、macOS build、Mac feature tests、iOS Simulator test |
+| `validate` | macOS 26 | 核对 tag、两端有效 Xcode 版本、更新 feed 与仓库一致、Mac build 单调性和上一版 appcast bootstrap |
+| `tests` | macOS 26 | MacFeature 单元测试，发布前必须通过 |
+| `macos` | macOS 26 | 临时 keychain、Developer ID archive/export、App 公证与 Staple、DMG、公证、Staple、ZIP、signed appcast（含公私钥配对检查）与 checksums |
+| `testflight` | macOS 26 | App Store Connect API key、automatic signing、Apple 管理上传 build、TestFlight upload |
+| `publish` | Ubuntu 24.04 | 建立或刷新 Draft Release、逐字节核对远端资产、发布 latest 并验证 latest appcast |
+
+发布资产固定为：
+
+- `Lumi-<version>-macOS26-arm64.dmg`
+- `Lumi-<version>-macOS26-arm64.zip`
+- `appcast.xml`
+- `SHA256SUMS.txt`
+
+Release Environment 保存 Developer ID p12、p12 密码、App Store Connect p8 和 Sparkle 私钥；Key ID 与 Issuer ID 是 Variables。凭据只落在 runner 临时目录或标准输入，job 结束清理。iOS 上传被 Apple 接受后即进入 publish，不等待 TestFlight processing，也不自动加入测试组。
 
 ## 测试层级
 
@@ -160,6 +173,7 @@ pnpm exec wrangler deploy
 ### Apps
 
 - Mac Hook merge、`RelayHostStatusClient`（脚本化 daemon 的 relay_* 应答）和 Notch snapshot/activity 规则。
+- macOS 更新的两个入口共享同一个 updater；自动检查选择由 Sparkle 保存，更新 feed 强制签名，安装包在解包前完成来源和完整性验证。
 - Xcode UI/runtime 验证三栏布局、Notch、配对和删除。
 - iOS Simulator 验证多 Mac 分组、Timeline，以及 `RelayDeviceChannel`（内存 Relay + 假 host）：冷启动先显示缓存再对账、事件实时应用与未知 Session 整取、info / removed / reviewed 双向、Clear received data 后回填、凭据被拒后停止重连并标 Revoked、Host 重复 `online` 再次 index、隐藏会话只在更新副本到达时回来、重配同一 Mac 复用 Device ID、孙级子 Agent 并入顶层行。
 
@@ -174,13 +188,13 @@ pnpm exec wrangler deploy
 
 ## 发布门槛
 
-正式可分发版本仍需完成：
+正式发布前仍需完成：
 
-1. Developer ID 签名和公证。
+1. 首个 tag 的 Developer ID、公证、signed appcast、TestFlight upload 和 GitHub Release 实跑。
 2. 干净 Mac 上安装、SMAppService 授权、daemon 更新和卸载。
 3. 真实 Codex `/hooks` 触发的端到端链路。
 4. 物理 iPhone 摄像头配对、前后台和弱网恢复。
-5. 超大单 Session（分片路径）、长时间 Relay 连接和 Durable Object 重启测试。
+5. 第二个更高 build 从旧版通过 Sparkle 完成替换、重启、helper/daemon 刷新；并验证超大 Session、长连接和 Durable Object 重启。
 
 APNs 不属于当前发布门槛；它是后续独立能力。
 

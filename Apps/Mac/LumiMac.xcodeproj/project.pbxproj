@@ -30,9 +30,19 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Debug.xcconfig,
+				ExportOptions.DeveloperID.plist,
 				Release.xcconfig,
 				Shared.xcconfig,
 				Tests.xcconfig,
+			);
+			target = 8BC2655B2DEDD3F400F279A4 /* LumiMac */;
+		};
+		A52000012EFA000100000001 /* Exceptions for "LumiMac" folder in "LumiMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				LaunchAgents/app.huanan.lumi.daemon.plist,
+				LumiMac.xctestplan,
 			);
 			target = 8BC2655B2DEDD3F400F279A4 /* LumiMac */;
 		};
@@ -49,6 +59,9 @@
 		};
 		8BC2655E2DEDD3F400F279A4 /* LumiMac */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A52000012EFA000100000001 /* Exceptions for "LumiMac" folder in "LumiMac" target */,
+			);
 			path = LumiMac;
 			sourceTree = "<group>";
 		};

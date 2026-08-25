@@ -4,5 +4,15 @@
 <dict>
 	<key>LumiRelayURL</key>
 	<string>$(LUMI_RELAY_URL)</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>$(LUMI_UPDATE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>yeD/MtGWwWWgglm0e0/NtVxpjaPb4UVF1Q5LXKhWmJw=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

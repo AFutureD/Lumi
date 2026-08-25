@@ -102,7 +102,9 @@ Relay stores device authorization and operational metadata only. Session payload
 
 ## macOS packaging
 
-Builds compile daemon and helper for `arm64` only; Release strips their symbol tables, then embeds and signs them before signing the outer App. After archiving, run `scripts/macos-bundle.sh verify <app path>` before notarization.
+Builds compile daemon and helper for `arm64` only; Release strips their symbol tables, then embeds and signs them before signing Sparkle and the outer App. Use `EXPECTED_TEAM_ID=<team id> scripts/macos-bundle.sh verify-signed <app path>` before notarization and `verify-notarized <app path> <dmg path>` (same variable) after Staple.
+
+Only a pushed `v<MARKETING_VERSION>` tag starts `.github/workflows/release.yml`. It publishes a signed/notarized DMG, a manual-download ZIP, a signed Sparkle appcast and checksums, uploads the iOS build to TestFlight, then publishes the GitHub Release. `Config/Version.xcconfig` is the version source for both Apps.
 
 The Codex integration installer preserves existing Hooks. Users may need to review and trust the Lumi definition through Codex `/hooks`.
 
@@ -113,5 +115,5 @@ The Codex integration installer preserves existing Hooks. Users may need to revi
 - [Data, communication, and storage](docs/design/data-communication-storage.md)
 - [Agent Hook design](docs/design/agent-hook.md)
 - [Product overview](docs/feat/index.md)
-- [Design system handoff](design/README.md) — `design/DESIGN SYSTEM.html` is the source of every colour, type and spacing value; Swift tokens live in `Common/Sources/DesignSystem`
+- [Design system handoff](DESIGN%20SYSTEM.html) — `DESIGN SYSTEM.html` is the source of every colour, type and spacing value; Swift tokens live in `Common/Sources/DesignSystem`
 - [Current implementation task](docs/developer/tasks/260816T1953-lumi-v1/TASK.md)

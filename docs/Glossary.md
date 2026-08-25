@@ -45,10 +45,20 @@ Activity 里每条记录的 chip 标签，以及 Category 过滤面板里的名�
 | TOOL | Tool call | 工具调用 |
 | RESULT | Tool result | 工具结果 |
 
+## 软件更新
+
+| 场景 | 界面写法 | 含义 |
+| --- | --- | --- |
+| 设置分区 | Software Updates | 管理 Lumi for Mac 的更新检查方式 |
+| 主动检查 | Check for Updates… | 立即向稳定更新通道检查新版本 |
+| 自动检查 | Automatically check for updates | 允许 Lumi 定期检查新版本，但不静默下载或安装 |
+| 自动检查已开启 | Automatic checks on | Lumi 会定期检查新版本 |
+| 自动检查已关闭 | Automatic checks off | Lumi 只在用户主动要求时检查新版本 |
+| 更新通道 | Stable | 只接收正式发布版本 |
+
 ## 弃用词
 
 | 不再用 | 原因 |
 | --- | --- |
 | CONTEXT ×N | 2026-08-24 起相邻上下文不再合并；一条记录一行 CONTEXT |
 | Session context / Turn context | 上下文不再分两档：模型读的叫 Context，Agent 的运行方式叫 Configuration |
-

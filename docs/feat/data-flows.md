@@ -2,7 +2,7 @@
 
 > 验证状态：开发预览。daemon、Mac 与 iOS 模拟器已通过同一合成 Session 的创建、时间线同步和删除验证；模型配置、内部上下文和消耗指标已通过结构化解析、保存与跨端编译验证；真实 Codex Hook 与 iPhone 实机仍待验收。
 
-本页描述三类用户相关数据：Session 状态与时间线、设备与通道、配对授权。
+本页描述四类用户相关数据：Session 状态与时间线、设备与通道、配对授权、软件更新。
 
 ## 数据主线
 
@@ -78,9 +78,28 @@ flowchart LR
 - **Mac 或通道离线**：iPhone 在 Macs 页将该 Mac 标为 Offline，继续显示缓存；其他 Mac 通道不受影响。退出 Mac App 不算离线（Relay 连接在 daemon）。
 - **恢复在线**：iPhone 向 Mac 索取 Session 索引，只补差异（缺失的整个取、变过的取新增部分），之后继续实时接收。
 
+## 软件更新
+
+- **用户相关数据**：这台 Mac 是否允许自动检查、当前 App 版本和正式更新通道提供的可用版本。
+- **创建来源**：第二次启动时的许可选择，或用户在“Settings > General”主动切换；可用版本来自 Lumi 的公开更新信息。
+- **更新入口**：App 菜单和“Settings > About”可以立即检查；General 开关改变之后是否定期检查。
+- **主要消费者**：Lumi for Mac 的更新提示和“Settings > About”版本显示。
+- **删除影响**：关闭自动检查只停止定期检查，不删除当前 App、Session 历史或手动入口。
+- **规则引用**：[UPD-R-001](modules/software-updates.md#upd-r-001-两个入口使用同一个更新状态)、[UPD-R-003](modules/software-updates.md#upd-r-003-自动检查设置可随时更改)、[UPD-R-004](modules/software-updates.md#upd-r-004-只接受签名的-stable-更新)。
+
+### 从检查到替换
+
+1. 自动调度或用户主动检查读取正式更新信息并验证其真实性。
+2. Lumi 比较当前 build 与可用 build；没有更高版本时报告当前已是最新。
+3. 有新版本时，用户决定是否继续；更新包必须通过当前安全设置要求的来源和完整性验证。
+4. 用户确认安装后 App 被完整替换并重新启动，Session 历史保留；已安装的 helper 跟随刷新，正在运行且已连接的已安装 daemon 在版本不一致时重启刷新。
+
+检查失败、验证失败或用户取消时，当前 App 与 Session 历史保持不变。完整入口和分支见[软件更新模块](modules/software-updates.md)与[更新旅程](journeys/keep-lumi-up-to-date.md)。
+
 ## 相关文档
 
 - [功能全景](index.md)
 - [Mac 会话查看](modules/mac-session-view.md)
 - [iPhone 在线查看](modules/iphone-live-view.md)
+- [软件更新](modules/software-updates.md)
 - [用户摩擦点](friction-points.md)

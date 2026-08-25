@@ -1,0 +1,450 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
+jobs:
+  validate:
+    name: Validate tag and version
+    runs-on: macos-26
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read previous Sparkle feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          context_dir="$RUNNER_TEMP/release-context"
+          mkdir -p "$context_dir"
+          if latest_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>/dev/null)"; then
+            appcast_url="$(jq -r '.assets[] | select(.name == "appcast.xml") | .browser_download_url' <<<"$latest_json")"
+            [[ -n "$appcast_url" ]] || {
+              echo "Latest published release has no appcast.xml" >&2
+              exit 1
+            }
+            curl --fail --location --silent --show-error "$appcast_url" -o "$context_dir/appcast.xml"
+          else
+            published_release_count="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp |
+              jq '[.[][] | select(.draft == false and .prerelease == false)] | length')"
+            [[ "$published_release_count" == 0 ]] || {
+              echo "Published release history exists but no latest Sparkle feed is available" >&2
+              exit 1
+            }
+            touch "$context_dir/first-release"
+          fi
+
+      - name: Validate Xcode version authority
+        id: version
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          context_dir="$RUNNER_TEMP/release-context"
+          appcast_path=""
+          [[ ! -f "$context_dir/appcast.xml" ]] || appcast_path="$context_dir/appcast.xml"
+          validate_output="$(scripts/release-version.sh validate "$GITHUB_REF_NAME" "$appcast_path")"
+          print -r -- "$validate_output" >> "$GITHUB_OUTPUT"
+
+          expected_version="$(scripts/release-version.sh show | awk -F= '/^version=/{print $2}')"
+          expected_build="$(scripts/release-version.sh show | awk -F= '/^build=/{print $2}')"
+          for scheme in LumiMac LumiIOS; do
+            settings="$(xcodebuild -workspace Lumi.xcworkspace -scheme "$scheme" -configuration Release -showBuildSettings)"
+            actual_version="$(awk -F ' = ' '/MARKETING_VERSION =/{print $2; exit}' <<<"$settings")"
+            actual_build="$(awk -F ' = ' '/CURRENT_PROJECT_VERSION =/{print $2; exit}' <<<"$settings")"
+            [[ "$actual_version" == "$expected_version" && "$actual_build" == "$expected_build" ]] || {
+              echo "$scheme effective version $actual_version ($actual_build) does not match Config/Version.xcconfig" >&2
+              exit 1
+            }
+            if [[ "$scheme" == LumiMac ]]; then
+              feed_url="$(awk -F ' = ' '/LUMI_UPDATE_FEED_URL =/{print $2; exit}' <<<"$settings")"
+              [[ "$feed_url" == "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" ]] || {
+                echo "LUMI_UPDATE_FEED_URL ($feed_url) does not point at $GITHUB_REPOSITORY" >&2
+                exit 1
+              }
+            fi
+          done
+
+      - name: Preserve release context
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-context
+          path: ${{ runner.temp }}/release-context
+          if-no-files-found: error
+          retention-days: 7
+
+  tests:
+    name: Run Mac feature tests
+    needs: validate
+    runs-on: macos-26
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run MacFeature tests
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -workspace Lumi.xcworkspace \
+            -scheme LumiMac \
+            -destination "platform=macOS" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -only-testing:MacFeatureTests
+
+  macos:
+    name: Sign, notarize, and create appcast
+    needs: [validate, tests]
+    runs-on: macos-26
+    environment: release
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restore release context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-context
+          path: ${{ runner.temp }}/release-context
+
+      - name: Install signing credentials
+        env:
+          P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_P8_BASE64 }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          : "${P12_BASE64:?Missing MACOS_DEVELOPER_ID_P12_BASE64}"
+          : "${P12_PASSWORD:?Missing MACOS_DEVELOPER_ID_P12_PASSWORD}"
+          : "${ASC_KEY_BASE64:?Missing ASC_PRIVATE_KEY_P8_BASE64}"
+          keychain_path="$RUNNER_TEMP/lumi-release.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          p12_path="$RUNNER_TEMP/DeveloperID.p12"
+          asc_key_path="$RUNNER_TEMP/AuthKey.p8"
+          {
+            echo "KEYCHAIN_PATH=$keychain_path"
+            echo "P12_PATH=$p12_path"
+            echo "ASC_KEY_PATH=$asc_key_path"
+          } >> "$GITHUB_ENV"
+          print -rn -- "$P12_BASE64" | base64 --decode > "$p12_path"
+          print -rn -- "$ASC_KEY_BASE64" | base64 --decode > "$asc_key_path"
+          chmod 600 "$p12_path" "$asc_key_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$p12_path" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path" | grep -q "Developer ID Application"
+
+      - name: Archive and export Developer ID app
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          archive_path="$RUNNER_TEMP/LumiMac.xcarchive"
+          export_path="$RUNNER_TEMP/macos-export"
+          packages_path="$RUNNER_TEMP/SourcePackages"
+          team_id="$(xcodebuild -workspace Lumi.xcworkspace -scheme LumiMac -configuration Release -showBuildSettings |
+            awk -F ' = ' '/DEVELOPMENT_TEAM =/{print $2; exit}')"
+          [[ -n "$team_id" ]] || { echo "Missing DEVELOPMENT_TEAM" >&2; exit 1; }
+          echo "EXPECTED_TEAM_ID=$team_id" >> "$GITHUB_ENV"
+          xcodebuild archive \
+            -workspace Lumi.xcworkspace \
+            -scheme LumiMac \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -archivePath "$archive_path" \
+            -clonedSourcePackagesDirPath "$packages_path" \
+            DEVELOPMENT_TEAM="$team_id" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            OTHER_CODE_SIGN_FLAGS=--timestamp
+          xcodebuild -exportArchive \
+            -archivePath "$archive_path" \
+            -exportPath "$export_path" \
+            -exportOptionsPlist Apps/Mac/Config/ExportOptions.DeveloperID.plist
+          app_path="$export_path/Lumi.app"
+          EXPECTED_TEAM_ID="$team_id" scripts/macos-bundle.sh verify-signed "$app_path"
+          {
+            echo "APP_PATH=$app_path"
+            echo "PACKAGES_PATH=$packages_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Create and notarize DMG
+        env:
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          : "${ASC_KEY_ID:?Missing ASC_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Missing ASC_ISSUER_ID}"
+          version="${{ needs.validate.outputs.version }}"
+          dist_dir="$RUNNER_TEMP/dist"
+          dmg_path="$dist_dir/Lumi-${version}-macOS26-arm64.dmg"
+          mkdir -p "$dist_dir"
+
+          notarize() {
+            local artifact="$1"
+            local notary_result="$RUNNER_TEMP/notary-result.json"
+            local notary_exit=0
+            xcrun notarytool submit "$artifact" \
+              --key "$ASC_KEY_PATH" \
+              --key-id "$ASC_KEY_ID" \
+              --issuer "$ASC_ISSUER_ID" \
+              --wait \
+              --output-format json > "$notary_result" || notary_exit=$?
+            local submission_id="$(jq -r '.id // empty' "$notary_result" 2>/dev/null || true)"
+            local notary_state="$(jq -r '.status // empty' "$notary_result" 2>/dev/null || true)"
+            if (( notary_exit != 0 )) || [[ "$notary_state" != "Accepted" ]]; then
+              [[ -z "$submission_id" ]] || xcrun notarytool log "$submission_id" \
+                --key "$ASC_KEY_PATH" \
+                --key-id "$ASC_KEY_ID" \
+                --issuer "$ASC_ISSUER_ID" \
+                "$RUNNER_TEMP/notary-log.json" || true
+              echo "Notary submission of ${artifact:t} failed with exit $notary_exit and status ${notary_state:-unknown}" >&2
+              exit 1
+            fi
+          }
+
+          # The app must be stapled before the DMG is built, or the copy users
+          # drag out of the DMG has no ticket for offline Gatekeeper checks.
+          app_zip="$RUNNER_TEMP/Lumi-notarization.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$app_zip"
+          notarize "$app_zip"
+          xcrun stapler staple "$APP_PATH"
+
+          scripts/macos-bundle.sh package-dmg "$APP_PATH" "$dmg_path"
+          notarize "$dmg_path"
+          xcrun stapler staple "$dmg_path"
+          scripts/macos-bundle.sh verify-notarized "$APP_PATH" "$dmg_path"
+          echo "DMG_PATH=$dmg_path" >> "$GITHUB_ENV"
+          echo "DIST_DIR=$dist_dir" >> "$GITHUB_ENV"
+
+      - name: Package ZIP and signed Sparkle feed
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          : "${SPARKLE_ED_PRIVATE_KEY:?Missing SPARKLE_ED_PRIVATE_KEY}"
+          version="${{ needs.validate.outputs.version }}"
+          build="${{ needs.validate.outputs.build }}"
+          tag="$GITHUB_REF_NAME"
+          zip_name="Lumi-${version}-macOS26-arm64.zip"
+          dmg_name="${DMG_PATH:t}"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$DIST_DIR/$zip_name"
+
+          feed_dir="$RUNNER_TEMP/appcast-input"
+          mkdir -p "$feed_dir"
+          cp "$DMG_PATH" "$feed_dir/$dmg_name"
+          if [[ -f "$RUNNER_TEMP/release-context/appcast.xml" ]]; then
+            cp "$RUNNER_TEMP/release-context/appcast.xml" "$feed_dir/appcast.xml"
+          fi
+          appcast_tool="$PACKAGES_PATH/artifacts/sparkle/Sparkle/bin/generate_appcast"
+          [[ -x "$appcast_tool" ]] || {
+            echo "Sparkle generate_appcast was not resolved at $appcast_tool" >&2
+            exit 1
+          }
+          expected_public_key="$(print -rn -- "$SPARKLE_ED_PRIVATE_KEY" |
+            "${appcast_tool:h}/sign_update" -p --ed-key-file -)"
+          app_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist")"
+          [[ -n "$expected_public_key" && "$app_public_key" == "$expected_public_key" ]] || {
+            echo "SPARKLE_ED_PRIVATE_KEY does not pair with the app's SUPublicEDKey (${app_public_key:-missing})" >&2
+            exit 1
+          }
+          print -rn -- "$SPARKLE_ED_PRIVATE_KEY" |
+            "$appcast_tool" \
+              --ed-key-file - \
+              --maximum-deltas 0 \
+              --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/" \
+              --link "https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" \
+              -o "$feed_dir/appcast.xml" \
+              "$feed_dir"
+          cp "$feed_dir/appcast.xml" "$DIST_DIR/appcast.xml"
+
+          xmllint --noout "$DIST_DIR/appcast.xml"
+          print -rn -- "$SPARKLE_ED_PRIVATE_KEY" |
+            "$PACKAGES_PATH/artifacts/sparkle/Sparkle/bin/sign_update" \
+              --verify \
+              --ed-key-file - \
+              "$DIST_DIR/appcast.xml"
+          enclosure_url="$(xmllint --xpath 'string((//*[local-name()="item"]/*[local-name()="enclosure"]/@url)[1])' "$DIST_DIR/appcast.xml")"
+          item_build="$(xmllint --xpath 'string((//*[local-name()="item"]/*[local-name()="version"])[1])' "$DIST_DIR/appcast.xml")"
+          enclosure_signature="$(xmllint --xpath 'string((//*[local-name()="item"]/*[local-name()="enclosure"]/@*[local-name()="edSignature"])[1])' "$DIST_DIR/appcast.xml")"
+          [[ "$enclosure_url" == "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$dmg_name" ]]
+          [[ "$item_build" == "$build" ]]
+          [[ -n "$enclosure_signature" ]]
+          grep -q "sparkle-signatures:" "$DIST_DIR/appcast.xml"
+          (
+            cd "$DIST_DIR"
+            shasum -a 256 "$dmg_name" "$zip_name" appcast.xml > SHA256SUMS.txt
+          )
+
+      - name: Preserve release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-release
+          path: ${{ runner.temp }}/dist
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Preserve notarization diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: notarization-diagnostics
+          path: |
+            ${{ runner.temp }}/notary-result.json
+            ${{ runner.temp }}/notary-log.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove signing credentials
+        if: always()
+        shell: zsh {0}
+        run: |
+          set +e
+          [[ -z "${KEYCHAIN_PATH:-}" ]] || security delete-keychain "$KEYCHAIN_PATH"
+          rm -f "${P12_PATH:-}" "${ASC_KEY_PATH:-}"
+
+  testflight:
+    name: Upload TestFlight build
+    needs: [validate, macos]
+    runs-on: macos-26
+    environment: release
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare App Store Connect key
+        env:
+          ASC_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_P8_BASE64 }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          : "${ASC_KEY_BASE64:?Missing ASC_PRIVATE_KEY_P8_BASE64}"
+          asc_key_path="$RUNNER_TEMP/AuthKey.p8"
+          echo "ASC_KEY_PATH=$asc_key_path" >> "$GITHUB_ENV"
+          print -rn -- "$ASC_KEY_BASE64" | base64 --decode > "$asc_key_path"
+          chmod 600 "$asc_key_path"
+
+      - name: Archive and upload iOS app
+        env:
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          : "${ASC_KEY_ID:?Missing ASC_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Missing ASC_ISSUER_ID}"
+          archive_path="$RUNNER_TEMP/LumiIOS.xcarchive"
+          export_path="$RUNNER_TEMP/ios-upload"
+          packages_path="$RUNNER_TEMP/SourcePackages"
+          team_id="$(xcodebuild -workspace Lumi.xcworkspace -scheme LumiIOS -configuration Release -showBuildSettings |
+            awk -F ' = ' '/DEVELOPMENT_TEAM =/{print $2; exit}')"
+          [[ -n "$team_id" ]] || { echo "Missing DEVELOPMENT_TEAM" >&2; exit 1; }
+          xcodebuild archive \
+            -workspace Lumi.xcworkspace \
+            -scheme LumiIOS \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$archive_path" \
+            -clonedSourcePackagesDirPath "$packages_path" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$team_id" \
+            CODE_SIGN_STYLE=Automatic
+          xcodebuild -exportArchive \
+            -archivePath "$archive_path" \
+            -exportPath "$export_path" \
+            -exportOptionsPlist Apps/iOS/Config/ExportOptions.AppStore.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Remove App Store Connect key
+        if: always()
+        shell: zsh {0}
+        run: rm -f "${ASC_KEY_PATH:-}"
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, macos, testflight]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Restore release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-release
+          path: dist
+
+      - name: Create or refresh draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          if release_json="$(gh release view "$TAG" --json isDraft 2>/dev/null)"; then
+            if [[ "$(jq -r '.isDraft' <<<"$release_json")" == "true" ]]; then
+              gh release edit "$TAG" --title "Lumi $VERSION" --draft
+              gh release upload "$TAG" dist/* --clobber
+            else
+              echo "Release $TAG is already published; keeping its assets and re-verifying them"
+            fi
+          else
+            gh release create "$TAG" --verify-tag --draft --generate-notes --title "Lumi $VERSION"
+            gh release upload "$TAG" dist/* --clobber
+          fi
+
+      - name: Verify draft assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir remote-assets
+          gh release download "$TAG" --dir remote-assets
+          for asset in dist/*; do
+            cmp "$asset" "remote-assets/${asset##*/}"
+          done
+          if [[ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" == "true" ]]; then
+            gh release edit "$TAG" --draft=false --latest
+          fi
+          for attempt in {1..10}; do
+            curl --fail --location --silent --show-error \
+              "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" \
+              -o latest-appcast.xml || true
+            if [[ -f latest-appcast.xml ]] && cmp -s dist/appcast.xml latest-appcast.xml; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Published latest appcast did not converge to the verified asset" >&2
+          exit 1

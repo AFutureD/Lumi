@@ -175,6 +175,46 @@ Mac 上的码在中途换掉或过期，也按 ① 处理——回到输码屏�
 
 **完成信号**：Notch 出现在所选屏幕；之后的紧凑、展开和活动提示都使用同一屏幕。
 
+## Check for Updates… 显示错误
+
+受影响目标：确认或安装最新的 Lumi for Mac。
+
+**用户会看到**：从 App 菜单或“Settings > About”检查时出现无法读取、验证或安装更新的提示；“Settings > About”仍显示当前版本。
+
+**可能原因**：Mac 无法访问 Stable 更新信息或下载地址，更新尚未完整发布，或下载内容没有通过来源验证。
+
+规则引用：[UPD-R-004](modules/software-updates.md#upd-r-004-只接受签名的-stable-更新)、[UPD-R-005](modules/software-updates.md#upd-r-005-不静默下载或安装)。
+
+**恢复步骤**：
+
+1. 保留当前 Lumi，不从其他不明来源替换 App。
+2. 确认 Mac 网络可用。
+3. 稍后从任一“Check for Updates…”入口重试。
+
+**完成信号**：检查显示当前已是最新版，或出现可确认的新版本；失败和取消期间 Session 历史不受影响。
+
+相关文档：[软件更新](modules/software-updates.md) / [让 Lumi 保持最新](journeys/keep-lumi-up-to-date.md)
+
+## 更新安装要求授权
+
+受影响目标：把已验证的新版本安装到当前 App 位置。
+
+**触发条件**：用户确认安装，但当前 App 位置需要 macOS 提升权限才能替换。
+
+**用户会看到**：macOS 在安装前要求确认或输入管理员凭据。
+
+规则引用：[UPD-R-005](modules/software-updates.md#upd-r-005-不静默下载或安装)、[UPD-R-006](modules/software-updates.md#upd-r-006-app-更新后刷新本机组件)。
+
+**恢复步骤**：
+
+1. 确认提示针对 Lumi 更新。
+2. 要继续安装就完成 macOS 授权；不确定时取消。
+3. 取消后需要更新时，再从“Check for Updates…”重新开始。
+
+**完成信号**：Lumi 重新打开，“Settings > About”显示新版本；取消时当前版本与 Session 历史保持不变。
+
+相关文档：[软件更新](modules/software-updates.md) / [让 Lumi 保持最新](journeys/keep-lumi-up-to-date.md)
+
 ## 仍无法恢复：先看日志
 
 三个本机进程各写一份日志，错误另外汇总成一份：

@@ -142,6 +142,7 @@ final class SettingsNavigationViewController: NSViewController, NSTableViewDataS
 final class SettingsDetailViewController: NSViewController {
     private let store: MacSessionStore
     private let nook: HaloController
+    private let softwareUpdates: SoftwareUpdateController
     private let model: SettingsModel
     let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: DetailLayout.horizontalInset)
     private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
@@ -151,9 +152,10 @@ final class SettingsDetailViewController: NSViewController {
 
     private(set) var selectedSection: SettingsSectionID = .general
 
-    init(store: MacSessionStore, nook: HaloController) {
+    init(store: MacSessionStore, nook: HaloController, softwareUpdates: SoftwareUpdateController) {
         self.store = store
         self.nook = nook
+        self.softwareUpdates = softwareUpdates
         model = SettingsModel(store: store)
         super.init(nibName: nil, bundle: nil)
         model.presentError = { [weak self] error in self?.showError(error) }
@@ -206,7 +208,7 @@ final class SettingsDetailViewController: NSViewController {
     private func panel(for section: SettingsSectionID) -> some View {
         switch section {
         case .general:
-            GeneralSettingsPanel(model: model)
+            GeneralSettingsPanel(model: model, softwareUpdates: softwareUpdates)
         case .notch:
             HaloSettingsView(
                 appState: nook.appState,
@@ -218,7 +220,7 @@ final class SettingsDetailViewController: NSViewController {
         case .agents:
             AgentsSettingsPanel(model: model)
         case .about:
-            AboutSettingsPanel(model: model)
+            AboutSettingsPanel(model: model, softwareUpdates: softwareUpdates)
         }
     }
 

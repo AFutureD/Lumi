@@ -1,6 +1,6 @@
 # Lumi 功能全景
 
-> 适用版本：v1 开发预览。macOS App 已完成本机编译与运行，iOS App 已完成模拟器编译、单元测试与预览数据页面走查，Relay 已部署并通过健康检查。真实 Codex Hook、iPhone 实机、Developer ID 签名、公证和干净机器安装仍待验收。
+> 适用版本：v1 开发预览。macOS App 已完成本机编译与运行，iOS App 已完成模拟器编译、单元测试与预览数据页面走查，Relay 已部署并通过健康检查。软件更新入口与设置已完成本机点击核对，签名配置已完成编译；首个正式更新信息、Developer ID 公证、跨版本安装、真实 Codex Hook、iPhone 实机和干净机器安装仍待验收。
 
 Lumi 把一台 Mac 上多个 Codex Agent、多个 Session 的状态集中到一个地方。用户可以在 Mac 的三栏主窗口和 Notch 查看状态，也可以把一台或多台 Mac 配对到 iPhone，进行只读查看。
 
@@ -36,16 +36,24 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 [查看模块详情](modules/iphone-live-view.md)
 
+### 软件更新
+
+用户可以从 Lumi App 菜单或“Settings > About”主动检查 Stable 更新；第二次启动时，Lumi 会先询问是否允许自动检查，也可在“Settings > General”随时开关。检查不会静默下载或安装，发现新版本后仍由用户确认。
+
+[查看模块详情](modules/software-updates.md)
+
 ## 主要用户旅程
 
 - [在 Mac 上跟进一次 Codex Session](journeys/observe-session-locally.md)
 - [在 iPhone 上查看多台 Mac](journeys/check-session-away.md)
+- [让 Lumi 保持最新](journeys/keep-lumi-up-to-date.md)
 
 ## 核心业务数据
 
 - [Session 状态与时间线](data-flows.md#session-状态与时间线)：由新加入 Lumi 的 Codex Session 产生，并同步到 daemon、Mac 与在线 iPhone。
 - [设备与通道](data-flows.md#设备与通道)：每台 Mac 对每台已授权 iPhone 建立一条通道，一条通道承载该 Mac 的所有 Session。
 - [配对授权](data-flows.md#配对授权)：每台 iPhone 独立授权，可在 Mac 上单独撤销。
+- [软件更新](data-flows.md#软件更新)：Mac 读取签名的 Stable 更新信息，用户确认后才替换 App。
 
 ## 数据如何连接功能
 
@@ -72,3 +80,4 @@ Relay 不保存 Session 正文或可浏览的历史。Mac 不在线时，iPhone 
 - Mac 侧 Relay 地址是编译配置，不是 App 内设置项；iPhone 只在添加 Mac 时可填自托管地址，之后跟着那台 Mac 走。
 - v1 不提供后台状态通知；iPhone Settings 里的通知权限行只管理系统授权，Relay 尚未接入推送。
 - 真实 Codex Hook、iPhone 实机和正式发布链路尚未完成验收。
+- 首个正式版本只会建立更新 feed；完整的跨版本替换要等下一个更高 build 验收。

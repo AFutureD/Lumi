@@ -11,8 +11,18 @@ final class MainWindowController: NSWindowController {
     private let rootController: RootSplitViewController
     private let toolbarController: MainWindowToolbarController
 
-    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: HaloController) {
-        rootController = RootSplitViewController(store: store, relayHost: relayHost, nook: nook)
+    init(
+        store: MacSessionStore,
+        relayHost: RelayHostStatusClient,
+        nook: HaloController,
+        softwareUpdates: SoftwareUpdateController
+    ) {
+        rootController = RootSplitViewController(
+            store: store,
+            relayHost: relayHost,
+            nook: nook,
+            softwareUpdates: softwareUpdates
+        )
         toolbarController = MainWindowToolbarController(
             store: store,
             relayHost: relayHost,
@@ -127,13 +137,22 @@ final class RootSplitViewController: NSSplitViewController {
     var onSelection: ((MainWindowController.Tab) -> Void)?
     var onToolbarStateChange: (() -> Void)?
 
-    init(store: MacSessionStore, relayHost: RelayHostStatusClient, nook: HaloController) {
+    init(
+        store: MacSessionStore,
+        relayHost: RelayHostStatusClient,
+        nook: HaloController,
+        softwareUpdates: SoftwareUpdateController
+    ) {
         navigation = NavigationSidebarViewController(store: store, relayHost: relayHost)
         sessionList = SessionListViewController(store: store)
         sessionDetail = SessionDetailViewController(store: store)
         pairing = PairingViewController(relayHost: relayHost)
         settingsNavigation = SettingsNavigationViewController()
-        settingsDetail = SettingsDetailViewController(store: store, nook: nook)
+        settingsDetail = SettingsDetailViewController(
+            store: store,
+            nook: nook,
+            softwareUpdates: softwareUpdates
+        )
 
         let contentListTabs = NSTabViewController()
         contentListTabs.tabStyle = .unspecified
