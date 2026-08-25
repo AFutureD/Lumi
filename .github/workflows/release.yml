@@ -106,6 +106,7 @@ jobs:
             -scheme LumiMac \
             -destination "platform=macOS" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -skipMacroValidation \
             -only-testing:MacFeatureTests
 
   macos:
@@ -263,8 +264,19 @@ jobs:
             echo "Sparkle generate_appcast was not resolved at $appcast_tool" >&2
             exit 1
           }
-          expected_public_key="$(print -rn -- "$SPARKLE_ED_PRIVATE_KEY" |
-            "${appcast_tool:h}/sign_update" -p --ed-key-file -)"
+          # sign_update cannot print a public key, so derive it from the seed with CryptoKit.
+          expected_public_key="$(swift - <<'SWIFT'
+          import CryptoKit
+          import Foundation
+          guard let b64 = ProcessInfo.processInfo.environment["SPARKLE_ED_PRIVATE_KEY"],
+                let seed = Data(base64Encoded: b64.trimmingCharacters(in: .whitespacesAndNewlines)),
+                let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed) else {
+              FileHandle.standardError.write(Data("SPARKLE_ED_PRIVATE_KEY is not a base64 Ed25519 seed\n".utf8))
+              exit(1)
+          }
+          print(key.publicKey.rawRepresentation.base64EncodedString())
+          SWIFT
+          )"
           app_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist")"
           [[ -n "$expected_public_key" && "$app_public_key" == "$expected_public_key" ]] || {
             echo "SPARKLE_ED_PRIVATE_KEY does not pair with the app's SUPublicEDKey (${app_public_key:-missing})" >&2
