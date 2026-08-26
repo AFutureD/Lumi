@@ -43,8 +43,13 @@
   ],
   // APNs credentials (key ID, team ID, .p8 private key) are secrets:
   // `wrangler secret put APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY`.
-  // Never mirror them here — a var with the same name would overwrite the
-  // secret on deploy.
+  // Never mirror them in "vars" — a var with the same name would overwrite
+  // the secret on deploy. Declaring them here makes them the source of truth
+  // for `wrangler types` (no .dev.vars needed in CI) and lets deploy verify
+  // they are configured.
+  "secrets": {
+    "required": ["APNS_KEY_ID", "APNS_TEAM_ID", "APNS_PRIVATE_KEY"]
+  },
   "vars": {
     "LOG_LEVEL": "info",
     "APNS_TOPIC": "app.huanan.lumi"
