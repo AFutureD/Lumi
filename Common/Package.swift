@@ -6,7 +6,7 @@ let package = Package(
     name: "Common",
     platforms: [
         .macOS(.v15),
-        .iOS(.v18),
+        .iOS(.v26),
     ],
     products: [
         .library(name: "Core", targets: ["Core"]),

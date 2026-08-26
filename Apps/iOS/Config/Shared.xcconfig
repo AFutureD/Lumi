@@ -15,7 +15,7 @@ PRODUCT_BUNDLE_IDENTIFIER = app.huanan.lumi
 // ==========================================
 // Platform Configuration
 // ==========================================
-IPHONEOS_DEPLOYMENT_TARGET = 18.0
+IPHONEOS_DEPLOYMENT_TARGET = 26.0
 
 // (1 == iPhone, 2 == iPad)
 TARGETED_DEVICE_FAMILY = 1,2
