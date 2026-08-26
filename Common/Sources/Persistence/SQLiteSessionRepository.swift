@@ -369,6 +369,42 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
+    /// Reads only the model-configuration items to resolve each Session's
+    /// latest CLI-reported model and reasoning effort (the macOS Sessions
+    /// list subtitle), without decoding entire timelines. Every requested id
+    /// gets a stamp — an empty one when the session reported nothing — so
+    /// callers can cache "known absent".
+    public func latestModelStamps(
+        sessionIDs: [SessionID]
+    ) async throws -> [SessionID: SessionModelStamp] {
+        let decoder = decoder
+        return try await database.read { db in
+            var stamps: [SessionID: SessionModelStamp] = [:]
+            for sessionID in sessionIDs where stamps[sessionID] == nil {
+                let cursor = try Data.fetchCursor(
+                    db,
+                    sql: """
+                        SELECT item FROM timeline
+                        WHERE session_id = ?
+                          AND json_extract(CAST(item AS TEXT), '$.payload.type') = 'model_configuration'
+                        ORDER BY occurred_at DESC, id DESC
+                        """,
+                    arguments: [sessionID.rawValue]
+                )
+                var model: String?
+                var effort: String?
+                while model == nil || effort == nil, let data = try cursor.next() {
+                    let item = try decoder.decode(TimelineItem.self, from: data)
+                    guard case let .modelConfiguration(payload) = item.payload else { continue }
+                    if model == nil { model = payload.model }
+                    if effort == nil { effort = payload.reasoningEffort }
+                }
+                stamps[sessionID] = SessionModelStamp(model: model, reasoningEffort: effort)
+            }
+            return stamps
+        }
+    }
+
     /// Atomically installs one authoritative session: clears its tombstone,
     /// then replaces summary, turns and timeline wholesale. `processed_events`
     /// is untouched so client-side event dedupe survives the replace.

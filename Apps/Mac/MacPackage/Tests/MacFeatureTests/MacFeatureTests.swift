@@ -1005,6 +1005,72 @@ private func nookSession(
     #expect(SessionListHierarchy.filtering([main, child, other], query: "nope").isEmpty)
 }
 
+@Test func sessionListRowsFlattenDescendantsInBucketOrder() {
+    let main = hierarchySummary(id: "main", updatedAt: 500)
+    let done = hierarchySummary(id: "done", parentID: "main", lifecycle: .completed, phase: .idle, updatedAt: 400)
+    let grandchild = hierarchySummary(id: "grandchild", parentID: "done", depth: 2, updatedAt: 300)
+    let failed = hierarchySummary(id: "failed", parentID: "main", lifecycle: .failed, phase: .idle, updatedAt: 450)
+
+    let rows = SessionListModel.rows(
+        sessions: [main, done, grandchild, failed],
+        filter: "",
+        modelStamps: [main.id: SessionModelStamp(model: "gpt-5-codex", reasoningEffort: "high")],
+        isExpanded: { _, tone in SessionListModel.expandsByDefault(tone) }
+    )
+
+    #expect(rows.count == 1)
+    let row = rows[0]
+    // Every descendant — the grandchild included — is one line of the root,
+    // in bucket order: running → waiting → failed → done.
+    #expect(row.subagents.map { $0.id.rawValue } == ["grandchild", "failed", "done"])
+    #expect(row.isExpanded)
+    #expect(row.model == "gpt-5-codex")
+    #expect(row.reasoningEffort == "high")
+    #expect(row.subagentSummaryLabel == "3 subagents · 1 running · 1 failed · 1 done")
+}
+
+@Test func sessionListDisclosureDefaultsFollowTheTier() {
+    #expect(SessionListModel.expandsByDefault(.blue))
+    #expect(SessionListModel.expandsByDefault(.orange))
+    #expect(SessionListModel.expandsByDefault(.red))
+    #expect(!SessionListModel.expandsByDefault(.green))
+    #expect(!SessionListModel.expandsByDefault(.gray))
+    // A manual override resets only when the default flips; the green ⇄ gray
+    // review-flag change keeps it.
+    #expect(SessionListModel.defaultDisclosureChanged(from: .blue, to: .gray))
+    #expect(!SessionListModel.defaultDisclosureChanged(from: .green, to: .gray))
+    #expect(!SessionListModel.defaultDisclosureChanged(from: .blue, to: .orange))
+}
+
+@Test @MainActor func sessionListRowHeightsFollowTheTwoLineGrid() {
+    let base = hierarchySummary(id: "main")
+    let child = hierarchySummary(id: "child", parentID: "main")
+    let collapsed = SessionListModel.rows(
+        sessions: [base, child], filter: "", modelStamps: [:], isExpanded: { _, _ in false }
+    )[0]
+    let expanded = SessionListModel.rows(
+        sessions: [base, child], filter: "", modelStamps: [:], isExpanded: { _, _ in true }
+    )[0]
+    // 7 + 18 + 2 + 16 + 7; expanded adds 4 + 1 + 5 and 20 per line.
+    #expect(SessionListCellView.height(for: collapsed) == 50)
+    #expect(SessionListCellView.height(for: expanded) == 80)
+}
+
+@Test func displayActivityClockNeverPredatesTheStart() {
+    let started = Date(timeIntervalSince1970: 500)
+    let provisional = SessionSummary(
+        id: SessionID("provisional"),
+        agent: .codex,
+        title: "Provisional",
+        lifecycle: .starting,
+        phase: .idle,
+        startedAt: started,
+        updatedAt: started,
+        lastActivityAt: .distantPast
+    )
+    #expect(provisional.displayActivityAt == started)
+}
+
 @Test func timelineModeTogglesBetweenLanesAndSingle() {
     #expect(ActivityTimelineMode.lanes.toggled == .single)
     #expect(ActivityTimelineMode.single.toggled == .lanes)
@@ -1015,12 +1081,15 @@ private func nookSession(
     func text(_ secondsAgo: TimeInterval) -> String {
         SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-secondsAgo), now: now)
     }
-    #expect(text(3) == "now")
+    #expect(text(0.4) == "0s")
+    #expect(text(3) == "3s")
     #expect(text(12) == "12s")
     #expect(text(4 * 60 + 5) == "4m")
+    #expect(text(3_599) == "59m")
     #expect(text(3_600 + 30) == "1h")
+    #expect(text(86_399) == "23h")
     #expect(text(30 * 3_600) == "1d")
-    #expect(text(3 * 86_400) == "3d")
+    #expect(text(12 * 86_400) == "12d")
 }
 
 @Test func elapsedFormatterUsesCompactUnits() {
@@ -1342,6 +1411,45 @@ func macStoreHidesProvisionalSessionsUntilTheirFirstTurn() async throws {
     let detail = try await store.cachedSessionDetails(ids: [SessionID("fresh")]).first
     #expect(detail?.timeline.contains { $0.id == TimelineItemIDs.sessionMarker(SessionID("fresh"), .sessionStarted) } == true)
     #expect(try await store.snapshotDetails().map(\.summary.id) == [SessionID("fresh")])
+}
+
+private func macConfigEvent(
+    _ id: String,
+    event: String,
+    at: TimeInterval,
+    model: String?,
+    effort: String? = nil
+) -> AgentIngressEvent {
+    let sessionID = SessionID(id)
+    return AgentIngressEvent(
+        eventID: EventID(event), sessionID: sessionID, agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: at),
+        timelineItem: TimelineItem(
+            id: TimelineItemID(event), sessionID: sessionID,
+            occurredAt: Date(timeIntervalSince1970: at),
+            payload: .modelConfiguration(ModelConfigurationTimelinePayload(
+                source: "claude", model: model, reasoningEffort: effort, settings: .null
+            ))
+        )
+    )
+}
+
+@Test @MainActor
+func macStoreResolvesModelStampsAndFoldsStreamedConfigurations() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let sessionID = SessionID("stamped")
+
+    store.enqueueAgentEvent(macPromptEvent("stamped", event: "s-p1", at: 100))
+    store.enqueueAgentEvent(macConfigEvent("stamped", event: "s-config", at: 101, model: "claude-fable-5", effort: "high"))
+    await store.flushPendingEventsForTesting()
+    #expect(store.modelStamps[sessionID] == SessionModelStamp(model: "claude-fable-5", reasoningEffort: "high"))
+
+    // A later streamed configuration folds on top: reported fields win,
+    // unreported ones keep the known value.
+    store.enqueueAgentEvent(macConfigEvent("stamped", event: "s-config-2", at: 102, model: "claude-opus-5"))
+    await store.flushPendingEventsForTesting()
+    #expect(store.modelStamps[sessionID] == SessionModelStamp(model: "claude-opus-5", reasoningEffort: "high"))
 }
 
 @Test @MainActor

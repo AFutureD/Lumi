@@ -45,6 +45,16 @@ Activity 里每条记录的 chip 标签，以及 Category 过滤面板里的名�
 | TOOL | Tool call | 工具调用 |
 | RESULT | Tool result | 工具结果 |
 
+## Session 列表（macOS）
+
+| 场景 | 界面写法 | 含义 |
+| --- | --- | --- |
+| 状态点悬停提示 | Running / Waiting For Input / Completed / Failed 等，格式“生命周期 · Turn 阶段” | 与状态胶囊同一套词，列表里状态只画色点、词进提示 |
+| 相对时间悬停提示 | Last update | 该行最后一次活动距今时长 |
+| 相对时间口径 | 0s / 12s / 4m / 2h / 12d | 单一单位、只到天；不用 now / ago / yesterday / w / mo |
+| 副标题 | `claude-sonnet-4-5 · high` | CLI 上报的 model 与 reasoning effort 原值，不做美化映射；缺 effort 时连分隔点一起省掉 |
+| Subagent 叠点悬停提示 | `3 subagents · 2 running · 1 done` | 与 Notch 计数条同一套文案，只列非零档，单数写 `1 subagent` |
+
 ## 推送提醒
 
 | 场景 | 界面写法 | 含义 |

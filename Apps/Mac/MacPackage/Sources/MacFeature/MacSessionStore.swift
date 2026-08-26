@@ -26,6 +26,14 @@ extension DaemonIPCClient: MacDaemonClient {
 @MainActor
 public final class MacSessionStore {
     public private(set) var sessions: [SessionSummary] = []
+    /// Latest CLI-reported model / reasoning effort per visible session (the
+    /// Sessions list subtitle). Filled from the local cache alongside
+    /// `sessions`; kept current from streamed model-configuration events and
+    /// re-read for sessions the reconcile replaced.
+    public private(set) var modelStamps: [SessionID: SessionModelStamp] = [:]
+    /// Bumped by every stamp invalidation; a cache read that straddled an
+    /// invalidation is discarded instead of resurrecting the stale value.
+    private var modelStampEpoch: UInt64 = 0
     public private(set) var selectedSession: SessionDetail?
     public private(set) var health: DaemonHealth?
     public private(set) var connectionError: String?
@@ -171,6 +179,7 @@ public final class MacSessionStore {
                    let detail = try await fetchFullDetail(id: sessionID) {
                     try await cache.replaceSession(detail)
                     cachedSnapshotDetails = nil
+                    invalidateModelStamp(sessionID)
                     convertLog.info("session_refreshed", metadata: .fields([
                         "session": sessionID.rawValue,
                         "timeline": detail.timeline.count,
@@ -386,6 +395,9 @@ public final class MacSessionStore {
                 continue
             }
             try await cache.replaceSession(detail)
+            // The replace may have rewritten model-configuration items; the
+            // stamp is re-read from the cache on the reload below.
+            invalidateModelStamp(id)
             fetched += 1
         }
         let changed = fetched > 0
@@ -556,6 +568,7 @@ public final class MacSessionStore {
             // parent of a visible subagent, which stays so the tree holds and
             // the user can refresh (reingest) it.
             let updated = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
+            try await refreshModelStamps(for: updated, events: appliedEvents)
             let previousSessions = sessions
             let previousDetail = selectedSession
             let previousID = pendingSelectionID ?? selectedSession?.summary.id
@@ -589,6 +602,46 @@ public final class MacSessionStore {
             dbLog.error("cache_reload_failed", metadata: .fields(["error": error]))
             notifyObservers()
         }
+    }
+
+    /// Keeps `modelStamps` covering exactly the visible sessions. Sessions
+    /// already stamped fold streamed model-configuration events on top;
+    /// unstamped ones (new, or invalidated after a reconcile replace) are
+    /// resolved from the cache in one targeted read.
+    private func refreshModelStamps(
+        for visible: [SessionSummary],
+        events: [AgentIngressEvent]
+    ) async throws {
+        guard let cache else { return }
+        let visibleIDs = Set(visible.map(\.id))
+        var stamps = modelStamps.filter { visibleIDs.contains($0.key) }
+        for event in events {
+            guard let item = event.timelineItem,
+                  case let .modelConfiguration(payload) = item.payload,
+                  let existing = stamps[event.sessionID] else { continue }
+            stamps[event.sessionID] = existing.updating(with: payload)
+        }
+        let missing = visible.map(\.id).filter { stamps[$0] == nil }
+        if !missing.isEmpty {
+            let epoch = modelStampEpoch
+            let fetched = try await cache.latestModelStamps(sessionIDs: missing)
+            guard epoch == modelStampEpoch else {
+                // An invalidation raced the read; the pass that invalidated
+                // ends in its own reload, which re-reads with fresh data.
+                return
+            }
+            stamps.merge(fetched) { _, new in new }
+            dbLog.debug("model_stamps_loaded", metadata: .fields([
+                "sessions": missing.count,
+                "with_model": fetched.values.count { $0.model != nil },
+            ]))
+        }
+        modelStamps = stamps
+    }
+
+    private func invalidateModelStamp(_ id: SessionID) {
+        modelStamps.removeValue(forKey: id)
+        modelStampEpoch &+= 1
     }
 
     private func connectEventStream() {

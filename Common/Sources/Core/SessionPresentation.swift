@@ -37,11 +37,12 @@ public extension TurnPhase {
 
 // MARK: - Time
 
-/// `now` / `12s` / `4m` / `1h` / `3d` — one unit, no words, for session lists.
+/// `0s` / `12s` / `4m` / `1h` / `3d` — one unit, no words, for session lists.
+/// Days are the largest unit (no `w` / `mo`), and there is no `now` — under a
+/// second reads `0s`.
 public enum SessionRelativeTimeFormatter {
     public static func string(from date: Date, now: Date = .now) -> String {
         let seconds = Int(max(0, now.timeIntervalSince(date)))
-        if seconds < 10 { return "now" }
         if seconds < 60 { return "\(seconds)s" }
         if seconds < 3_600 { return "\(seconds / 60)m" }
         if seconds < 86_400 { return "\(seconds / 3_600)h" }
@@ -65,6 +66,14 @@ public enum SessionElapsedFormatter {
 }
 
 // MARK: - List row
+
+public extension SessionSummary {
+    /// Activity clock as displayed in lists. `lastActivityAt` stays at
+    /// `.distantPast` until the agent's first state assertion (a provisional
+    /// parent kept visible for its subagents); rendering that would read as
+    /// tens of thousands of days, so the session's start bounds it.
+    var displayActivityAt: Date { max(lastActivityAt, startedAt) }
+}
 
 public struct SessionListRowPresentation: Equatable, Sendable {
     public let title: String

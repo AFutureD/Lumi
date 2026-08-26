@@ -103,9 +103,15 @@ public extension SessionStatusTone {
     }
 
     func style(_ appearance: DesignAppearance) -> SessionStatusToneStyle {
-        SessionStatusToneStyle(
+        var dot = hue.statusDot(dotForm, appearance: appearance)
+        // §4.1 session tiers halo at `.18` on light — one step softer than the
+        // `.20` of the L2 item dots; dark keeps the shared `.32`.
+        if appearance == .light {
+            dot.halo = dot.color.opacity(0.18)
+        }
+        return SessionStatusToneStyle(
             hue: hue,
-            dot: hue.statusDot(dotForm, appearance: appearance),
+            dot: dot,
             pill: hue.pillStyle(appearance)
         )
     }

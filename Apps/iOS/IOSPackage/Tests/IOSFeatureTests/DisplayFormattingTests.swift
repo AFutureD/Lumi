@@ -6,7 +6,8 @@ import Testing
 
 @Test func relativeTimeUsesOneUnit() {
     let now = Date(timeIntervalSince1970: 100_000)
-    #expect(SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-3), now: now) == "now")
+    #expect(SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-3), now: now) == "3s")
+    #expect(SessionRelativeTimeFormatter.string(from: now, now: now) == "0s")
     #expect(SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-42), now: now) == "42s")
     #expect(SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-14 * 60), now: now) == "14m")
     #expect(SessionRelativeTimeFormatter.string(from: now.addingTimeInterval(-3_700), now: now) == "1h")

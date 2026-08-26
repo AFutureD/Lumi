@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 会话查看
+
+- [Lumi for Mac] - Session 列表改为两行式：状态点前置 + 标题 + 行尾相对时间，副标题显示 Agent 图标与 CLI 上报的 `model · reasoning effort` 原值。
+- [Lumi for Mac] - Subagent 折叠成副标题右端的叠放状态点（最多五个，数量与分档进悬停提示），展开后一个一行、带各自的相对时间，且可单独选中查看自己的详情；Running / Waiting / Failed 默认展开、Completed 默认收起。
+- [Lumi for Mac] - 列表选中改为满宽中性灰底（Subagent 行为圆角灰底），新增悬停底色；状态词与生命周期文字移入状态点的悬停提示。
+- 列表相对时间口径统一为 0s / 12s / 4m / 2h / 12d：不足一秒显示 0s，不再出现 now。
+
 ### Daemon
 
 - [Lumi for Mac] - 已注册的 daemon 起不来时（如注册指向的安装包被重编译或删除），App 启动约 10 秒后自动重装一次并恢复连接，不再无限报 Connection refused。

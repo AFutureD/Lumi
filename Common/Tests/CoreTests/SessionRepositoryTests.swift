@@ -411,6 +411,64 @@ import Testing
     #expect(messages == [sessionID: "Current request"])
 }
 
+@Test func grdbRepositoryResolvesModelStampsFromTheNewestConfigurations() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-model-stamp-tests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = try SQLiteSessionRepository(
+        path: directory.appendingPathComponent("sessions.sqlite3").path
+    )
+    let stamped = SessionID("stamped")
+    let unstamped = SessionID("unstamped")
+    let date = Date(timeIntervalSince1970: 2_000)
+    let items = [
+        // Older configuration carries the effort; the newest only the model —
+        // each field resolves to its own latest non-nil value.
+        TimelineItem(
+            id: TimelineItemID("config-old"),
+            sessionID: stamped,
+            occurredAt: date,
+            payload: .modelConfiguration(ModelConfigurationTimelinePayload(
+                source: "codex", model: "gpt-5", reasoningEffort: "medium", settings: .null
+            ))
+        ),
+        TimelineItem(
+            id: TimelineItemID("config-new"),
+            sessionID: stamped,
+            occurredAt: date.addingTimeInterval(1),
+            payload: .modelConfiguration(ModelConfigurationTimelinePayload(
+                source: "codex", model: "gpt-5-codex", settings: .null
+            ))
+        ),
+        TimelineItem(
+            id: TimelineItemID("noise"),
+            sessionID: stamped,
+            occurredAt: date.addingTimeInterval(2),
+            payload: .message(MessageTimelinePayload(role: .user, text: "model_configuration"))
+        ),
+        TimelineItem(
+            id: TimelineItemID("plain"),
+            sessionID: unstamped,
+            occurredAt: date,
+            payload: .message(MessageTimelinePayload(role: .user, text: "No config here"))
+        ),
+    ]
+    for (index, item) in items.enumerated() {
+        #expect(try await repository.apply(AgentIngressEvent(
+            eventID: EventID("model-stamp-event-\(index)"),
+            sessionID: item.sessionID,
+            agent: .codex,
+            occurredAt: item.occurredAt,
+            timelineItem: item
+        )))
+    }
+
+    let stamps = try await repository.latestModelStamps(sessionIDs: [stamped, unstamped, stamped])
+    #expect(stamps[stamped] == SessionModelStamp(model: "gpt-5-codex", reasoningEffort: "medium"))
+    // Known-absent still gets a stamp so callers can cache the miss.
+    #expect(stamps[unstamped] == SessionModelStamp())
+}
+
 @Test func grdbRepositoryDeletesOneSessionAndKeepsItDeleted() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("lumi-delete-tests-\(UUID().uuidString)", isDirectory: true)
