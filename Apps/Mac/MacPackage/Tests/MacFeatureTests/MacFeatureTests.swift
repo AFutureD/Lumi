@@ -355,7 +355,6 @@ private let nookNow = Date(timeIntervalSince1970: 100)
     let eligible = [active] + (1...7).map {
         nookSummary(id: "extra-\($0)", lifecycle: .running, phase: .executing, updatedAt: TimeInterval(20 - $0))
     }
-    #expect(HaloSnapshot.eligibleSummaries(from: eligible, now: nookNow).count == 8)
     #expect(HaloSnapshot.visibleSummaries(from: eligible, now: nookNow).count == 8)
 }
 
@@ -365,7 +364,6 @@ private let nookNow = Date(timeIntervalSince1970: 100)
         .withHiddenInNotch(true)
 
     // Archived sessions leave the Notch entirely: rows and the footer count.
-    #expect(HaloSnapshot.eligibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
     #expect(HaloSnapshot.visibleSummaries(from: [active, archived], now: nookNow).map(\.id) == [active.id])
 
     // The Mac window ignores the flag.
@@ -379,10 +377,33 @@ private let nookNow = Date(timeIntervalSince1970: 100)
     let fresh = nookSummary(id: "fresh", lifecycle: .waitingForInput, phase: .idle, updatedAt: 1_001)
     let boundary = nookSummary(id: "boundary", lifecycle: .waitingForInput, phase: .idle, updatedAt: 1_000)
     #expect(
-        HaloSnapshot.eligibleSummaries(from: [stale, fresh, boundary], now: now).map(\.id.rawValue)
+        HaloSnapshot.recentSummaries(from: [stale, fresh, boundary], now: now).map(\.id.rawValue)
             == ["fresh"]
     )
 
+}
+
+@Test func nookArchivingAParentHidesItsWholeSubagentGroup() {
+    let parent = nookSummary(id: "parent", lifecycle: .waitingForInput, phase: .idle, updatedAt: 30)
+    let child = hierarchySummary(id: "child", parentID: "parent", updatedAt: 29)
+    let grandchild = hierarchySummary(id: "grandchild", parentID: "child", depth: 2, updatedAt: 28)
+    let other = nookSummary(id: "other", lifecycle: .running, phase: .executing, updatedAt: 20)
+
+    // The archive flag lives on the parent only; descendants at any depth
+    // follow it out instead of being promoted to top-level rows.
+    let archived = parent.withHiddenInNotch(true)
+    let visible = HaloSnapshot.visibleSummaries(
+        from: [archived, child, grandchild, other],
+        now: nookNow
+    )
+    #expect(visible.map(\.id) == [other.id])
+
+    // A new request clears the parent's flag and the whole group returns.
+    let resurrected = HaloSnapshot.visibleSummaries(
+        from: [parent, child, grandchild, other],
+        now: nookNow
+    )
+    #expect(resurrected.map(\.id.rawValue) == ["parent", "child", "grandchild", "other"])
 }
 
 @Test func nookListKeepsStoreOrderAndKeepsSubagentsWithTheirParent() {

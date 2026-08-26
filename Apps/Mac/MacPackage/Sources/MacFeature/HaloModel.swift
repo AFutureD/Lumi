@@ -202,24 +202,25 @@ enum HaloSnapshot {
     static let recentRowLimit = 8
     static let maximumSessionAge: TimeInterval = 7 * 86_400
 
-    /// Notch-worthy sessions: not archived from the Notch and active within
-    /// the last seven days. A session crossing the age boundary drops out on
-    /// the next data change, not the moment it turns seven days old.
-    static func eligibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
-        summaries.filter { summary in
-            guard !summary.hiddenInNotch else { return false }
-            return summary.lastActivityAt > now.addingTimeInterval(-maximumSessionAge)
-        }
+    /// Sessions active within the last seven days. A session crossing the
+    /// age boundary drops out on the next data change, not the moment it
+    /// turns seven days old.
+    static func recentSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
+        summaries.filter { $0.lastActivityAt > now.addingTimeInterval(-maximumSessionAge) }
     }
 
     /// Parents in the store's order (newest activity first), each followed
-    /// by its eligible subagents — every descendant, already in strip order
+    /// by its recent subagents — every descendant, already in strip order
     /// (`SessionHierarchy`, the same grouping as the iPhone list). Children
     /// stay with their parent through every lifecycle: the list folds them
     /// into a count strip, so a finished session still shows how its
-    /// subagents ended.
+    /// subagents ended. Archiving follows the same grouping: the parent's
+    /// `hiddenInNotch` flag hides the whole group — descendants at any
+    /// depth leave with it rather than being promoted to top level, and
+    /// they all return together when a new request clears the parent's flag.
     static func visibleSummaries(from summaries: [SessionSummary], now: Date) -> [SessionSummary] {
-        SessionHierarchy.groups(eligibleSummaries(from: summaries, now: now))
+        SessionHierarchy.groups(recentSummaries(from: summaries, now: now))
+            .filter { !$0.parent.hiddenInNotch }
             .flatMap { [$0.parent] + $0.descendants }
     }
 

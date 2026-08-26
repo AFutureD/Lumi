@@ -11,6 +11,7 @@
 - [Lumi for Mac] - 列表选中改为满宽中性灰底（Subagent 行为圆角灰底），新增悬停底色；状态词与生命周期文字移入状态点的悬停提示。
 - 列表相对时间口径统一为 0s / 12s / 4m / 2h / 12d：不足一秒显示 0s，不再出现 now。
 - [Lumi for Mac] - 关闭主窗口后 Dock 图标随之隐藏（App 继续驻留，Notch 与同步照常运行）；从 Notch 打开 Session / 设置或再次启动 App 时，窗口与 Dock 图标一起恢复。
+- [Lumi for Mac] - 在 Notch 归档带 Subagent 的 Session 时，整组子 Agent（含更深层）随父级一起从列表和计数消失，不再升格为独立顶层行；父级收到新请求时整组一起回来。
 
 ### Daemon
 
