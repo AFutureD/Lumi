@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-26
+
 ### 会话查看
 
 - [Lumi for Mac] - Activity 保留完整的工具调用与工具结果内容，不再截断。
@@ -61,7 +63,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/AFutureD/Lumi/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/AFutureD/Lumi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/AFutureD/Lumi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/AFutureD/Lumi/releases/tag/v0.1.0
