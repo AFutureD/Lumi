@@ -87,3 +87,14 @@ If a line would only make sense to someone reading the source, it does not belon
 ## 0x06. Design System
 
 Only update [DESIGN SYSTEM](./DESIGN%20SYSTEM.html) when synchronizing design files.
+
+
+## 0x07. Changelog
+
+`CHANGELOG.md` records each release, grouped by feature module.
+
+### Structure
+
+- `##` = version. `[Unreleased]` first, then `[x.y.z] - YYYY-MM-DD`, newest first. Compare links at the bottom.
+- `###` = feature module, never an app.
+- Same module, different behavior per app → prefix the entry with the app: `[Halo] - XXXX`. Uniform or single-layer entries carry no prefix.
