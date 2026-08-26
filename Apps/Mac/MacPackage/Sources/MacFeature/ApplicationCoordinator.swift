@@ -24,6 +24,7 @@ public final class ApplicationCoordinator: NSObject {
         softwareUpdates: softwareUpdates
     )
     private lazy var daemonAutoUpdater = DaemonAutoUpdater(store: store)
+    private var mainWindowCloseObserver: NSObjectProtocol?
 
     public override init() {
         super.init()
@@ -60,9 +61,36 @@ public final class ApplicationCoordinator: NSObject {
         store.start()
         daemonAutoUpdater.start()
         mainWindow.showWindow(nil)
+        observeMainWindowClose()
         notch.start()
         NSApp.activate(ignoringOtherApps: true)
         DebugSnapshotExporter.run(notch: notch)
+    }
+
+    /// The app stays resident after the main window closes (the Notch keeps
+    /// running), so the Dock icon follows the window: hide it on close and
+    /// bring it back whenever the window is presented again.
+    private func observeMainWindowClose() {
+        guard mainWindowCloseObserver == nil, let window = mainWindow.window else { return }
+        mainWindowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                NSApp.setActivationPolicy(.accessory)
+                log.info("main_window_closed_dock_icon_hidden")
+            }
+        }
+    }
+
+    private func presentMainWindow(_ show: () -> Void) {
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+            log.info("main_window_presented_dock_icon_restored")
+        }
+        show()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     public func stop() async {
@@ -104,26 +132,30 @@ public final class ApplicationCoordinator: NSObject {
         }
     }
 
-    @objc private func showMainWindow() {
-        mainWindow.showWindow(nil)
-        mainWindow.window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+    @objc public func showMainWindow() {
+        presentMainWindow {
+            mainWindow.showWindow(nil)
+            mainWindow.window?.makeKeyAndOrderFront(nil)
+        }
     }
 
     @objc private func showSettings() {
-        mainWindow.selectSettings(.general)
-        NSApp.activate(ignoringOtherApps: true)
+        presentMainWindow {
+            mainWindow.selectSettings(.general)
+        }
     }
 
     private func showSession(_ sessionID: SessionID) {
-        store.select(sessionID)
-        mainWindow.select(.sessions)
-        NSApp.activate(ignoringOtherApps: true)
+        presentMainWindow {
+            store.select(sessionID)
+            mainWindow.select(.sessions)
+        }
     }
 
     private func showNotchSettings() {
-        mainWindow.selectSettings(.notch)
-        NSApp.activate(ignoringOtherApps: true)
+        presentMainWindow {
+            mainWindow.selectSettings(.notch)
+        }
     }
 
     @objc private func terminate() {

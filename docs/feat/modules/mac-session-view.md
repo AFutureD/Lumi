@@ -59,6 +59,10 @@ Mac 主窗口在列表中用标题行前置的 7 pt 状态色点表达状态（�
 
 ## 日常操作
 
+### 关闭主窗口
+
+关闭主窗口不会退出 Lumi：Notch、daemon 和 iPhone 同步照常运行，Dock 图标随窗口一起隐藏。要找回窗口，从 Notch 打开任意 Session 或 Notch 设置，或从 Spotlight / 启动台 / Finder 再次打开 Lumi——窗口回来时 Dock 图标一并恢复。彻底退出用菜单栏的 Quit Lumi（⌘Q）。
+
 ### 刷新 Session
 
 点击工具栏右侧的刷新图标（Refresh Sessions）：当前选中的 Session 会先由 daemon 从它的 transcript / rollout 整个重建（Claude 父 Session 连同子 Agent 一起；你已删除的子 Agent 不会被重建回来），已同步的 iPhone 同时拿到重建结果，然后再从 daemon 取得全部 Session 的完整当前数据；没有选中时只做后一步。解析规则更新后，用它回填旧 Session 新增的记录（例如 `Empty` 的 REASONING 行）。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，不进行定时轮询。

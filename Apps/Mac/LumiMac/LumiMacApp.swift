@@ -20,6 +20,13 @@ final class LumiMacApp: NSObject, NSApplicationDelegate {
         coordinator.start()
     }
 
+    /// Relaunching the app (Finder, Spotlight, Dock) while it is resident
+    /// reopens the main window — and with it the Dock icon hidden on close.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        coordinator.showMainWindow()
+        return false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isPreparingToTerminate else { return .terminateLater }
         isPreparingToTerminate = true
