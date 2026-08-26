@@ -81,7 +81,7 @@ final class SettingsViewController: UIViewController, UICollectionViewDelegate {
         var content = UIListContentConfiguration.plainFooter()
         content.text = section == Section.notifications.rawValue
             ? notificationFooter
-            : "iPhone 只保存配对凭据；收到的 Session 数据仅存在内存中，退出应用即清除。"
+            : "收到的 Session 内容缓存在本机（每台 Mac 一个数据库），重启后立即显示；Clear received data 清空全部缓存并自动从每台 Mac 重新取回。配对凭据保存在 Keychain。"
         content.textProperties.font = .design(IOSDS.Typography.caption)
         content.textProperties.color = .inkTertiary
         content.directionalLayoutMargins = NSDirectionalEdgeInsets(
