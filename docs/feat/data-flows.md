@@ -59,7 +59,7 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 - **用户相关数据**：设备名称、配对时间、当前授权状态（Active / Unverified / Revoked）；iPhone 侧还有每台 Mac 的 Relay 地址。
 - **创建来源**：iPhone 用 Mac“iPhone”页显示的 6 位配对码（手输或扫码）提交自己，两端各显示一组 6 位数字，Mac 上点 Match 才生效。
 - **更新入口**：Mac 撤销某台 iPhone；iPhone 移除某台 Mac；iPhone 重新配对（Unverified 或 Revoked 变回 Active）。
-- **主要用途**：确定哪台 iPhone 可以接收哪台 Mac 的加密更新（推送提醒的送达边界略有不同，见 [IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
+- **主要用途**：确定哪台 iPhone 可以接收哪台 Mac 的加密更新和推送提醒——同一条信任边界（[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
 - **删除影响**：只关闭目标通道，不影响其他设备。
 
 规则引用：[IOS-R-001](modules/iphone-live-view.md#ios-r-001-每台设备独立授权)、[IOS-R-002](modules/iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-004](modules/iphone-live-view.md#ios-r-004-撤销按设备生效)、[IOS-R-008](modules/iphone-live-view.md#ios-r-008-一台-iphone-可连接多台-mac)、[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)、[IOS-R-015](modules/iphone-live-view.md#ios-r-015-relay-地址跟着每台-mac-走)。

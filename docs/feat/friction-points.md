@@ -122,7 +122,7 @@ Mac 上的码在中途换掉或过期，也按第一种处理——回到输码�
 
 ## iPhone 在 Mac 上显示 Unverified
 
-**用户会看到**：Mac“iPhone”页 Paired iPhones 里这台 iPhone 的状态是 Unverified，下方提示 `Key not verified · pair this iPhone again`；这台 iPhone 的 Macs 页该 Mac 仍显示 Online，但 Session 不再更新——推送提醒当前仍会送达，所以会出现“收得到提醒、点进去内容不更新”的组合，这是同一个问题。这台 iPhone 的身份不是这台 Mac 点 Match 批准过的：此版本之前配对的 iPhone 升级后都会这样，中转服务换过钥匙也会这样。
+**用户会看到**：Mac“iPhone”页 Paired iPhones 里这台 iPhone 的状态是 Unverified，下方提示 `Key not verified · pair this iPhone again`；这台 iPhone 的 Macs 页该 Mac 仍显示 Online，但 Session 不再更新，推送提醒也一起停了。这台 iPhone 的身份不是这台 Mac 点 Match 批准过的：此版本之前配对的 iPhone 升级后都会这样，中转服务换过钥匙也会这样。
 
 **恢复步骤**：
 

@@ -357,7 +357,7 @@ public actor RelayHostService {
             let listed = try await rest.devices(hostID: credentials.hostID, hostSecret: credentials.hostSecret)
             let previous = devices
             devices = listed.map { verifyKey(of: $0) }
-            let trusted = Set(devices.filter { $0.revokedAt == nil && $0.keyVerified }.map(\.id))
+            let trusted = Set(trustedDeviceIDs)
             let dropped = activeDevices.subtracting(trusted)
             activeDevices.formIntersection(trusted)
             lastError = nil
@@ -692,6 +692,12 @@ public actor RelayHostService {
         devices.first { $0.id == id && $0.revokedAt == nil && $0.keyVerified }
     }
 
+    /// Paired devices whose key this daemon pinned: the only devices frames
+    /// or push alerts may reach.
+    private var trustedDeviceIDs: [DeviceID] {
+        devices.filter { $0.revokedAt == nil && $0.keyVerified }.map(\.id)
+    }
+
     private func open(_ frame: RelayRoutingFrame, from device: PairedDevice, credentials: RelayHostCredentials) throws -> RemoteSessionPayload {
         try RelayCryptography.open(
             frame,
@@ -755,10 +761,10 @@ public actor RelayHostService {
         let events = pendingEvents
         pendingEvents = []
         guard !events.isEmpty else { return }
-        // Before the active-device gate: alerts target every paired device
-        // (the Relay does not know which are suspended), so they must not
-        // depend on a live socket; foreground devices suppress the banner
-        // client-side.
+        // Before the active-device gate: alerts target every key-verified
+        // paired device (the Relay does not know which are suspended), so
+        // they must not depend on a live socket; foreground devices suppress
+        // the banner client-side.
         evaluatePush(events)
         guard !activeDevices.isEmpty else {
             log.debug("relay_events_dropped_no_devices", metadata: .fields(["events": events.count]))
@@ -769,12 +775,12 @@ public actor RelayHostService {
 
     // MARK: - Push notifications
 
-    /// Turn-level alerts to paired iPhones, via the Relay's plaintext
-    /// notification endpoint (`PushNotificationPolicy` decides which events
-    /// qualify). REST, not the serial send loop: an alert has no place in the
-    /// frame sequence and must not wait behind a large sync.
+    /// Turn-level alerts to key-verified paired iPhones, via the Relay's
+    /// plaintext notification endpoint (`PushNotificationPolicy` decides which
+    /// events qualify). REST, not the serial send loop: an alert has no place
+    /// in the frame sequence and must not wait behind a large sync.
     private func evaluatePush(_ events: [AgentIngressEvent]) {
-        guard credentials != nil, devices.contains(where: { $0.revokedAt == nil }) else { return }
+        guard credentials != nil, !trustedDeviceIDs.isEmpty else { return }
         let notable = PushNotificationPolicy.notableEvents(events, now: Date())
         guard !notable.isEmpty else { return }
         pendingPushEvents.append(contentsOf: notable)
@@ -817,12 +823,19 @@ public actor RelayHostService {
             now: now
         )
         guard !candidates.isEmpty, let credentials else { return }
+        // The alert title is the session's title in plaintext, so it honors
+        // the same trust boundary as frames: only devices whose key this
+        // daemon pinned are addressed. The Relay cannot tell a verified key
+        // from a swapped one, so the daemon names the targets explicitly.
+        let targets = trustedDeviceIDs
+        guard !targets.isEmpty else { return }
         for candidate in candidates {
             lastPushAt[candidate.sessionID] = now
             do {
                 let results = try await rest.sendPushNotification(
                     hostID: credentials.hostID,
                     notification: RelayPushNotification(
+                        deviceIDs: targets,
                         title: candidate.title,
                         subtitle: candidate.subtitle,
                         sessionID: candidate.sessionID,

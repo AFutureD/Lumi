@@ -23,6 +23,7 @@ private struct RelayHarness {
     init(
         healthProvider: @escaping RelayHostService.HealthProvider = { nil },
         preregisterDevice: Bool = true,
+        pinDeviceKey: Bool = true,
         pairingDecisionTimeout: Duration = .seconds(60)
     ) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -30,7 +31,7 @@ private struct RelayHarness {
         rest = InMemoryRelayHostREST(devices: preregisterDevice ? [
             PairedDevice(id: deviceID, name: "Test iPhone", publicKey: deviceKeys.publicKey, pairedAt: Date()),
         ] : [])
-        if preregisterDevice {
+        if preregisterDevice, pinDeviceKey {
             // A device this daemon verified in an earlier life: its key is pinned.
             var state = RelayHostStateStore(path: statePath)
             try? state.setVerifiedKey(deviceKeys.publicKey, for: deviceID)
@@ -519,6 +520,37 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(sent.first?.title == "a")
     #expect(sent.first?.subtitle == "Completed")
     #expect(sent.first?.sessionID == SessionID("a"))
+    // The alert names its targets: only the key-verified device.
+    #expect(sent.first?.deviceIDs == [harness.deviceID])
+    await harness.service.stop()
+}
+
+@Test func hostNeverAlertsAnUnverifiedDevice() async throws {
+    // The Relay lists the device, but this daemon never pinned its key (the
+    // Mac never pressed Match, or the Relay swapped the key): no frames, and
+    // no push either — the alert title is the session title in plaintext.
+    let harness = RelayHarness(pinDeviceKey: false)
+    let base = Date()
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    await harness.service.start()
+    // Wait for the device list: without it the push gate would skip for the
+    // wrong reason (no devices at all) and prove nothing.
+    for _ in 0..<300 where await harness.service.status().devices.isEmpty {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.service.status().devices.first?.keyVerified == false)
+
+    let event = AgentIngressEvent(
+        eventID: EventID("turn-end"), sessionID: SessionID("a"), agent: .codex, occurredAt: Date(),
+        timelineItem: TimelineItem(
+            id: TimelineItemID("a-end"), sessionID: SessionID("a"), occurredAt: Date(),
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "Shipped."))
+        )
+    )
+    _ = try await harness.repository.apply(event)
+    harness.hub.publish(event)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(await harness.rest.sentNotifications.isEmpty)
     await harness.service.stop()
 }
 

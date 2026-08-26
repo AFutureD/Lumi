@@ -171,7 +171,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：iPhone 用 Mac 的配对码提交了自己；此版本之前配对过的 iPhone 也要重新配对一次。
 - 行为：Mac 先把自己的身份“封”起来交给 Relay，等 iPhone 的身份到了才揭开；两端各自算出同一组 6 位数字。iPhone 先核对揭开的内容和之前封好的一致（不一致就是“校验失败”，放弃），再显示数字；Mac 显示同一组数字和 iPhone 的名字，人比对后点 Match，Mac 才承认并记住这台 iPhone 的身份，Relay 才签发它的凭据。
 - 结果：中转服务替换不了任何一方的身份——换了，两边的数字就对不上；Match 后 Mac 的 Paired iPhones 里这台 iPhone 显示 Active 并开始同步。
-- 限制或例外：Mac 上 60 秒没点视为拒绝；Don't match 或超时后 iPhone 提示“Mac 拒绝了这次配对”，没有保存任何凭据。Mac 没批准过、或钥匙被中转服务换过的 iPhone 在 Paired iPhones 里显示 Unverified（`Key not verified · pair this iPhone again`），收不到任何 Session 内容——但只要它没被撤销，推送提醒（明文标题与状态）当前仍会送达它；这台 iPhone 的 Macs 页仍显示该 Mac Online，但 Session 不再更新，重新配对后恢复。恢复方式见[用户摩擦点](../friction-points.md#iphone-在-mac-上显示-unverified)。
+- 限制或例外：Mac 上 60 秒没点视为拒绝；Don't match 或超时后 iPhone 提示“Mac 拒绝了这次配对”，没有保存任何凭据。Mac 没批准过、或钥匙被中转服务换过的 iPhone 在 Paired iPhones 里显示 Unverified（`Key not verified · pair this iPhone again`），收不到任何 Session 内容，推送提醒也不发给它（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）；这台 iPhone 的 Macs 页仍显示该 Mac Online，但 Session 不再更新，重新配对后恢复。恢复方式见[用户摩擦点](../friction-points.md#iphone-在-mac-上显示-unverified)。
 
 ### IOS-R-015 Relay 地址跟着每台 Mac 走
 
@@ -185,7 +185,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：iPhone 允许了通知权限，且至少配对了一台 Mac。
 - 行为：Session 回合结束、失败或被中断时，Mac 的 daemon 让 Relay 向这台 iPhone 发一条系统通知（带默认提示音）：标题是 Session 标题（过长时截断并加省略号），副标题是它的状态（Completed / Failed / Interrupted，与列表状态胶囊同一套词）；同一 Session 的多条提醒在通知中心叠成一组。App 在前台时不弹横幅——列表本来就在实时更新。
 - 结果：App 挂起或未打开也能第一时间知道哪个 Session 需要回来看；点通知直接落在那个 Session 的详情页，打开即视为已查看（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)），这个 Session 已送达的通知同时清掉。
-- 限制或例外：通知的标题和状态以明文经 Relay 转发，Relay 不把它们写入存储（运行日志只记录长度），Session 的完整内容仍走端到端加密通道。子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。同一 Session 的提醒有数秒冷却；超过约两分钟才补录到达的旧回合不再提醒；还没在任何界面出现过的 Session 不提醒；回合开始不提醒。在 Mac 上撤销这台 iPhone 后提醒立即停止；Mac 离线（daemon 没在跑）时没有提醒来源。
+- 限制或例外：通知的标题和状态以明文经 Relay 转发，Relay 不把它们写入存储（运行日志只记录长度），Session 的完整内容仍走端到端加密通道。提醒只发给这台 Mac 点过 Match 的 iPhone——Paired iPhones 里显示 Unverified 的（Mac 没批准过、或钥匙被中转服务换过）和 Session 内容一样收不到（[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。同一 Session 的提醒有数秒冷却；超过约两分钟才补录到达的旧回合不再提醒；还没在任何界面出现过的 Session 不提醒；回合开始不提醒。在 Mac 上撤销这台 iPhone 后提醒立即停止；Mac 离线（daemon 没在跑）时没有提醒来源。
 
 ## 空状态与故障
 

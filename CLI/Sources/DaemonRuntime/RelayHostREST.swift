@@ -212,6 +212,17 @@ public actor InMemoryRelayHostREST: RelayHostREST {
         hostSecret: String
     ) async throws -> [RelayPushResult] {
         sentNotifications.append(notification)
+        // Mirrors the Relay: explicit targets are answered one by one
+        // (unknown or revoked rows report `revoked`); no targets means every
+        // non-revoked device.
+        if let targets = notification.deviceIDs {
+            return targets.map { id in
+                guard let device = pairedDevices.first(where: { $0.id == id }), device.revokedAt == nil else {
+                    return RelayPushResult(deviceID: id, status: .revoked)
+                }
+                return RelayPushResult(deviceID: device.id, status: .sent)
+            }
+        }
         return pairedDevices.filter { $0.revokedAt == nil }.map {
             RelayPushResult(deviceID: $0.id, status: .sent)
         }

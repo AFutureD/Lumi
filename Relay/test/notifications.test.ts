@@ -234,6 +234,28 @@ describe("notification send", () => {
     expect(recorded).toHaveLength(0);
   });
 
+  it("addresses only the named devices when deviceIDs is present", async () => {
+    // The daemon names its key-verified devices on every send; a paired
+    // device the Mac never verified stays outside the list and gets nothing,
+    // even with a registered token.
+    const host = await freshHost("nt-target");
+    const verifiedID = "device-nt-tgt-01";
+    const unverifiedID = "device-nt-tgt-02";
+    const verifiedToken = await pairDevice(host.id, host.secret, verifiedID);
+    const unverifiedToken = await pairDevice(host.id, host.secret, unverifiedID);
+    expect((await putPushToken(host.id, verifiedID, verifiedToken)).status).toBe(204);
+    expect((await putPushToken(host.id, unverifiedID, unverifiedToken, {
+      token: "b".repeat(64), environment: "development",
+    })).status).toBe(204);
+
+    const response = await postNotification(host.id, host.secret, {
+      title: "t", subtitle: "Completed", deviceIDs: [verifiedID],
+    });
+    expect(await results(response)).toEqual([{ deviceID: verifiedID, status: "sent" }]);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.url.pathname).toBe(`/3/device/${APNS_TOKEN}`);
+  });
+
   it("reports unknown device IDs as revoked", async () => {
     const host = await freshHost("nt-unknown");
     const response = await postNotification(host.id, host.secret, {
