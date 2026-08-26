@@ -20,6 +20,22 @@ private func healthReporting(_ hash: String?) -> DaemonHealth {
     #expect(DaemonAutoUpdater.decide(bundledHash: "a", health: nil, alreadyAttempted: true) == .wait)
 }
 
+@Test func autoUpdaterRestartsAnUnreachableRegisteredDaemon() {
+    // A registration whose binary launchd cannot spawn (rebuilt or deleted
+    // bundle) never reports health; after the grace it earns one reinstall.
+    let decision = DaemonAutoUpdater.decide(
+        bundledHash: "a", health: nil, alreadyAttempted: false, unreachableGraceElapsed: true
+    )
+    guard case .restart = decision else {
+        Issue.record("expected restart, got \(decision)")
+        return
+    }
+    // Post-restart silence is a daemon still booting — wait, never loop.
+    #expect(DaemonAutoUpdater.decide(
+        bundledHash: "a", health: nil, alreadyAttempted: true, unreachableGraceElapsed: true
+    ) == .wait)
+}
+
 @Test func autoUpdaterIsDoneWhenHashesMatch() {
     #expect(DaemonAutoUpdater.decide(
         bundledHash: "a", health: healthReporting("a"), alreadyAttempted: false

@@ -9,7 +9,11 @@ private let log = Logger(label: "lifecycle")
 /// launchd keeps a registered daemon running on the binary it launched, so an
 /// app update leaves a stale process behind until something re-registers the
 /// service. This restarts the daemon once per app launch when the hash the
-/// running daemon reports no longer matches the binary bundled in this app.
+/// running daemon reports no longer matches the binary bundled in this app —
+/// or when the registered daemon cannot come up at all (a registration
+/// pointing at a rebuilt or deleted bundle spawn-fails forever with
+/// `EX_CONFIG`; health then never arrives, so the fingerprint path alone
+/// would wait indefinitely while the app logs `connection refused`).
 @MainActor
 final class DaemonAutoUpdater {
     enum Decision: Equatable {
@@ -25,8 +29,26 @@ final class DaemonAutoUpdater {
         case stillStale
     }
 
-    nonisolated static func decide(bundledHash: String, health: DaemonHealth?, alreadyAttempted: Bool) -> Decision {
-        guard let health else { return .wait }
+    /// How long after launch a registered daemon may stay silent before it
+    /// counts as unreachable. A healthy daemon connects within a second.
+    static let unreachableGrace: Duration = .seconds(10)
+
+    nonisolated static func decide(
+        bundledHash: String,
+        health: DaemonHealth?,
+        alreadyAttempted: Bool,
+        unreachableGraceElapsed: Bool = false
+    ) -> Decision {
+        guard let health else {
+            // A registered service that never produced health is dead-looping
+            // in launchd (or its binary is gone). One reinstall re-registers
+            // it on this app's bundle. After a restart, silence means the new
+            // daemon is still booting — keep waiting, never loop.
+            if unreachableGraceElapsed, !alreadyAttempted {
+                return .restart(reason: "registered daemon is unreachable")
+            }
+            return .wait
+        }
         guard let reported = health.executableHash, !reported.isEmpty else {
             return alreadyAttempted
                 ? .stillStale
@@ -44,6 +66,8 @@ final class DaemonAutoUpdater {
 
     private var bundledHash: String?
     private var attempted = false
+    /// Set once `unreachableGrace` has passed since `start()`.
+    private var graceElapsed = false
     /// After a restart, the pre-restart health is still in the store until the
     /// connection drops; ignore it until we have seen the `nil` from the
     /// disconnect, so `stillStale` only ever judges post-restart health.
@@ -78,6 +102,12 @@ final class DaemonAutoUpdater {
             self.store.observe { [weak self] in self?.evaluate() }
             self.evaluate()
         }
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.unreachableGrace)
+            guard let self, !self.finished else { return }
+            self.graceElapsed = true
+            self.evaluate()
+        }
     }
 
     private func evaluate() {
@@ -86,7 +116,12 @@ final class DaemonAutoUpdater {
             guard store.health == nil else { return }
             awaitingDisconnect = false
         }
-        switch Self.decide(bundledHash: bundledHash, health: store.health, alreadyAttempted: attempted) {
+        switch Self.decide(
+            bundledHash: bundledHash,
+            health: store.health,
+            alreadyAttempted: attempted,
+            unreachableGraceElapsed: graceElapsed
+        ) {
         case .wait:
             break
         case .upToDate:

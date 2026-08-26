@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Daemon
+
+- [Lumi for Mac] - 已注册的 daemon 起不来时（如注册指向的安装包被重编译或删除），App 启动约 10 秒后自动重装一次并恢复连接，不再无限报 Connection refused。
+
 ### 系统要求
 
 - [Lumi for iPhone] - 最低支持版本提升到 iOS 26。
