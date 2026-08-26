@@ -1,6 +1,6 @@
 # iPhone 在线查看
 
-> 验证状态：开发预览。iOS App 已在模拟器完成编译、单元测试（含缓存与 index 对账的通道测试、配对码 + 数字比对的配对状态机测试）、七个页面走查；2026-08-21 起 Relay Host 移入 daemon、iPhone 改为本机 SQLite 缓存 + index 对账；2026-08-23 起配对改为“6 位配对码 + 两端比对数字 + Mac 点 Match”（已实现并有单元测试，尚未在真机 iPhone 上端到端验收）；真机、弱网与大历史仍待验收。
+> 验证状态：开发预览。iOS App 已在模拟器完成编译、单元测试（本机缓存对账、配对流程）与页面走查，并已随 v0.1.3 提交 TestFlight；推送链路三端有单元测试。真机端到端配对、弱网与大历史仍待验收。
 
 iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建立独立通道，只读监看每台 Mac 上的 Session：哪些在跑、跑到哪一步、哪个需要你处理。
 
@@ -8,15 +8,15 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 - **iPhone 入口**：底部三个 Tab —— Sessions（合并列表）、Macs（已配对的 Mac）、Settings。
 - **Mac 入口**：侧边栏“iPhone”显示 6 位配对码和二维码，并在这里按 Match 批准某台 iPhone。
-- **前置条件**：Mac 的 daemon 和 Relay 可用（Mac App 只在配对时需要打开）；配对码 5 分钟内使用。
+- **前置条件**：iPhone 运行 iOS 26 或更高版本；Mac 的 daemon 和 Relay 可用。配对全程需要停在 Mac 的“iPhone”页完成，配对之后的日常同步不需要打开 Mac App。
 - **主要结果**：Sessions 把所有 Mac 的 Session 合并成一条列表；Macs 显示每台 Mac 的在线状态和它的 Relay 地址。
 - **隐私提示**：已配对 iPhone 会通过端到端加密通道收到 Session 的完整副本，并缓存在本机（每台 Mac 一个数据库）；配对凭据进 Keychain（[IOS-R-010](#ios-r-010-session-内容缓存在本机)）。唯一的例外是推送提醒的标题和状态：以明文经 Relay 转发，不落存储（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）。
 
 ## 配对并查看
 
 1. 在 Mac 侧边栏选择“iPhone”。
-   - 系统反馈：页面显示 6 位配对码（如 `7KF 3QP`）、二维码、Relay 地址和倒计时；码 5 分钟到期自动换新（[IOS-R-002](#ios-r-002-配对码短时且一次性)）。
-2. 在 iPhone 打开 Macs Tab，点右上 `+` > “Add Device”，输入这 6 位（不分大小写，O/0、I/L/1 自动纠正，粘贴整串也行），点 Continue；或点 “Scan code” 扫 Mac 上的二维码（用系统相机扫也会跳进同一页）。
+   - 系统反馈：页面显示 6 位配对码（如 `7KF-3QP`）、二维码、Relay 地址和倒计时；码 5 分钟到期自动换新（[IOS-R-002](#ios-r-002-配对码短时且一次性)）。
+2. 在 iPhone 打开 Macs Tab，点右上 `+` > “Add Device”，输入这 6 位（不分大小写，O/0、I/L/1、U/V 自动纠正，粘贴整串也行），点 Continue；或点 “Scan code” 扫 Mac 上的二维码（用系统相机扫也会跳进同一页）。
    - 系统反馈：iPhone 显示 Mac 名、Relay 地址和一组 6 位数字（如 `482 913`）；同时 Mac 上出现 “<iPhone 名> wants to pair” 和同一组数字。
    - 替代路径：自托管 Relay 时展开 Advanced 填 Relay URL（留空 = 内置 Relay，填过一次下次预填）；扫码时地址随二维码带过来（[IOS-R-015](#ios-r-015-relay-地址跟着每台-mac-走)）。
 3. 核对两边数字一样，在 Mac 上点 Match（iPhone 上没有确认按钮，只有 Cancel）。
@@ -32,14 +32,14 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ## Sessions 列表
 
-每行从上到下：Mac 名称 + 右侧状态胶囊（`Running` / `Waiting` / `Completed` / `Failed`）；标题（最多两行）+ 相对时间；最新一条活动（类别标签 + 内容）；Subagent 组。四段左边界对齐。
+每行从上到下：Mac 名称 + 右侧状态胶囊；标题（最多两行）+ 相对时间（每秒刷新）；最新一条活动（类别标签 + 内容）；Subagent 组。四段左边界对齐，行尾有进入详情的箭头。
 
-- **状态胶囊**：颜色跟五档状态梯级走（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；已完成的 Session 不再显示“最新活动”一行。
-- **Subagent 组**：子 Agent（包括子 Agent 的子 Agent）不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档，与 Mac Notch 文案一致）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
-- **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running 蓝 / Waiting 橙 / Completed 灰，与行上的状态胶囊同色），点开在按钮下方落下一张勾选面板（每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
+- **状态胶囊**：文字是当前生命周期词（Running、Waiting、Completed，也可能是 Starting、Compacting、Failed、Interrupted），颜色跟五档状态梯级走（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；已完成且已查看（灰档）的 Session 不再显示“最新活动”一行，未查看（绿档）和失败（红档）仍显示。
+- **Subagent 组**：子 Agent（包括子 Agent 的子 Agent）不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档，与 Mac、Notch 文案一致）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
+- **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running 蓝 / Waiting 橙 / Completed 灰；失败、中断和待查看的 Session 都归入 Completed 组），点开在按钮下方落下一张勾选面板（组名标题加每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
 - **搜索**：导航栏右上的放大镜默认收拢，点开才展开搜索框（系统搜索控件）；按标题、Agent、工作目录和 Subagent 名称即时过滤当前列表。
 - **刷新**：下拉列表，或右上 `···` > “Refresh list”，向每台 Mac 重新索取 Session 索引并只补差异。
-- **空状态**：未配对时提示去 Macs 添加 Mac；Mac 在线但没有 Session 时显示 No live sessions；Mac 不在线且本机没有缓存时显示 Mac unavailable；有缓存就照常显示（[IOS-R-006](#ios-r-006-mac-离线时继续显示缓存)）。
+- **空状态**：未配对时提示去 Macs 配对；Mac 在线但没有 Session 时显示 No live sessions；Mac 在线但首轮对账未完成时显示 Syncing…；过滤或搜索排空时显示 No matching sessions；Mac 不在线且本机没有缓存时显示 Mac unavailable；有缓存就照常显示（[IOS-R-006](#ios-r-006-mac-离线时继续显示缓存)）。
 
 ## Session 详情
 
@@ -48,31 +48,33 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 **Activity**
 
 - 头部下方是三泳道条（User / Model / Exec，与 Mac 同名同序）：列表每一行一格，按所属泳道着色；泳道与下方列表联动滚动——列表滚到哪，泳道跟到对应格子；拖泳道，列表跳到对应行；点格子也跳。
-- 列表按时间顺序显示每条活动：类别标签、时间和内容；新活动到达时自动跟到底部。模型每次思考占一行 REASONING，Claude 没有正文的思考显示为 `Empty`（与 Mac 一致）。
-- 点一行弹出半高详情：工具调用显示 Command 与 Output（调用和结果自动配对）；其他类别显示完整内容。失败项直接展开到全高。
+- 列表按时间顺序显示每条活动：类别标签、时间和内容；停在列表底部附近时新活动自动跟到底，翻看历史时保持当前位置。模型每次思考占一行 REASONING，Claude 没有正文的思考显示为 `Empty`（与 Mac 一致）。
+- 点一行弹出半高详情：工具调用显示 Command 与 Output（调用和结果自动配对，结果还没回来时 Output 显示 Still running…）；其他类别显示完整内容。失败项直接展开到全高。
 
 **Info**
 
 - 三张指标卡：tokens、context、elapsed（运行中的 Session 每秒走动）。
-- 分组：Overview（Session ID、Agent、Lifecycle、Turn Phase、Started）、Lineage（有来源信息时显示）、Model、Usage。
+- 分组：Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、Lineage（有来源信息时显示）、Model、Usage。
 
 **右上 `···`**
 
 - Refresh session：把这个 Session 从 Mac 整个重新取一遍（修复本机缓存与 Mac 不一致）。
-- Delete：只在这台 iPhone 上移除该 Session（[IOS-R-012](#ios-r-012-删除只影响这台-iphone)）。
+- Delete：确认后只在这台 iPhone 上隐藏该 Session，本次运行有效；Mac 不受影响，重启 App 后它会回来（[IOS-R-012](#ios-r-012-删除只影响这台-iphone)）。
+
+正在查看的 Session 被 Mac 删除时，详情自动退回列表。
 
 ## Macs
 
-- 每行：Mac 名称、状态 + 这台 Mac 的 Relay 地址（`Online · afuture.workers.dev`、`Offline · 2h ago · afuture.workers.dev`，或被撤销后的 `Revoked · afuture.workers.dev`）、在线绿点 / 离线灰点。离线时 Sessions 里仍显示这台 Mac 的缓存内容，这一行是判断新鲜度的地方。
-- 点一行：切到 Sessions Tab 并只显示这台 Mac。
-- 左滑 > Remove：移除这一条通道、凭据和本机缓存，其他 Mac 不受影响；Mac 侧的配对记录仍在，撤销访问要回到 Mac 操作。
+- 每行：Mac 名称、状态 + 这台 Mac 的 Relay 地址（`Online · afuture.workers.dev`；离线为 `Offline · 2h ago · afuture.workers.dev`，从未同步过则没有时间；被撤销后为 `Revoked · afuture.workers.dev`）、在线绿点 / 离线灰点。离线时 Sessions 里仍显示这台 Mac 的缓存内容，这一行是判断新鲜度的地方。
+- 点一行：切到 Sessions Tab 并只显示这台 Mac（等价于在 `Macs` 过滤里只勾它，这个选择同样会被记住，去 `Macs` 过滤或 `Reset` 恢复）。
+- 左滑 > Remove：确认后移除这一条通道、凭据和本机缓存，其他 Mac 不受影响；Mac 侧的配对记录仍在，撤销访问要回到 Mac 操作。
 - `+` 菜单：Add Device —— 打开 “Add Mac” 页，输码、扫码、Advanced 里填 Relay URL 都在这一页；Rename this iPhone —— 改的是下次配对时 Mac 看到的名字，已配对的记录不变。
 - 脚注：“左滑移除某台 Mac 只关闭这一条通道，其他设备不受影响。凭据保存在 Keychain，每台 Mac 各自记着自己的 Relay。”
 
 ## Settings
 
 - **Push notifications**：随系统权限三态显示。未请求过显示蓝色 Allow，点击弹系统授权；已允许显示绿点 + Allowed，已拒绝显示灰点 + Not allowed，点击都跳到 iOS 系统设置。允许后，App 不在前台时也能收到 Session 的关键提醒（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）。
-- **About**：Version、Clear received data（清空本机缓存的全部 Session，随后自动从每台 Mac 重新取回）。
+- **About**：Version、Clear received data（确认后清空本机缓存的全部 Session，配对关系与 Mac 列表保留，随后自动从每台在线 Mac 重新取回）。
 
 ## 规则
 
@@ -88,7 +90,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：Mac 已连接 Relay 并打开“iPhone”页。
 - 行为：6 位配对码（字母 + 数字，不分大小写）5 分钟后失效并自动换新；被一台 iPhone 用掉后立即作废；离开“iPhone”页或点 New code 也作废。
 - 结果：过期、用过或输错的码在 iPhone 输入页提示“配对码不对或已过期”，不会创建授权。
-- 限制或例外：码可以手输（六格，粘贴整串自动分配）或扫码（App 内扫描器、系统相机）；二维码和码里都没有秘密，只有 Relay 地址 + 这 6 位；猜码每分钟次数受限。
+- 限制或例外：码可以手输（六格三三分组，粘贴整串自动分配，O/0、I/L/1、U/V 自动纠正）或扫码（App 内扫描器、系统相机）；二维码和码里都没有秘密，只有 Relay 地址 + 这 6 位；猜码每分钟次数受限。Mac 上有 iPhone 待确认时 New code 暂不可用。
 
 ### IOS-R-003 已移除：只保存在当前内存
 
@@ -106,12 +108,12 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：Mac 发送在线更新。
 - 行为：内容在 Mac 按目标设备加密，Relay 只转发密文。
 - 结果：Relay 不提供 Session 正文、工具详情或历史查询。
-- 限制或例外：Relay 可以保存设备授权、限流和过期时间等运行所需信息。
+- 限制或例外：Relay 可以保存设备授权、推送地址、限流、过期时间等运行所需信息。
 
 ### IOS-R-006 Mac 离线时继续显示缓存
 
-- 条件：iPhone 未取得该 Mac 的在线状态，或本轮对账尚未完成。
-- 行为：Sessions 继续显示该 Mac 本机缓存的 Session；Macs 里该 Mac 显示 Offline、上次同步时间和它的 Relay 地址。
+- 条件：iPhone 未取得该 Mac 的在线状态。
+- 行为：Sessions 继续显示该 Mac 本机缓存的 Session；Macs 里该 Mac 显示 Offline、上次同步时间和它的 Relay 地址。Mac 在线但首轮对账还没完成时不算离线，列表在缓存之外显示 Syncing…。
 - 结果：启动立即有内容；新鲜度由 Macs 页表达，而不是靠隐藏内容。
 - 限制或例外：本机没有缓存且 Mac 离线时，列表显示 Mac unavailable。
 
@@ -141,7 +143,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：iPhone 收到任意 Mac 的 Session。
 - 行为：内容写入本机的每台 Mac 一个数据库（与 Mac 同一种格式），重启 App 立即显示；Mac 永远是数据源，本机只是缓存。
 - 结果：退出 App 不丢内容；Mac 离线也能翻看；重新上线只传差异。
-- 限制或例外：Settings > Clear received data 清空全部缓存并自动重新取回；移除某台 Mac 会删掉它的缓存文件；Keychain 只存配对凭据、设备名、过滤选择和上次同步时间另存。
+- 限制或例外：Settings > Clear received data 清空全部缓存并自动重新取回；移除某台 Mac 会删掉它的缓存文件；Keychain 只存配对凭据，设备名、过滤选择和上次同步时间另存。
 
 ### IOS-R-011 Subagent 收成父 Session 的标签
 
@@ -162,14 +164,14 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：iPhone 打开一个绿色「已结束未查看」的 Session 详情。
 - 行为：这台 iPhone 上立刻变灰，并把「已查看」告诉对应的 Mac；Mac 更新后，Notch 和其他已配对 iPhone 一起变灰。
 - 结果：同一个 Session 在哪一端看过，其他端都不再提示。
-- 限制或例外：Mac 离线时只有本机变灰（也写进本机缓存），重连后以 Mac 再次发来的状态为准；这是 iPhone 唯一会发给 Mac 的状态变更，仍不提供审批、终止或输入。
+- 限制或例外：Mac 离线时只有本机变灰（也写进本机缓存），这次「已查看」不会在重连后补发——对账以 Mac 的状态为准，该 Session 可能刷回绿色，再打开一次即可。这是 iPhone 唯一会发给 Mac 的状态变更，仍不提供审批、终止或输入。
 
 ### IOS-R-014 配对时两端比对数字，Mac 点 Match 才生效
 
 - 条件：iPhone 用 Mac 的配对码提交了自己；此版本之前配对过的 iPhone 也要重新配对一次。
 - 行为：Mac 先把自己的身份“封”起来交给 Relay，等 iPhone 的身份到了才揭开；两端各自算出同一组 6 位数字。iPhone 先核对揭开的内容和之前封好的一致（不一致就是“校验失败”，放弃），再显示数字；Mac 显示同一组数字和 iPhone 的名字，人比对后点 Match，Mac 才承认并记住这台 iPhone 的身份，Relay 才签发它的凭据。
 - 结果：中转服务替换不了任何一方的身份——换了，两边的数字就对不上；Match 后 Mac 的 Paired iPhones 里这台 iPhone 显示 Active 并开始同步。
-- 限制或例外：Mac 上 60 秒没点视为拒绝；Don't match 或超时后 iPhone 提示“Mac 拒绝了这次配对”，没有保存任何凭据。Mac 没批准过、或钥匙被中转服务换过的 iPhone 在 Paired iPhones 里显示 Unverified（`Key not verified · pair this iPhone again`），收不到任何内容；这台 iPhone 的 Macs 页仍显示该 Mac Online，但 Session 不再更新，重新配对后恢复。
+- 限制或例外：Mac 上 60 秒没点视为拒绝；Don't match 或超时后 iPhone 提示“Mac 拒绝了这次配对”，没有保存任何凭据。Mac 没批准过、或钥匙被中转服务换过的 iPhone 在 Paired iPhones 里显示 Unverified（`Key not verified · pair this iPhone again`），收不到任何 Session 内容——但只要它没被撤销，推送提醒（明文标题与状态）当前仍会送达它；这台 iPhone 的 Macs 页仍显示该 Mac Online，但 Session 不再更新，重新配对后恢复。恢复方式见[用户摩擦点](../friction-points.md#iphone-在-mac-上显示-unverified)。
 
 ### IOS-R-015 Relay 地址跟着每台 Mac 走
 
@@ -181,13 +183,13 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 ### IOS-R-016 关键时刻推送提醒
 
 - 条件：iPhone 允许了通知权限，且至少配对了一台 Mac。
-- 行为：Session 回合结束、失败或被中断时，Mac 的 daemon 让 Relay 向这台 iPhone 发一条系统通知：标题是 Session 标题（过长时截断并加省略号），副标题是它的状态（Completed / Failed / Interrupted，与列表状态胶囊同一套词）；同一 Session 的多条提醒在通知中心叠成一组。App 在前台时不弹横幅——列表本来就在实时更新。
+- 行为：Session 回合结束、失败或被中断时，Mac 的 daemon 让 Relay 向这台 iPhone 发一条系统通知（带默认提示音）：标题是 Session 标题（过长时截断并加省略号），副标题是它的状态（Completed / Failed / Interrupted，与列表状态胶囊同一套词）；同一 Session 的多条提醒在通知中心叠成一组。App 在前台时不弹横幅——列表本来就在实时更新。
 - 结果：App 挂起或未打开也能第一时间知道哪个 Session 需要回来看；点通知直接落在那个 Session 的详情页，打开即视为已查看（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)），这个 Session 已送达的通知同时清掉。
-- 限制或例外：通知的标题和状态以明文经 Relay 转发（Relay 不保存也不记录），Session 的完整内容仍走端到端加密通道；子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）；在 Mac 上撤销这台 iPhone 后提醒立即停止；回合开始不提醒。Mac 离线（daemon 没在跑）时没有提醒来源。
+- 限制或例外：通知的标题和状态以明文经 Relay 转发，Relay 不把它们写入存储（运行日志只记录长度），Session 的完整内容仍走端到端加密通道。子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。同一 Session 的提醒有数秒冷却；超过约两分钟才补录到达的旧回合不再提醒；还没在任何界面出现过的 Session 不提醒；回合开始不提醒。在 Mac 上撤销这台 iPhone 后提醒立即停止；Mac 离线（daemon 没在跑）时没有提醒来源。
 
 ## 空状态与故障
 
-- **No Macs paired**：去 Macs Tab 点 `+` > Add Device。
+- **No Macs paired**：去 Macs Tab 点 `+` > Add Device 输码，或直接扫 Mac 上的二维码。
 - **Mac unavailable**：通道断开或 daemon 不可用，且本机没有这台 Mac 的缓存；有缓存时列表照常显示，只在 Macs 页标 Offline。退出 Mac App 不影响。
 - **相机不可用**：扫码页提示去 iOS 设置允许相机；改为手输 6 位码。
 - **配对码不对或已过期**：输入页六格变红、内容保留，Try again；回到 Mac 看一眼新码（[IOS-R-002](#ios-r-002-配对码短时且一次性)）。
@@ -200,7 +202,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ## 业务数据
 
-iPhone 为每台 Mac 维护一条通道和一个 SQLite 缓存；启动先显示缓存，在线后用索引对账补差异，再实时应用 Agent 活动。Keychain 保存配对凭据（每台 Mac 连同自己的 Relay 地址）；本机还保存设备名、设备过滤选择、每台 Mac 的上次同步时间和 Advanced 里上次填的 Relay URL（只作预填）。完整生命周期见[数据流](../data-flows.md)。
+iPhone 为每台 Mac 维护一条通道和一个 SQLite 缓存；启动先显示缓存，在线后用索引对账补差异，再实时应用 Agent 活动。Keychain 保存配对凭据（每台 Mac 连同自己的 Relay 地址）；本机还保存设备名、设备与状态过滤选择、每台 Mac 的上次同步时间和 Advanced 里上次填的 Relay URL（只作预填）。完整生命周期见[数据流](../data-flows.md)。
 
 ## 相关文档
 

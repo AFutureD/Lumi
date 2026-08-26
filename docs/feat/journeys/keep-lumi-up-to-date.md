@@ -1,6 +1,6 @@
 # 让 Lumi 保持最新
 
-> 验证状态：开发预览。入口与设置已在本机 App 中完成点击核对；第二次启动许可提示和真实跨版本安装仍需在正式发布后验收。
+> 验证状态：开发预览。v0.1.0–v0.1.3 已发布，签名更新信息已上线并包含跨版本升级路径；入口与设置已在本机 App 中完成点击核对。第二次启动许可提示和真实跨版本安装的端到端体验仍待验收。
 
 最短路径：Lumi App 菜单 > Check for Updates… > 确认更新 > Lumi 重新打开。
 
@@ -12,14 +12,14 @@
 
 ## 前置条件
 
-- Lumi for Mac 已安装并可以启动。
-- 首个签名 Release 和正式更新信息已经发布，且 Mac 可以访问公开下载地址。
+- Lumi for Mac 已安装并可以启动（Apple silicon，macOS 26 或更高版本）。
+- Mac 可以访问公开更新信息和下载地址。
 - 安装目录需要权限时，用户可以完成 macOS 授权。
 
 ## 实际入口
 
 - **主入口**：Lumi App 菜单 >“Check for Updates…”。
-- **替代入口**：侧边栏“Settings”> 中栏“About”>“Check for Updates…”。
+- **替代入口**：侧边栏“Settings”> 中栏“About”>“Check for Updates…”；开启自动检查后，Lumi 也会在发现新版本时主动显示同样的更新提示（第二次启动时先征求许可，[UPD-R-002](../modules/software-updates.md#upd-r-002-第二次启动先询问自动检查)、[UPD-R-003](../modules/software-updates.md#upd-r-003-自动检查设置可随时更改)），从提示起进入同一条主路径。
 - **到达状态**：Lumi 开始检查；尚未下载或替换 App。
 - **规则引用**：[UPD-R-001](../modules/software-updates.md#upd-r-001-两个入口使用同一个更新状态)。
 
@@ -34,8 +34,8 @@
    - 数据变化：当前 App 在验证和确认完成前保持不变。
    - 规则引用：[UPD-R-004](../modules/software-updates.md#upd-r-004-只接受签名的-stable-更新)、[UPD-R-005](../modules/software-updates.md#upd-r-005-不静默下载或安装)。
 3. 确认安装并允许 Lumi 重新打开。
-   - 系统反馈：App 完成替换后启动；需要时 macOS 先显示授权提示。
-   - 数据变化：原有 Session 历史保留；已安装的 helper 跟随刷新，正在运行且已连接的已安装 daemon 在版本不一致时重启刷新。
+   - 系统反馈：Lumi 的更新程序完成替换后 App 重新启动；需要时 macOS 先显示授权提示。
+   - 数据变化：原有 Session 历史保留；已安装的 helper 与 daemon 在启动时自动刷新到新版本。
    - 规则引用：[UPD-R-006](../modules/software-updates.md#upd-r-006-app-更新后刷新本机组件)。
 
 ## 分支和失败路径
@@ -45,7 +45,6 @@
 - 用户看到：检查结果表明没有更高版本。
 - 可执行动作：关闭结果并继续使用 Lumi。
 - 持久化影响：App、设置和 Session 历史均不变化。
-- 规则引用：[UPD-R-001](../modules/software-updates.md#upd-r-001-两个入口使用同一个更新状态)。
 - 结束状态：当前 App 继续运行，本次检查完成。
 
 ### 无法读取或验证更新
@@ -65,7 +64,7 @@
 
 ## 持久化结果
 
-- **成功后**：新 App 版本保留；已安装的 helper 跟随刷新，符合运行和连接条件的已安装 daemon 跟随刷新；Session 历史继续可见。
+- **成功后**：新 App 版本保留；已安装的 helper 与已启用的 daemon 在下次启动时自动刷新；Session 历史继续可见。
 - **取消或失败后**：当前 App、自动检查选择和 Session 历史保持原状。
 - **数据流**：[软件更新](../data-flows.md#软件更新)。
 
@@ -82,4 +81,4 @@
 
 - [软件更新](../modules/software-updates.md)
 - [软件更新数据流](../data-flows.md#软件更新)
-- [用户摩擦点](../friction-points.md#check-for-updates-显示错误)
+- [用户摩擦点：检查错误](../friction-points.md#check-for-updates-显示错误) / [安装要求授权](../friction-points.md#更新安装要求授权)
