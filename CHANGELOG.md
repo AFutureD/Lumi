@@ -19,6 +19,7 @@
 
 ### 推送提醒
 
+- [Lumi for iPhone] - 修复点按推送提醒时 App 立刻闪退、看起来像"没有打开"的问题；现在点提醒会直接落在对应 Session 的详情页，App 未启动、在后台或已打开都一样。
 - 推送提醒只发给这台 Mac 点过 Match（身份已核对）的 iPhone；Paired iPhones 里显示 Unverified 的设备不再收到含 Session 标题的提醒，与 Session 内容同一条信任边界。
 
 ### 系统要求

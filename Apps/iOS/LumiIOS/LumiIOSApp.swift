@@ -3,43 +3,59 @@ import IOSFeature
 
 @main
 final class LumiIOSApp: UIResponder, UIApplicationDelegate {
-    private let coordinator = IOSApplicationCoordinator()
-    var window: UIWindow?
+    static let coordinator = IOSApplicationCoordinator()
 
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        let window = UIWindow(frame: UIScreen.main.bounds)
-        self.window = window
-        coordinator.start(in: window)
+        // The notification-center delegate must be in place before launching
+        // finishes, or the tap that cold-launched the app is dropped.
+        Self.coordinator.bootstrap()
         return true
-    }
-
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        coordinator.resume()
     }
 
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
-        coordinator.updatePushToken(deviceToken)
+        Self.coordinator.updatePushToken(deviceToken)
     }
 
     func application(
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        coordinator.pushRegistrationFailed(error)
+        Self.coordinator.pushRegistrationFailed(error)
+    }
+}
+
+/// Named in the Info.plist scene manifest.
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions
+    ) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: windowScene)
+        self.window = window
+        LumiIOSApp.coordinator.start(in: window)
+        for context in connectionOptions.urlContexts {
+            LumiIOSApp.coordinator.open(context.url)
+        }
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        LumiIOSApp.coordinator.resume()
     }
 
     /// `lumi://pair?relay=…&code=…` from the system camera or a link.
-    func application(
-        _ app: UIApplication,
-        open url: URL,
-        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
-    ) -> Bool {
-        coordinator.open(url)
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        for context in URLContexts {
+            LumiIOSApp.coordinator.open(context.url)
+        }
     }
 }

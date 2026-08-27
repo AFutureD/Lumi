@@ -3,7 +3,7 @@ import Transport
 import Foundation
 import os
 import UIKit
-import UserNotifications
+@preconcurrency import UserNotifications
 
 private let pushLog = os.Logger(subsystem: "app.huanan.lumi", category: "push")
 
@@ -27,6 +27,16 @@ public final class IOSApplicationCoordinator: NSObject {
         super.init()
     }
 
+    /// Runs inside `didFinishLaunching`, before any scene connects: the
+    /// notification-center delegate must be set by then or the system drops
+    /// the tap that cold-launched the app.
+    public func bootstrap() {
+        UNUserNotificationCenter.current().delegate = self
+        notifications.onAuthorized = {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
     public func start(in window: UIWindow) {
         if ProcessInfo.processInfo.arguments.contains("-LumiPreviewData") {
             relay.usePreview(PreviewFixture.channelStates(now: Date()))
@@ -38,12 +48,12 @@ public final class IOSApplicationCoordinator: NSObject {
         }
         window.rootViewController = tabs
         window.makeKeyAndVisible()
-        UNUserNotificationCenter.current().delegate = self
-        notifications.onAuthorized = {
-            UIApplication.shared.registerForRemoteNotifications()
-        }
         relay.start()
         Task { await notifications.refresh() }
+        if let pending = pendingSession {
+            pendingSession = nil
+            openSession(hostID: pending.hostID, sessionID: pending.sessionID)
+        }
     }
 
     public func resume() {
@@ -63,7 +73,15 @@ public final class IOSApplicationCoordinator: NSObject {
         pushLog.warning("push_registration_failed: \(String(describing: error), privacy: .public)")
     }
 
+    /// A tap can be delivered before the scene has connected (cold launch):
+    /// the target waits here for `start(in:)` to replay it.
+    private var pendingSession: (hostID: HostID, sessionID: SessionID)?
+
     private func openSession(hostID: HostID, sessionID: SessionID) {
+        guard tabs.viewControllers?.isEmpty == false else {
+            pendingSession = (hostID, sessionID)
+            return
+        }
         tabs.presentedViewController?.dismiss(animated: false)
         tabs.selectedIndex = 0
         guard let navigation = tabs.viewControllers?.first as? UINavigationController else { return }
@@ -125,17 +143,23 @@ extension IOSApplicationCoordinator: UNUserNotificationCenterDelegate {
         []
     }
 
-    /// Tapping a banner lands on the session it names.
+    /// Tapping a banner lands on the session it names. The completion must
+    /// run on the main thread: UIKit does snapshot/state-restoration work
+    /// there and asserts (crashing the launch) if it lands off-main — which
+    /// is exactly where the async-variant bridge left it.
     public nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        guard let target = PushNotificationRouting.session(in: response.notification.request.content.userInfo) else {
-            pushLog.warning("push_tap_without_session_payload")
-            return
-        }
-        await MainActor.run {
-            openSession(hostID: target.hostID, sessionID: target.sessionID)
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
+        let target = PushNotificationRouting.session(in: response.notification.request.content.userInfo)
+        Task { @MainActor in
+            if let target {
+                self.openSession(hostID: target.hostID, sessionID: target.sessionID)
+            } else {
+                pushLog.warning("push_tap_without_session_payload")
+            }
+            completionHandler()
         }
     }
 }
