@@ -110,9 +110,10 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
     override func viewDidAppear() {
         super.viewDidAppear()
         guard relativeTimeTimer == nil else { return }
-        // Relative times ("4m", "1h") only need coarse refreshes; only label
-        // text moves, so the status dots keep breathing undisturbed.
-        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+        // Live subagent durations print seconds ("3m 43s"), so the refresh
+        // ticks every second; only label text moves, so the status dots keep
+        // breathing undisturbed.
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshRelativeTimes() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -297,9 +298,10 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
     private func reload() {
         guard isViewLoaded else { return }
 
-        // Newest activity first; a session whose tier changed loses any manual
+        // Newest created first (creation time is stable, so activity never
+        // shuffles the rows); a session whose tier changed loses any manual
         // expansion override and falls back to the tier default.
-        let sorted = store.sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
+        let sorted = SessionListModel.ordered(store.sessions)
         var tones: [SessionID: SessionStatusTone] = [:]
         for session in sorted { tones[session.id] = session.statusTone }
         for (id, tone) in tones {
@@ -607,7 +609,7 @@ final class SessionListCellView: NSView {
         cluster.isHidden = row.subagents.isEmpty
         if !row.subagents.isEmpty {
             cluster.configure(
-                tones: row.subagents.map(\.tone),
+                tones: row.clusterTones,
                 expanded: row.isExpanded,
                 label: row.subagentSummaryLabel
             )
@@ -635,7 +637,7 @@ final class SessionListCellView: NSView {
         guard let model else { return }
         timeLabel.stringValue = SessionRelativeTimeFormatter.string(from: model.lastActivityAt)
         for (line, view) in zip(model.isExpanded ? model.subagents : [], lineViews) {
-            view.refreshRelativeTime(line.lastActivityAt)
+            view.refreshDuration(line)
         }
         needsLayout = true
     }
@@ -925,7 +927,8 @@ private extension NSTextField {
     }
 }
 
-/// One expanded subagent: 6px solid dot, name, its own relative time.
+/// One expanded subagent: 6px solid dot, name, its duration (ticking while
+/// live, frozen once its displayed lifecycle ends).
 @MainActor
 private final class SubagentLineView: NSView {
     private typealias SL = DesignSystem.SessionList
@@ -941,7 +944,7 @@ private final class SubagentLineView: NSView {
         nameLabel.usesSingleLineMode = true
         timeLabel.font = Design.Font.mono
         timeLabel.textColor = NSColor(SL.subtitleText)
-        timeLabel.toolTip = "Last update"
+        timeLabel.toolTip = "Duration"
         dot.setFrameSize(NSSize(width: SL.subagentDot, height: SL.subagentDot))
         for subview in [dot, nameLabel, timeLabel] {
             addSubview(subview)
@@ -965,12 +968,14 @@ private final class SubagentLineView: NSView {
         style.form = .solid
         dot.configure(style)
         dot.toolTip = line.status
-        refreshRelativeTime(line.lastActivityAt)
+        refreshDuration(line)
         needsLayout = true
     }
 
-    func refreshRelativeTime(_ lastActivityAt: Date) {
-        timeLabel.stringValue = SessionRelativeTimeFormatter.string(from: lastActivityAt)
+    func refreshDuration(_ line: SessionListRowModel.SubagentLine) {
+        timeLabel.stringValue = SessionElapsedFormatter.string(
+            from: (line.endedAt ?? Date()).timeIntervalSince(line.startedAt)
+        )
         needsLayout = true
     }
 

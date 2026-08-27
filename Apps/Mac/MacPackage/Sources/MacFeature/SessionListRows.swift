@@ -12,7 +12,9 @@ struct SessionListRowModel: Equatable {
         let tone: SessionStatusTone
         /// Dot tooltip: `Running · Responding`.
         let status: String
-        let lastActivityAt: Date
+        let startedAt: Date
+        /// `nil` while the subagent is still live; the duration keeps ticking.
+        let endedAt: Date?
     }
 
     let id: SessionID
@@ -27,8 +29,8 @@ struct SessionListRowModel: Equatable {
     /// `·` separator goes with a missing effort).
     let model: String?
     let reasoningEffort: String?
-    /// Bucket order (running → waiting → failed → done, newest first inside
-    /// a bucket); all of them — the view never paginates.
+    /// Spawn order (earliest started first — the run's execution trace);
+    /// all of them — the view never paginates.
     let subagents: [SubagentLine]
     var isExpanded: Bool
 
@@ -36,12 +38,30 @@ struct SessionListRowModel: Equatable {
     var subagentSummaryLabel: String {
         SubagentGroupSummary.label(tones: subagents.map(\.tone))
     }
+
+    /// Stacked-dot tones for the collapsed cluster. The cluster is a summary,
+    /// so it keeps bucket order (running → waiting → failed → done) and active
+    /// dots stay visible ahead of the cap, unlike the spawn-ordered lines.
+    var clusterTones: [SessionStatusTone] {
+        subagents.map(\.tone).sorted {
+            SubagentSummaryBucket(tone: $0) < SubagentSummaryBucket(tone: $1)
+        }
+    }
 }
 
 enum SessionListModel {
-    /// Roots keep the caller's order (newest activity first); every
+    /// List order: newest created first. Creation time is stable, so rows
+    /// don't shuffle as activity arrives; ties break on id for determinism.
+    static func ordered(_ sessions: [SessionSummary]) -> [SessionSummary] {
+        sessions.sorted {
+            if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+            return $0.id.rawValue < $1.id.rawValue
+        }
+    }
+
+    /// Roots keep the caller's order (newest created first); every
     /// descendant of a root — regardless of depth — becomes one subagent
-    /// line of that root, in bucket order.
+    /// line of that root, in spawn order.
     static func rows(
         sessions: [SessionSummary],
         filter: String,
@@ -56,10 +76,8 @@ enum SessionListModel {
             var descendants: [SessionSummary] = []
             collectDescendants(of: root, into: &descendants)
             descendants.sort {
-                SubagentGroupSummary.precedes(
-                    ($0.statusTone, $0.lastActivityAt),
-                    ($1.statusTone, $1.lastActivityAt)
-                )
+                if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }
+                return $0.id.rawValue < $1.id.rawValue
             }
             let stamp = modelStamps[summary.id]
             return SessionListRowModel(
@@ -78,7 +96,11 @@ enum SessionListModel {
                         title: SessionListRowPresentation.normalizedTitle(child.title),
                         tone: child.statusTone,
                         status: SessionListRowPresentation(session: child).status,
-                        lastActivityAt: child.displayActivityAt
+                        startedAt: child.startedAt,
+                        // `displayLifecycle`: a subagent parked at its prompt
+                        // (waitingForInput · idle) shows a done dot — its
+                        // duration must freeze with it.
+                        endedAt: child.displayLifecycle.isLive ? nil : child.displayActivityAt
                     )
                 },
                 isExpanded: !descendants.isEmpty && isExpanded(summary.id, summary.statusTone)

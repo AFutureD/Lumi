@@ -36,16 +36,8 @@ struct SessionListHierarchy {
                 roots.append(node)
             }
         }
-        // Children in strip order — running → waiting → failed → done, newest
-        // first inside a bucket — the same order the Notch and the iPhone use.
-        for node in nodesByID.values where node.children.count > 1 {
-            node.children.sort { lhs, rhs in
-                SubagentGroupSummary.precedes(
-                    (lhs.summary.statusTone, lhs.summary.lastActivityAt),
-                    (rhs.summary.statusTone, rhs.summary.lastActivityAt)
-                )
-            }
-        }
+        // Children keep insertion order; the flat list re-sorts descendants
+        // into spawn order (`SessionListModel.rows`).
         return SessionListHierarchy(roots: roots, nodesByID: nodesByID)
     }
 
@@ -71,31 +63,6 @@ struct SessionListHierarchy {
         summary.title.localizedCaseInsensitiveContains(query)
             || summary.agent.displayName.localizedCaseInsensitiveContains(query)
             || summary.workspace?.localizedCaseInsensitiveContains(query) == true
-    }
-
-    func hasSameStructure(as other: SessionListHierarchy) -> Bool {
-        guard roots.map(\.summary.id) == other.roots.map(\.summary.id),
-              nodesByID.keys == other.nodesByID.keys else {
-            return false
-        }
-        return nodesByID.allSatisfy { id, node in
-            node.children.map(\.summary.id) == other.nodesByID[id]?.children.map(\.summary.id)
-        }
-    }
-
-    /// Keeps the node identities retained by NSOutlineView while refreshing their content.
-    /// Returns only rows whose visible presentation changed; timestamp-only updates are ignored.
-    func updateSummaries(from sessions: [SessionSummary]) -> Set<SessionID> {
-        var changedIDs: Set<SessionID> = []
-        for summary in sessions {
-            guard let node = nodesByID[summary.id] else { continue }
-            if SessionListRowPresentation(session: node.summary)
-                != SessionListRowPresentation(session: summary) {
-                changedIDs.insert(summary.id)
-            }
-            node.summary = summary
-        }
-        return changedIDs
     }
 
     private static func wouldCreateCycle(

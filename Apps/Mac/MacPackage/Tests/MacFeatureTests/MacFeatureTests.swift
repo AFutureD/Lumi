@@ -766,67 +766,6 @@ private func nookSession(
     #expect(childNode.children.map { $0.summary.id } == [grandchild.id])
 }
 
-@Test func sessionListHierarchyOrdersChildrenRunningWaitingFailedDone() throws {
-    let hierarchy = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "parent", updatedAt: 100),
-        hierarchySummary(id: "done", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 99),
-        hierarchySummary(id: "failed", parentID: "parent", lifecycle: .failed, phase: .idle, updatedAt: 98),
-        hierarchySummary(id: "waiting", parentID: "parent", lifecycle: .waitingForInput, phase: .waitingForApproval, updatedAt: 97),
-        hierarchySummary(id: "running", parentID: "parent", updatedAt: 96),
-    ])
-    // The same strip order the Notch and the iPhone use, not newest first.
-    #expect(hierarchy.roots.first?.children.map(\.summary.id.rawValue) == ["running", "waiting", "failed", "done"])
-}
-
-@Test func sessionListHierarchyReusesNodesAndReloadsOnlyVisibleChanges() throws {
-    let original = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "main"),
-        hierarchySummary(id: "child", parentID: "main", depth: 1),
-    ])
-    let timestampOnly = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "main", updatedAt: 200),
-        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 200),
-    ])
-
-    #expect(original.hasSameStructure(as: timestampOnly))
-    #expect(original.updateSummaries(from: timestampOnly.roots.flatMap(flatten)) == [])
-    let originalMain = try #require(original.nodesByID[SessionID("main")])
-    #expect(originalMain.summary.updatedAt == Date(timeIntervalSince1970: 200))
-
-    let phaseChange = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "main", phase: .executing, updatedAt: 201),
-        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 201),
-    ])
-    #expect(original.hasSameStructure(as: phaseChange))
-    #expect(original.updateSummaries(from: phaseChange.roots.flatMap(flatten)) == [SessionID("main")])
-
-    // `needsReview` flips the tone (green ⇄ gray) without changing the
-    // status text; the row diff must still report the change.
-    let reviewFlip = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "main", lifecycle: .waitingForInput, phase: .idle, needsReview: true, updatedAt: 202),
-        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 202),
-    ])
-    #expect(original.hasSameStructure(as: reviewFlip))
-    #expect(original.updateSummaries(from: reviewFlip.roots.flatMap(flatten)) == [SessionID("main")])
-    let reviewed = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "main", lifecycle: .waitingForInput, phase: .idle, needsReview: false, updatedAt: 203),
-        hierarchySummary(id: "child", parentID: "main", depth: 1, updatedAt: 203),
-    ])
-    #expect(original.updateSummaries(from: reviewed.roots.flatMap(flatten)) == [SessionID("main")])
-
-    let reordered = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "child", parentID: "main", depth: 1),
-        hierarchySummary(id: "main"),
-    ])
-    #expect(original.hasSameStructure(as: reordered))
-
-    let detached = SessionListHierarchy.build(from: [
-        hierarchySummary(id: "main"),
-        hierarchySummary(id: "child"),
-    ])
-    #expect(!original.hasSameStructure(as: detached))
-}
-
 @Test func sessionPagePresentationBuildsSummaryAndCategorizesActivity() throws {
     let date = Date(timeIntervalSince1970: 100)
     let summary = SessionSummary(
@@ -1026,7 +965,7 @@ private func nookSession(
     #expect(SessionListHierarchy.filtering([main, child, other], query: "nope").isEmpty)
 }
 
-@Test func sessionListRowsFlattenDescendantsInBucketOrder() {
+@Test func sessionListRowsFlattenDescendantsInSpawnOrder() {
     let main = hierarchySummary(id: "main", updatedAt: 500)
     let done = hierarchySummary(id: "done", parentID: "main", lifecycle: .completed, phase: .idle, updatedAt: 400)
     let grandchild = hierarchySummary(id: "grandchild", parentID: "done", depth: 2, updatedAt: 300)
@@ -1042,12 +981,80 @@ private func nookSession(
     #expect(rows.count == 1)
     let row = rows[0]
     // Every descendant — the grandchild included — is one line of the root,
-    // in bucket order: running → waiting → failed → done.
-    #expect(row.subagents.map { $0.id.rawValue } == ["grandchild", "failed", "done"])
+    // in spawn order: earliest started first, whatever the tone.
+    #expect(row.subagents.map { $0.id.rawValue } == ["grandchild", "done", "failed"])
+    // The collapsed cluster stays a bucket-ordered summary.
+    #expect(row.clusterTones == [.blue, .red, .gray])
     #expect(row.isExpanded)
     #expect(row.model == "gpt-5-codex")
     #expect(row.reasoningEffort == "high")
     #expect(row.subagentSummaryLabel == "3 subagents · 1 running · 1 failed · 1 done")
+}
+
+@Test func sessionListOrdersByCreationTimeNewestFirst() {
+    let oldButActive = SessionSummary(
+        id: SessionID("old-active"),
+        agent: .codex,
+        title: "Old but active",
+        lifecycle: .running,
+        phase: .executing,
+        startedAt: Date(timeIntervalSince1970: 100),
+        updatedAt: Date(timeIntervalSince1970: 900),
+        lastActivityAt: Date(timeIntervalSince1970: 900)
+    )
+    let newButQuiet = SessionSummary(
+        id: SessionID("new-quiet"),
+        agent: .codex,
+        title: "New but quiet",
+        lifecycle: .running,
+        phase: .thinking,
+        startedAt: Date(timeIntervalSince1970: 300),
+        updatedAt: Date(timeIntervalSince1970: 350),
+        lastActivityAt: Date(timeIntervalSince1970: 350)
+    )
+    let tiedA = hierarchySummary(id: "tied-a", updatedAt: 200)
+    let tiedB = hierarchySummary(id: "tied-b", updatedAt: 200)
+
+    // Creation time wins over activity; a same-instant tie breaks on id.
+    #expect(
+        SessionListModel.ordered([oldButActive, tiedB, newButQuiet, tiedA]).map(\.id.rawValue)
+            == ["new-quiet", "tied-a", "tied-b", "old-active"]
+    )
+}
+
+@Test func sessionListSubagentLinesCarryDurationClocks() {
+    let started = Date(timeIntervalSince1970: 100)
+    let ended = Date(timeIntervalSince1970: 160)
+    func child(_ id: String, lifecycle: SessionLifecycle, phase: TurnPhase) -> SessionSummary {
+        SessionSummary(
+            id: SessionID(id),
+            agent: .codexSubagent,
+            title: id,
+            lifecycle: lifecycle,
+            phase: phase,
+            startedAt: started,
+            updatedAt: ended,
+            lastActivityAt: ended,
+            lineage: SessionLineage(threadSource: "subagent", parentSessionID: SessionID("main"))
+        )
+    }
+    let rows = SessionListModel.rows(
+        sessions: [
+            hierarchySummary(id: "main", updatedAt: 500),
+            child("live", lifecycle: .running, phase: .executing),
+            child("ended", lifecycle: .completed, phase: .idle),
+            // Parked at its prompt: displayed as done, so the clock freezes.
+            child("parked", lifecycle: .waitingForInput, phase: .idle),
+        ],
+        filter: "",
+        modelStamps: [:],
+        isExpanded: { _, _ in true }
+    )
+    let lines = Dictionary(uniqueKeysWithValues: rows[0].subagents.map { ($0.id.rawValue, $0) })
+    #expect(lines["live"]?.startedAt == started)
+    #expect(lines["live"]?.endedAt == nil)
+    #expect(lines["ended"]?.endedAt == ended)
+    #expect(lines["parked"]?.endedAt == ended)
 }
 
 @Test func sessionListDisclosureDefaultsFollowTheTier() {
@@ -1245,10 +1252,6 @@ private func hierarchySummary(
         needsReview: needsReview,
         lineage: lineage
     )
-}
-
-private func flatten(_ node: SessionListNode) -> [SessionSummary] {
-    [node.summary] + node.children.flatMap(flatten)
 }
 
 // MARK: - Provisional sessions in the Mac store

@@ -20,7 +20,7 @@ Codex 只运行它信任过的 Hook，而且不信任时不给任何提示。安
 
 ### Mac 会话查看
 
-Mac 主窗口参考系统 Mail.app 的“导航—列表—详情”三栏：Session 列表按最近活动时间倒序，两行式行内即可看到标题、状态、模型与 Subagent 状态；详情由 Activity 主区（可切换密度的横向时间轴，按消息类别与重要性 L1–L3 过滤）和 Inspector（Token / Context / Elapsed 指标与 Session 信息）组成。关闭主窗口不退出 Lumi，Dock 图标随窗口隐藏，Notch 和同步照常运行。
+Mac 主窗口参考系统 Mail.app 的“导航—列表—详情”三栏：Session 列表按创建时间倒序，两行式行内即可看到标题、状态、最近更新时间、模型与 Subagent 状态；详情由 Activity 主区（可切换密度的横向时间轴，按消息类别与重要性 L1–L3 过滤）和 Inspector（Token / Context / Elapsed 指标与 Session 信息）组成。关闭主窗口不退出 Lumi，Dock 图标随窗口隐藏，Notch 和同步照常运行。
 
 Notch 紧凑状态只占屏幕顶部一小条，展开后列出最近七天内活动过的主 Session；Turn 结束或失败时自动展开并短暂提示，回合开始不打扰；处理完的 Session 可以就地归档出 Notch，主窗口和 iPhone 不受影响。外部产生的 Session 内容只在 App 启动、手动刷新和收到 Agent 事件时同步；历史不会自动过期，删除由用户决定。
 
