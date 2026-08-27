@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-27
+
 ### 官网
 
 - 上线落地页 lumi.huanan.app：单页十节（Hero 推送卡片、三大功能、Privacy boundary、三步上手、FAQ），含移动端单列布局；以 Cloudflare Worker 静态资产部署。
@@ -90,7 +92,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/AFutureD/Lumi/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/AFutureD/Lumi/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/AFutureD/Lumi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/AFutureD/Lumi/compare/v0.1.0...v0.1.1
