@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN" id="top">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumi — Know when your agents need you</title>
+<meta name="description" content="Track agent sessions from Mac and iPhone with clear status, complete Activity, read-only remote viewing, and encrypted device sync.">
+<meta property="og:title" content="Lumi — Know when your agents need you">
+<meta property="og:description" content="Track agent sessions from Mac and iPhone with clear status, complete Activity, read-only remote viewing, and encrypted device sync.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://lumi.huanan.app/">
+<link rel="icon" href="/assets/lumi-app-icon.svg" type="image/svg+xml">
+<style>
+:root {
+  --ink: #131313;
+  --muted: #86868b;
+  --faint: #a1a1a6;
+  --ghost: #c7c7cc;
+  --accent: rgb(0, 120, 240);
+  --accent-hover: rgb(0, 96, 200);
+  --surface: #ffffff;
+  --surface-2: #f5f5f7;
+  --hairline: rgba(0, 0, 0, .08);
+  --hairline-nav: rgba(0, 0, 0, .07);
+  --quote-rule: rgba(0, 0, 0, .1);
+  --gutter: 72px;
+}
+
+* { box-sizing: border-box; }
+
+html, body { overflow-x: clip; }
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, sans-serif;
+}
+
+.page { max-width: 1280px; margin: 0 auto; }
+
+p { text-wrap: pretty; }
+h1, h2 { text-wrap: pretty; }
+
+a { color: var(--accent); text-decoration: none; transition: color 120ms ease; }
+a:hover { color: var(--accent-hover); }
+
+img { max-width: 100%; height: auto; }
+
+/* ---------- Nav ---------- */
+
+nav {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--hairline-nav);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand img { width: 26px; height: 26px; display: block; border-radius: 6px; }
+.brand span { font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
+.nav-links { display: flex; align-items: center; gap: 26px; font-size: 13.5px; }
+.nav-links a { color: var(--muted); }
+.nav-links a:hover { color: var(--accent); }
+.nav-links a.nav-download { color: var(--accent); }
+.nav-links a.nav-download:hover { color: var(--accent-hover); }
+
+/* ---------- Hero ---------- */
+
+.hero {
+  padding: 104px var(--gutter) 0;
+  display: flex;
+  gap: 72px;
+  align-items: center;
+  justify-content: space-between;
+}
+.hero-copy { width: 560px; flex: none; }
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  color: var(--accent);
+}
+.hero-copy .eyebrow { margin-bottom: 26px; }
+h1 {
+  margin: 0;
+  font-size: 64px;
+  line-height: 70px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+}
+.hero-sub {
+  margin: 26px 0 0;
+  max-width: 440px;
+  font-size: 17px;
+  line-height: 31px;
+  color: var(--muted);
+}
+.cta-row { display: flex; gap: 14px; margin-top: 38px; }
+.btn {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  border-radius: 1000px;
+  font-size: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+.btn-primary { padding: 0 26px; background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); color: #fff; }
+.btn-ghost { padding: 0 22px; color: var(--accent); }
+.btn-ghost:hover { color: var(--accent-hover); }
+.hero-fineprint { margin-top: 18px; font-size: 12.5px; color: var(--faint); }
+
+/* ---------- Hero push-card stack ---------- */
+
+.stack-stage { width: 504px; flex: none; }
+.stack {
+  width: 504px;
+  height: 452px;
+  position: relative;
+  transform-origin: top left;
+}
+.drop { position: absolute; }
+.card {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 14px 16px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.card-head img { border-radius: 5px; display: block; }
+.card-head .app { font-weight: 600; letter-spacing: .04em; }
+.card-head time { margin-left: auto; }
+.card-title { margin-top: 8px; font-size: 14px; font-weight: 600; line-height: 19px; }
+.card-status { margin-top: 3px; font-size: 13px; color: var(--muted); }
+
+.drop-1 { left: 96px; top: 0; }
+.drop-1 .card {
+  width: 384px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.09), 0 0 0 .5px rgba(0,0,0,.07);
+  transform: rotate(-2.5deg) scale(.86);
+  transform-origin: 50% 100%;
+  opacity: .45;
+}
+.drop-2 { left: 60px; top: 78px; }
+.drop-2 .card {
+  width: 400px;
+  padding: 15px 17px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.1), 0 0 0 .5px rgba(0,0,0,.08);
+  transform: rotate(1.6deg) scale(.92);
+  transform-origin: 50% 100%;
+  opacity: .68;
+}
+.drop-2 .card-head { font-size: 11.5px; }
+.drop-2 .card-title { font-size: 14.5px; line-height: 20px; }
+.drop-2 .card-status { font-size: 13.5px; }
+.drop-3 { left: 28px; top: 178px; }
+.drop-3 .card {
+  width: 436px;
+  border-radius: 22px;
+  padding: 16px 18px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.12), 0 0 0 .5px rgba(0,0,0,.09);
+  transform: rotate(-1.2deg);
+}
+.drop-3 .card-head { font-size: 12px; }
+.drop-3 .card-title { margin-top: 9px; font-size: 15px; line-height: 21px; }
+.drop-3 .card-status { margin-top: 4px; font-size: 14px; }
+.drop-4 { left: 0; top: 296px; }
+.drop-4 .card {
+  width: 472px;
+  border-radius: 24px;
+  padding: 18px 20px;
+  box-shadow: 0 26px 60px rgba(0,0,0,.16), 0 0 0 .5px rgba(0,0,0,.1);
+  transform: rotate(2deg);
+}
+.drop-4 .card-head { gap: 9px; font-size: 12.5px; }
+.drop-4 .card-head img { border-radius: 6px; }
+.drop-4 .card-title { margin-top: 10px; font-size: 16.5px; line-height: 23px; }
+.drop-4 .card-status { margin-top: 4px; font-size: 15px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .drop { animation: drop-in 500ms ease both; }
+  .drop-1 { animation-delay: 0ms; }
+  .drop-2 { animation-delay: 80ms; }
+  .drop-3 { animation-delay: 160ms; }
+  .drop-4 { animation-delay: 240ms; }
+  @keyframes drop-in {
+    from { opacity: 0; translate: 0 8px; }
+    to { opacity: 1; translate: 0 0; }
+  }
+}
+
+/* ---------- Tagline ---------- */
+
+.tagline {
+  margin: 104px var(--gutter) 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  padding: 88px 0;
+  text-align: center;
+}
+.tagline div {
+  font-size: 44px;
+  line-height: 60px;
+  font-weight: 500;
+  letter-spacing: -.025em;
+}
+.tagline .dim { color: var(--ghost); }
+
+/* ---------- Features ---------- */
+
+.features {
+  padding: 96px var(--gutter) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 110px;
+}
+.feature .eyebrow { margin-bottom: 20px; }
+.feature h2 {
+  margin: 0;
+  font-size: 36px;
+  line-height: 48px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.feature p {
+  margin: 16px 0 0;
+  font-size: 16.5px;
+  line-height: 31px;
+  color: var(--muted);
+}
+.feature h2 + p { margin-top: 22px; }
+.feature .fineprint {
+  margin: 26px 0 0;
+  font-size: 13.5px;
+  line-height: 24px;
+  color: var(--faint);
+  border-left: 2px solid var(--quote-rule);
+  padding-left: 14px;
+}
+
+.feature-iphone {
+  display: flex;
+  gap: 72px;
+  align-items: center;
+  justify-content: space-between;
+}
+.feature-iphone .copy { width: 520px; flex: none; }
+.feature-iphone img {
+  width: 288px;
+  flex: none;
+  display: block;
+  border-radius: 34px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.14);
+}
+
+.feature-notch { display: flex; gap: 64px; align-items: center; }
+.feature-notch img {
+  width: 660px;
+  flex: none;
+  display: block;
+  margin-left: -70px;
+  margin-bottom: -40px;
+}
+.feature-notch .copy { flex: 1; }
+
+.feature-mac .copy { max-width: 620px; }
+/* The Mac screenshot carries no window shadow of its own; without one the
+   white window melts into the page. Same shadow family as the iPhone shot. */
+.feature-mac img {
+  width: 100%;
+  display: block;
+  margin: 40px 0 0;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.08);
+}
+
+/* ---------- Privacy ---------- */
+
+.privacy {
+  margin: 104px var(--gutter) 0;
+  padding: 56px;
+  background: var(--surface-2);
+  border-radius: 16px;
+}
+.privacy h2 {
+  margin: 0;
+  max-width: 700px;
+  font-size: 34px;
+  line-height: 46px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.privacy > p {
+  margin: 20px 0 0;
+  max-width: 660px;
+  font-size: 16px;
+  line-height: 30px;
+  color: var(--muted);
+}
+.diagram { display: flex; align-items: center; margin: 44px 0 0; }
+.node {
+  flex: none;
+  width: 180px;
+  padding: 18px 0;
+  background: var(--surface);
+  border-radius: 14px;
+  text-align: center;
+}
+.node-relay { width: 200px; opacity: .6; }
+.node .name { font-size: 15px; font-weight: 600; }
+.node .role { font-size: 12.5px; color: var(--faint); margin-top: 3px; }
+.wire { flex: 1; border-top: 1px dashed var(--accent); opacity: .55; }
+.diagram-caption {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: .08em;
+  color: var(--accent);
+}
+.privacy-foot {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  margin-top: 40px;
+  font-size: 13.5px;
+  color: var(--faint);
+}
+
+/* ---------- How it works ---------- */
+
+.how { padding: 104px var(--gutter) 0; }
+.how h2 {
+  margin: 0 0 44px;
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.step {
+  display: flex;
+  gap: 40px;
+  padding: 30px 0;
+  border-top: 1px solid var(--hairline);
+}
+.step:last-child { border-bottom: 1px solid var(--hairline); }
+.step .num {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  width: 28px;
+  flex: none;
+  padding-top: 6px;
+}
+.step .title {
+  width: 210px;
+  flex: none;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -.015em;
+}
+.step .body { flex: 1; font-size: 15.5px; line-height: 28px; color: var(--muted); }
+
+/* ---------- FAQ ---------- */
+
+.faq { padding: 96px var(--gutter) 0; }
+.faq h2 {
+  margin: 0 0 36px;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.faq-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 64px; }
+.faq details { border-top: 1px solid var(--hairline); padding: 22px 0; }
+.faq details:nth-last-child(-n+2) { border-bottom: 1px solid var(--hairline); }
+.faq summary { list-style: none; cursor: pointer; font-size: 16.5px; font-weight: 500; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq details div {
+  margin-top: 12px;
+  font-size: 15.5px;
+  line-height: 28px;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* ---------- Bottom CTA ---------- */
+
+.closing { padding: 120px var(--gutter) 116px; text-align: center; }
+.closing div.line {
+  font-size: 52px;
+  line-height: 66px;
+  font-weight: 600;
+  letter-spacing: -.03em;
+}
+.closing .dim { color: var(--ghost); }
+.closing .cta-row { justify-content: center; margin-top: 44px; }
+.closing-links { margin-top: 24px; font-size: 13.5px; color: var(--faint); }
+.closing-links a { color: var(--faint); }
+.closing-links a:hover { color: var(--accent); }
+
+/* ---------- Footer ---------- */
+
+footer {
+  padding: 24px var(--gutter) 32px;
+  border-top: 1px solid var(--hairline-nav);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+.foot-brand { display: flex; align-items: center; gap: 8px; }
+.foot-brand img { width: 20px; height: 20px; display: block; border-radius: 5px; }
+.foot-brand span { font-size: 14px; font-weight: 600; color: var(--ink); }
+.foot-links { display: flex; gap: 24px; }
+.foot-links a { color: var(--faint); }
+.foot-links a:hover { color: var(--accent); }
+
+/* ---------- Mobile (breakpoint not in the design; single-column fallback) ---------- */
+
+@media (max-width: 1023px) {
+  :root { --gutter: 28px; }
+
+  .hero {
+    flex-direction: column;
+    gap: 64px;
+    align-items: flex-start;
+    padding-top: 64px;
+  }
+  .hero-copy { width: auto; }
+  h1 { font-size: 42px; line-height: 48px; }
+  .stack-stage { align-self: center; max-width: 100%; }
+  .stack { transform-origin: top left; }
+}
+
+/* No-JS fallback for the fixed 504×452 card stack; the inline script
+   refines the scale to the exact container width. */
+@media (max-width: 583px) {
+  .stack { transform: scale(.72); }
+  .stack-stage { height: 326px; }
+}
+@media (max-width: 440px) {
+  .stack { transform: scale(.6); }
+  .stack-stage { height: 272px; }
+}
+
+@media (max-width: 1023px) {
+
+  .tagline { margin-top: 72px; padding: 56px 0; }
+  .tagline div { font-size: 30px; line-height: 42px; }
+
+  .features { padding-top: 64px; gap: 72px; }
+  .feature h2 { font-size: 28px; line-height: 38px; }
+
+  .feature-iphone { flex-direction: column; gap: 44px; align-items: flex-start; }
+  .feature-iphone .copy { width: auto; }
+  .feature-iphone img { align-self: center; }
+
+  .feature-notch { flex-direction: column-reverse; gap: 24px; align-items: flex-start; }
+  .feature-notch img {
+    width: 100%;
+    /* The PNG has transparent padding: the panel starts at 10.6% of the
+       image width and 3% of its height is bottom whitespace. */
+    margin-left: -10.6%;
+    margin-bottom: -6%;
+  }
+
+  .privacy { padding: 32px 24px; }
+  .privacy h2 { font-size: 26px; line-height: 36px; }
+  .diagram { flex-direction: column; }
+  .node, .node-relay { width: min(280px, 100%); }
+  .wire { flex: none; width: 0; height: 28px; border-top: 0; border-left: 1px dashed var(--accent); }
+  .privacy-foot { flex-direction: column; align-items: flex-start; gap: 12px; }
+
+  .how { padding-top: 72px; }
+  .how h2 { font-size: 28px; }
+  .step { flex-wrap: wrap; gap: 16px; }
+  .step .title { width: auto; }
+  .step .body { flex-basis: 100%; }
+
+  .faq { padding-top: 64px; }
+  .faq-grid { grid-template-columns: 1fr; column-gap: 0; }
+  .faq details:nth-last-child(2):not(:last-child) { border-bottom: 0; }
+
+  .closing { padding: 88px var(--gutter) 80px; }
+  .closing div.line { font-size: 32px; line-height: 42px; }
+  .closing .cta-row { flex-wrap: wrap; }
+
+  footer { flex-wrap: wrap; gap: 14px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <nav>
+    <div class="brand">
+      <img src="/assets/lumi-app-icon.svg" alt="" width="26" height="26">
+      <span>Lumi</span>
+    </div>
+    <div class="nav-links">
+      <a href="#features">功能</a>
+      <a href="https://github.com/AFutureD/Lumi">GitHub</a>
+      <a class="nav-download" href="https://github.com/AFutureD/Lumi/releases/latest">Download</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="hero-copy">
+      <div class="eyebrow">FOR PEOPLE WHO RUN AGENTS</div>
+      <h1>Know when your agents need you.</h1>
+      <p class="hero-sub">回合结束、任务失败、中途被打断——需要你的那一刻，Lumi 会找到你。其余时间，它保持安静。</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/AFutureD/Lumi/releases/latest">Download for Mac</a>
+        <a class="btn btn-ghost" href="https://testflight.apple.com/join/uYcSWMzV">Join TestFlight →</a>
+      </div>
+      <div class="hero-fineprint">iPhone 端 Beta 测试中 · Apple silicon · macOS 26</div>
+    </div>
+
+    <div class="stack-stage">
+      <div class="stack">
+        <div class="drop drop-1">
+          <div class="card">
+            <div class="card-head">
+              <img src="/assets/lumi-app-icon.svg" alt="" width="17" height="17">
+              <span class="app">LUMI</span><time>3h</time>
+            </div>
+            <div class="card-title">Update macOS bundle verification</div>
+            <div class="card-status">Turn ended · Mac mini</div>
+          </div>
+        </div>
+        <div class="drop drop-2">
+          <div class="card">
+            <div class="card-head">
+              <img src="/assets/lumi-app-icon.svg" alt="" width="18" height="18">
+              <span class="app">LUMI</span><time>14m</time>
+            </div>
+            <div class="card-title">Rebuild relay session cache</div>
+            <div class="card-status">Interrupted · Mac mini</div>
+          </div>
+        </div>
+        <div class="drop drop-3">
+          <div class="card">
+            <div class="card-head">
+              <img src="/assets/lumi-app-icon.svg" alt="" width="19" height="19">
+              <span class="app">LUMI</span><time>11m</time>
+            </div>
+            <div class="card-title">Investigate hook install failure</div>
+            <div class="card-status">Failed · MacBook Pro</div>
+          </div>
+        </div>
+        <div class="drop drop-4">
+          <div class="card">
+            <div class="card-head">
+              <img src="/assets/lumi-app-icon.svg" alt="" width="21" height="21">
+              <span class="app">LUMI</span><time>now</time>
+            </div>
+            <div class="card-title">Fix relay durable object lifecycle</div>
+            <div class="card-status">Waiting for you · MacBook Pro</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="tagline">
+    <div>Your agents keep moving.</div>
+    <div class="dim">You only step in when it matters.</div>
+  </section>
+
+  <section class="features" id="features">
+
+    <div class="feature feature-iphone">
+      <div class="copy">
+        <div class="eyebrow">01 — IPHONE</div>
+        <h2>离开 Mac，也不会错过需要你的时刻。</h2>
+        <p>回合结束、失败或被中断，iPhone 收到推送，点开直达 Session 详情——该回去还是继续待着，十秒判断。</p>
+        <p>一台 iPhone 连多台 Mac；Mac App 关着照样同步，离线时缓存照样能翻。</p>
+        <p class="fineprint">只读设计——看得见，改不了。目前通过 TestFlight 提供。</p>
+      </div>
+      <img src="/assets/ios-sessions.png" alt="iPhone Sessions 列表" width="1179" height="2556" loading="lazy">
+    </div>
+
+    <div class="feature feature-notch">
+      <img src="/assets/notch-list-clean.png" alt="Notch 展开后的 Session 列表" width="1980" height="1302" loading="lazy">
+      <div class="copy">
+        <div class="eyebrow">02 — NOTCH</div>
+        <h2>人在 Mac 前，一抬眼就够了。</h2>
+        <p>平时只是顶部一小条；回合结束或失败才自动展开提示，过程一概不打扰。</p>
+        <p>打扰你的每一次，都是真的需要你。</p>
+      </div>
+    </div>
+
+    <div class="feature feature-mac">
+      <div class="copy">
+        <div class="eyebrow">03 — MAC</div>
+        <h2>被叫回来，完整历史都在。</h2>
+        <p>三栏窗口，像看邮件一样看 Session：谁在等你一眼可见，时间轴还原它停在哪一步，Token、Context、耗时随手可查。</p>
+      </div>
+      <img src="/assets/mac-main.png" alt="Mac 三栏主窗口" width="2640" height="1516" loading="lazy">
+    </div>
+
+  </section>
+
+  <section class="privacy">
+    <h2>Your Session content is encrypted for each paired iPhone.</h2>
+    <p>Relay forwards encrypted Session payloads — it stores nothing and reads nothing. The daemon on your Mac is the only source of truth; your iPhone keeps its own local cache.</p>
+    <div class="diagram">
+      <div class="node"><div class="name">Mac</div><div class="role">daemon</div></div>
+      <div class="wire"></div>
+      <div class="node node-relay"><div class="name">Relay</div><div class="role">forwards only</div></div>
+      <div class="wire"></div>
+      <div class="node"><div class="name">iPhone</div><div class="role">local cache</div></div>
+    </div>
+    <div class="diagram-caption">END-TO-END ENCRYPTED CHANNEL</div>
+    <div class="privacy-foot">
+      <span>Push notifications carry only the Session title and status — never the content.</span>
+      <!-- TODO: Privacy 页面上线后恢复 “Read the privacy policy →” 链接 -->
+    </div>
+  </section>
+
+  <section class="how">
+    <h2>Three steps, then forget about it.</h2>
+    <div>
+      <div class="step">
+        <span class="num">01</span>
+        <span class="title">Connect Lumi</span>
+        <span class="body">Install Lumi for Mac, start the daemon, and enable the Hook for the agents you use. One-time setup, about a minute.</span>
+      </div>
+      <div class="step">
+        <span class="num">02</span>
+        <span class="title">Keep working</span>
+        <span class="body">Use your agents exactly as you do now — nothing about your workflow changes. Lumi picks up every new Session and keeps its Activity updating as work happens.</span>
+      </div>
+      <div class="step">
+        <span class="num">03</span>
+        <span class="title">Check what matters</span>
+        <span class="body">When a Session needs you, it finds you — a glance at the Notch, the full timeline in Lumi for Mac, or a push on your paired iPhone.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="faq">
+    <h2>常见问题</h2>
+    <div class="faq-grid">
+      <details open>
+        <summary>支持哪些 agent？</summary>
+        <div>当前支持主流 coding agent，后续持续扩展。</div>
+      </details>
+      <details open>
+        <summary>会不会很吵？</summary>
+        <div>不会。只有回合结束、失败、中断三种时刻会提醒你，过程性事件全部静默。</div>
+      </details>
+      <details>
+        <summary>关掉窗口 Lumi 还在吗？</summary>
+        <div>在。Notch 和同步照常运行。</div>
+      </details>
+      <details>
+        <summary>需要账号吗？</summary>
+        <div>不需要。配对用 6 位码 + 双端数字比对，不经过任何账号体系。</div>
+      </details>
+      <details>
+        <summary>iPhone 能操控 agent 吗？</summary>
+        <div>不能，v1 是刻意设计的只读。</div>
+      </details>
+      <details>
+        <summary>系统要求？</summary>
+        <div>Mac 端 Apple silicon + macOS 26，iPhone 端 iOS 26。</div>
+      </details>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div class="line">Your agents will need you.</div>
+    <div class="line dim">到时候，别靠运气知道。</div>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/AFutureD/Lumi/releases/latest">Download for Mac</a>
+      <a class="btn btn-ghost" href="https://testflight.apple.com/join/uYcSWMzV">Join TestFlight →</a>
+    </div>
+    <div class="closing-links">
+      <a href="https://github.com/AFutureD/Lumi/blob/main/docs/FEAT.md">文档</a> ·
+      <a href="https://github.com/AFutureD/Lumi/blob/main/CHANGELOG.md">更新日志</a>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-brand">
+      <img src="/assets/lumi-app-icon.svg" alt="" width="20" height="20">
+      <span>Lumi</span>
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/AFutureD/Lumi">GitHub</a>
+      <!-- TODO: Privacy / Terms 页面上线后在此恢复链接 -->
+      <a href="#top">Back to top</a>
+    </div>
+    <span>© 2026 Lumi</span>
+  </footer>
+
+</div>
+<script>
+  // The push-card stack is a fixed 504×452 composition; scale it down when
+  // the viewport can't fit it.
+  (function () {
+    var stage = document.querySelector('.stack-stage');
+    var stack = document.querySelector('.stack');
+    function fit() {
+      var s = Math.min(1, stage.clientWidth / 504);
+      stack.style.transform = 'scale(' + s + ')';
+      stage.style.height = Math.round(452 * s) + 'px';
+    }
+    fit();
+    addEventListener('resize', fit);
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website",
+      "runtimeExecutable": "Website/node_modules/.bin/wrangler",
+      "runtimeArgs": ["dev", "--cwd", "Website", "--port", "8788"],
+      "port": 8788
+    }
+  ]
+}

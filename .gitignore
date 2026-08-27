@@ -5,7 +5,10 @@ DerivedData/
 xcuserdata/
 Relay/node_modules/
 Relay/.wrangler/
+Website/node_modules/
+Website/.wrangler/
 Relay/coverage/
 Relay/.dev.vars
 *.xcuserstate
 *.profraw
+.claude/worktrees/

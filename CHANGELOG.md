@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 官网
+
+- 上线落地页 lumi.huanan.app：单页十节（Hero 推送卡片、三大功能、Privacy boundary、三步上手、FAQ），含移动端单列布局；以 Cloudflare Worker 静态资产部署。
+
 ### 会话查看
 
 - [Lumi for Mac] - Session 列表改为两行式：状态点前置 + 标题 + 行尾相对时间，副标题显示 Agent 图标与 CLI 上报的 `model · reasoning effort` 原值。

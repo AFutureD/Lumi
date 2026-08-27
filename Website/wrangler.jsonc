@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lumi-website",
+  // Static landing page: assets-only Worker, no script.
+  "compatibility_date": "2026-08-16",
+  // One public address, same policy as the Relay: the workers.dev alias
+  // stays off and the custom domain is the only way in.
+  "workers_dev": false,
+  "routes": [{ "pattern": "lumi.huanan.app", "custom_domain": true }],
+  "assets": {
+    "directory": "./public",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}
