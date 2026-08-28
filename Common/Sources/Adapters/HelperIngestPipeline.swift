@@ -31,6 +31,9 @@ public struct HelperIngestReport: Hashable, Sendable {
     public var warnings: [String]
     /// Decisions worth surfacing under `--verbose` that are not problems.
     public var notes: [String]
+    /// Wrapper app that spawned the agent process, when one was detected.
+    public var wrapperKind: String?
+    public var wrapperAgentID: String?
 
     public init(
         provider: AgentProvider,
@@ -40,7 +43,9 @@ public struct HelperIngestReport: Hashable, Sendable {
         richSourceLinesRead: Int = 0,
         eventsSent: Int = 0,
         warnings: [String] = [],
-        notes: [String] = []
+        notes: [String] = [],
+        wrapperKind: String? = nil,
+        wrapperAgentID: String? = nil
     ) {
         self.provider = provider
         self.sessionID = sessionID
@@ -50,6 +55,8 @@ public struct HelperIngestReport: Hashable, Sendable {
         self.eventsSent = eventsSent
         self.warnings = warnings
         self.notes = notes
+        self.wrapperKind = wrapperKind
+        self.wrapperAgentID = wrapperAgentID
     }
 }
 
@@ -222,6 +229,33 @@ public struct HelperIngestPipeline: Sendable {
         batch.append(contentsOf: hookEvents)
         if let childIdentity { batch.append(childIdentity) }
 
+        // 3b. Wrapper app (Paseo / Raft). Its title overrides the native one,
+        // re-asserted on every hook so renames follow and daemon-side replays
+        // self-heal: appended last, an identity-only event beats any title an
+        // adapter event in this batch carried. Only the hook's own session —
+        // subagents keep their spawn-description titles. A batch that discards
+        // the session gets no title: the row is gone.
+        if !batch.contains(where: { $0.disposition == .discard }),
+           let wrapper = AaaS.detect(environment: environment, homeDirectory: homeDirectory) {
+            report.wrapperKind = wrapper.kind.rawValue
+            report.wrapperAgentID = wrapper.agentID
+            if let title = wrapper.title {
+                let occurredAt = root.date("timestamp") ?? Date()
+                batch.append(AgentIngressEvent(
+                    eventID: EventID(
+                        "wrapper-title:\(wrapper.kind.rawValue):\(sessionID.rawValue)"
+                            + ":\(occurredAt.timeIntervalSince1970):\(Self.stableHash(title))"
+                    ),
+                    sessionID: sessionID,
+                    agent: provider == .claude ? .claude : .codex,
+                    occurredAt: occurredAt,
+                    title: title
+                ))
+            } else {
+                report.notes.append("wrapper_title_unavailable kind=\(wrapper.kind.rawValue)")
+            }
+        }
+
         // 4. Ship, then advance the cursor (only after the daemon accepted).
         if !batch.isEmpty {
             try port.ingest(batch)
@@ -246,6 +280,17 @@ public struct HelperIngestPipeline: Sendable {
         } catch {
             return false
         }
+    }
+
+    /// FNV-1a. Event IDs must be reproducible across processes (the helper is
+    /// one process per hook); `hashValue` is seeded per launch and is not.
+    static func stableHash(_ value: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x0000_0100_0000_01b3
+        }
+        return hash
     }
 
     // MARK: - Provider detection

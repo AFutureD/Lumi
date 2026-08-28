@@ -176,6 +176,24 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 
 hook 进程是实时通道，且受 agent 的 hook 超时约束，不做无界工作：daemon 没有该文件的游标（冷启动）且文件超过 1 MiB 时，第 3 步跳过整本回放，改发 `backfill_session` 把历史交给 daemon 的串行回填队列（父 transcript 与 subagent sidechain 同一规则）。此时 hook 以 `richSourceAvailable=false` 摊开自己的 prompt / tool 行占位——回填靠同一套稳定 item ID 覆盖它们；`SessionEnd` 的“从未使用即丢弃”启发式在委托回填时不生效，避免误删真会话。
 
+## AaaS 识别（Paseo / Raft）
+
+AaaS（Agentic AI as a Service）指包装受支持 CLI、代管会话的应用，如 Paseo 与 Raft：它们的会话本就经上述 hook 链路进入，AaaS 只额外贡献一个标题。helper 从 hook 进程继承的环境变量识别 AaaS（`AaaS`，`Common/Adapters`），并读其本地落盘取标题：
+
+| AaaS | 识别 env | 标题来源 |
+| --- | --- | --- |
+| Paseo | `PASEO_AGENT_ID` | `~/.paseo/agents/*/<agentId>.json` 顶层 `title`（`PASEO_HOME` 可改根目录；按 agent id glob，不重算 Paseo 的目录名清洗规则） |
+| Raft | `SLOCK_AGENT_ID` | `$SLOCK_CLI_TRANSPORT_DIR/claude-system-prompt.md` 首行 `You are "<名>"` 的引号内容（Raft 无会话标题概念，agent 名是其唯一持久身份） |
+
+语义与约束：
+
+- AaaS 标题**覆盖**原生标题：每次 hook 在事件批**末位**追加一条 identity-only 标题事件（Event ID `wrapper-title:<kind>:<s>:<ts>:<titleHash>`，内容派生、跨进程稳定）。批内按序应用，因此压过 CodexAdapter 每事件附带的原生线程名；每次 hook 重申，AaaS 里改名下个 hook 即跟进，daemon 侧 watcher / 回放造成的临时覆盖也随之自愈。
+- 只作用于 hook 自己的 session：subagent 子会话保留各自的 spawn 描述标题。携带 `discard` 的批不追加（行将删除的会话不需要标题）。
+- 检测永不失败：env 命中但文件缺失/损坏时照常检出（report 记 `wrapper_title_unavailable`），ingest 不受影响。
+- 两组 env 同时存在时按 Paseo → Raft 定序（嵌套包装的边角）。
+- 红线：绝不读取 `~/.slock/computer/servers/*/runner.state.json`——其中有明文 API key。
+- 已知局限：Codex 会话 `reingest_session` 在 daemon 侧重建（无 AaaS env），标题暂回原生线程名，下个 hook 自愈；Claude 会话的重建无标题产出，靠 reingester 的非默认标题保留直接存续。
+
 ## 稳定 ID
 
 - Hook Event ID：`hook:` / `claude-hook:` + SHA-256(raw stdin)。rollout/transcript Event ID：`rollout:` / `claude-transcript:` + SHA-256(path + byteOffset + line)。

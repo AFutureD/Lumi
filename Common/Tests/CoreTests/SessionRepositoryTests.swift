@@ -202,6 +202,19 @@ import Testing
     #expect(updated.title == current.title)
     #expect(updated.lineage == lineage)
     #expect(updated.phase == .responding)
+
+    // The same guard holds for identity-only events (wrapper titles): the
+    // title lands, the subagent verdict stays.
+    let identityOnly = AgentIngressEvent(
+        eventID: EventID("wrapper-title"),
+        sessionID: current.id,
+        agent: .codex,
+        occurredAt: date.addingTimeInterval(2),
+        title: "Paseo title"
+    )
+    let retitled = SessionReduction.summary(applying: identityOnly, to: current)
+    #expect(retitled.agent == .codexSubagent)
+    #expect(retitled.title == "Paseo title")
 }
 
 @Test func retainedDiagnosticsDoNotReorderVisibleSessionActivity() async throws {

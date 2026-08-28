@@ -519,3 +519,118 @@ private func hook(_ fields: [String: Any]) -> Data {
     #expect(warm.richSourceLinesRead == 2)
     #expect(port.backfillRequests.count == 2)
 }
+
+// MARK: - Wrapper apps (Paseo / Raft)
+
+private func writePaseoTitle(home: URL, agentID: String, title: String) throws {
+    let dir = home.appendingPathComponent(".paseo/agents/Users-x-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try #"{"id":"\#(agentID)","provider":"claude","title":"\#(title)"}"#
+        .write(to: dir.appendingPathComponent("\(agentID).json"), atomically: true, encoding: .utf8)
+}
+
+@Test func paseoTitleOverridesTheDefaultClaudeTitleAndFollowsRenames() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "7d0a6a1e-0000-4000-8000-000000000001"
+    let paseoAgent = "14d83292-45c5-45dd-9825-be971183e17b"
+    try writePaseoTitle(home: home, agentID: paseoAgent, title: "你会使用 computer use 么？")
+
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(
+        port: port,
+        environment: ["PASEO_AGENT_ID": paseoAgent, "CLAUDE_PROJECT_DIR": "/tmp/proj"],
+        homeDirectory: home
+    )
+    let base: [String: Any] = [
+        "session_id": session,
+        "transcript_path": home.appendingPathComponent(".claude/projects/-tmp-proj/\(session).jsonl").path,
+        "cwd": "/tmp/proj",
+    ]
+    let report = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "SessionStart", "source": "startup"]) { $1 }))
+    #expect(report.wrapperKind == "paseo")
+    #expect(report.wrapperAgentID == paseoAgent)
+    #expect(port.detail(SessionID(session))?.summary.title == "你会使用 computer use 么？")
+    let identity = try #require(port.ingested.last)
+    #expect(identity.title != nil && identity.lifecycle == nil && identity.timelineItem == nil)
+    #expect(identity.agent == .claude)
+
+    // Renamed in Paseo: the next hook re-asserts the new title.
+    try writePaseoTitle(home: home, agentID: paseoAgent, title: "改名之后")
+    _ = try pipeline.run(hookData: hook(base.merging(["hook_event_name": "UserPromptSubmit", "prompt": "hi"]) { $1 }))
+    #expect(port.detail(SessionID(session))?.summary.title == "改名之后")
+}
+
+@Test func paseoTitleBeatsTheNativeCodexThreadTitle() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "01a01326-0000-7000-8000-000000000002"
+    let paseoAgent = "aaaaaaaa-0000-0000-0000-000000000003"
+    try writePaseoTitle(home: home, agentID: paseoAgent, title: "Paseo 里的标题")
+
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(
+        port: port,
+        environment: ["PASEO_AGENT_ID": paseoAgent],
+        homeDirectory: home,
+        codexAdapter: CodexAdapter(threads: FixedThreadIdentities(identities: [
+            SessionID(session): CodexThreadIdentity(sessionID: SessionID(session), title: "Native thread title"),
+        ]))
+    )
+    _ = try pipeline.run(hookData: hook([
+        "session_id": session, "turn_id": "turn-1", "cwd": "/tmp/proj", "hook_event_name": "Stop",
+    ]))
+    #expect(port.detail(SessionID(session))?.summary.title == "Paseo 里的标题")
+}
+
+@Test func raftSessionsAreTitledByTheAgentName() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "084a5101-0000-4000-8000-000000000004"
+    let transport = home.appendingPathComponent(".slock/cli-transport/agent/pid-1", isDirectory: true)
+    try FileManager.default.createDirectory(at: transport, withIntermediateDirectories: true)
+    try #"You are "Fable", an AI agent in Raft (former Slock) — a collaborative platform."#
+        .write(to: transport.appendingPathComponent("claude-system-prompt.md"), atomically: true, encoding: .utf8)
+
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(
+        port: port,
+        environment: [
+            "SLOCK_AGENT_ID": "65e8e001-1d5e-4fe0-b977-aac119612fc6",
+            "SLOCK_CLI_TRANSPORT_DIR": transport.path,
+            "CLAUDE_PROJECT_DIR": "/tmp/proj",
+        ],
+        homeDirectory: home
+    )
+    let report = try pipeline.run(hookData: hook([
+        "session_id": session,
+        "transcript_path": home.appendingPathComponent(".claude/projects/-tmp-proj/\(session).jsonl").path,
+        "cwd": "/tmp/proj",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+    ]))
+    #expect(report.wrapperKind == "raft")
+    #expect(port.detail(SessionID(session))?.summary.title == "Fable")
+}
+
+@Test func wrapperWithoutAReadableTitleLeavesTheDefaultAndNotes() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let session = "7d0a6a1e-0000-4000-8000-000000000005"
+    let port = MemoryDaemonPort()
+    let pipeline = HelperIngestPipeline(
+        port: port,
+        environment: ["PASEO_AGENT_ID": "no-such-agent", "CLAUDE_PROJECT_DIR": "/tmp/proj"],
+        homeDirectory: home
+    )
+    let report = try pipeline.run(hookData: hook([
+        "session_id": session,
+        "transcript_path": home.appendingPathComponent(".claude/projects/-tmp-proj/\(session).jsonl").path,
+        "cwd": "/tmp/proj",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+    ]))
+    #expect(report.wrapperKind == "paseo")
+    #expect(report.notes.contains("wrapper_title_unavailable kind=paseo"))
+    #expect(port.detail(SessionID(session))?.summary.title == "Claude Session")
+}

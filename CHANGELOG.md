@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 会话查看
+
+- 由 AaaS 应用（Agentic AI as a Service，如 Paseo、Raft）启动的 Session 标题改用该应用自己的标题：Paseo 显示其 agent 标题（含改名跟进），Raft 显示 agent 名（如 Fable）；不再停留在默认的“Claude Session / Codex Session”。
+
+### Daemon
+
+- Helper 新增环境变量诊断日志：`LUMI_LOG_ENV=1`（或 `--verbose`）时每次 hook 记录一行 env 键名列表（只记键名，不记值）；`hook_ingested` 行新增检出的 AaaS 应用及其 agent id。
+
 ### 配对与同步
 
 - [Lumi for Mac] - 配对码到期后不再自动换新：卡片停在 Expired（二维码收起、旧码变灰），点 New code 或重新进入“iPhone”页才出新码。配对页开着但没人配对时，不再每 5 分钟向 Relay 申请一次新码。

@@ -54,15 +54,26 @@ enum SparkMain {
         // line here and, as the IPC request id, every daemon line it caused.
         let runID = makeTraceID()
         withTrace(runID) {
-            run(selection: selection, started: started)
+            run(selection: selection, verbose: verbose, started: started)
         }
         exit(EXIT_SUCCESS)
     }
 
-    private static func run(selection: HelperAgentSelection, started: ContinuousClock.Instant) {
+    private static func run(selection: HelperAgentSelection, verbose: Bool, started: ContinuousClock.Instant) {
         do {
             let input = FileHandle.standardInput.readDataToEndOfFile()
             guard !input.isEmpty else { throw HelperError.emptyInput }
+
+            // Key names only, never values: the inherited environment carries
+            // API keys and tokens. `LUMI_LOG_ENV=1` lifts the line to info so
+            // a wrapper app's markers can be diagnosed without --verbose.
+            let environment = ProcessInfo.processInfo.environment
+            let dumpRequested = environment["LUMI_LOG_ENV"] == "1"
+            if verbose || dumpRequested {
+                log.log(level: dumpRequested ? .info : .debug, "hook_environment", metadata: .fields([
+                    "keys": environment.keys.sorted().joined(separator: ","),
+                ]))
+            }
 
             let socketPath = DaemonEndpoint.defaultSocketPath()
             let port = IPCDaemonPort(client: DaemonIPCClient(), socketPath: socketPath)
@@ -90,6 +101,8 @@ enum SparkMain {
                 "lines": report.richSourceLinesRead,
                 "events": report.eventsSent,
                 "hook_bytes": input.count,
+                "wrapper": report.wrapperKind,
+                "wrapper_agent": report.wrapperAgentID,
                 "ms": LogClock.milliseconds(since: started),
             ]))
         } catch {

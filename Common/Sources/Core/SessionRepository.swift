@@ -110,16 +110,15 @@ public enum SessionReduction {
             && event.lifecycle == nil
             && event.phase == nil
             && event.timelineItem == nil
-        let agent = if isIdentityOnly {
-            event.agent
-        } else if shouldUpdateMetadata {
-            if event.lineage == nil,
-               event.agent == .codex,
-               current?.agent == .codexSubagent {
-                current!.agent
-            } else {
-                event.agent
-            }
+        // A `.codex` event with no lineage cannot demote a session already
+        // known to be a subagent thread — only lineage carries that verdict.
+        // Identity-only events (subagent meta, wrapper titles) get the same
+        // guard: they update the agent but never flip subagent → codex.
+        let demotesSubagent = event.lineage == nil
+            && event.agent == .codex
+            && current?.agent == .codexSubagent
+        let agent = if isIdentityOnly || shouldUpdateMetadata {
+            demotesSubagent ? current!.agent : event.agent
         } else {
             current?.agent ?? event.agent
         }
