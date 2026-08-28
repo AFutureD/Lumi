@@ -78,7 +78,7 @@ final class SettingsModel: ObservableObject {
         }
         lastCodexTrustProbe = Date()
         Task { [weak self] in
-            let state = await Task.detached(priority: .utility) { CodexHookTrustAuthorizer().probe() }.value
+            let state = await CodexHookTrustAuthorizer().probe(qos: .utility)
             self?.codexHookTrust = state
         }
     }
@@ -196,7 +196,7 @@ final class SettingsModel: ObservableObject {
         guard !isAuthorizingCodexHooks else { return }
         isAuthorizingCodexHooks = true
         Task { [weak self] in
-            let state = await Task.detached(priority: .userInitiated) { CodexHookTrustAuthorizer().authorize() }.value
+            let state = await CodexHookTrustAuthorizer().authorize(qos: .userInitiated)
             guard let self else { return }
             isAuthorizingCodexHooks = false
             lastCodexTrustProbe = Date()

@@ -123,7 +123,7 @@ public final class ApplicationCoordinator: NSObject {
                 }
             }
             guard codex.isInstalled() else { return }
-            let trust = CodexHookTrustAuthorizer().authorize()
+            let trust = await CodexHookTrustAuthorizer().authorize(qos: .utility)
             if trust.needsAttention {
                 log.warning("codex_hook_trust_unresolved", metadata: .fields(["state": String(describing: trust)]))
             } else {

@@ -25,6 +25,8 @@ public enum CodexAppServerError: Error, Sendable {
     case executableNotFound
     case launchFailed(String)
     case timedOut(method: String)
+    /// The app-server exited (or its stdout closed) before replying.
+    case terminated(method: String)
     case rpc(code: Int, message: String)
     case malformedResponse(method: String)
 }
@@ -57,6 +59,7 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
     private var nextID = 0
     private var started = false
     private var closed = false
+    private var outputAtEOF = false
 
     public init(executableURL: URL, timeout: TimeInterval = 15) {
         self.executableURL = executableURL
@@ -103,7 +106,7 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
         closed = true
         condition.unlock()
         guard wasRunning else { return }
-        output.fileHandleForReading.readabilityHandler = nil
+        // The reader thread unblocks on the EOF this produces.
         try? input.fileHandleForWriting.close()
         if process.isRunning { process.terminate() }
     }
@@ -129,9 +132,6 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
         process.standardOutput = output
         // Codex logs to stderr; keep it off the app's own log.
         process.standardError = FileHandle.nullDevice
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.ingest(handle.availableData)
-        }
         do {
             try process.run()
         } catch {
@@ -140,6 +140,24 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
             condition.unlock()
             throw CodexAppServerError.launchFailed(String(describing: error))
         }
+        // A dedicated reader thread instead of `readabilityHandler`: the
+        // handler runs on a default-QoS dispatch queue, and a condition wait
+        // gets no priority donation from it — a user-initiated caller waiting
+        // in `request` is a priority inversion. The reader is the only thing
+        // that can satisfy that wait, so it runs at the highest QoS a caller
+        // can bring.
+        let handle = output.fileHandleForReading
+        let reader = Thread { [weak self] in
+            while true {
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else { break }
+                self?.ingest(chunk)
+            }
+            self?.markOutputAtEOF()
+        }
+        reader.name = "codex-app-server-reader"
+        reader.qualityOfService = .userInitiated
+        reader.start()
         _ = try request(
             method: "initialize",
             params: try JSONSerialization.data(withJSONObject: [
@@ -171,6 +189,10 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
         let deadline = Date(timeIntervalSinceNow: timeout)
         condition.lock()
         while pending[id] == nil {
+            if outputAtEOF {
+                condition.unlock()
+                throw CodexAppServerError.terminated(method: method)
+            }
             guard condition.wait(until: deadline) else {
                 condition.unlock()
                 throw CodexAppServerError.timedOut(method: method)
@@ -208,6 +230,15 @@ public final class CodexAppServerProcessTransport: CodexAppServerTransport, @unc
             pending[id] = object
         }
         condition.broadcast()
+    }
+
+    /// Wakes every waiter when the app-server's stdout closes, so a dead
+    /// process fails requests immediately instead of running out the timeout.
+    private func markOutputAtEOF() {
+        condition.lock()
+        outputAtEOF = true
+        condition.broadcast()
+        condition.unlock()
     }
 }
 
@@ -249,6 +280,29 @@ public struct CodexHookTrustAuthorizer: Sendable {
 
     public init(makeTransport: @escaping TransportFactory = { try CodexAppServerProcessTransport() }) {
         self.makeTransport = makeTransport
+    }
+
+    /// The transport blocks its calling thread for up to its timeout per
+    /// round trip. These variants run that wait on a plain dispatch queue —
+    /// never on a Swift Concurrency cooperative thread — at a QoS no higher
+    /// than the transport's reader, so the wait cannot invert priorities.
+    public func probe(qos: DispatchQoS.QoSClass) async -> CodexHookTrustState {
+        await Self.offCooperativePool(qos: qos) { probe() }
+    }
+
+    public func authorize(qos: DispatchQoS.QoSClass) async -> CodexHookTrustState {
+        await Self.offCooperativePool(qos: qos) { authorize() }
+    }
+
+    private static func offCooperativePool(
+        qos: DispatchQoS.QoSClass,
+        _ work: @escaping @Sendable () -> CodexHookTrustState
+    ) async -> CodexHookTrustState {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: qos).async {
+                continuation.resume(returning: work())
+            }
+        }
     }
 
     /// Read-only: reports the current state without writing anything.

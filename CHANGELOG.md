@@ -12,6 +12,10 @@
 
 - Helper 新增环境变量诊断日志：`LUMI_LOG_ENV=1`（或 `--verbose`）时每次 hook 记录一行 env 键名列表（只记键名，不记值）；`hook_ingested` 行新增检出的 AaaS 应用及其 agent id。
 
+### 会话采集
+
+- [Lumi for Mac] - 修复 Codex hook 授权链路的线程优先级反转（Thread Performance Checker 告警）：app-server 应答读取移到专属高优先级线程，等待也不再占用 Swift Concurrency 线程池；codex 进程意外退出时授权立即失败返回，不再干等 15 秒超时。
+
 ### 配对与同步
 
 - [Lumi for Mac] - 配对码到期后不再自动换新：卡片停在 Expired（二维码收起、旧码变灰），点 New code 或重新进入“iPhone”页才出新码。配对页开着但没人配对时，不再每 5 分钟向 Relay 申请一次新码。
