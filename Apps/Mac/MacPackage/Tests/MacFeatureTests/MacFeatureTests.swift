@@ -313,6 +313,48 @@ func pairingContentUsesVerticalLayoutBelowItsHorizontalMinimum() {
     #expect(!PairingViewController.usesCompactContentLayout(availableWidth: minimum))
 }
 
+/// GitHub #1: an expired code stays on the card; the page only asks for a
+/// code where it has none, never to replace one that ran out.
+@Test @MainActor
+func pairingPageNeverReplacesAnExpiredCodeOnItsOwn() {
+    typealias State = PairingViewController.CodeCardState
+    let now = Date(timeIntervalSince1970: 1_000)
+    let relayURL = URL(string: "https://relay.example.test")!
+    let live = RelayPairingSession(sessionID: "s1", code: "7KF3QP", relayURL: relayURL, expiresAt: now.addingTimeInterval(90))
+    let ranOut = RelayPairingSession(sessionID: "s1", code: "7KF3QP", relayURL: relayURL, expiresAt: now)
+    let marked = RelayPairingSession(
+        sessionID: "s1", code: "7KF3QP", relayURL: relayURL, expiresAt: now.addingTimeInterval(90), expiredAt: now
+    )
+    let ended = RelayPairingSession(
+        sessionID: "s1", code: "7KF3QP", relayURL: relayURL, expiresAt: now,
+        outcome: RelayPairingOutcome(kind: .approved, deviceName: "iPhone", at: now)
+    )
+    func state(_ pairing: RelayPairingSession?, connected: Bool = true, failure: String? = nil) -> State {
+        PairingViewController.codeCardState(pairing: pairing, isConnected: connected, startFailure: failure, now: now)
+    }
+
+    #expect(state(live) == .live(live))
+    // The clock flips the card at 0:00; the daemon's mark does the same
+    // regardless of what the clock says.
+    #expect(state(ranOut) == .expired(ranOut))
+    #expect(state(marked) == .expired(marked))
+    // A result on screen is not an expiry, whatever the countdown says.
+    #expect(state(ended) == .live(ended))
+    #expect(state(nil) == .idle)
+    #expect(state(live, connected: false) == .unavailable)
+    #expect(state(nil, failure: "boom") == .failed("boom"))
+
+    // Start only where there is no code: on arrival, after a failure, once a
+    // result was shown. An expired code waits for a person.
+    #expect(PairingViewController.shouldStartCode(in: .idle))
+    #expect(PairingViewController.shouldStartCode(in: .failed("boom")))
+    #expect(PairingViewController.shouldStartCode(in: .live(ended)))
+    #expect(!PairingViewController.shouldStartCode(in: .live(live)))
+    #expect(!PairingViewController.shouldStartCode(in: .expired(ranOut)))
+    #expect(!PairingViewController.shouldStartCode(in: .expired(marked)))
+    #expect(!PairingViewController.shouldStartCode(in: .unavailable))
+}
+
 /// Fixtures use epoch-relative dates, so tests pass an epoch-relative `now`
 /// that keeps them inside the seven-day window.
 private let nookNow = Date(timeIntervalSince1970: 100)

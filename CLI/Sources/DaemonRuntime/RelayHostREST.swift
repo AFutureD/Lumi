@@ -130,6 +130,10 @@ public actor InMemoryRelayHostREST: RelayHostREST {
         sessionOrder.last.flatMap { sessions[$0] }
     }
 
+    /// Every `cancelPairing` the daemon sent, in order — a session the Relay
+    /// already ended (expired, decided) must not get one.
+    public private(set) var cancelRequests: [String] = []
+
     public func registerHost(hostID: HostID, hostSecret: String) async throws {
         registered[hostID] = hostSecret
     }
@@ -183,6 +187,7 @@ public actor InMemoryRelayHostREST: RelayHostREST {
     }
 
     public func cancelPairing(hostID: HostID, sessionID: String, hostSecret: String) async throws {
+        cancelRequests.append(sessionID)
         guard var session = sessions[sessionID] else { return }
         if !session.state.isTerminal { session.state = .cancelled }
         sessions[sessionID] = session

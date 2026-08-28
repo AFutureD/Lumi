@@ -26,7 +26,7 @@ flowchart TD
 ```
 
 - `MacSessionStore`：daemon 连接、Mac SQLite、Session 选择和观察通知。
-- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态、已配对设备和当前配对会话，发起 / 决定（Match、Don't match）/ 取消配对，撤销设备、删除已撤销设备的记录（Remove）；配对页可见时 1 秒轮询 `relay_pairing_state`，否则 30 秒轮询 `relay_status`，并跟随 `health.relayConnected` 变化立即刷新。只有 `relay_unavailable` 才把连接状态打成不可用，单个动作失败（撤销、开始配对）只显示错误。配对码到期或一次结果显示完（2 秒）时配对页可见则自动开始新码；离开配对页即取消会话。App 不持有 Relay 凭据或连接，配对状态机在 daemon。
+- `RelayHostStatusClient`：经 IPC 读取 daemon 的 Relay 连接状态、已配对设备和当前配对会话，发起 / 决定（Match、Don't match）/ 取消配对，撤销设备、删除已撤销设备的记录（Remove）；配对页可见时 1 秒轮询 `relay_pairing_state`，否则 30 秒轮询 `relay_status`，并跟随 `health.relayConnected` 变化立即刷新。只有 `relay_unavailable` 才把连接状态打成不可用，单个动作失败（撤销、开始配对）只显示错误。新码只在三个时机申请：进入配对页、点 New code、一次结果显示完（2 秒）；码到期时 daemon 把会话标为 expired 并保留，配对页停在过期态，不自动续码。离开配对页即取消会话。App 不持有 Relay 凭据或连接，配对状态机在 daemon。
 - `MainWindowController`：AppKit 窗口、toolbar 和三栏导航。
 - `HaloController`：OpenNook、紧凑状态、活动队列和 Notch 设置桥接。
 

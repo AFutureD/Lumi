@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 配对与同步
+
+- [Lumi for Mac] - 配对码到期后不再自动换新：卡片停在 Expired（二维码收起、旧码变灰），点 New code 或重新进入“iPhone”页才出新码。配对页开着但没人配对时，不再每 5 分钟向 Relay 申请一次新码。
+
 ### 官网
 
 - Download 按钮改为直接下载最新版 dmg：链接统一走 `/download`，由官网现场解析 GitHub 最新 release 后跳转；解析失败时退回 releases 页面。

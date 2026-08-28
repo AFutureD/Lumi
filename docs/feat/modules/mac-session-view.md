@@ -96,7 +96,7 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 
 ### 配对一台 iPhone
 
-“iPhone”页面常驻一张配对码卡片：二维码、6 位配对码（显示为 `7KF-3QP` 的三三分组）、Relay 地址、`Expires in m:ss` 倒计时和寿命进度条。码 5 分钟到点自动换新，旧码立刻作废；卡片上的 New code 可手动换新（有 iPhone 待确认时暂不可用）；离开页面码也作废。iPhone 输码或扫码提交后，卡片下方出现 “<iPhone 名> wants to pair”、Relay 地址和时间、一组 6 位数字（如 `482 913`）以及 Don't match / Match 两个按钮：和 iPhone 屏幕上的数字一样才点 Match（默认键盘焦点在 Don't match，Return 不触发任何一个）；60 秒没点自动拒绝。结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始；iPhone 那边中途取消则不显示结果，直接换新码。整个确认过程要停在这一页完成——离开页面或退出 Mac App 会取消进行中的配对；daemon 重启后这一页会自动出新码。规则见 [IOS-R-002](./iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)。
+“iPhone”页面常驻一张配对码卡片：二维码、6 位配对码（显示为 `7KF-3QP` 的三三分组）、Relay 地址、`Expires in m:ss` 倒计时和寿命进度条。码 5 分钟有效，到点立刻作废，但不会自动换新：卡片停在过期态（倒计时处显示 Expired、二维码收起、旧码变灰），提示点 New code 再出一个。只在进入这一页、点 New code 或一次配对有了结果之后才申请新码；New code 在有 iPhone 待确认时暂不可用。离开页面码也作废，回来时重新出码。iPhone 输码或扫码提交后，卡片下方出现 “<iPhone 名> wants to pair”、Relay 地址和时间、一组 6 位数字（如 `482 913`）以及 Don't match / Match 两个按钮：和 iPhone 屏幕上的数字一样才点 Match（默认键盘焦点在 Don't match，Return 不触发任何一个）；60 秒没点自动拒绝。结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始；iPhone 那边中途取消则不显示结果，直接换新码。整个确认过程要停在这一页完成——离开页面或退出 Mac App 会取消进行中的配对；daemon 重启后这一页会自动出新码。规则见 [IOS-R-002](./iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)。
 
 ### 管理已配对 iPhone
 

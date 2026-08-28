@@ -1,8 +1,12 @@
 import DesignSystem
+import Diagnostics
+import Logging
 import Remote
 import Transport
 import AppKit
 import CoreImage
+
+private let pairingLog = Logger(label: "pairing")
 
 /// Pair an iPhone (design 1b): the Mac is the side that shows the code and
 /// the side that decides. Left column: the code card (QR + six characters +
@@ -12,8 +16,10 @@ import CoreImage
 /// the right, subtitle, rule — the toolbar carries only the sidebar chrome.
 ///
 /// The daemon owns the pairing state machine; this screen drives rotation —
-/// it starts a session when it appears, when the code expires and after an
-/// outcome was shown — and cancels when it leaves.
+/// it starts a session when it appears, on New code, and after an outcome
+/// was shown — and cancels when it leaves. It never starts one on a timer:
+/// an expired code stays on the card, marked Expired, until a person asks
+/// for another (GitHub #1 — an open page must not keep asking the Relay).
 @MainActor
 final class PairingViewController: NSViewController {
     private typealias Pairing = DesignSystem.Pairing
@@ -33,9 +39,10 @@ final class PairingViewController: NSViewController {
     private let qrImageView = NSImageView()
     private let codeLabel = NSTextField(labelWithString: "")
     private let relayHostLabel = NSTextField(labelWithString: "")
+    private let expiryCaptionLabel = NSTextField(labelWithString: "Expires in")
     private let expiryValueLabel = NSTextField(labelWithString: "")
     private let countdownBar = CountdownBarView()
-    private let codeHelpLabel = NSTextField(wrappingLabelWithString: "到点自动换一个新码，旧码立刻作废。二维码里只有 Relay 地址和这 6 位。")
+    private let codeHelpLabel = NSTextField(wrappingLabelWithString: PairingViewController.liveCodeHelp)
     private let newCodeButton = NSButton(title: "New code", target: nil, action: nil)
 
     // Pending card
@@ -82,6 +89,8 @@ final class PairingViewController: NSViewController {
     /// The iPhone that paired on this visit, tinted once in the list.
     private var recentlyPairedDeviceName: String?
     private var pendingCardVisible = false
+    /// The session whose expiry this page already logged (one line per code).
+    private var loggedExpiredSessionID: String?
 
     private var canGenerateCode: Bool {
         relayHost.isConnected && !isStarting && relayHost.pairing?.pending == nil
@@ -106,7 +115,7 @@ final class PairingViewController: NSViewController {
         super.viewDidAppear()
         relayHost.setPairingViewVisible(true)
         startTicking()
-        ensureLiveCode()
+        startCodeIfMissing()
     }
 
     override func viewDidDisappear() {
@@ -267,12 +276,11 @@ final class PairingViewController: NSViewController {
         relayHostLabel.maximumNumberOfLines = 1
         relayHostLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let expiresCaption = NSTextField(labelWithString: "Expires in")
-        expiresCaption.font = Design.Font.caption
-        expiresCaption.textColor = .tertiaryLabelColor
+        expiryCaptionLabel.font = Design.Font.caption
+        expiryCaptionLabel.textColor = .tertiaryLabelColor
         expiryValueLabel.font = .design(Pairing.expiryValue)
         expiryValueLabel.textColor = Design.Color.inkPrimary
-        let expiryRow = NSStackView(views: [expiresCaption, expiryValueLabel])
+        let expiryRow = NSStackView(views: [expiryCaptionLabel, expiryValueLabel])
         expiryRow.orientation = .horizontal
         expiryRow.spacing = 6
         expiryRow.alignment = .firstBaseline
@@ -529,15 +537,59 @@ final class PairingViewController: NSViewController {
         renderPending()
         reloadDevices()
         newCodeButton.isEnabled = canGenerateCode
-        if view.window != nil { ensureLiveCode() }
+        if view.window != nil { startCodeIfMissing() }
     }
 
-    /// A code is on screen whenever the page is up and the Relay is there.
-    private func ensureLiveCode() {
-        guard view.window != nil, relayHost.isConnected, !isStarting, shownOutcome == nil else { return }
-        if let pairing = relayHost.pairing {
-            guard pairing.expiresAt <= Date() || pairing.outcome != nil else { return }
+    // MARK: Code card
+
+    /// What the code card shows, derived from the daemon's session and the
+    /// clock. Pure so the start policy below is testable.
+    enum CodeCardState: Equatable {
+        /// `relay_pairing_start` failed; the reason is on the card.
+        case failed(String)
+        /// No Relay connection: nothing to pair through.
+        case unavailable
+        /// Connected, no session yet (page just opened, or the iPhone cancelled).
+        case idle
+        /// A claimable code, or one that ended with an outcome (result card up).
+        case live(RelayPairingSession)
+        /// The code ran out. Stays until a person asks for a new one.
+        case expired(RelayPairingSession)
+    }
+
+    static func codeCardState(
+        pairing: RelayPairingSession?, isConnected: Bool, startFailure: String?, now: Date
+    ) -> CodeCardState {
+        if let startFailure { return .failed(startFailure) }
+        guard isConnected else { return .unavailable }
+        guard let pairing else { return .idle }
+        // The daemon marks expiry (`expiredAt`); the clock only lets the card
+        // flip at 0:00 instead of on the next poll.
+        if pairing.outcome == nil, pairing.expiredAt != nil || pairing.expiresAt <= now {
+            return .expired(pairing)
         }
+        return .live(pairing)
+    }
+
+    /// Whether the page should ask the daemon for a code in this state — the
+    /// page never replaces a code on its own, so `expired` is never a reason.
+    static func shouldStartCode(in state: CodeCardState) -> Bool {
+        switch state {
+        case .idle, .failed: true
+        case .live(let pairing): pairing.outcome != nil
+        case .unavailable, .expired: false
+        }
+    }
+
+    private var codeCardState: CodeCardState {
+        Self.codeCardState(pairing: relayHost.pairing, isConnected: relayHost.isConnected, startFailure: startFailure, now: Date())
+    }
+
+    /// Starts a code where the page has none: on arrival, after a failure
+    /// (slow retry), and once a result was shown. Never for an expired one.
+    private func startCodeIfMissing() {
+        guard view.window != nil, relayHost.isConnected, !isStarting, shownOutcome == nil else { return }
+        guard Self.shouldStartCode(in: codeCardState) else { return }
         // A failed start retries on a slow clock (or via `New code`), never
         // once a second — and never as a modal alert.
         if startFailure != nil, let lastStartAttempt, Date().timeIntervalSince(lastStartAttempt) < 30 { return }
@@ -568,37 +620,69 @@ final class PairingViewController: NSViewController {
         }
     }
 
+    private static let liveCodeHelp = "5 分钟内有效，到点作废、不自动换新。二维码里只有 Relay 地址和这 6 位。"
+    private static let expiredCodeHelp = "这个码已失效，iPhone 上输它不会通过。点 New code 换一个。"
+
     private func renderCode() {
-        if let startFailure {
+        let state = codeCardState
+        switch state {
+        case .failed(let failure):
+            showCodePlaceholder(relayHost: "—")
+            codeHelpLabel.stringValue = "拿不到配对码：\(failure)\n每 30 秒自动重试，或点 New code。"
+        case .unavailable:
+            showCodePlaceholder(relayHost: "Relay unavailable")
+            codeHelpLabel.stringValue = Self.liveCodeHelp
+        case .idle:
+            showCodePlaceholder(relayHost: "—")
+            codeHelpLabel.stringValue = Self.liveCodeHelp
+        case .live(let pairing):
+            codeLabel.attributedStringValue = Self.codeText(Self.displayCode(pairing))
+            relayHostLabel.stringValue = RelayURLValidation.displayHost(pairing.relayURL)
+            let link = PairingLink(relayURL: pairing.relayURL, code: pairing.code)
+            if qrImageView.toolTip != link.url.absoluteString {
+                qrImageView.image = Self.qrImage(text: link.url.absoluteString)
+                qrImageView.toolTip = link.url.absoluteString
+            }
+            codeHelpLabel.stringValue = Self.liveCodeHelp
+            expiryCaptionLabel.stringValue = "Expires in"
+            renderCountdown(pairing)
+        case .expired(let pairing):
+            // The dead code stays readable (greyed) so someone mid-typing on
+            // the iPhone sees which one just stopped working; the QR goes.
             qrImageView.image = nil
-            codeLabel.attributedStringValue = Self.codeText("···-···")
-            relayHostLabel.stringValue = "—"
-            expiryValueLabel.stringValue = "—"
+            qrImageView.toolTip = nil
+            codeLabel.attributedStringValue = Self.codeText(Self.displayCode(pairing), dimmed: true)
+            relayHostLabel.stringValue = RelayURLValidation.displayHost(pairing.relayURL)
+            expiryCaptionLabel.stringValue = "Code"
+            expiryValueLabel.stringValue = "Expired"
             countdownBar.progress = 0
-            codeHelpLabel.stringValue = "拿不到配对码：\(startFailure)\n每 30 秒自动重试，或点 New code。"
-            return
+            codeHelpLabel.stringValue = Self.expiredCodeHelp
+            if loggedExpiredSessionID != pairing.sessionID {
+                loggedExpiredSessionID = pairing.sessionID
+                pairingLog.info("pairing_page_code_expired", metadata: .fields([
+                    "expires_at": pairing.expiresAt,
+                    "daemon_marked": pairing.expiredAt != nil,
+                ]))
+            }
         }
-        codeHelpLabel.stringValue = "到点自动换一个新码，旧码立刻作废。二维码里只有 Relay 地址和这 6 位。"
-        guard let pairing = relayHost.pairing, relayHost.isConnected else {
-            qrImageView.image = nil
-            codeLabel.attributedStringValue = Self.codeText("···-···")
-            relayHostLabel.stringValue = relayHost.isConnected ? "—" : "Relay unavailable"
-            expiryValueLabel.stringValue = "—"
-            countdownBar.progress = 0
-            return
-        }
-        codeLabel.attributedStringValue = Self.codeText(PairingCode.display(pairing.code).replacingOccurrences(of: " ", with: "-"))
-        relayHostLabel.stringValue = RelayURLValidation.displayHost(pairing.relayURL)
-        let link = PairingLink(relayURL: pairing.relayURL, code: pairing.code)
-        if qrImageView.toolTip != link.url.absoluteString {
-            qrImageView.image = Self.qrImage(text: link.url.absoluteString)
-            qrImageView.toolTip = link.url.absoluteString
-        }
-        renderCountdown()
     }
 
-    private func renderCountdown() {
-        guard let pairing = relayHost.pairing else { return }
+    /// No code to show: placeholders everywhere, no QR.
+    private func showCodePlaceholder(relayHost: String) {
+        qrImageView.image = nil
+        qrImageView.toolTip = nil
+        codeLabel.attributedStringValue = Self.codeText("···-···")
+        relayHostLabel.stringValue = relayHost
+        expiryCaptionLabel.stringValue = "Expires in"
+        expiryValueLabel.stringValue = "—"
+        countdownBar.progress = 0
+    }
+
+    private static func displayCode(_ pairing: RelayPairingSession) -> String {
+        PairingCode.display(pairing.code).replacingOccurrences(of: " ", with: "-")
+    }
+
+    private func renderCountdown(_ pairing: RelayPairingSession) {
         let remaining = max(0, pairing.expiresAt.timeIntervalSinceNow)
         expiryValueLabel.stringValue = Self.clock(remaining)
         let lifetime = max(1, pairing.expiresAt.timeIntervalSince(pairing.expiresAt.addingTimeInterval(-5 * 60)))
@@ -620,7 +704,7 @@ final class PairingViewController: NSViewController {
                 guard !Task.isCancelled, let self else { return }
                 self.shownOutcome = nil
                 self.setPendingCard(visible: false)
-                self.ensureLiveCode()
+                self.startCodeIfMissing()
             }
         }
         if let outcome = shownOutcome {
@@ -655,7 +739,7 @@ final class PairingViewController: NSViewController {
         dontMatchButton.isEnabled = !isDeciding
         matchButton.isEnabled = !isDeciding
         pendingCard.setPending(true)
-        renderCountdown()
+        if let pairing { renderCountdown(pairing) }
         let wasVisible = pendingCardVisible
         setPendingCard(visible: true)
         if !wasVisible { view.window?.makeFirstResponder(dontMatchButton) }
@@ -689,8 +773,8 @@ final class PairingViewController: NSViewController {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self else { return }
-                self.renderCountdown()
-                self.ensureLiveCode()
+                self.renderCode()
+                self.startCodeIfMissing()
             }
         }
     }
@@ -882,12 +966,12 @@ final class PairingViewController: NSViewController {
     }
 
     /// `7KF-3QP` as one run: the hyphen greyed so the halves read as a pair,
-    /// the rest in the code style's tracking.
-    private static func codeText(_ text: String) -> NSAttributedString {
+    /// the rest in the code style's tracking. `dimmed` is the expired code.
+    private static func codeText(_ text: String, dimmed: Bool = false) -> NSAttributedString {
         let result = NSMutableAttributedString(string: text, attributes: [
             .font: NSFont.design(Pairing.code),
             .kern: Pairing.code.tracking,
-            .foregroundColor: Design.Color.inkPrimary,
+            .foregroundColor: dimmed ? NSColor.tertiaryLabelColor : Design.Color.inkPrimary,
         ])
         if let hyphen = text.range(of: "-") {
             result.addAttribute(.foregroundColor, value: NSColor(Pairing.codeHyphen), range: NSRange(hyphen, in: text))

@@ -73,7 +73,7 @@ sequenceDiagram
     participant R as Relay
     participant I as iPhone
 
-    A->>D: IPC relay_pairing_start（进入配对页 / 码到期 / New code）
+    A->>D: IPC relay_pairing_start（进入配对页 / New code / 结果显示完）
     D->>D: nonceH = random(32) commit = H(hostPub ‖ nonceH)
     D->>R: POST pairing-sessions {commit, hostPublicKey, hostName, expiresAt}   [Host secret]
     R->>R: HostRelay 建 session（取消上一个）；Directory 分配唯一 code
@@ -111,9 +111,10 @@ sequenceDiagram
 
 - **配对码**：6 位 Crockford Base32（`0-9 A-Z` 去 I L O U，30 bit），由 `PairingDirectory` 生成并保证与活跃码不撞；5 分钟；单次；输入归一化（大写、去空格 / 连字符、`O→0`、`I→1`、`L→1`、`U→V`）。码不参与任何密钥。
 - **状态机在 daemon**：Mac App 退出不影响进行中的配对；daemon 重启 = 内存会话丢失，Relay 侧会话到期自然作废，重开配对页即可。
-- **Mac 侧节奏**：配对页可见时 1 秒轮询 `relay_pairing_state`；码到期自动 `relay_pairing_start` 续一个；离开页面 `relay_pairing_cancel`，码立刻作废。
+- **Mac 侧节奏**：配对页可见时 1 秒轮询 `relay_pairing_state`；新码只由人触发（进入页面、New code、一次结果显示完），不按时间续码；离开页面 `relay_pairing_cancel`，码立刻作废。
+- **到期**：daemon 的 5 分钟定时器（或 Relay 的 `pairing_closed{reason:"expired"}`）把会话标为 expired、清掉等待中的 iPhone，但保留会话；`relay_pairing_state` 带 `expiredAt`，Mac 显示 Expired，直到用户点 New code 或离开页面。配对页开着没人配对时，不再每 5 分钟向 Relay 建一次会话。
 - **超时**：pending 60 秒无人点 → daemon 自动 `decision{approved:false}`，iPhone 看到 rejected。
-- **取消**：iPhone 取消 → Relay 给 daemon `pairing_closed`，daemon 丢掉该会话，Mac 不显示结果、直接开始新码。结果态只有 Paired / Pairing declined，停 2 秒后卡片收起、新码开始。
+- **取消**：iPhone 取消 → Relay 给 daemon `pairing_closed{reason:"cancelled"}`，daemon 丢掉该会话，Mac 不显示结果、直接开始新码。结果态只有 Paired / Pairing declined，停 2 秒后卡片收起、新码开始。
 - **失败不落盘**：iPhone 任何一步失败都不写 Keychain。
 
 ### 钥匙为什么不信 Relay

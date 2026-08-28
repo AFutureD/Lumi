@@ -66,7 +66,7 @@
 ### 配对码不对或已过期
 
 - 用户看到：Add Mac 页六格变红，提示“配对码不对或已过期”，输入内容保留。
-- 可执行动作：回到 Mac 看一眼当前的码（到点会自动换新），改好后 Try again（[IOS-R-002](../modules/iphone-live-view.md#ios-r-002-配对码短时且一次性)）。
+- 可执行动作：回到 Mac 看一眼当前的码（显示 Expired 就点 New code），改好后 Try again（[IOS-R-002](../modules/iphone-live-view.md#ios-r-002-配对码短时且一次性)）。
 - 数据影响：不会创建设备授权。
 
 ### Mac 不在线
@@ -106,7 +106,7 @@
 
 ## 为同一台 Mac 配对第二台 iPhone
 
-1. 在 Mac 打开“iPhone”页（码到点自动换新，也可点 New code）。
+1. 在 Mac 打开“iPhone”页（码显示 Expired 就点 New code）。
 2. 在第二台 iPhone 输码或扫码，两边对数字，在 Mac 上点 Match。
 3. 返回 Mac 查看 Paired iPhones。
    - 系统反馈：出现第二条独立记录，两台 iPhone 都可以在线查看。

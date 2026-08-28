@@ -88,7 +88,9 @@ public actor RelayHostService {
     private var stopped = false
     /// The one pairing session this Mac has going (code on screen, maybe an
     /// iPhone waiting for Match). The Mac app drives rotation: it starts a
-    /// new one when the page opens, the code expires or an outcome was shown.
+    /// new one when the page opens, on New code, or after an outcome was
+    /// shown — never on a timer. An expired code stays here, marked, so the
+    /// Mac can show it as expired instead of asking for another one.
     private var pairing: LivePairing?
 
     private struct LivePairing {
@@ -96,6 +98,7 @@ public actor RelayHostService {
         let code: String
         let expiresAt: Date
         let nonce: Data
+        var expiredAt: Date?
         var pending: RelayPairingPending?
         var pendingDevicePublicKey: Data?
         var outcome: RelayPairingOutcome?
@@ -209,8 +212,8 @@ public actor RelayHostService {
         return pairingSnapshot(live, relayURL: credentials.relayURL)
     }
 
-    /// The live session as the Mac app shows it; `nil` when there is none
-    /// (never started, expired, or cancelled).
+    /// The session as the Mac app shows it — live, ended, or expired;
+    /// `nil` when there is none (never started, or cancelled).
     public func pairingSession() -> RelayPairingSession? {
         guard let pairing else { return nil }
         return pairingSnapshot(pairing, relayURL: credentials?.relayURL ?? relayURL)
@@ -255,7 +258,7 @@ public actor RelayHostService {
     private func pairingSnapshot(_ live: LivePairing, relayURL: URL) -> RelayPairingSession {
         RelayPairingSession(
             sessionID: live.sessionID, code: live.code, relayURL: relayURL,
-            expiresAt: live.expiresAt, pending: live.pending, outcome: live.outcome
+            expiresAt: live.expiresAt, expiredAt: live.expiredAt, pending: live.pending, outcome: live.outcome
         )
     }
 
@@ -267,11 +270,12 @@ public actor RelayHostService {
         pairingLog.info("pairing_cancelled", metadata: .fields([
             "session": Self.shortPairingID(live.sessionID),
             "had_outcome": live.outcome != nil,
+            "expired": live.expiredAt != nil,
             "notify_relay": notifyRelay,
         ]))
-        // A session that already ended (approved / rejected / cancelled by the
-        // iPhone) is terminal at the Relay; only a live one needs cancelling.
-        guard notifyRelay, live.outcome == nil, let credentials else { return }
+        // A session that already ended (approved / rejected / expired) is
+        // terminal at the Relay; only a live one needs cancelling.
+        guard notifyRelay, live.outcome == nil, live.expiredAt == nil, let credentials else { return }
         do {
             try await rest.cancelPairing(hostID: credentials.hostID, sessionID: live.sessionID, hostSecret: credentials.hostSecret)
         } catch {
@@ -279,11 +283,22 @@ public actor RelayHostService {
         }
     }
 
+    /// The code ran out (our timer, or the Relay said so). The session stays,
+    /// marked expired and with no iPhone on it, until the Mac asks for a new
+    /// code or leaves the page — the Mac shows "Expired", it never gets a
+    /// replacement it did not ask for.
     private func pairingExpired(_ sessionID: String) {
-        guard let live = pairing, live.sessionID == sessionID else { return }
+        guard var live = pairing, live.sessionID == sessionID, live.expiredAt == nil else { return }
         live.decisionTask?.cancel()
-        pairing = nil
-        pairingLog.info("pairing_expired", metadata: .fields(["session": Self.shortPairingID(sessionID), "had_pending": live.pending != nil]))
+        live.decisionTask = nil
+        live.expiryTask?.cancel()
+        live.expiryTask = nil
+        let hadPending = live.pending != nil
+        live.pending = nil
+        live.pendingDevicePublicKey = nil
+        live.expiredAt = Date()
+        pairing = live
+        pairingLog.info("pairing_expired", metadata: .fields(["session": Self.shortPairingID(sessionID), "had_pending": hadPending]))
     }
 
     /// `pairing_device` from the Relay: an iPhone submitted its identity and
@@ -292,7 +307,7 @@ public actor RelayHostService {
     /// Relay in the middle cannot pick a key that matches.
     private func handlePairingDevice(_ notice: RelayPairingDeviceNotice) async {
         guard var live = pairing, live.sessionID == notice.sessionID, live.pending == nil, live.outcome == nil,
-              let credentials else {
+              live.expiredAt == nil, let credentials else {
             pairingLog.warning("pairing_device_ignored", metadata: .fields([
                 "session": Self.shortPairingID(notice.sessionID),
                 "live_session": pairing.map { Self.shortPairingID($0.sessionID) },
@@ -342,13 +357,20 @@ public actor RelayHostService {
         }
     }
 
-    /// `pairing_closed` from the Relay: the iPhone cancelled, or the Relay
-    /// found the session expired on its side. Either way the session is
-    /// gone — same as our own expiry timer — and the Mac app starts a fresh
-    /// code (no result card: "任一端取消，另一端回到起点").
+    /// `pairing_closed` from the Relay. `expired`: the Relay's clock beat our
+    /// timer — same outcome, the code stays on screen as expired. Anything
+    /// else (the iPhone cancelled): the session is gone, no result card, and
+    /// the Mac app starts a fresh code ("任一端取消，另一端回到起点").
     private func handlePairingClosed(sessionID: String, reason: String) {
         pairingLog.info("pairing_closed_by_relay", metadata: .fields(["session": Self.shortPairingID(sessionID), "reason": reason]))
-        pairingExpired(sessionID)
+        if reason == "expired" {
+            pairingExpired(sessionID)
+            return
+        }
+        guard let live = pairing, live.sessionID == sessionID else { return }
+        live.decisionTask?.cancel()
+        live.expiryTask?.cancel()
+        pairing = nil
     }
 
     public func refreshDevices() async {

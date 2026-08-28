@@ -24,6 +24,7 @@ private struct RelayHarness {
         healthProvider: @escaping RelayHostService.HealthProvider = { nil },
         preregisterDevice: Bool = true,
         pinDeviceKey: Bool = true,
+        pairingCodeLifetime: Duration = .seconds(5 * 60),
         pairingDecisionTimeout: Duration = .seconds(60)
     ) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -52,6 +53,7 @@ private struct RelayHarness {
             reconnectDelay: .milliseconds(50),
             deviceRefreshInterval: .seconds(60),
             healthInterval: .seconds(60),
+            pairingCodeLifetime: pairingCodeLifetime,
             pairingDecisionTimeout: pairingDecisionTimeout
         )
     }
@@ -449,6 +451,57 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.service.cancelPairing()
     #expect(await harness.service.pairingSession() == nil)
     #expect(await harness.rest.sessions[third.sessionID]?.state == .cancelled)
+    await harness.service.stop()
+}
+
+@Test func hostKeepsAnExpiredCodeOnScreenInsteadOfReplacingIt() async throws {
+    let harness = RelayHarness(preregisterDevice: false, pairingCodeLifetime: .milliseconds(150))
+    _ = try await harness.connect()
+
+    // The timer runs out: the session stays, marked expired, and nothing is
+    // asked of the Relay — a new code only comes from a person.
+    let first = try await harness.service.startPairing()
+    #expect(first.expiredAt == nil)
+    for _ in 0..<300 where await harness.service.pairingSession()?.expiredAt == nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let expired = try #require(await harness.service.pairingSession())
+    #expect(expired.sessionID == first.sessionID)
+    #expect(expired.code == first.code)
+    #expect(expired.expiredAt != nil)
+    #expect(expired.pending == nil)
+    #expect(expired.outcome == nil)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(await harness.service.pairingSession() == expired)
+    #expect(await harness.rest.sessions.count == 1)
+
+    // New code from the Mac: the expired one is dropped without a cancel
+    // round-trip (it is already terminal at the Relay).
+    let second = try await harness.service.startPairing()
+    #expect(second.sessionID != first.sessionID)
+    #expect(second.expiredAt == nil)
+    #expect(await harness.rest.cancelRequests.isEmpty)
+    #expect(await harness.service.pairingSession() == second)
+
+    // The Relay's own expiry (its clock ahead of ours) lands in the same
+    // state; an iPhone that was waiting is gone with the code.
+    try await harness.submitDevice()
+    #expect(await harness.service.pairingSession()?.pending != nil)
+    await harness.link.sendPairingClosedToHost(sessionID: second.sessionID, reason: "expired")
+    for _ in 0..<300 where await harness.service.pairingSession()?.expiredAt == nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let closed = try #require(await harness.service.pairingSession())
+    #expect(closed.sessionID == second.sessionID)
+    #expect(closed.expiredAt != nil)
+    #expect(closed.pending == nil)
+    await #expect(throws: RelayPairingError.self) { try await harness.service.decidePairing(approved: true) }
+
+    // Leaving the page forgets it — again without telling the Relay about
+    // a session it closed itself.
+    await harness.service.cancelPairing()
+    #expect(await harness.service.pairingSession() == nil)
+    #expect(await harness.rest.cancelRequests.isEmpty)
     await harness.service.stop()
 }
 
