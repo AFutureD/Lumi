@@ -23,7 +23,8 @@ final class RelayHostStatusClient {
     private(set) var isConnected = false
     private(set) var lastError: String?
     private(set) var devices: [PairedDevice] = []
-    /// The daemon's live pairing session (code, pending iPhone, outcome);
+    /// The daemon's pairing session (code, pending iPhone, outcome, or an
+    /// expired code the daemon keeps until the page asks for another);
     /// `nil` when none. Refreshed every second while the Pairing page is up.
     private(set) var pairing: RelayPairingSession?
     private var observers: [UUID: () -> Void] = [:]

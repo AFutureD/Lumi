@@ -103,7 +103,7 @@
 
 | 提示 | 意思 | 下一步 |
 | --- | --- | --- |
-| 配对码不对或已过期（六格变红） | 输错，或 Mac 上的码已换新 / 被用过 | 回 Mac 看一眼当前的码，改好后 Try again |
+| 配对码不对或已过期（六格变红） | 输错，或 Mac 上的码已到期 / 换新 / 被用过 | 回 Mac 看一眼当前的码（显示 Expired 就点 New code），改好后 Try again |
 | Mac 不在线 | 码是对的，但这台 Mac 没连上 Relay | 确认 Mac 上 Lumi 在运行、显示 Relay connected，Try again（接着这一次继续） |
 | Mac 拒绝了这次配对 | Mac 点了 Don't match，或 60 秒没点 | 如果只是没来得及点，Start over 重来；数字确实不一样就别配 |
 | 校验失败（红色） | Relay 返回的数据不一致——可能有人在中间换钥匙 | 换个网络 Try again；仍失败停止配对，检查这台 Mac 用的 Relay |
@@ -112,7 +112,7 @@ Mac 上的码在中途换掉或过期，也按第一种处理——回到输码�
 
 **恢复步骤**：
 
-1. 在 Mac“iPhone”页确认 Relay connected，看当前的 6 位码（到点自动换新，也可点 New code）。
+1. 在 Mac“iPhone”页确认 Relay connected，看当前的 6 位码（显示 Expired 就点 New code 换一个）。
 2. 在 iPhone Macs Tab 点 `+` > “Add Device”，输入这 6 位或扫二维码；自托管 Relay 时展开 Advanced 核对 Relay URL。
 3. 两边出现同一组 6 位数字后，在 Mac 上点 Match。
 

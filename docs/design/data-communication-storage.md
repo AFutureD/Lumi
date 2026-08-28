@@ -101,8 +101,8 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 | `health` | daemon 状态（含 `relayConnected`） | 短连接请求 |
 | `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
 | `relay_status` | daemon 的 Relay Host 状态：已连接、Host ID、Relay URL、错误、已配对设备（含是否已钉住公钥） | Mac App 侧栏 / 工具栏（30 秒轮询；配对页可见时由 `relay_pairing_state` 代替） |
-| `relay_pairing_start` | 开始 / 续一个配对会话：daemon 生成 nonce 与承诺，向 Relay 建会话、领 6 位配对码；返回 `{sessionID, code, relayURL, expiresAt}`（上一个会话随之取消） | 短连接请求（进入配对页、码到期、New code） |
-| `relay_pairing_state` | 当前配对会话：code、relayURL、expiresAt、`pending {deviceName, sas}`（iPhone 已提交）、`outcome`（Paired / declined / cancelled）；没有会话时为空 | Mac App 配对页（可见时 1 秒轮询） |
+| `relay_pairing_start` | 开始一个新配对会话：daemon 生成 nonce 与承诺，向 Relay 建会话、领 6 位配对码；返回 `{sessionID, code, relayURL, expiresAt}`（上一个会话随之取消） | 短连接请求（进入配对页、New code、结果显示完） |
+| `relay_pairing_state` | 当前配对会话：code、relayURL、expiresAt、`expiredAt`（码已到期，会话保留到用户换码或离开）、`pending {deviceName, sas}`（iPhone 已提交）、`outcome`（Paired / declined）；没有会话时为空 | Mac App 配对页（可见时 1 秒轮询） |
 | `relay_pairing_decide {approved}` | Match / Don't match：daemon 向 Relay 提交决定；Match 同时钉住设备公钥并刷新设备列表 | 短连接请求 |
 | `relay_pairing_cancel` | 离开配对页：取消会话，码立刻作废 | 短连接请求 |
 | `relay_revoke_device` / `relay_refresh_devices` | 撤销一台 iPhone / 重新拉设备列表，都返回最新状态 | 短连接请求 |

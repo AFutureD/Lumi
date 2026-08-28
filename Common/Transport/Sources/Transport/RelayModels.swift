@@ -203,15 +203,22 @@ public struct RelayPairingOutcome: Codable, Hashable, Sendable {
     }
 }
 
-/// The daemon's live pairing session as the Mac app shows it
+/// The daemon's pairing session as the Mac app shows it
 /// (`relay_pairing_start` / `relay_pairing_state`). The code is the only
 /// thing a person types; the Relay URL is what the Mac's daemon is on.
+///
+/// The session outlives its code: once `expiredAt` is set the code is dead
+/// at the Relay and the Mac shows it as expired until someone asks for a new
+/// one — the daemon never replaces a code on its own.
 public struct RelayPairingSession: Codable, Hashable, Sendable {
     public let sessionID: String
     /// Six Crockford Base32 characters (`"7KF3QP"`); shown as `7KF 3QP`.
     public let code: String
     public let relayURL: URL
     public let expiresAt: Date
+    /// When the daemon (its own timer, or the Relay's `pairing_closed`)
+    /// declared the code dead; `nil` while it can still be claimed.
+    public let expiredAt: Date?
     public let pending: RelayPairingPending?
     public let outcome: RelayPairingOutcome?
 
@@ -220,6 +227,7 @@ public struct RelayPairingSession: Codable, Hashable, Sendable {
         code: String,
         relayURL: URL,
         expiresAt: Date,
+        expiredAt: Date? = nil,
         pending: RelayPairingPending? = nil,
         outcome: RelayPairingOutcome? = nil
     ) {
@@ -227,6 +235,7 @@ public struct RelayPairingSession: Codable, Hashable, Sendable {
         self.code = code
         self.relayURL = relayURL
         self.expiresAt = expiresAt
+        self.expiredAt = expiredAt
         self.pending = pending
         self.outcome = outcome
     }
@@ -236,6 +245,7 @@ public struct RelayPairingSession: Codable, Hashable, Sendable {
         case code
         case relayURL
         case expiresAt
+        case expiredAt
         case pending
         case outcome
     }
@@ -246,6 +256,7 @@ public struct RelayPairingSession: Codable, Hashable, Sendable {
         code = try c.decode(String.self, forKey: .code)
         relayURL = try c.decode(URL.self, forKey: .relayURL)
         expiresAt = try c.decode(Date.self, forKey: .expiresAt)
+        expiredAt = try c.decodeIfPresent(Date.self, forKey: .expiredAt)
         pending = try c.decodeIfPresent(RelayPairingPending.self, forKey: .pending)
         outcome = try c.decodeIfPresent(RelayPairingOutcome.self, forKey: .outcome)
     }
