@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 官网
+
+- Download 按钮改为直接下载最新版 dmg：链接统一走 `/download`，由官网现场解析 GitHub 最新 release 后跳转；解析失败时退回 releases 页面。
+
 ## [0.1.4] - 2026-08-27
 
 ### 官网
