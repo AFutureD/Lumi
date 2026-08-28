@@ -1,9 +1,32 @@
 name: Release
 
+# Three independent release targets share this workflow:
+#
+#   apps     macOS (sign, notarize, appcast, GitHub Release) + iOS TestFlight
+#   relay    Relay worker deploy
+#   website  website worker deploy
+#
+# A v* tag push releases all three. A manual dispatch releases the targets
+# picked in its inputs; the apps target derives its version from the tag, so
+# dispatch it on a v* tag ref (relay and website run from any ref).
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: "Release macOS + iOS (needs a v* tag ref)"
+        type: boolean
+        default: false
+      relay:
+        description: "Deploy Relay worker"
+        type: boolean
+        default: false
+      website:
+        description: "Deploy website worker"
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,13 +39,27 @@ env:
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
+  # ─── apps: validate → tests → macos → ios, then publish ──────────────────
+  # Gating the chain's root is enough: a skipped job skips everything that
+  # needs it.
+
   validate:
     name: Validate tag and version
+    if: github.event_name == 'push' || inputs.apps
     runs-on: macos-26
     outputs:
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.version.outputs.build }}
     steps:
+      - name: Require a v* tag ref
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || {
+            echo "The apps target derives its version from the tag; rerun the dispatch on a v* tag ref" >&2
+            exit 1
+          }
+
       - name: Check out tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -435,39 +472,6 @@ jobs:
           [[ -z "${KEYCHAIN_PATH:-}" ]] || security delete-keychain "$KEYCHAIN_PATH"
           rm -f "${P12_PATH:-}" "${ASC_KEY_PATH:-}"
 
-  relay:
-    name: Deploy Relay worker
-    needs: validate
-    runs-on: ubuntu-24.04
-    environment: release
-    defaults:
-      run:
-        working-directory: Relay
-    steps:
-      - name: Check out tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up pnpm via corepack
-        run: corepack enable pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check and test
-        run: |
-          set -euo pipefail
-          pnpm run check
-          pnpm test
-
-      - name: Deploy to Cloudflare
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          : "${CLOUDFLARE_API_TOKEN:?Missing CLOUDFLARE_API_TOKEN}"
-          pnpm exec wrangler deploy
-
   publish:
     name: Publish GitHub Release
     needs: [validate, macos]
@@ -527,3 +531,67 @@ jobs:
           done
           echo "Published latest appcast did not converge to the verified asset" >&2
           exit 1
+
+  # ─── relay ────────────────────────────────────────────────────────────────
+
+  relay:
+    name: Deploy Relay worker
+    if: github.event_name == 'push' || inputs.relay
+    runs-on: ubuntu-24.04
+    environment: release
+    defaults:
+      run:
+        working-directory: Relay
+    steps:
+      - name: Check out ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm via corepack
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check and test
+        run: |
+          set -euo pipefail
+          pnpm run check
+          pnpm test
+
+      - name: Deploy to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Missing CLOUDFLARE_API_TOKEN}"
+          pnpm exec wrangler deploy
+
+  # ─── website ──────────────────────────────────────────────────────────────
+
+  website:
+    name: Deploy website worker
+    if: github.event_name == 'push' || inputs.website
+    runs-on: ubuntu-24.04
+    environment: release
+    defaults:
+      run:
+        working-directory: Website
+    steps:
+      - name: Check out ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm via corepack
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Missing CLOUDFLARE_API_TOKEN}"
+          pnpm exec wrangler deploy
