@@ -16,18 +16,55 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 
 ### Sessions：标准三栏
 
-1. 左栏是固定 224 pt 的全高侧边栏，分为 Monitor / Connections / Application 三组：Sessions 行右侧显示 Lumi 当前保存的 Session 总数（Main Session 与 Subagent 都计入，因此通常大于中栏行数），iPhone 行右侧在 Relay 连接时显示绿点。工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
-2. 中栏是 Session 列表，按创建时间倒序（新建的 Session 排最上；创建时间不会变，所以后续活动、改标题都不会打乱顺序），不分组、不分档，一行一个 Main Session；工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级，过滤后没有命中时显示 No matching Sessions。每个 Session 占两行：第一行是状态色点 + 标题 + 行尾等宽相对时间（悬停提示 Last update）；第二行左端是 13 pt 的 Agent 原色图标（Agent 名进悬停提示），紧跟灰色的 `model · reasoning effort`——直接显示 CLI 上报的原值（如 `claude-sonnet-4-5 · high`）；只有 model 时省掉分隔点，只有 effort 时单独显示 effort，两者都没有则这一段留空。带 Subagent 的 Session 在第二行右端叠放各 Subagent 的状态色圆点（按 running → waiting → failed → done 排列，最多画五个，数量与分档进悬停提示，如 `3 subagents · 2 running · 1 done`）加一枚折叠箭头；点这一簇展开或收起，不改变选中。展开后一个 Subagent 一行（子 Agent 的子 Agent 也平铺在同一组里），按启动先后从早到晚排列——读下来就是这次运行的执行顺序：6 pt 状态点 + 名称 + 行尾的持续时间（悬停提示 Duration；运行中每秒走动，结束后停在最终用时），全部逐行列出、不分页。Running / Waiting / Failed 的 Session 默认展开，Completed 默认收起；手动切换后记住你的选择（本次运行期间），直到该行的默认档位变化为止。键盘左右方向键展开或收起当前行，上下方向键在 Session 行与已展开的 Subagent 行之间移动选中。选中分两级且互斥：点第一二行选中整个 Session——满宽中性灰底、贴到列两边；点 Subagent 行选中该 Subagent——圆角灰底，右栏切到它自己的详情，此时父级行不再高亮。悬停用更浅的同形灰底。相对时间只用单一单位（0s / 12s / 4m / 1h / 3d，不出现 now 或 yesterday 之类文字）；持续时间最多两段（12s / 3m 43s / 1h 02m / 2d 03h）。两者都每秒刷新。标题固定一行，原始换行和连续空白归一为空格，超出可用宽度时尾部省略（空间不够先截断 model，相对时间永不被挤压）；工具栏标题遵循相同规则。Main Session 使用 Agent 上报的标题，Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题；首次还没有标题时使用“`<Agent 名>` Session”（如 Codex Session、Claude Session）。没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。中栏宽度只在用户拖动分隔线时改变（240–480 pt），窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
-3. 右栏顶部是工具栏中的 Session 标题和三个动作按钮（Refresh、Delete Session、Toggle Inspector），标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。其下 Activity 独占主区，右侧是 288 pt 的 Inspector：顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段。Inspector 由 Toggle Inspector 显隐，状态在重启后保留。Activity 按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。Activity 粘顶 header 包含标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮：默认 User、Model、Exec 三行横向时间轴（Session 开始/结束、压缩与配置横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；点击任一方格会跳到对应记录并短暂高亮；点击记录行查看原始 JSON；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮。密度偏好在重启后保留；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
+1. 左栏——固定 224 pt 的全高侧边栏。
+   - 分 Monitor / Connections / Application 三组。
+   - Sessions 行右侧显示 Lumi 当前保存的 Session 总数（Main Session 与 Subagent 都计入，因此通常大于中栏行数）；iPhone 行右侧在 Relay 连接时显示绿点。
+   - 工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
+2. 中栏——Session 列表。
+   - 排序：按创建时间倒序（新建的排最上）；创建时间不会变，后续活动、改标题都不打乱顺序。不分组、不分档，一行一个 Main Session。
+   - 行结构（两行）：第一行是状态色点 + 标题 + 行尾等宽相对时间（悬停提示 Last update）；第二行左端是 13 pt 的 Agent 原色图标（Agent 名进悬停提示），紧跟灰色的 `model · reasoning effort`——直接显示 CLI 上报的原值（如 `claude-sonnet-4-5 · high`）；只有 model 时省掉分隔点，只有 effort 时单独显示 effort，两者都没有则留空。
+   - 标题来源（Agent 上报）：Main Session 使用 Agent 上报的标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时显示“`<Agent 名>` Session”（如 Codex Session、Claude Session）。
+   - 标题来源（AaaS）：由 AaaS 应用（Agentic AI as a Service，如 Paseo、Raft）启动的 Session 改用该应用自己的标题——Paseo 显示你在 Paseo 里看到（或改过）的 agent 标题，Raft 显示 agent 名（如 Fable）；改名后随下一次 Agent 活动更新。
+   - 标题排版：固定一行，原始换行和连续空白归一为空格，超出可用宽度时尾部省略（空间不够先截断 model，相对时间永不被挤压）；工具栏标题遵循相同规则。
+   - Subagent 簇：带 Subagent 的行在第二行右端叠放各 Subagent 的状态色圆点（按 running → waiting → failed → done 排列，最多画五个，数量与分档进悬停提示，如 `3 subagents · 2 running · 1 done`）加一枚折叠箭头；点这一簇展开或收起，不改变选中。
+   - 展开后：一个 Subagent 一行（子 Agent 的子 Agent 也平铺在同一组里），按启动先后从早到晚排列——读下来就是这次运行的执行顺序；每行是 6 pt 状态点 + 名称 + 行尾持续时间（悬停提示 Duration；运行中每秒走动，结束后停在最终用时）；全部逐行列出、不分页。
+   - 展开默认档：Running / Waiting / Failed 默认展开，Completed 默认收起；手动切换后记住你的选择（本次运行期间），直到该行的默认档位变化为止。
+   - 键盘：左右方向键展开或收起当前行，上下方向键在 Session 行与已展开的 Subagent 行之间移动选中。
+   - 选中：两级且互斥。点第一二行选中整个 Session——满宽中性灰底、贴到列两边；点 Subagent 行选中该 Subagent——圆角灰底，右栏切到它自己的详情，父级行不再高亮。悬停用更浅的同形灰底。
+   - 时间格式：相对时间只用单一单位（0s / 12s / 4m / 1h / 3d，不出现 now 或 yesterday 之类文字）；持续时间最多两段（12s / 3m 43s / 1h 02m / 2d 03h）；两者都每秒刷新。
+   - 过滤：工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级；没有命中时显示 No matching Sessions。
+   - 孤立 Subagent：没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
+   - 宽度：只在用户拖动分隔线时改变（240–480 pt），窗口缩放和数据刷新都不会改变它；Sessions 与 Settings 各自记住上次宽度。
+3. 右栏——详情。
+   - 工具栏：Session 标题 + 三个动作按钮（Refresh、Delete Session、Toggle Inspector）；标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。
+   - Inspector：右侧 288 pt。顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段；由 Toggle Inspector 显隐，状态在重启后保留。
+   - Activity：独占主区，按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。
+   - Activity 粘顶 header：标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮。默认 User、Model、Exec 三行横向时间轴（Session 开始/结束、压缩与配置横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；密度偏好在重启后保留。
+   - Activity 交互：点击任一时间轴方格跳到对应记录并短暂高亮；点击记录行查看原始 JSON；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
 4. 窗口缩放只改变右栏中 Activity 主区的宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
-“iPhone”页面收起中栏：页头是标题“Pair an iPhone”、右侧的 Relay 状态药丸和一行提示。内容区左列是配对码卡片（二维码、6 位配对码、Relay 地址、5 分钟倒计时与进度条、New code），iPhone 提交后它下方出现待确认卡片（“<iPhone 名> wants to pair”、6 位数字、Don't match / Match）；右列是 Paired iPhones 列表；窗口较窄时两列改为上下排布。Relay 连接、配对过程和配对记录都由 daemon 持有，这一页只是它的控制台；离开这一页，配对码即作废，进行中的配对也随之取消——配对全程需要停在这一页完成。已配对 iPhone 的日常同步不需要打开 Mac App。“Settings”继续保持三栏：中栏列出 General、Notch、Daemon、Agents 和 About（44 pt 高的两行式行、灰底选中），右栏是工具栏标题 + 副标题 subheader + 卡片式内容；各面板内容见[设置面板](#设置面板)。
+### iPhone 与 Settings 页面
+
+- “iPhone”页面收起中栏：页头是标题“Pair an iPhone”、右侧的 Relay 状态药丸和一行提示。
+- 内容区左列是配对码卡片（二维码、6 位配对码、Relay 地址、5 分钟倒计时与进度条、New code）；iPhone 提交后它下方出现待确认卡片（“<iPhone 名> wants to pair”、6 位数字、Don't match / Match）。右列是 Paired iPhones 列表；窗口较窄时两列改为上下排布。
+- Relay 连接、配对过程和配对记录都由 daemon 持有，这一页只是它的控制台；离开这一页，配对码即作废，进行中的配对也随之取消——配对全程需要停在这一页完成。已配对 iPhone 的日常同步不需要打开 Mac App。
+- “Settings”继续保持三栏：中栏列出 General、Notch、Daemon、Agents 和 About（44 pt 高的两行式行、灰底选中），右栏是工具栏标题 + 副标题 subheader + 卡片式内容；各面板内容见[设置面板](#设置面板)。
 
 ### Notch：活动摘要
 
-Notch 紧凑时显示列表中的 Session 数量和最近一个 Session 的状态色；展开后按最近活动时间列出最近七天内活动过的全部主 Session（包括已关闭的会话），视口一次最多显示六条，更多内容向下滚动，底部一行显示列表中的 Session 总数。顶栏是品牌图标、“Lumi”标题、一枚锁形“保持展开”开关（与 Notch 设置里的 Stay expanded 同一状态）和设置按钮。正在工作的 Session 在标题下多一行最近活动（类别标签 + 摘要）。带 Subagent 的 Session 在标题下多一条可点开的 Subagent 计数条（子 Agent 的子 Agent 也算在同一条里）；运行中默认展开成胶囊，其他状态默认折叠；点击胶囊直接打开该 Subagent；鼠标悬停在带 Subagent 的行上时，这一行显示为一张卡片。Session 的 Turn 结束或失败时 Notch 会自动展开并短暂提示；回合开始不自动展开。Notch 顶部的设置按钮打开主 App 的“Settings > Notch”，不在 Notch 内维护第二套设置页。完整展示规则见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态)，可用选项见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
+- 紧凑时：显示列表中的 Session 数量和最近一个 Session 的状态色。
+- 展开后：按最近活动时间列出最近七天内活动过的全部主 Session（包括已关闭的会话）；视口一次最多显示六条，更多内容向下滚动；底部一行显示列表中的 Session 总数。
+- 顶栏：品牌图标、“Lumi”标题、一枚锁形“保持展开”开关（与 Notch 设置里的 Stay expanded 同一状态）和设置按钮；设置按钮打开主 App 的“Settings > Notch”，不在 Notch 内维护第二套设置页。
+- 正在工作的 Session 在标题下多一行最近活动（类别标签 + 摘要）。
+- 带 Subagent 的 Session 在标题下多一条可点开的 Subagent 计数条（子 Agent 的子 Agent 也算在同一条里）：运行中默认展开成胶囊，其他状态默认折叠；点击胶囊直接打开该 Subagent；悬停在带 Subagent 的行上时，这一行显示为一张卡片。
+- Session 的 Turn 结束或失败时 Notch 自动展开并短暂提示；回合开始不自动展开。
+- 完整展示规则见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态)，可用选项见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
 
-在 Notch 列表点击一行进入该 Session 的 Notch 详情页：返回按钮、标题、状态药丸 + Agent 胶囊、TOKENS / CONTEXT / ELAPSED 三张指标卡（ELAPSED 每秒跳动）、最近活动列表（最多显示最近 8 条，头部计数即这 8 条以内的条数），底部提供 Show in App（在主窗口打开该 Session）和 Jump to Agent（把 Codex / Claude 桌面端或所用终端切到前台）两个按钮。打开详情即把该 Session 标记为已查看（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
+在 Notch 列表点击一行进入该 Session 的 Notch 详情页：
+
+- 结构：返回按钮、标题、状态药丸 + Agent 胶囊、TOKENS / CONTEXT / ELAPSED 三张指标卡（ELAPSED 每秒跳动）、最近活动列表（最多显示最近 8 条，头部计数即这 8 条以内的条数）。
+- 底部按钮：Show in App（在主窗口打开该 Session）和 Jump to Agent（把 Codex / Claude 桌面端或所用终端切到前台）。
+- 打开详情即把该 Session 标记为已查看（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
 
 ### Session 状态颜色
 
@@ -41,7 +78,12 @@ Mac Session 列表、详情、Notch 和 iPhone 用同一套五档状态颜色回
 
 在 Mac 列表点击某行，或从 Notch、iPhone 打开详情，都算“看过”，绿色随即降为灰色并同步到所有端；见 [MAC-R-019](#mac-r-019-打开-session-即视为已查看)。
 
-Mac 主窗口在列表中用标题行前置的 7 pt 状态色点表达状态（状态词进色点的悬停提示，Completed 档的标题转为中灰），在 subheader 中用同档色系、带描边的状态药丸；状态变化时颜色 0.2 秒过渡。蓝、橙、绿三档的色点带光晕并缓慢呼吸（约 1.6 秒一次）；灰与红的点为实心静止。选中行使用中性灰底，文字颜色与字重不变。完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
+Mac 主窗口的状态视觉：
+
+- 列表：标题行前置 7 pt 状态色点（状态词进色点的悬停提示，Completed 档的标题转为中灰）；subheader 用同档色系、带描边的状态药丸；状态变化时颜色 0.2 秒过渡。
+- 蓝、橙、绿三档的色点带光晕并缓慢呼吸（约 1.6 秒一次）；灰与红的点为实心静止。
+- 选中行使用中性灰底，文字颜色与字重不变。
+- 完整映射见 [MAC-R-013](#mac-r-013-session-状态颜色跨端一致)。
 
 ## 首次配置
 
@@ -67,7 +109,12 @@ Mac 主窗口在列表中用标题行前置的 7 pt 状态色点表达状态（�
 
 ### 刷新 Session
 
-点击工具栏右侧的刷新图标（Refresh）：当前选中的 Session 会先由 daemon 从它的本机对话记录整个重建（Claude 父 Session 连同子 Agent 一起；你已删除的子 Agent 不会被重建回来），已同步的 iPhone 同时拿到重建结果，然后再从 daemon 取得全部 Session 的完整当前数据。列表非空时总有一条处于选中，所以刷新通常都带重建；解析规则更新后，用它回填旧 Session 新增的记录（例如 `Empty` 的 REASONING 行）。列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，见 [MAC-R-009](#mac-r-009-mac-界面只有三种同步入口)。
+点击工具栏右侧的刷新图标（Refresh）：
+
+- 当前选中的 Session 先由 daemon 从它的本机对话记录整个重建（Claude 父 Session 连同子 Agent 一起；你已删除的子 Agent 不会被重建回来），已同步的 iPhone 同时拿到重建结果；然后再从 daemon 取得全部 Session 的完整当前数据。
+- 列表非空时总有一条处于选中，所以刷新通常都带重建；解析规则更新后，用它回填旧 Session 新增的记录（例如 `Empty` 的 REASONING 行）。
+- 列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。
+- 外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，见 [MAC-R-009](#mac-r-009-mac-界面只有三种同步入口)。
 
 ### 删除单个 Session
 
@@ -75,7 +122,10 @@ Mac 主窗口在列表中用标题行前置的 7 pt 状态色点表达状态（�
 
 ### 从 Notch 归档 Session
 
-在 Notch 展开列表中，把鼠标悬停到一条 Turn 已结束的 Session 行上（等待查看、已关闭、失败或中断都算），行尾的相对时间会原地换成归档按钮，点击后该 Session 立即从 Notch 的列表和计数里消失；带 Subagent 的 Session 整组一起消失，回来时也整组一起回来。归档只影响 Notch：主窗口和已连接 iPhone 照常显示这个 Session，历史也不删除。你在该 Session 里发出新请求（或它重新启动）时，它会自动回到 Notch。不手动归档的话，超过七天没有活动的 Session 也会自动离开 Notch 列表。
+- 入口：在 Notch 展开列表中，悬停到一条 Turn 已结束的 Session 行上（等待查看、已关闭、失败或中断都算），行尾的相对时间原地换成归档按钮。
+- 点击后该 Session 立即从 Notch 的列表和计数里消失；带 Subagent 的 Session 整组一起消失，回来时也整组一起回来。
+- 归档只影响 Notch：主窗口和已连接 iPhone 照常显示这个 Session，历史也不删除。
+- 回来条件：你在该 Session 里发出新请求（或它重新启动）时，它自动回到 Notch。不手动归档的话，超过七天没有活动的 Session 也会自动离开 Notch 列表。
 
 - 规则引用：[MAC-R-014](#mac-r-014-notch-显示-session-当前状态)。
 
@@ -85,7 +135,12 @@ Mac 主窗口在列表中用标题行前置的 7 pt 状态色点表达状态（�
 
 ### 过滤 Activity
 
-Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板按 Session / User / Model / Exec 四个泳道分组；失败分两项——Model 组的 Turn failure 和 Exec 组的 Tool failure，标签都是 FAILED，但前者是实色红、后者是淡红底）和 Importance（按 L3 / L2 / L1 三档：L3 是阶段——用户输入、回合结束、回合失败、中断；L2 是过程——回复、工具结果、工具失败、计划、子 Agent；L1 是细节——思考、上下文、配置、工具调用，以及 Session 开始/结束和上下文压缩）。点开面板后点任意一行勾选或取消，列表和上方的横向时间轴立即只显示“类别被选中 且 重要性被选中”的记录——列表少几行，时间轴就少几格，两边始终一行对一格；分组头可以一键全选 / 全不选整组。过滤中的按钮变蓝并显示仍选中的项数，标题旁的计数变成“命中 / 总数”（如 `11 / 27`）。
+Activity 标题右侧有两枚下拉按钮：
+
+- Category：按消息类别，面板按 Session / User / Model / Exec 四个泳道分组。失败分两项——Model 组的 Turn failure 和 Exec 组的 Tool failure，标签都是 FAILED，但前者是实色红、后者是淡红底。
+- Importance：按 L3 / L2 / L1 三档。L3 是阶段——用户输入、回合结束、回合失败、中断；L2 是过程——回复、工具结果、工具失败、计划、子 Agent；L1 是细节——思考、上下文、配置、工具调用，以及 Session 开始/结束和上下文压缩。
+- 用法：点开面板后点任意一行勾选或取消，列表和上方的横向时间轴立即只显示“类别被选中 且 重要性被选中”的记录——列表少几行，时间轴就少几格，两边始终一行对一格；分组头可以一键全选 / 全不选整组。
+- 过滤中的按钮变蓝并显示仍选中的项数，标题旁的计数变成“命中 / 总数”（如 `11 / 27`）。
 
 - 面板里的计数永远是这个 Session 的全量条数，不随另一枚按钮变化。
 - 一个维度不能全部取消：取消掉最后一项会自动回到全选。
@@ -96,7 +151,14 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 
 ### 配对一台 iPhone
 
-“iPhone”页面常驻一张配对码卡片：二维码、6 位配对码（显示为 `7KF-3QP` 的三三分组）、Relay 地址、`Expires in m:ss` 倒计时和寿命进度条。码 5 分钟有效，到点立刻作废，但不会自动换新：卡片停在过期态（倒计时处显示 Expired、二维码收起、旧码变灰），提示点 New code 再出一个。只在进入这一页、点 New code 或一次配对有了结果之后才申请新码；New code 在有 iPhone 待确认时暂不可用。离开页面码也作废，回来时重新出码。iPhone 输码或扫码提交后，卡片下方出现 “<iPhone 名> wants to pair”、Relay 地址和时间、一组 6 位数字（如 `482 913`）以及 Don't match / Match 两个按钮：和 iPhone 屏幕上的数字一样才点 Match（默认键盘焦点在 Don't match，Return 不触发任何一个）；60 秒没点自动拒绝。结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始；iPhone 那边中途取消则不显示结果，直接换新码。整个确认过程要停在这一页完成——离开页面或退出 Mac App 会取消进行中的配对；daemon 重启后这一页会自动出新码。规则见 [IOS-R-002](./iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)。
+“iPhone”页面常驻一张配对码卡片：二维码、6 位配对码（显示为 `7KF-3QP` 的三三分组）、Relay 地址、`Expires in m:ss` 倒计时和寿命进度条。
+
+- 码的寿命：5 分钟有效，到点立刻作废，但不会自动换新——卡片停在过期态（倒计时处显示 Expired、二维码收起、旧码变灰），提示点 New code 再出一个。
+- 出新码的时机：只在进入这一页、点 New code 或一次配对有了结果之后；New code 在有 iPhone 待确认时暂不可用。离开页面码也作废，回来时重新出码；daemon 重启后这一页自动出新码。
+- iPhone 提交后：卡片下方出现 “<iPhone 名> wants to pair”、Relay 地址和时间、一组 6 位数字（如 `482 913`）以及 Don't match / Match 两个按钮。和 iPhone 屏幕上的数字一样才点 Match（默认键盘焦点在 Don't match，Return 不触发任何一个）；60 秒没点自动拒绝。
+- 结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始；iPhone 那边中途取消则不显示结果，直接换新码。
+- 整个确认过程要停在这一页完成——离开页面或退出 Mac App 会取消进行中的配对。
+- 规则见 [IOS-R-002](./iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)。
 
 ### 管理已配对 iPhone
 
@@ -112,7 +174,11 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 
 - **General**：Startup 卡片提供“Open Lumi at login”开关（登录自动启动 Lumi；daemon 的常驻另由 Daemon 设置管理，互不影响）；Software Updates 卡片提供“Automatically check for updates”开关，脚注注明下载或安装前 Lumi 都会先询问。完整更新行为见[软件更新](software-updates.md)。
 - **Notch**：见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
-- **Daemon**：subheader 显示 Running / Not connected 药丸。Local service 卡片显示 Status、Uptime、Active sessions、Stored sessions 和 Socket 路径；已安装时提供“Reinstall daemon”（立即执行）和“Stop & uninstall”（需确认，确认框注明采集停止但历史保留），未安装时提供“Install & Start daemon”。Session history 卡片标题显示保存的 Session 条数和磁盘占用，点“Clear history…”并在确认框（Clear Lumi Session history?）点“Clear History”即清空 Lumi 保存的全部 Session 与时间线，Agent 自身历史不受影响。Logs 卡片显示日志目录（`~/Library/Logs/Lumi`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。升级 App 后不需要手动 Reinstall：启动时发现 daemon 版本过期或起不来会自动重装（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
+- **Daemon**：subheader 显示 Running / Not connected 药丸。
+  - Local service 卡片：Status、Uptime、Active sessions、Stored sessions 和 Socket 路径；已安装时提供“Reinstall daemon”（立即执行）和“Stop & uninstall”（需确认，确认框注明采集停止但历史保留），未安装时提供“Install & Start daemon”。
+  - Session history 卡片：标题显示保存的 Session 条数和磁盘占用；点“Clear history…”并在确认框（Clear Lumi Session history?）点“Clear History”即清空 Lumi 保存的全部 Session 与时间线，Agent 自身历史不受影响。
+  - Logs 卡片：显示日志目录（`~/Library/Logs/Lumi`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。
+  - 升级 App 后不需要手动 Reinstall：启动时发现 daemon 版本过期或起不来会自动重装（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
 - **Agents**：Codex 与 Claude Code 两张卡片，各自显示 integration installed / not installed、配置文件位置和 Install Hook / Remove Hook 按钮；Codex 卡片在已安装时多一行 Hook 信任状态（[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)）。
 - **About**：显示版本与 build、更新通道与自动检查状态（如 `Stable · Automatic checks on`），提供“Check for Updates…”和系统 About 面板入口；完整行为见[软件更新](software-updates.md)。
 
@@ -177,7 +243,10 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 ### MAC-R-009 Mac 界面只有三种同步入口
 
 - 条件：App 启动、用户点击刷新图标（Refresh）或收到 Agent 事件。
-- 行为：分别执行首次同步、完整手动同步或增量更新。手动刷新时若有选中的 Session，daemon 先用该 Session 的本机对话记录从头重算它（修正卡住的状态、补齐漏掉的内容），再做完整同步。重算保留人为标记：已查看状态（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）和 Notch 归档（[MAC-R-014](#mac-r-014-notch-显示-session-当前状态)）不因刷新重置。
+- 行为：
+  - 三种入口分别执行首次同步、完整手动同步或增量更新。
+  - 手动刷新时若有选中的 Session，daemon 先用该 Session 的本机对话记录从头重算它（修正卡住的状态、补齐漏掉的内容），再做完整同步。
+  - 重算保留人为标记：已查看状态（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）和 Notch 归档（[MAC-R-014](#mac-r-014-notch-显示-session-当前状态)）不因刷新重置。
 - 结果：界面不做周期轮询；刷新不会让看过的 Session 重新变绿，也不会让归档的 Session 回到 Notch。
 - 限制或例外：删除和清空会立即同步操作结果；连接恢复会重新建立事件通道。daemon 会自行跟进运行中 Claude Session 的对话记录，因此有些变化（如 Esc 中止后数秒内变红）不需要任何 Hook 事件，见[数据流](../data-flows.md#session-状态与时间线)。
 
@@ -205,42 +274,85 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 ### MAC-R-013 Session 状态颜色跨端一致
 
 - 条件：Mac、Notch 或 iPhone 显示一个 Session 的当前状态。
-- 行为：五档映射——Starting、Running、Compacting 使用蓝色（Agent 在工作）；Turn 停在等待审批或回答时使用橙色（人不处理就不会继续）；Turn 已结束但还没被打开过时使用绿色（待查看）；Turn 已结束且已查看，或 Session 空闲时使用灰色；Failed 和 Interrupted 使用红色。命令行回到提示符等待下一条指令的 Session 按“已结束”档显示（绿或灰，状态文字为 Completed），不算等待审批。颜色不影响列表排序。
+- 行为：
+  - 五档映射——Starting、Running、Compacting 使用蓝色（Agent 在工作）；Turn 停在等待审批或回答时使用橙色（人不处理就不会继续）；Turn 已结束但还没被打开过时使用绿色（待查看）；Turn 已结束且已查看，或 Session 空闲时使用灰色；Failed 和 Interrupted 使用红色。
+  - 命令行回到提示符等待下一条指令的 Session 按“已结束”档显示（绿或灰，状态文字为 Completed），不算等待审批。
+  - 颜色不影响列表排序。
 - 结果：用户在三个界面看到相同的状态颜色语义；绿色专指“已结束但还没看过”，看过即降灰（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
-- 限制或例外：三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观），Notch 使用独立的深色取值（默认 Solid 表面为纯黑实色面板，便于与刘海无缝衔接；用户也可在设置中改为 Translucent 或 Liquid Glass 材质，见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)），iPhone 随系统外观在浅色 / 深色两组值之间切换。蓝、橙、绿三档的状态点在 Mac 主窗口和 Notch 带光晕呼吸，灰与红为实心；iPhone 的状态标记是实心图标（Failed / Interrupted 显示为感叹号标记），不带呼吸光晕。Mac Inspector Overview 的 Lifecycle 字段显示原始生命周期，停在提示符的 Session 在该字段显示 Waiting For Input 而非 Completed。Notch 列表里 Turn 已结束的行标题降为次级亮度，状态点仍按本档显示，Agent 标签不变。Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。Mac 列表选中行使用中性灰底，文字颜色不变。Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
+- 限制或例外：
+  - 三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观）；Notch 使用独立的深色取值（默认 Solid 表面为纯黑实色面板，便于与刘海无缝衔接；用户也可在设置中改为 Translucent 或 Liquid Glass 材质，见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)）；iPhone 随系统外观在浅色 / 深色两组值之间切换。
+  - 蓝、橙、绿三档的状态点在 Mac 主窗口和 Notch 带光晕呼吸，灰与红为实心；iPhone 的状态标记是实心图标（Failed / Interrupted 显示为感叹号标记），不带呼吸光晕。
+  - Mac Inspector Overview 的 Lifecycle 字段显示原始生命周期，停在提示符的 Session 在该字段显示 Waiting For Input 而非 Completed。
+  - Notch 列表里 Turn 已结束的行标题降为次级亮度，状态点仍按本档显示，Agent 标签不变。
+  - Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。
+  - Mac 列表选中行使用中性灰底，文字颜色不变。
+  - Notch 仍只展示当前纳入活动摘要的 Session，不因颜色规则扩大显示范围。
 
 ### MAC-R-014 Notch 显示 Session 当前状态
 
 - 条件：Mac 本地同步数据中存在最近七天内活动过、未被 Notch 归档、已产生过 Turn 且状态已知的主 Session——正在启动、工作、压缩上下文、等待审批、Turn 已结束停在提示符（待查看与已查看都算）、已关闭（Completed），或以失败 / 中断收尾。
-- 行为：紧凑状态显示列表中的主 Session 数量；展开后按最近活动时间全量列出这些主 Session，视口一次最多显示六条（按各行实际高度截到第六条为止），更多内容向下滚动，底部一行显示列表中的 Session 总数。正在工作（蓝色档）的行在标题下显示最近一条活动（类别标签 + 摘要）。带 Subagent 的 Session 不论处于哪一档都在标题下保留一条 Subagent 计数条（叠放的状态点按 running → waiting → failed → done 排列，文案为 `N subagents` 加各非零档的数量，单数写 `1 subagent`）；蓝色档默认展开成胶囊（状态点 + 名称 + 已运行时长，按同样顺序自由换行），其他档默认折叠；点计数条切换展开 / 折叠，这一行的选择在它的状态档变化前一直保留，状态档变化后回到默认；点击胶囊打开该 Subagent 的详情。悬停在带 Subagent 的行上时该行以卡片底色高亮，位置与尺寸不变。Turn 结束时 Notch 自动展开、显示约 6 秒回合完成卡片（标题、Turn complete / failed / aborted 与用时、tokens / context 胶囊、最后一条助手消息摘要、Jump to Agent 按钮；点卡片本身进入该 Session 详情）后自动收回；回合级失败 / 中断时自动展开并短暂显示错误提示（标题 + 错误摘要，约 3 秒）后收回。面板不会在用户悬停或手动展开期间被自动收回；失败提示会等用户离开后再呈现，但回合完成卡片在面板打开期间仍会临时覆盖列表内容。新用户消息（回合开始）不改变 Notch 显示；子代理的回合边界属于父级的内部进度，单个工具调用的失败属于常规噪音，都不触发提示；App 启动后约 6 秒内以及首次加载的历史数据也不触发提示。正在查看某条 Notch 详情时，完成卡片不打断当前页面。
+- 行为：
+  - 紧凑状态显示列表中的主 Session 数量；展开后按最近活动时间全量列出这些主 Session，视口一次最多显示六条（按各行实际高度截到第六条为止），更多内容向下滚动，底部一行显示列表中的 Session 总数。
+  - 正在工作（蓝色档）的行在标题下显示最近一条活动（类别标签 + 摘要）。
+  - 带 Subagent 的 Session 不论处于哪一档都在标题下保留一条 Subagent 计数条（叠放的状态点按 running → waiting → failed → done 排列，文案为 `N subagents` 加各非零档的数量，单数写 `1 subagent`）；蓝色档默认展开成胶囊（状态点 + 名称 + 已运行时长，按同样顺序自由换行），其他档默认折叠。
+  - 点计数条切换展开 / 折叠，这一行的选择在它的状态档变化前一直保留，状态档变化后回到默认；点击胶囊打开该 Subagent 的详情。悬停在带 Subagent 的行上时该行以卡片底色高亮，位置与尺寸不变。
+  - Turn 结束时 Notch 自动展开、显示约 6 秒回合完成卡片（标题、Turn complete / failed / aborted 与用时、tokens / context 胶囊、最后一条助手消息摘要、Jump to Agent 按钮；点卡片本身进入该 Session 详情）后自动收回；回合级失败 / 中断时自动展开并短暂显示错误提示（标题 + 错误摘要，约 3 秒）后收回。
+  - 面板不会在用户悬停或手动展开期间被自动收回；失败提示会等用户离开后再呈现，但回合完成卡片在面板打开期间仍会临时覆盖列表内容。正在查看某条 Notch 详情时，完成卡片不打断当前页面。
+  - 不触发提示的情形：新用户消息（回合开始）不改变 Notch 显示；子代理的回合边界属于父级的内部进度，单个工具调用的失败属于常规噪音；App 启动后约 6 秒内以及首次加载的历史数据同样不触发。
 - 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么；已结束的 Turn 和已关闭的会话留在列表里，直到被归档或超过七天没有新活动。
-- 限制或例外：超过七天没有活动的 Session 自动移出列表和计数，没有单独入口找回（主窗口照常显示）；跨过七天边界的移出要等下一次数据变化才生效，不是即时的。用户在 Notch 归档的 Session 不进入列表和计数，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。归档一条带 Subagent 的 Session 时，整组子 Agent（含子 Agent 的子 Agent）随父级一起从列表和计数消失，不会变成独立的顶层行，父级收到新请求回来时整组一起回来。还没有产生任何 Turn 的 Session 不进入 Notch。Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
+- 限制或例外：
+  - 超过七天没有活动的 Session 自动移出列表和计数，没有单独入口找回（主窗口照常显示）；跨过七天边界的移出要等下一次数据变化才生效，不是即时的。
+  - 用户在 Notch 归档的 Session 不进入列表和计数，直到该 Session 收到新请求或重新启动；归档不影响主窗口和 iPhone 的显示。
+  - 归档一条带 Subagent 的 Session 时，整组子 Agent（含子 Agent 的子 Agent）随父级一起从列表和计数消失，不会变成独立的顶层行，父级收到新请求回来时整组一起回来。
+  - 还没有产生任何 Turn 的 Session 不进入 Notch。
+  - Notch 只读取 Mac 已同步内容，不额外刷新 daemon。
 
 ### MAC-R-015 Notch 设置集中在主 App
 
 - 条件：用户点击 Notch 顶部设置按钮，或在主 App 选择“Settings > Notch”。
-- 行为：第三栏的 Appearance section 不显示 Theme 和 Layout 控件；Notch 始终使用 Dark Theme 与 Notch Layout。用户可以选择 Solid、Translucent 或 Liquid Glass 表面，选择内建屏幕、主屏幕或一台已连接的指定屏幕，并调整紧凑宽度、展开宽度和展开动画时长。紧凑宽度默认 64 pt，可在 32–240 pt 间按 1 pt 调整；展开宽度默认 520 pt，可在 360–720 pt 间按 4 pt 调整；展开动画默认 0.54 秒，可在 0.15–1.20 秒间按 0.01 秒调整。三项调节都能通过数值左侧的恢复按钮回到默认值（已是默认值时按钮禁用），滑块不显示步进刻度点。保持展开、触觉反馈和 Show Notch 继续保留；启用触觉反馈时会给出一次确认脉冲，并在完成卡片或错误提示出现时反馈。
+- 行为：
+  - 第三栏的 Appearance section 不显示 Theme 和 Layout 控件；Notch 始终使用 Dark Theme 与 Notch Layout。
+  - 用户可以选择 Solid、Translucent 或 Liquid Glass 表面，选择内建屏幕、主屏幕或一台已连接的指定屏幕，并调整紧凑宽度、展开宽度和展开动画时长。
+  - 紧凑宽度默认 64 pt，可在 32–240 pt 间按 1 pt 调整；展开宽度默认 520 pt，可在 360–720 pt 间按 4 pt 调整；展开动画默认 0.54 秒，可在 0.15–1.20 秒间按 0.01 秒调整。三项调节都能通过数值左侧的恢复按钮回到默认值（已是默认值时按钮禁用），滑块不显示步进刻度点。
+  - 保持展开、触觉反馈和 Show Notch 继续保留；启用触觉反馈时会给出一次确认脉冲，并在完成卡片或错误提示出现时反馈。
 - 结果：屏幕、尺寸、动画、表面和行为设置保存在主 App 中、跨 App 重启保留并立即应用；Notch 设置按钮打开同一个 Notch 设置页面。
 - 限制或例外：物理刘海宽度是紧凑状态的安全下限；指定屏幕断开时，Notch 暂时回到可用的内建屏幕或主屏幕，屏幕下拉里该屏幕显示为 Saved Display (Not Connected)，重新连接后自动恢复。触觉反馈仍受 Mac 硬件和系统设置限制。
 
 ### MAC-R-016 Session 列表与详情按信息层级展示
 
 - 条件：Sessions 页面存在一个或多个 Session，用户选择其中一条。
-- 行为：列表一行一个 Main Session，两行式：状态色点 + 标题 + 相对时间，加 Agent 图标 + `model · reasoning effort` 副标题（只有 effort 时单独显示 effort，都没有则留空）；带 Subagent 的行在副标题右端显示叠放状态点与折叠箭头，点这一簇（或键盘左右方向键）切换展开，展开后每个 Subagent（含更深层的子 Agent）占一行且本身可选中——选中 Subagent 即在右栏查看它自己的详情，父级行同时取消高亮。Running / Waiting / Failed 默认展开、Completed 默认收起，手动切换在该行默认档位变化前一直保留（本次 App 运行期间）。详情固定为 Activity 主区 + Inspector：Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间），其下 Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
+- 行为：
+  - 列表一行一个 Main Session，两行式：状态色点 + 标题 + 相对时间，加 Agent 图标 + `model · reasoning effort` 副标题（只有 effort 时单独显示 effort，都没有则留空）。
+  - 带 Subagent 的行在副标题右端显示叠放状态点与折叠箭头，点这一簇（或键盘左右方向键）切换展开；展开后每个 Subagent（含更深层的子 Agent）占一行且本身可选中——选中 Subagent 即在右栏查看它自己的详情，父级行同时取消高亮。
+  - Running / Waiting / Failed 默认展开、Completed 默认收起，手动切换在该行默认档位变化前一直保留（本次 App 运行期间）。
+  - 详情固定为 Activity 主区 + Inspector。Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间）；其下 Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。
+  - Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
 - 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的活动记录与指标。
-- 限制或例外：没有 Activity 时显示明确空状态。父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示；父 Session 还没有 Turn（通常不显示）但已有可见 Subagent 时，父级照常显示，选中它点 Refresh 即可从对话记录补全。Activity 记录（含工具的完整输入与输出、系统与上下文内容）可能包含凭据、环境信息；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
+- 限制或例外：
+  - 没有 Activity 时显示明确空状态。
+  - 父 Session 不在当前列表、父子关系成环，或旧格式 Subagent 没有 parent 时，该 Subagent 作为顶层项显示；父 Session 还没有 Turn（通常不显示）但已有可见 Subagent 时，父级照常显示，选中它点 Refresh 即可从对话记录补全。
+  - Activity 记录（含工具的完整输入与输出、系统与上下文内容）可能包含凭据、环境信息；App 不做内容级脱敏，只应在受信任的 Mac 上查看。
 
 ### MAC-R-017 Activity 全量显示并支持时间轴定位
 
 - 条件：用户选择的 Session 包含一条或多条 Activity。
-- 行为：Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴：三泳道模式下每条记录占一个 13 pt 方格（列表一行对应时间轴一格），只填在自己所属的泳道（User：用户输入和注入的上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End、回合级失败与中断；Exec：Tool、Result、工具失败），其余泳道留空；Session 开始/结束、上下文压缩与配置变化不占泳道，而是在三条泳道各画一条 4 pt 窄条，靠宽度与实格区分；单行模式下所有记录排成一行，方格填类别色。横向时间轴与下方列表同步滚动：滚动列表时时间轴跟着移动，在时间轴上横向滚动或按住鼠标左右拖动时列表也随之滚动，拖动松手后时间轴带惯性滑行一小段（列表继续跟随），再次拖动、滚动或点击即停；只有填了色的方格可以点击（悬停时指针变为手形、方格出现描边），点击后列表滚动到对应记录并短暂高亮，空白泳道格和方格间隙不响应点击。新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
+- 行为：
+  - Activity 按发生顺序显示属于当前 Session 的全部记录，不要求分批加载。粘顶 header 包含标题、记录数量、密度切换按钮和横向时间轴。
+  - 三泳道模式：每条记录占一个 13 pt 方格（列表一行对应时间轴一格），只填在自己所属的泳道（User：用户输入和注入的上下文；Model：Assistant、Reasoning、Plan、Subagent、Turn End、回合级失败与中断；Exec：Tool、Result、工具失败），其余泳道留空；Session 开始/结束、上下文压缩与配置变化不占泳道，而是在三条泳道各画一条 4 pt 窄条，靠宽度与实格区分。
+  - 单行模式：所有记录排成一行，方格填类别色。
+  - 同步滚动：滚动列表时时间轴跟着移动；在时间轴上横向滚动或按住鼠标左右拖动时列表也随之滚动，拖动松手后时间轴带惯性滑行一小段（列表继续跟随），再次拖动、滚动或点击即停。
+  - 点击：只有填了色的方格可以点击（悬停时指针变为手形、方格出现描边），点击后列表滚动到对应记录并短暂高亮；空白泳道格和方格间隙不响应点击。
+  - 新记录到达时若用户停在列表底部则跟随到底，否则保持当前位置。
 - 结果：用户浏览长 Session 时仍能看到时间轴和当前位置入口，可以先识别会话结构，再直接定位任意一条活动记录。
 - 限制或例外：时间轴与密度切换只改变当前详情的查看方式和位置，不修改或控制 Agent 的 Session。
 
 ### MAC-R-018 Subagent 使用自己的标题与活动
 
 - 条件：Codex 或 Claude Code 为 Main Session 启动一个 Subagent，Lumi 收到该 Subagent 的身份和任务活动。
-- 行为：Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随子代理的启动与结束（结束后为 Completed，不会显示为等待输入）。为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
+- 行为：
+  - Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。
+  - Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随子代理的启动与结束（结束后为 Completed，不会显示为等待输入）。
+  - 为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
 - 结果：用户在父子层级中能按任务辨认 Subagent，打开详情时只看到该 Subagent 实际开始工作后的活动。
 - 限制或例外：缺少父子关系的旧格式或孤立 Subagent 仍保留在顶层；其可用身份信息不足时显示通用 Subagent 名称。旧版本记录的 Claude Session 没有子行——选中该 Session 点工具栏 Refresh 即可从本机对话记录补出它的 Subagent。
 
@@ -263,7 +375,10 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 - 条件：Codex Hook 已安装。发生在点击“Install Hook”之后，以及每次 App 启动时。
 - 行为：向 Codex 询问它当前怎么看待各个处理项，为其中未被信任的 Lumi 处理项写入信任，然后再问一次以确认结果。整个过程只涉及命令为 Lumi helper 的处理项，其他工具的 Hook 一律不读取也不改写。
 - 结果：用户不必手动审核就能继续收到 Session 事件；“Settings > Agents”的 Codex 卡片显示“Trusted by Codex”和处理项数量。
-- 限制或例外：Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。本机没有 Codex、或 Codex 版本还没有信任机制时不显示这一行。仍有处理项未被信任时，卡片提示未信任数量并提供“Authorize”按钮；Codex 没有应答（无法确认信任状态）时，卡片提示 Hook trust could not be verified 并提供“Check again”按钮。两者仍失败则需要用户在 Codex `/hooks` 中手动信任。
+- 限制或例外：
+  - Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。
+  - 本机没有 Codex、或 Codex 版本还没有信任机制时不显示这一行。
+  - 仍有处理项未被信任时，卡片提示未信任数量并提供“Authorize”按钮；Codex 没有应答（无法确认信任状态）时，卡片提示 Hook trust could not be verified 并提供“Check again”按钮。两者仍失败则需要用户在 Codex `/hooks` 中手动信任。
 
 ### MAC-R-022 启动时自动更新已安装的 daemon
 
@@ -275,7 +390,11 @@ Activity 标题右侧有两枚下拉按钮：Category（按消息类别，面板
 ### MAC-R-023 Activity 过滤同时收窄列表与时间轴
 
 - 条件：用户在 Activity 头部的 Category 或 Importance 面板里改变勾选。
-- 行为：列表和横向时间轴只保留类别与重要性都被选中的记录——被过滤掉的记录既没有行也没有格子，两边仍然一行对一格、同步滚动，改完勾选后时间轴对齐到列表顶部那一行；两枚按钮之间取交集，一枚按钮内取并集。面板里两级计数都是过滤前的全量条数；取消某维度的最后一项时该维度自动回到全选；交集为空时列表与时间轴都空，显示空态与 Reset。同一时间只开一枚面板，点面板外、按 Esc、调整窗口大小、切换 Session、最小化或关闭窗口、App 失去激活都会关闭它。
+- 行为：
+  - 列表和横向时间轴只保留类别与重要性都被选中的记录——被过滤掉的记录既没有行也没有格子，两边仍然一行对一格、同步滚动，改完勾选后时间轴对齐到列表顶部那一行。
+  - 两枚按钮之间取交集，一枚按钮内取并集。
+  - 面板里两级计数都是过滤前的全量条数；取消某维度的最后一项时该维度自动回到全选；交集为空时列表与时间轴都空，显示空态与 Reset。
+  - 同一时间只开一枚面板，点面板外、按 Esc、调整窗口大小、切换 Session、最小化或关闭窗口、App 失去激活都会关闭它。
 - 结果：用户可以只看用户输入与回合结束这类“阶段”消息，或只看某一泳道的记录，时间轴随之变成这些记录的地图，标题旁的“命中 / 总数”计数告诉他藏掉了多少。
 - 限制或例外：Inspector 指标与 Notch 不受过滤影响；过滤不持久化，切走再回来即复位；过滤不修改或控制 Agent 的 Session。
 
