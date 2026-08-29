@@ -51,6 +51,34 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     #expect(read.events.first(where: { $0.lifecycle == .waitingForInput })!.occurredAt > read.events[0].occurredAt)
 }
 
+@Test func claudeTranscriptSlashCommandIsTheUsersMessageNotContext() throws {
+    let session = "cccccccc-5555-6666-7777-888888888888"
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("\(session).jsonl").path
+    let records: [[String: Any]] = [
+        ["type": "user", "uuid": "u1", "sessionId": session, "timestamp": "2026-08-29T16:02:27.000Z", "cwd": "/tmp/proj", "isMeta": true,
+         "message": ["role": "user", "content": "<local-command-caveat>Caveat: local commands.</local-command-caveat>"]],
+        ["type": "user", "uuid": "u2", "sessionId": session, "timestamp": "2026-08-29T16:02:28.000Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "<command-name>/usage</command-name>\n<command-message>usage</command-message>\n<command-args></command-args>"]],
+        ["type": "user", "uuid": "u3", "sessionId": session, "timestamp": "2026-08-29T16:02:29.000Z", "cwd": "/tmp/proj",
+         "message": ["role": "user", "content": "<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args>--fix high</command-args>"]],
+    ]
+    try jsonl(records).write(toFile: path, atomically: true, encoding: .utf8)
+
+    let read = try RichSourceReader.read(path: path, sessionID: SessionID(session), adapter: ClaudeAdapter(), fromOffset: 0)
+    let payloads = read.events.compactMap { $0.timelineItem?.payload }
+    let messages: [MessageTimelinePayload] = payloads.compactMap { if case .message(let m) = $0 { m } else { nil } }
+    #expect(messages.map(\.text) == ["/usage", "/review --fix high"])
+    #expect(messages.allSatisfy { $0.role == .user })
+    let contexts: [ContextTimelinePayload] = payloads.compactMap { if case .context(let c) = $0 { c } else { nil } }
+    #expect(contexts.map(\.kind) == ["local_command_caveat"])
+    // Slash commands are turn-neutral: no Turn opens and the session never
+    // reads as running off one.
+    #expect(read.events.allSatisfy { $0.turn == nil && $0.lifecycle == nil })
+}
+
 @Test func reingestRebuildsFromTranscriptAndKeepsHookOnlyFacts() async throws {
     let session = "dddddddd-1111-2222-3333-444444444444"
     let sid = SessionID(session)

@@ -9,6 +9,7 @@
 - 由 AaaS 应用（Agentic AI as a Service，如 Paseo、Raft）启动的 Session 标题改用该应用自己的标题：Paseo 显示其 agent 标题（含改名跟进），Raft 显示 agent 名（如 Fable）；不再停留在默认的“Claude Session / Codex Session”。
 - 每个 Session 现在记住承载它的 AaaS 应用（ChatGPT、Codex、Claude Desktop、Claude Code、Paseo、Raft）与所在终端，标题由该应用决定；修复 Paseo/Raft 的 Session 结束后标题被换回 Agent 原生线程名的问题。
 - Session 详情 Inspector（Mac 与 iPhone 的 Info）Overview 新增 Application 项，显示承载该会话的 AaaS 应用；早于归属记录的旧 Session 显示 Not available。
+- Activity 中用户键入的斜杠命令（Claude 会话）按键入原样（如 `/usage`）显示为用户消息，不再作为上下文记录归类；命令的本地输出仍是上下文。
 - Raft daemon 自动发起的工具型会话（如它的用量轮询）现在也归属 Raft：环境只带 `SLOCK_HOME` 时即判定为 Raft，无 agent id 与标题；此前这类会话被归为 Claude Code。
 
 ### 会话采集
