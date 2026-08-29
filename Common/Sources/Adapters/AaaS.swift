@@ -1,10 +1,10 @@
+import Transport
 import Foundation
 
-/// The AaaS app (Agentic AI as a Service) that spawned this agent process,
-/// recovered from the environment the hook inherited plus the wrapper's own
-/// on-disk state. Paseo and Raft both wrap the supported CLIs, so their
-/// sessions already flow in through the normal hooks — what they add is a
-/// display title of their own:
+/// The AaaS app (Agentic AI as a Service) hosting this agent session — the
+/// application layer above the agent engine, recovered from the environment
+/// the hook inherited plus, for wrappers, their own on-disk state. Every
+/// session belongs to exactly one AaaS; detection is total:
 ///
 /// - Paseo stamps `PASEO_AGENT_ID` and keeps a per-agent JSON with a `title`
 ///   under `~/.paseo/agents/<workspace>/<agentId>.json`.
@@ -12,32 +12,53 @@ import Foundation
 ///   the agent's display name is its only durable identity, recoverable from
 ///   the first line of the system prompt file in `SLOCK_CLI_TRANSPORT_DIR`
 ///   (`You are "Fable", an AI agent in Raft …`).
+/// - ChatGPT is the OpenAI desktop app driving Codex: launched processes
+///   inherit its `__CFBundleIdentifier` (observed `com.openai.codex`; the
+///   historic `com.openai.chat` is accepted too).
+/// - Codex is every other codex session — the CLI in a terminal, IDE
+///   extensions (`com.microsoft.VSCode`), anything not the desktop app.
+/// - Claude Desktop is the Claude desktop app, including the Claude Code
+///   sessions it hosts: `CLAUDE_CODE_ENTRYPOINT` starts with
+///   `claude-desktop` (the `-3p` variant included) or the bundle identifier
+///   is `com.anthropic.claudefordesktop`.
+/// - Claude Code is every other claude session (`cli`, SDK entrypoints,
+///   or no entrypoint at all).
 ///
-/// Detection never fails: a wrapper we can see but cannot title still
-/// detects, with `title` nil. Raft's `~/.slock/computer/servers/*/
-/// runner.state.json` holds a plaintext API key and must never be read.
+/// A wrapper we can see but cannot title still detects, with `title` nil.
+/// Raft's `~/.slock/computer/servers/*/runner.state.json` holds a plaintext
+/// API key and must never be read.
 public struct AaaS: Hashable, Sendable {
-    public enum Kind: String, Sendable {
-        case paseo
-        case raft
-    }
+    public typealias Kind = AaaSKind
 
     public var kind: Kind
     /// The wrapper's own agent id (`PASEO_AGENT_ID` / `SLOCK_AGENT_ID`) —
-    /// not a Lumi session id.
-    public var agentID: String
+    /// not a Lumi session id. Only Paseo and Raft have one.
+    public var agentID: String?
+    /// The hosting terminal (`TERM_PROGRAM`), when the session runs in one.
+    public var terminalProgram: String?
     /// Display title per the wrapper; nil when its files were absent,
-    /// unreadable, or malformed.
+    /// unreadable, or malformed. Only Paseo and Raft carry titles of their
+    /// own — the other AaaS title through the agent's native channels.
     public var title: String?
 
+    /// The persistable ownership record (drops the transient title).
+    public var ownership: SessionAaaS {
+        SessionAaaS(kind: kind, agentID: agentID, terminalProgram: terminalProgram)
+    }
+
     public static func detect(
+        provider: AgentProvider,
         environment: [String: String],
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> AaaS? {
+    ) -> AaaS {
+        let terminal = nonEmpty(environment["TERM_PROGRAM"])
+        // Wrappers first: they may themselves run inside a desktop app or a
+        // terminal, and their markers are the most specific signal.
         if let agentID = nonEmpty(environment["PASEO_AGENT_ID"]) {
             return AaaS(
                 kind: .paseo,
                 agentID: agentID,
+                terminalProgram: terminal,
                 title: paseoTitle(agentID: agentID, environment: environment, homeDirectory: homeDirectory)
             )
         }
@@ -45,10 +66,21 @@ public struct AaaS: Hashable, Sendable {
             return AaaS(
                 kind: .raft,
                 agentID: agentID,
+                terminalProgram: terminal,
                 title: raftTitle(environment: environment)
             )
         }
-        return nil
+        let bundle = nonEmpty(environment["__CFBundleIdentifier"])
+        switch provider {
+        case .codex:
+            let isDesktopApp = bundle == "com.openai.codex" || bundle == "com.openai.chat"
+            return AaaS(kind: isDesktopApp ? .chatgpt : .codex, terminalProgram: terminal)
+        case .claude:
+            let entrypoint = nonEmpty(environment["CLAUDE_CODE_ENTRYPOINT"])
+            let isDesktopApp = entrypoint?.hasPrefix("claude-desktop") == true
+                || bundle == "com.anthropic.claudefordesktop"
+            return AaaS(kind: isDesktopApp ? .claudeDesktop : .claudeCode, terminalProgram: terminal)
+        }
     }
 
     /// `<root>/agents/<workspace-dir>/<agentId>.json`, top-level `"title"`.

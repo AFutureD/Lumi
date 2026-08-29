@@ -100,10 +100,13 @@ public enum RichSourceReader {
         var data = try handle.readToEnd() ?? Data()
         if let maximumBytes, data.count > maximumBytes {
             // Keep the tail; skip to the first newline so we start on a line.
+            // The new offset is absolute — `fileSize - data.count` already
+            // includes the original start, so assigning (not adding) is what
+            // keeps a capped read from a nonzero cursor in bounds.
             data = Data(data.suffix(maximumBytes))
             if let newline = data.firstIndex(of: 0x0A) {
                 let skipped = data.distance(from: data.startIndex, to: newline) + 1
-                offset += UInt64(fileSize) - UInt64(data.count) + UInt64(skipped)
+                offset = UInt64(fileSize) - UInt64(data.count) + UInt64(skipped)
                 data = Data(data[data.index(after: newline)...])
             }
         }

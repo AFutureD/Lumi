@@ -7,13 +7,16 @@
 ### 会话查看
 
 - 由 AaaS 应用（Agentic AI as a Service，如 Paseo、Raft）启动的 Session 标题改用该应用自己的标题：Paseo 显示其 agent 标题（含改名跟进），Raft 显示 agent 名（如 Fable）；不再停留在默认的“Claude Session / Codex Session”。
-
-### Daemon
-
-- Helper 新增环境变量诊断日志：`LUMI_LOG_ENV=1`（或 `--verbose`）时每次 hook 记录一行 env 键名列表（只记键名，不记值）；`hook_ingested` 行新增检出的 AaaS 应用及其 agent id。
+- 每个 Session 现在记住承载它的 AaaS 应用（ChatGPT、Codex、Claude Desktop、Claude Code、Paseo、Raft）与所在终端，标题由该应用决定；修复 Paseo/Raft 的 Session 结束后标题被换回 Agent 原生线程名的问题。
+- Session 详情 Inspector（Mac 与 iPhone 的 Info）Overview 新增 Application 项，显示承载该会话的 AaaS 应用；早于归属记录的旧 Session 显示 Not available。
 
 ### 会话采集
 
+- 修复中断的 Codex 会话永久卡在 Running 的问题：中断把终态写进 rollout 但不触发任何 hook，现在 daemon 内常驻的 rollout watcher 在数秒内补读并把会话正确收口为 Interrupted。Claude 侧的 transcript watcher 同样常驻，两者不再有环境变量开关。
+- Hook 采集链路重构为「helper 只转发、daemon 全量归并」：Spark 不再解析 hook 内容，把原始 stdin、agent 类型与白名单环境变量组成一帧 `ingest_hook` 交给 daemon；解析、transcript / rollout 增量读取、归并、AaaS 标题识别全部收进 daemon（游标随之由 daemon 单一持有）。helper.log 新增 `hook_frame` 帧日志（含 payload 的 JSON 渲染、不含原始字节；渲染仅入日志不进帧），摄取详情改记在 daemon.log 的 `hook_ingested`。
+- 采集链路更皮实：注册表与二进制版本偏差带来的未知 hook 事件降级为「只读增量」而不再整帧丢弃；daemon 离线期间积累的超大 rollout/transcript 断档交给串行回填整段补读，不再只吃尾部；修复大断档续读时游标越界导致整本重放的偏移计算。
+- Helper 环境变量诊断日志保留：`LUMI_LOG_ENV=1`（或 `--verbose`）时每次 hook 记录一行 env 键名列表（只记键名，不记值）。
+- Helper 转发的环境白名单新增 `TERM_PROGRAM`、`__CFBundleIdentifier`、`CLAUDE_CODE_ENTRYPOINT`（AaaS 归属判定用，均无敏感信息）；daemon 的 `hook_ingested` 日志键 `wrapper/wrapper_agent` 改为 `aaas/aaas_agent/aaas_term`。
 - [Lumi for Mac] - 修复 Codex hook 授权链路的线程优先级反转（Thread Performance Checker 告警）：app-server 应答读取移到专属高优先级线程，等待也不再占用 Swift Concurrency 线程池；codex 进程意外退出时授权立即失败返回，不再干等 15 秒超时。
 
 ### 配对与同步

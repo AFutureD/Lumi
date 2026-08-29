@@ -1,5 +1,3 @@
-import Adapters
-import Core
 import IPCClient
 import Diagnostics
 import Logging
@@ -9,34 +7,56 @@ import Foundation
 
 private let log = Logger(label: "agent")
 
-/// `Spark [--agent codex|claude|auto] [--verbose]`
+/// `Spark --agent codex|claude [--verbose]`
 ///
-/// Invoked by Codex / Claude Code hooks with the hook payload on stdin. Reads
-/// the session's transcript increment, reduces hook + transcript into
-/// Agent-domain events, and ships them to the daemon over the Unix socket.
+/// Invoked by Codex / Claude Code hooks with the hook payload on stdin.
+/// Captures the invocation — the raw stdin bytes, the agent kind, and a
+/// whitelisted environment subset — and forwards it to the daemon in one
+/// `ingest_hook` frame. All parsing and domain reduction happen in the
+/// daemon; the helper never looks inside the payload.
 ///
 /// Always exits 0: a hook exit code of 2 would block the agent's tool call,
 /// and a monitoring failure must never do that. Problems go to stderr and to
 /// `helper.log`; `--verbose` mirrors every line (debug included) to stderr.
 @main
 enum SparkMain {
+    /// The only environment keys that cross the socket. The full inherited
+    /// environment carries API keys and tokens and must never be forwarded.
+    static let environmentWhitelist = [
+        "PASEO_AGENT_ID", "PASEO_HOME",
+        "SLOCK_AGENT_ID", "SLOCK_CLI_TRANSPORT_DIR",
+        "CLAUDE_PROJECT_DIR", "CODEX_HOME",
+        // AaaS-layer detection: the hosting app and terminal. None of these
+        // carry secrets.
+        "TERM_PROGRAM", "__CFBundleIdentifier", "CLAUDE_CODE_ENTRYPOINT",
+    ]
+
+    /// The frame budget derives from the codec's real limit: `data` inflates
+    /// by 4/3 as base64 inside the JSON envelope, and 64 KiB of headroom
+    /// covers every other field. A payload that cannot fit is abandoned —
+    /// the rollout/transcript watchers self-heal the content side; only that
+    /// one hook's low-latency signal is lost.
+    static let maximumDataBytes = (LengthPrefixedFrameCodec.maximumFrameLength - 64 * 1024) * 3 / 4
+    /// Cap for the JSON rendering in the local `hook_frame` log line — the
+    /// rendering never enters the frame.
+    static let maximumLoggedJSONBytes = 4 * 1024 * 1024
+
     static func main() {
         let arguments = CommandLine.arguments.dropFirst()
-        var selection: HelperAgentSelection = .auto
+        var agent: AgentProvider?
         var verbose = false
         var iterator = arguments.makeIterator()
         while let argument = iterator.next() {
             switch argument {
             case "--agent":
-                if let value = iterator.next(), let parsed = HelperAgentSelection(rawValue: value) {
-                    selection = parsed
+                if let value = iterator.next() {
+                    agent = AgentProvider(rawValue: value)
                 }
             case "--verbose", "-v":
                 verbose = true
             default:
-                if argument.hasPrefix("--agent="),
-                   let parsed = HelperAgentSelection(rawValue: String(argument.dropFirst("--agent=".count))) {
-                    selection = parsed
+                if argument.hasPrefix("--agent=") {
+                    agent = AgentProvider(rawValue: String(argument.dropFirst("--agent=".count)))
                 }
             }
         }
@@ -54,135 +74,104 @@ enum SparkMain {
         // line here and, as the IPC request id, every daemon line it caused.
         let runID = makeTraceID()
         withTrace(runID) {
-            run(selection: selection, verbose: verbose, started: started)
+            run(agent: agent, started: started)
         }
         exit(EXIT_SUCCESS)
     }
 
-    private static func run(selection: HelperAgentSelection, verbose: Bool, started: ContinuousClock.Instant) {
-        do {
-            let input = FileHandle.standardInput.readDataToEndOfFile()
-            guard !input.isEmpty else { throw HelperError.emptyInput }
-
-            // Key names only, never values: the inherited environment carries
-            // API keys and tokens. `LUMI_LOG_ENV=1` lifts the line to info so
-            // a wrapper app's markers can be diagnosed without --verbose.
-            let environment = ProcessInfo.processInfo.environment
-            let dumpRequested = environment["LUMI_LOG_ENV"] == "1"
-            if verbose || dumpRequested {
-                log.log(level: dumpRequested ? .info : .debug, "hook_environment", metadata: .fields([
-                    "keys": environment.keys.sorted().joined(separator: ","),
-                ]))
-            }
-
-            let socketPath = DaemonEndpoint.defaultSocketPath()
-            let port = IPCDaemonPort(client: DaemonIPCClient(), socketPath: socketPath)
-            let pipeline = HelperIngestPipeline(port: port)
-            let report = try pipeline.run(hookData: input, agent: selection)
-            for warning in report.warnings {
-                log.warning("hook_ingest_warning", metadata: .fields([
-                    "session": report.sessionID?.rawValue,
-                    "hook": report.hookEventName,
-                    "detail": warning,
-                ]))
-            }
-            for note in report.notes {
-                log.debug("hook_ingest_note", metadata: .fields([
-                    "session": report.sessionID?.rawValue,
-                    "hook": report.hookEventName,
-                    "detail": note,
-                ]))
-            }
-            log.info("hook_ingested", metadata: .fields([
-                "provider": report.provider.rawValue,
-                "session": report.sessionID?.rawValue,
-                "hook": report.hookEventName,
-                "rich": report.richSourcePath,
-                "lines": report.richSourceLinesRead,
-                "events": report.eventsSent,
+    private static func run(agent: AgentProvider?, started: ContinuousClock.Instant) {
+        guard let agent else {
+            log.error("hook_agent_missing", metadata: .fields([
+                "detail": "Spark needs --agent codex|claude; the installers always pass it.",
+            ]))
+            return
+        }
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        guard !input.isEmpty else {
+            log.error("hook_input_empty", metadata: .fields(["agent": agent.rawValue]))
+            return
+        }
+        guard input.count <= maximumDataBytes else {
+            log.warning("hook_frame_oversized", metadata: .fields([
+                "agent": agent.rawValue,
                 "hook_bytes": input.count,
-                "wrapper": report.wrapperKind,
-                "wrapper_agent": report.wrapperAgentID,
+            ]))
+            return
+        }
+
+        let environment = ProcessInfo.processInfo.environment
+        // Key names only, never values: the inherited environment carries
+        // API keys and tokens. `LUMI_LOG_ENV=1` lifts the line to info so a
+        // wrapper app's markers can be diagnosed without --verbose.
+        let dumpRequested = environment["LUMI_LOG_ENV"] == "1"
+        log.log(level: dumpRequested ? .info : .debug, "hook_environment", metadata: .fields([
+            "keys": environment.keys.sorted().joined(separator: ","),
+        ]))
+        let env = environmentWhitelist.reduce(into: [String: String]()) { result, key in
+            if let value = environment[key] { result[key] = value }
+        }
+        let json = input.count <= maximumLoggedJSONBytes ? jsonText(input) : nil
+        let createdAt = Date()
+        let request = IPCRequest(
+            operation: .ingestHook,
+            createdAt: createdAt,
+            agent: agent,
+            env: env,
+            data: input
+        )
+
+        // The whole frame, with the raw bytes rendered as JSON (log only —
+        // the frame ships the bytes once): what went to the daemon,
+        // reviewable without replaying it.
+        log.info("hook_frame", metadata: .fields([
+            "created_at": createdAt.formatted(.iso8601.year().month().day()
+                .timeZone(separator: .omitted).time(includingFractionalSeconds: true)),
+            "agent": agent.rawValue,
+            "env": env.keys.sorted().map { "\($0)=\(env[$0] ?? "")" }.joined(separator: ","),
+            "json": json,
+        ]))
+
+        do {
+            let response = try DaemonIPCClient().request(
+                request,
+                socketPath: DaemonEndpoint.defaultSocketPath(),
+                timeout: .seconds(2)
+            )
+            if let failure = response.failure {
+                log.error("hook_forward_rejected", metadata: .fields([
+                    "agent": agent.rawValue,
+                    "code": failure.code,
+                    "detail": failure.message,
+                    "ms": LogClock.milliseconds(since: started),
+                ]))
+                return
+            }
+            log.info("hook_forwarded", metadata: .fields([
+                "agent": agent.rawValue,
+                "hook_bytes": input.count,
+                "events": response.acceptedCount,
                 "ms": LogClock.milliseconds(since: started),
             ]))
         } catch {
-            log.error("hook_ingest_failed", metadata: .fields([
-                "agent": selection.rawValue,
+            // A timeout is not a loss: the daemon finishes the work on its
+            // own once the frame arrived; the response is only advisory.
+            log.error("hook_forward_failed", metadata: .fields([
+                "agent": agent.rawValue,
+                "hook_bytes": input.count,
                 "ms": LogClock.milliseconds(since: started),
                 "error": error,
             ]))
         }
     }
-}
 
-private enum HelperError: Error {
-    case emptyInput
-}
-
-/// `HelperDaemonPort` over the daemon's Unix-domain socket.
-struct IPCDaemonPort: HelperDaemonPort {
-    let client: DaemonIPCClient
-    let socketPath: String
-
-    func ingest(_ events: [AgentIngressEvent]) throws {
-        // Large replays are chunked so a single frame stays well below the
-        // codec's maximum length.
-        let chunkSize = 200
-        var index = 0
-        while index < events.count {
-            let chunk = Array(events[index..<min(index + chunkSize, events.count)])
-            let response = try client.request(
-                IPCRequest(operation: .ingestBatch, events: chunk),
-                socketPath: socketPath,
-                timeout: .seconds(5)
-            )
-            guard response.status != .error else {
-                throw response.failure ?? IPCFailure(
-                    code: "daemon_rejected_batch",
-                    message: "The daemon rejected the event batch.",
-                    retryable: true
-                )
-            }
-            index += chunkSize
-        }
-    }
-
-    func rolloutCursor(path: String) throws -> RolloutCursor? {
-        let response = try client.request(
-            IPCRequest(operation: .getRolloutCursor, path: path),
-            socketPath: socketPath,
-            timeout: .seconds(1)
-        )
-        return response.rolloutCursor
-    }
-
-    func saveRolloutCursor(_ cursor: RolloutCursor) throws {
-        _ = try client.request(
-            IPCRequest(operation: .saveRolloutCursor, rolloutCursor: cursor),
-            socketPath: socketPath,
-            timeout: .seconds(1)
-        )
-    }
-
-    func session(sessionID: SessionID) throws -> SessionDetail? {
-        let response = try client.request(
-            IPCRequest(operation: .getSession, sessionID: sessionID, limit: 1),
-            socketPath: socketPath,
-            timeout: .seconds(1)
-        )
-        // "Not retained" is a real answer (nil); any other failure is not.
-        if let failure = response.failure, failure.code != "session_not_found" {
-            throw failure
-        }
-        return response.session
-    }
-
-    func requestBackfill(sessionID: SessionID, path: String) throws {
-        let response = try client.request(
-            IPCRequest(operation: .backfillSession, sessionID: sessionID, path: path),
-            socketPath: socketPath,
-            timeout: .seconds(1)
-        )
-        if let failure = response.failure { throw failure }
+    /// One-line JSON rendering of the payload for the frame log (sorted
+    /// keys, compact — greppable); `nil` when stdin is not valid JSON.
+    private static func jsonText(_ data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(
+                  withJSONObject: object,
+                  options: [.sortedKeys, .withoutEscapingSlashes]
+              ) else { return nil }
+        return String(data: pretty, encoding: .utf8)
     }
 }

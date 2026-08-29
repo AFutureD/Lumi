@@ -114,7 +114,10 @@ public enum SessionReduction {
         // known to be a subagent thread — only lineage carries that verdict.
         // Identity-only events (subagent meta, wrapper titles) get the same
         // guard: they update the agent but never flip subagent → codex.
-        let demotesSubagent = event.lineage == nil
+        // An all-nil lineage carries no fact and must behave like an absent
+        // one — both for the demotion guard and the merge below.
+        let eventLineage = event.lineage.flatMap { $0.isEmpty ? nil : $0 }
+        let demotesSubagent = eventLineage == nil
             && event.agent == .codex
             && current?.agent == .codexSubagent
         let agent = if isIdentityOnly || shouldUpdateMetadata {
@@ -125,7 +128,13 @@ public enum SessionReduction {
         let agentName = agent.rawValue
             .replacingOccurrences(of: "_", with: " ")
             .capitalized
-        let title = if isIdentityOnly || shouldUpdateMetadata {
+        // The owning AaaS is the authority on the title. When the owner does
+        // not title through the agent's native channels (Paseo / Raft), only
+        // hook-path events — the ones that carry the ownership stamp — may
+        // retitle; native titles riding on watcher / replay events (adapters
+        // stamp the thread name on every rollout event) are ignored.
+        let ownerBlocksTitle = current?.aaas?.allowsNativeTitle == false && event.aaas == nil
+        let title = if (isIdentityOnly || shouldUpdateMetadata) && !ownerBlocksTitle {
             event.title ?? current?.title ?? "\(agentName) Session"
         } else {
             current?.title ?? "\(agentName) Session"
@@ -134,6 +143,12 @@ public enum SessionReduction {
         // backfill may only move the mark earlier, never clear it.
         let turnAt: Date? = (event.turnID ?? event.turn?.id) != nil ? event.occurredAt : nil
         let firstTurnAt = [current?.firstTurnAt, turnAt].compactMap { $0 }.min()
+        // AaaS ownership: asserted by hook-path events, sticky otherwise —
+        // watcher / replay / reingest events carry nil and never clear it.
+        // A session resumed under another host flips to the newest assertion.
+        let aaas = (isIdentityOnly || shouldUpdateMetadata)
+            ? (event.aaas ?? current?.aaas)
+            : current?.aaas
 
         return SessionSummary(
             id: event.sessionID,
@@ -156,8 +171,9 @@ public enum SessionReduction {
             needsAttention: needsAttention,
             needsReview: needsReview,
             hiddenInNotch: hiddenInNotch,
-            lineage: event.lineage ?? current?.lineage,
-            firstTurnAt: firstTurnAt
+            lineage: eventLineage ?? current?.lineage,
+            firstTurnAt: firstTurnAt,
+            aaas: aaas
         )
     }
 }

@@ -24,7 +24,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
    - 排序：按创建时间倒序（新建的排最上）；创建时间不会变，后续活动、改标题都不打乱顺序。不分组、不分档，一行一个 Main Session。
    - 行结构（两行）：第一行是状态色点 + 标题 + 行尾等宽相对时间（悬停提示 Last update）；第二行左端是 13 pt 的 Agent 原色图标（Agent 名进悬停提示），紧跟灰色的 `model · reasoning effort`——直接显示 CLI 上报的原值（如 `claude-sonnet-4-5 · high`）；只有 model 时省掉分隔点，只有 effort 时单独显示 effort，两者都没有则留空。
    - 标题来源（Agent 上报）：Main Session 使用 Agent 上报的标题；Subagent 使用自己的名称，未单独命名时显示昵称与任务路径摘要，不复用父 Session 的请求作为标题。首次还没有标题时显示“`<Agent 名>` Session”（如 Codex Session、Claude Session）。
-   - 标题来源（AaaS）：由 AaaS 应用（Agentic AI as a Service，如 Paseo、Raft）启动的 Session 改用该应用自己的标题——Paseo 显示你在 Paseo 里看到（或改过）的 agent 标题，Raft 显示 agent 名（如 Fable）；改名后随下一次 Agent 活动更新。
+   - 标题来源（AaaS）：每个 Session 归属一个承载它的 AaaS 应用（Agentic AI as a Service：ChatGPT、Codex、Claude Desktop、Claude Code、Paseo、Raft），标题由该应用决定——Paseo 显示你在 Paseo 里看到（或改过）的 agent 标题，Raft 显示 agent 名（如 Fable），其余应用沿用 Agent 上报的标题；改名后随下一次 Agent 活动更新，Session 结束后 Paseo/Raft 的标题也保持不变。
    - 标题排版：固定一行，原始换行和连续空白归一为空格，超出可用宽度时尾部省略（空间不够先截断 model，相对时间永不被挤压）；工具栏标题遵循相同规则。
    - Subagent 簇：带 Subagent 的行在第二行右端叠放各 Subagent 的状态色圆点（按 running → waiting → failed → done 排列，最多画五个，数量与分档进悬停提示，如 `3 subagents · 2 running · 1 done`）加一枚折叠箭头；点这一簇展开或收起，不改变选中。
    - 展开后：一个 Subagent 一行（子 Agent 的子 Agent 也平铺在同一组里），按启动先后从早到晚排列——读下来就是这次运行的执行顺序；每行是 6 pt 状态点 + 名称 + 行尾持续时间（悬停提示 Duration；运行中每秒走动，结束后停在最终用时）；全部逐行列出、不分页。
@@ -325,7 +325,7 @@ Activity 标题右侧有两枚下拉按钮：
   - 列表一行一个 Main Session，两行式：状态色点 + 标题 + 相对时间，加 Agent 图标 + `model · reasoning effort` 副标题（只有 effort 时单独显示 effort，都没有则留空）。
   - 带 Subagent 的行在副标题右端显示叠放状态点与折叠箭头，点这一簇（或键盘左右方向键）切换展开；展开后每个 Subagent（含更深层的子 Agent）占一行且本身可选中——选中 Subagent 即在右栏查看它自己的详情，父级行同时取消高亮。
   - Running / Waiting / Failed 默认展开、Completed 默认收起，手动切换在该行默认档位变化前一直保留（本次 App 运行期间）。
-  - 详情固定为 Activity 主区 + Inspector。Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间）；其下 Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。
+  - 详情固定为 Activity 主区 + Inspector。Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间）；其下 Overview（Session ID、Agent、Application、Lifecycle、Turn Phase、Needs Attention、Started；Agent 显示引擎与角色——Codex、Codex(subagent)、Claude、Claude(subagent)；Application 是承载会话的 AaaS 应用，如 Paseo、ChatGPT，早于归属记录的旧 Session 显示 Not available）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。
   - Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
 - 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的活动记录与指标。
 - 限制或例外：

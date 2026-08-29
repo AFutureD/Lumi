@@ -69,7 +69,12 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     func apply(_ fields: [String: Any], at timestamp: String? = nil, rich: Bool = true, turn: TurnID? = nil) async throws {
         var merged = base.merging(fields) { $1 }
         if let timestamp { merged["timestamp"] = timestamp }
-        for event in try adapter.events(fromHookData: hookData(merged), options: HookIngestOptions(richSourceAvailable: rich, currentTurnID: turn)) {
+        let data = hookData(merged)
+        for event in try adapter.events(
+            fromHook: ClaudeHookPayload(data: data),
+            raw: data,
+            options: HookIngestOptions(richSourceAvailable: rich, currentTurnID: turn)
+        ) {
             _ = try await repository.apply(event)
         }
     }
@@ -261,9 +266,10 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     let adapter = ClaudeAdapter()
     let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
     for event in live.events { _ = try await repository.apply(event) }
-    for event in try adapter.events(fromHookData: hookData([
+    let endData = hookData([
         "session_id": session, "cwd": "/tmp/proj", "hook_event_name": "SessionEnd", "reason": "exit", "timestamp": "2026-08-19T06:50:00Z",
-    ]), options: .withRichSource) {
+    ])
+    for event in try adapter.events(fromHook: ClaudeHookPayload(data: endData), raw: endData, options: .withRichSource) {
         _ = try await repository.apply(event)
     }
     let reingester = SessionReingester(repository: repository, claudeAdapter: adapter, homeDirectory: home)
@@ -299,7 +305,8 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     let adapter = ClaudeAdapter()
     // Recorded by an older helper: the parent exists, the child never did.
     let base: [String: Any] = ["session_id": session, "cwd": "/tmp/proj", "transcript_path": path, "timestamp": "2026-08-19T06:42:07Z"]
-    for event in try adapter.events(fromHookData: hookData(base.merging(["hook_event_name": "UserPromptSubmit", "prompt_id": "p1", "prompt": "commit"]) { $1 }), options: .withRichSource) {
+    let promptData = hookData(base.merging(["hook_event_name": "UserPromptSubmit", "prompt_id": "p1", "prompt": "commit"]) { $1 })
+    for event in try adapter.events(fromHook: ClaudeHookPayload(data: promptData), raw: promptData, options: .withRichSource) {
         _ = try await repository.apply(event)
     }
     let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)

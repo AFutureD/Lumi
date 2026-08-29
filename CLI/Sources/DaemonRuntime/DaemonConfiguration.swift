@@ -7,13 +7,6 @@ public struct DaemonConfiguration: Hashable, Sendable {
     public let databasePath: String
     public let codexSessionsDirectory: URL
     public let rolloutPollIntervalSeconds: Double
-    /// The in-daemon rollout tailer is a fallback; the helper now reads the
-    /// transcript on every hook. Enable with `LUMI_ROLLOUT_WATCHER=1`.
-    public let rolloutWatcherEnabled: Bool
-    /// Polls active Claude sessions' transcripts for records no hook delivers
-    /// (a user interrupt fires no hook). On by default; disable with
-    /// `LUMI_CLAUDE_WATCHER=0`.
-    public let claudeWatcherEnabled: Bool
     /// The Relay the daemon registers with as the host; paired iPhones sync
     /// through it. Override with `LUMI_RELAY_URL`; `LUMI_RELAY=0`
     /// keeps the daemon off the network (tests, smoke runs).
@@ -34,8 +27,6 @@ public struct DaemonConfiguration: Hashable, Sendable {
         databasePath: String,
         codexSessionsDirectory: URL,
         rolloutPollIntervalSeconds: Double = 2,
-        rolloutWatcherEnabled: Bool = false,
-        claudeWatcherEnabled: Bool = true,
         relayURL: URL = DaemonConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
         relayStatePath: String? = nil,
@@ -46,8 +37,6 @@ public struct DaemonConfiguration: Hashable, Sendable {
         self.databasePath = databasePath
         self.codexSessionsDirectory = codexSessionsDirectory
         self.rolloutPollIntervalSeconds = rolloutPollIntervalSeconds
-        self.rolloutWatcherEnabled = rolloutWatcherEnabled
-        self.claudeWatcherEnabled = claudeWatcherEnabled
         self.relayURL = relayURL
         self.relayEnabled = relayEnabled
         self.relayStatePath = relayStatePath ?? supportDirectory.appendingPathComponent("relay-host-state.json").path
@@ -74,12 +63,6 @@ public struct DaemonConfiguration: Hashable, Sendable {
             ),
             databasePath: databasePath,
             codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true),
-            rolloutWatcherEnabled: ["1", "true", "yes"].contains(
-                (environment["LUMI_ROLLOUT_WATCHER"] ?? "").lowercased()
-            ),
-            claudeWatcherEnabled: !["0", "false", "no"].contains(
-                (environment["LUMI_CLAUDE_WATCHER"] ?? "").lowercased()
-            ),
             relayURL: environment["LUMI_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
             relayEnabled: !["0", "false", "no"].contains(
                 (environment["LUMI_RELAY"] ?? "").lowercased()

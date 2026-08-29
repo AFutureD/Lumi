@@ -1,3 +1,4 @@
+import Transport
 import Foundation
 import Testing
 @testable import Adapters
@@ -29,10 +30,10 @@ private func writePaseoAgent(home: URL, workspace: String, agentID: String, json
         json: #"{"title":"other"}"#
     )
 
-    let wrapper = try #require(AaaS.detect(environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home))
-    #expect(wrapper.kind == .paseo)
-    #expect(wrapper.agentID == agentID)
-    #expect(wrapper.title == "你会使用 computer use 么？")
+    let aaas = AaaS.detect(provider: .claude, environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home)
+    #expect(aaas.kind == .paseo)
+    #expect(aaas.agentID == agentID)
+    #expect(aaas.title == "你会使用 computer use 么？")
 }
 
 @Test func paseoHomeEnvironmentOverridesTheDefaultRoot() throws {
@@ -48,11 +49,12 @@ private func writePaseoAgent(home: URL, workspace: String, agentID: String, json
     try #"{"title":"from paseo home"}"#
         .write(to: dir.appendingPathComponent("\(agentID).json"), atomically: true, encoding: .utf8)
 
-    let wrapper = try #require(AaaS.detect(
+    let aaas = AaaS.detect(
+        provider: .claude,
         environment: ["PASEO_AGENT_ID": agentID, "PASEO_HOME": paseoHome.path],
         homeDirectory: home
-    ))
-    #expect(wrapper.title == "from paseo home")
+    )
+    #expect(aaas.title == "from paseo home")
 }
 
 @Test func paseoDetectsWithoutATitleWhenTheStoreIsMissingOrMalformed() throws {
@@ -61,19 +63,19 @@ private func writePaseoAgent(home: URL, workspace: String, agentID: String, json
     let agentID = "aaaaaaaa-0000-0000-0000-000000000002"
 
     // No ~/.paseo at all.
-    var wrapper = try #require(AaaS.detect(environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home))
-    #expect(wrapper.kind == .paseo)
-    #expect(wrapper.title == nil)
+    var aaas = AaaS.detect(provider: .claude, environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home)
+    #expect(aaas.kind == .paseo)
+    #expect(aaas.title == nil)
 
     // Malformed JSON.
     try writePaseoAgent(home: home, workspace: "ws", agentID: agentID, json: "{not json")
-    wrapper = try #require(AaaS.detect(environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home))
-    #expect(wrapper.title == nil)
+    aaas = AaaS.detect(provider: .claude, environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home)
+    #expect(aaas.title == nil)
 
     // Valid JSON, no usable title.
     try writePaseoAgent(home: home, workspace: "ws", agentID: agentID, json: #"{"title":"  "}"#)
-    wrapper = try #require(AaaS.detect(environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home))
-    #expect(wrapper.title == nil)
+    aaas = AaaS.detect(provider: .claude, environment: ["PASEO_AGENT_ID": agentID], homeDirectory: home)
+    #expect(aaas.title == nil)
 }
 
 @Test func raftTitleIsTheQuotedNameOnTheSystemPromptFirstLine() throws {
@@ -86,16 +88,17 @@ private func writePaseoAgent(home: URL, workspace: String, agentID: String, json
     Not "someone else".
     """.write(to: transport.appendingPathComponent("claude-system-prompt.md"), atomically: true, encoding: .utf8)
 
-    let wrapper = try #require(AaaS.detect(
+    let aaas = AaaS.detect(
+        provider: .claude,
         environment: [
             "SLOCK_AGENT_ID": "65e8e001-1d5e-4fe0-b977-aac119612fc6",
             "SLOCK_CLI_TRANSPORT_DIR": transport.path,
         ],
         homeDirectory: transport
-    ))
-    #expect(wrapper.kind == .raft)
-    #expect(wrapper.agentID == "65e8e001-1d5e-4fe0-b977-aac119612fc6")
-    #expect(wrapper.title == "Fable")
+    )
+    #expect(aaas.kind == .raft)
+    #expect(aaas.agentID == "65e8e001-1d5e-4fe0-b977-aac119612fc6")
+    #expect(aaas.title == "Fable")
 }
 
 @Test func raftDetectsWithoutATitleWhenThePromptIsMissingOrUnrecognized() throws {
@@ -107,31 +110,110 @@ private func writePaseoAgent(home: URL, workspace: String, agentID: String, json
     ]
 
     // No prompt file.
-    var wrapper = try #require(AaaS.detect(environment: environment, homeDirectory: transport))
-    #expect(wrapper.kind == .raft)
-    #expect(wrapper.title == nil)
+    var aaas = AaaS.detect(provider: .claude, environment: environment, homeDirectory: transport)
+    #expect(aaas.kind == .raft)
+    #expect(aaas.title == nil)
 
     // First line without the marker.
     try "A different opening.\nYou are \"Fable\", but on line two."
         .write(to: transport.appendingPathComponent("claude-system-prompt.md"), atomically: true, encoding: .utf8)
-    wrapper = try #require(AaaS.detect(environment: environment, homeDirectory: transport))
-    #expect(wrapper.title == nil)
+    aaas = AaaS.detect(provider: .claude, environment: environment, homeDirectory: transport)
+    #expect(aaas.title == nil)
 
     // Transport dir env missing entirely.
-    wrapper = try #require(AaaS.detect(environment: ["SLOCK_AGENT_ID": "x"], homeDirectory: transport))
-    #expect(wrapper.title == nil)
+    aaas = AaaS.detect(provider: .claude, environment: ["SLOCK_AGENT_ID": "x"], homeDirectory: transport)
+    #expect(aaas.title == nil)
 }
 
-@Test func detectionPrefersPaseoAndIgnoresUnrelatedEnvironments() throws {
+// Detection is total: every session belongs to exactly one AaaS. The codex
+// engine splits on the OpenAI desktop app's bundle identifier; everything
+// else — terminal CLI, IDE extensions — is the Codex CLI.
+@Test func codexSessionsSplitBetweenChatGPTAppAndCodexCLI() throws {
     let home = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: home) }
-    #expect(AaaS.detect(environment: [:], homeDirectory: home) == nil)
-    #expect(AaaS.detect(environment: ["CLAUDE_PROJECT_DIR": "/x"], homeDirectory: home) == nil)
-    #expect(AaaS.detect(environment: ["PASEO_AGENT_ID": "  "], homeDirectory: home) == nil)
 
-    let both = try #require(AaaS.detect(
+    #expect(AaaS.detect(provider: .codex, environment: ["__CFBundleIdentifier": "com.openai.codex"], homeDirectory: home).kind == .chatgpt)
+    #expect(AaaS.detect(provider: .codex, environment: ["__CFBundleIdentifier": "com.openai.chat"], homeDirectory: home).kind == .chatgpt)
+    #expect(AaaS.detect(provider: .codex, environment: ["__CFBundleIdentifier": "com.microsoft.VSCode"], homeDirectory: home).kind == .codex)
+    #expect(AaaS.detect(provider: .codex, environment: ["__CFBundleIdentifier": "com.apple.Terminal"], homeDirectory: home).kind == .codex)
+    #expect(AaaS.detect(provider: .codex, environment: [:], homeDirectory: home).kind == .codex)
+}
+
+// The claude engine splits on the desktop entrypoint (either signal is
+// enough); cli / SDK entrypoints and a bare environment are Claude Code.
+@Test func claudeSessionsSplitBetweenDesktopAppAndClaudeCode() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_CODE_ENTRYPOINT": "claude-desktop"], homeDirectory: home).kind == .claudeDesktop)
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_CODE_ENTRYPOINT": "claude-desktop-3p"], homeDirectory: home).kind == .claudeDesktop)
+    #expect(AaaS.detect(provider: .claude, environment: ["__CFBundleIdentifier": "com.anthropic.claudefordesktop"], homeDirectory: home).kind == .claudeDesktop)
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_CODE_ENTRYPOINT": "cli"], homeDirectory: home).kind == .claudeCode)
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_CODE_ENTRYPOINT": "sdk-ts"], homeDirectory: home).kind == .claudeCode)
+    #expect(AaaS.detect(provider: .claude, environment: [:], homeDirectory: home).kind == .claudeCode)
+    // Historic assertion, deliberately inverted: a bare CLAUDE_PROJECT_DIR
+    // used to detect nothing; under the total two-layer model it is a plain
+    // Claude Code session.
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_PROJECT_DIR": "/x"], homeDirectory: home).kind == .claudeCode)
+}
+
+@Test func terminalProgramIsCapturedOnEveryKind() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_CODE_ENTRYPOINT": "cli", "TERM_PROGRAM": "ghostty"], homeDirectory: home).terminalProgram == "ghostty")
+    #expect(AaaS.detect(provider: .codex, environment: ["TERM_PROGRAM": "Apple_Terminal"], homeDirectory: home).terminalProgram == "Apple_Terminal")
+    #expect(AaaS.detect(provider: .claude, environment: ["PASEO_AGENT_ID": "p-1", "TERM_PROGRAM": "vscode"], homeDirectory: home).terminalProgram == "vscode")
+    #expect(AaaS.detect(provider: .claude, environment: ["CLAUDE_CODE_ENTRYPOINT": "cli", "TERM_PROGRAM": "  "], homeDirectory: home).terminalProgram == nil)
+    #expect(AaaS.detect(provider: .codex, environment: [:], homeDirectory: home).terminalProgram == nil)
+}
+
+// Wrappers may themselves run inside a desktop app or terminal; their
+// markers are the most specific signal and always win.
+@Test func wrapperMarkersOutrankDesktopAndTerminalSignals() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let both = AaaS.detect(
+        provider: .claude,
         environment: ["PASEO_AGENT_ID": "p-1", "SLOCK_AGENT_ID": "s-1"],
         homeDirectory: home
-    ))
+    )
     #expect(both.kind == .paseo)
+
+    let paseoInsideDesktop = AaaS.detect(
+        provider: .claude,
+        environment: ["PASEO_AGENT_ID": "p-1", "CLAUDE_CODE_ENTRYPOINT": "claude-desktop"],
+        homeDirectory: home
+    )
+    #expect(paseoInsideDesktop.kind == .paseo)
+
+    let raftOverChatGPT = AaaS.detect(
+        provider: .codex,
+        environment: ["SLOCK_AGENT_ID": "s-1", "__CFBundleIdentifier": "com.openai.codex"],
+        homeDirectory: home
+    )
+    #expect(raftOverChatGPT.kind == .raft)
+
+    // A blank wrapper id is no marker at all.
+    #expect(AaaS.detect(provider: .codex, environment: ["PASEO_AGENT_ID": "  "], homeDirectory: home).kind == .codex)
+}
+
+@Test func ownershipDropsTheTransientTitle() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let agentID = "aaaaaaaa-0000-0000-0000-000000000003"
+    try writePaseoAgent(home: home, workspace: "ws", agentID: agentID, json: #"{"title":"named"}"#)
+
+    let aaas = AaaS.detect(
+        provider: .codex,
+        environment: ["PASEO_AGENT_ID": agentID, "TERM_PROGRAM": "ghostty"],
+        homeDirectory: home
+    )
+    #expect(aaas.title == "named")
+    let ownership = aaas.ownership
+    #expect(ownership == SessionAaaS(kind: .paseo, agentID: agentID, terminalProgram: "ghostty"))
+    #expect(!ownership.allowsNativeTitle)
+    #expect(SessionAaaS(kind: .chatgpt).allowsNativeTitle)
+    #expect(SessionAaaS(kind: .claudeCode).allowsNativeTitle)
 }

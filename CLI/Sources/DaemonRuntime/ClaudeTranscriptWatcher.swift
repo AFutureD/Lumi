@@ -24,6 +24,7 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
     private let homeDirectory: URL
     private let pollIntervalSeconds: Double
     private let maximumIncrementBytes: Int
+    private let backfill: TranscriptBackfillQueue?
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
     private let adapter = ClaudeAdapter()
     private let lock = NSLock()
@@ -35,12 +36,14 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         pollIntervalSeconds: Double = 2,
         maximumIncrementBytes: Int = 32 * 1024 * 1024,
+        backfill: TranscriptBackfillQueue? = nil,
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void = { _ in }
     ) {
         self.repository = repository
         self.homeDirectory = homeDirectory
         self.pollIntervalSeconds = pollIntervalSeconds
         self.maximumIncrementBytes = maximumIncrementBytes
+        self.backfill = backfill
         self.onEvent = onEvent
     }
 
@@ -103,6 +106,22 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         guard let fileSize = (attributes?[.size] as? NSNumber)?.uint64Value else { return }
         guard needsScan(path: path, fileSize: fileSize) else { return }
+
+        // An offline gap larger than one capped read goes to the serial
+        // backfill worker whole — a tail-trimmed read would silently drop
+        // the middle of the session.
+        if let backfill,
+           let offset = try await repository.rolloutCursor(path: path)?.byteOffset,
+           offset > 0, fileSize > offset, fileSize - offset > UInt64(maximumIncrementBytes) {
+            await backfill.enqueue(sessionID: summary.id, path: path)
+            log.info("transcript_gap_delegated_to_backfill", metadata: .fields([
+                "session": summary.id.rawValue,
+                "path": path,
+                "gap": fileSize - offset,
+            ]))
+            markScanned(path: path, fileSize: fileSize)
+            return
+        }
 
         let report = try await RichSourceCatchUp.run(
             repository: repository,

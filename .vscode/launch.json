@@ -39,6 +39,46 @@
             "target": "Spark",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release Spark"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Debug Lumen (CLI)",
+            "target": "Lumen",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Lumen (CLI)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Release Lumen (CLI)",
+            "target": "Lumen",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Lumen (CLI)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Debug Spark (CLI)",
+            "target": "Spark",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Spark (CLI)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agent-status}/CLI",
+            "name": "Release Spark (CLI)",
+            "target": "Spark",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Spark (CLI)"
         }
     ]
 }

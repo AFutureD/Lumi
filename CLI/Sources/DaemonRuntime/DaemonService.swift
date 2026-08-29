@@ -20,7 +20,7 @@ public actor DaemonService {
     private let executableHash: String
     private var relayConnected = false
     private var relay: RelayHostService?
-    private var backfill: TranscriptBackfillQueue?
+    private var hookIngest: HookIngestService?
     public nonisolated let subscriptions: DaemonSubscriptionHub
 
     public init(
@@ -50,9 +50,9 @@ public actor DaemonService {
         self.relay = relay
     }
 
-    /// The worker `backfill_session` hands histories to.
-    public func attachBackfill(_ backfill: TranscriptBackfillQueue) {
-        self.backfill = backfill
+    /// The pipeline `ingest_hook` frames are handed to.
+    public func attachHookIngest(_ service: HookIngestService) {
+        hookIngest = service
     }
 
     /// The same health the `health` IPC answers with.
@@ -87,26 +87,35 @@ public actor DaemonService {
         do {
             let payload: IPCResponse
             switch envelope.payload.operation {
-            case .ingest:
-                if let event = envelope.payload.event {
-                    let inserted = try await repository.apply(event)
-                    if inserted { subscriptions.publish(event) }
-                    logIngested([event], accepted: inserted ? 1 : 0)
-                    payload = IPCResponse(status: inserted ? .accepted : .ok, event: event)
-                } else {
-                    payload = failure(code: "missing_event", message: "The ingest request has no event.")
+            case .ingestHook:
+                guard let hookIngest else {
+                    payload = failure(code: "hook_ingest_unavailable", message: "The daemon runs without a hook ingest pipeline.")
+                    break
                 }
-            case .ingestBatch:
-                let events = envelope.payload.events ?? []
-                var accepted = 0
-                for event in events {
-                    if try await repository.apply(event) {
-                        accepted += 1
-                        subscriptions.publish(event)
-                    }
+                guard let data = envelope.payload.data, !data.isEmpty,
+                      let agent = envelope.payload.agent else {
+                    payload = failure(code: "missing_hook_frame", message: "The ingest_hook request needs data and agent.")
+                    break
                 }
-                logIngested(events, accepted: accepted)
-                payload = IPCResponse(status: accepted > 0 ? .accepted : .ok, acceptedCount: accepted)
+                do {
+                    let report = try await hookIngest.ingest(
+                        data: data,
+                        agent: agent,
+                        environment: envelope.payload.env ?? [:],
+                        createdAt: envelope.payload.createdAt ?? now
+                    )
+                    logHookIngested(report, bytes: data.count)
+                    payload = IPCResponse(
+                        status: report.eventsApplied > 0 ? .accepted : .ok,
+                        acceptedCount: report.eventsApplied
+                    )
+                } catch let error as AgentAdapterError {
+                    agentLog.error("hook_rejected", metadata: .fields([
+                        "agent": agent.rawValue,
+                        "error": String(describing: error),
+                    ]))
+                    payload = failure(code: "malformed_hook", message: "The hook payload could not be decoded: \(error)")
+                }
             case .listSessions:
                 payload = IPCResponse(
                     status: .ok,
@@ -164,22 +173,6 @@ public actor DaemonService {
                 dbLog.info("history_cleared", metadata: .fields(["sessions": retained.count]))
                 await relay?.sessionsRemoved(retained)
                 payload = IPCResponse(status: .ok)
-            case .getRolloutCursor:
-                if let path = envelope.payload.path {
-                    payload = IPCResponse(
-                        status: .ok,
-                        rolloutCursor: try await repository.rolloutCursor(path: path)
-                    )
-                } else {
-                    payload = failure(code: "missing_path", message: "The cursor request has no path.")
-                }
-            case .saveRolloutCursor:
-                if let cursor = envelope.payload.rolloutCursor {
-                    try await repository.saveRolloutCursor(cursor)
-                    payload = IPCResponse(status: .ok, rolloutCursor: cursor)
-                } else {
-                    payload = failure(code: "missing_cursor", message: "The cursor request has no cursor.")
-                }
             case .reingestSession:
                 if let id = envelope.payload.sessionID {
                     do {
@@ -212,24 +205,6 @@ public actor DaemonService {
                     }
                 } else {
                     payload = failure(code: "missing_session_id", message: "The reingest request has no id.")
-                }
-            case .backfillSession:
-                if let id = envelope.payload.sessionID, let path = envelope.payload.path {
-                    if let backfill {
-                        await backfill.enqueue(sessionID: id, path: path)
-                        agentLog.info("session_backfill_queued", metadata: .fields([
-                            "session": id.rawValue,
-                            "path": path,
-                        ]))
-                        payload = IPCResponse(status: .accepted)
-                    } else {
-                        payload = failure(
-                            code: "backfill_unavailable",
-                            message: "The daemon runs without a backfill worker."
-                        )
-                    }
-                } else {
-                    payload = failure(code: "missing_session_id", message: "The backfill request needs a session id and a path.")
                 }
             case .relayStatus:
                 payload = IPCResponse(status: .ok, relay: await relayStatus())
@@ -322,17 +297,32 @@ public actor DaemonService {
     /// One line per ingest call: how many events arrived, how many were new
     /// (the rest were replays the idempotency table swallowed), for which
     /// sessions. Per-event detail is on the stream's debug line.
-    private func logIngested(_ events: [AgentIngressEvent], accepted: Int) {
-        guard !events.isEmpty else { return }
-        var sessions: [String] = []
-        for event in events where !sessions.contains(event.sessionID.rawValue) {
-            sessions.append(event.sessionID.rawValue)
+    private func logHookIngested(_ report: HookIngestService.Report, bytes: Int) {
+        for warning in report.warnings {
+            agentLog.warning("hook_ingest_warning", metadata: .fields([
+                "session": report.sessionID?.rawValue,
+                "hook": report.eventName,
+                "detail": warning,
+            ]))
         }
-        agentLog.info("events_ingested", metadata: .fields([
-            "received": events.count,
-            "accepted": accepted,
-            "duplicates": events.count - accepted,
-            "sessions": sessions.joined(separator: ","),
+        for note in report.notes {
+            agentLog.debug("hook_ingest_note", metadata: .fields([
+                "session": report.sessionID?.rawValue,
+                "hook": report.eventName,
+                "detail": note,
+            ]))
+        }
+        agentLog.info("hook_ingested", metadata: .fields([
+            "provider": report.provider.rawValue,
+            "session": report.sessionID?.rawValue,
+            "hook": report.eventName,
+            "rich": report.richSourcePath,
+            "lines": report.richSourceLinesRead,
+            "events": report.eventsApplied,
+            "hook_bytes": bytes,
+            "aaas": report.aaasKind,
+            "aaas_agent": report.aaasAgentID,
+            "aaas_term": report.aaasTerminalProgram,
         ]))
     }
 

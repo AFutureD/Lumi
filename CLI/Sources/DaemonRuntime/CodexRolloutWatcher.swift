@@ -14,6 +14,10 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     private let threadIdentities: any CodexThreadIdentityProviding
     private let adapter: CodexAdapter
     private let pollIntervalSeconds: Double
+    /// One capped read per scan; a gap larger than this goes to the backfill
+    /// worker whole instead of being tail-trimmed.
+    private let maximumIncrementBytes = 32 * 1024 * 1024
+    private let backfill: TranscriptBackfillQueue?
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
     private let lock = NSLock()
     private var task: Task<Void, Never>?
@@ -25,10 +29,12 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         repository: any SessionRepository,
         threadIdentities: (any CodexThreadIdentityProviding)? = nil,
         pollIntervalSeconds: Double = 2,
+        backfill: TranscriptBackfillQueue? = nil,
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void = { _ in }
     ) {
         self.rootDirectory = rootDirectory
         self.repository = repository
+        self.backfill = backfill
         let resolvedThreadIdentities = threadIdentities ?? CodexThreadIdentityStore(
             databasePath: rootDirectory
                 .deletingLastPathComponent()
@@ -69,9 +75,8 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         await synchronizeThreadIdentities()
         guard FileManager.default.fileExists(atPath: rootDirectory.path) else { return }
         let files = rolloutFiles()
-        for (fileURL, values) in files {
+        for (fileURL, fileSize) in files {
             guard !Task.isCancelled else { continue }
-            let fileSize = UInt64(values.fileSize ?? 0)
             guard needsScan(path: fileURL.path, fileSize: fileSize) else { continue }
             do {
                 if try await scan(fileURL, fileSize: fileSize) {
@@ -83,16 +88,37 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         }
     }
 
-    /// Establishes the first-run watermark without importing pre-existing Codex history.
+    /// Establishes the first-run watermark without importing pre-existing
+    /// Codex history — while leaving everything the store already tracks
+    /// alone. A database that ingested sessions before the baseline existed
+    /// (hook-driven reads predate the always-on watcher) holds live cursors
+    /// and sessions; ignoring those files would tombstone active sessions
+    /// and skip their unread tails.
     public func prepareInitialBaseline() async throws {
         guard try await !repository.isRolloutBaselineInitialized() else { return }
         let files = rolloutFiles()
         lifecycleLog.info("rollout_baseline_initializing", metadata: .fields(["files": files.count]))
-        for (fileURL, values) in files {
-            if let sessionID = existingSessionID(in: fileURL) {
+        for (fileURL, fileSize) in files {
+            // A cursor means this file is already being read; the first scan
+            // resumes from it (and picks up any hook-less tail).
+            if try await repository.rolloutCursor(path: fileURL.path) != nil { continue }
+            let sessionID = existingSessionID(in: fileURL)
+            if let sessionID,
+               try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1) != nil {
+                // Known session without a cursor: its history arrived over
+                // hooks; the watcher takes over from EOF.
+                try await repository.saveRolloutCursor(RolloutCursor(
+                    path: fileURL.path,
+                    byteOffset: fileSize,
+                    fileSize: fileSize,
+                    sessionID: sessionID
+                ))
+                markScanned(path: fileURL.path, fileSize: fileSize)
+                continue
+            }
+            if let sessionID {
                 try await repository.markSessionIgnored(sessionID)
             }
-            let fileSize = UInt64(values.fileSize ?? 0)
             try await repository.saveRolloutCursor(RolloutCursor(
                 path: fileURL.path,
                 byteOffset: fileSize,
@@ -104,20 +130,20 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         try await repository.markRolloutBaselineInitialized()
     }
 
-    private func rolloutFiles() -> [(URL, URLResourceValues)] {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: rootDirectory,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        var files: [(URL, URLResourceValues)] = []
-        for case let fileURL as URL in enumerator {
-            guard fileURL.pathExtension == "jsonl",
-                  let values = try? fileURL.resourceValues(forKeys: keys),
-                  values.isRegularFile == true else { continue }
-            files.append((fileURL, values))
+    /// Enumerates by relative path and rejoins onto the configured root:
+    /// cursor rows key by path string, and the URL-based enumerator resolves
+    /// symlinks (`/var` → `/private/var`), which would give the watcher
+    /// different keys than the hook path derives from the same root.
+    private func rolloutFiles() -> [(URL, UInt64)] {
+        guard let enumerator = FileManager.default.enumerator(atPath: rootDirectory.path) else { return [] }
+        var files: [(URL, UInt64)] = []
+        while let relative = enumerator.nextObject() as? String {
+            guard relative.hasSuffix(".jsonl"),
+                  !relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }),
+                  let attributes = enumerator.fileAttributes,
+                  attributes[.type] as? FileAttributeType == .typeRegular else { continue }
+            let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+            files.append((rootDirectory.appendingPathComponent(relative), size))
         }
         return files
     }
@@ -151,23 +177,46 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
     private func synchronizeThreadIdentities() async {
         do {
             let summaries = try await repository.listSessions(limit: 10_000)
+                .filter { $0.agent.provider == .codex }
             let identities = threadIdentities.identities(for: summaries.map(\.id))
             for summary in summaries {
                 guard let identity = identities[summary.id] else { continue }
-                let title = identity.displayTitle ?? summary.title
-                let agent = identity.agentKind
+                // The owning AaaS is the authority on the title: the native
+                // thread name may only retitle sessions owned by an AaaS
+                // that titles through it (ChatGPT / Codex), or sessions with
+                // no recorded ownership (pre-ownership rows, watcher-only
+                // discoveries). A Paseo / Raft title must survive the
+                // session's end — no hook will ever re-assert it.
+                let allowsNativeTitle = summary.aaas?.allowsNativeTitle ?? true
+                let title = allowsNativeTitle ? (identity.displayTitle ?? summary.title) : summary.title
+                // Mirror the reducer before deciding to emit: a fact-free
+                // `.codex` identity (no lineage fields) must neither demote a
+                // subagent nor blank its stored lineage. Diffing against the
+                // raw identity here would emit exactly that event.
+                let identityLineage = identity.lineage.isEmpty ? nil : identity.lineage
+                let agent = (identity.agentKind == .codex
+                    && identityLineage == nil
+                    && summary.agent == .codexSubagent)
+                    ? summary.agent
+                    : identity.agentKind
+                let lineage = identityLineage ?? summary.lineage
                 guard title != summary.title
                     || agent != summary.agent
-                    || identity.lineage != summary.lineage else { continue }
+                    || lineage != summary.lineage else { continue }
+                // Content-derived id: the same observed diff — across polls
+                // and daemon restarts — dedupes, while a genuine A→B→A gets a
+                // fresh id because the row's record clock advanced.
+                let fingerprint = "\(title ?? "")|\(agent.rawValue)|\(String(describing: lineage))"
                 let event = AgentIngressEvent(
                     eventID: EventID(
-                        "codex-thread-identity:\(summary.id.rawValue):\(UUID().uuidString)"
+                        "codex-thread-identity:\(summary.id.rawValue)"
+                            + ":\(summary.updatedAt.timeIntervalSince1970):\(StableHash.fnv1a(fingerprint))"
                     ),
                     sessionID: summary.id,
                     agent: agent,
                     occurredAt: Date(),
                     title: title,
-                    lineage: identity.lineage
+                    lineage: lineage
                 )
                 if try await repository.apply(event) {
                     log.info("thread_identity_applied", metadata: .fields([
@@ -182,13 +231,15 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
         }
     }
 
+    /// Catch a rollout file up to EOF through `RichSourceCatchUp` — the same
+    /// increment routine as the hook path, so cross-line state (turn
+    /// attribution, tool pairing, channel arbitration) is identical whether
+    /// a record arrives via a hook-triggered read or this poll.
     private func scan(_ url: URL, fileSize: UInt64) async throws -> Bool {
         let path = url.path
-        var cursor = try await repository.rolloutCursor(path: path)
-        var offset = cursor?.byteOffset ?? 0
-        var sessionID = cursor?.sessionID
+        let cursor = try await repository.rolloutCursor(path: path)
 
-        if sessionID == Self.ignoredExistingSession {
+        if cursor?.sessionID == Self.ignoredExistingSession {
             if fileSize != cursor?.fileSize {
                 try await repository.saveRolloutCursor(RolloutCursor(
                     path: path,
@@ -200,98 +251,90 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
             return true
         }
 
+        var offset = cursor?.byteOffset ?? 0
+        var knownSessionID = cursor?.sessionID
         if fileSize < offset {
+            // Truncated / rewritten: the reader restarts at 0; the stale
+            // cursor's session must not name the new content.
             offset = 0
-            sessionID = nil
+            knownSessionID = nil
         }
         guard fileSize > offset else { return true }
 
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        try handle.seek(toOffset: offset)
-        guard let data = try handle.readToEnd(), !data.isEmpty else { return true }
-
-        let initialHistory = Self.initialSubagentHistory(in: data, offset: offset)
-        if case .waitingForTrigger = initialHistory {
-            log.debug("rollout_scan_waiting_for_subagent_trigger", metadata: .fields(["path": path]))
+        // The session id keys the cursor and the read; a file whose head has
+        // no `session_meta` yet is retried on a later poll.
+        guard let sessionID = knownSessionID ?? existingSessionID(in: url) else {
+            log.debug("rollout_scan_no_session_meta", metadata: .fields(["path": path]))
             return false
         }
 
-        var lineStart = data.startIndex
-        var consumed = 0
-        var lines = 0
-        var produced = 0
-        var applied = 0
-        while let newline = data[lineStart...].firstIndex(of: 0x0A) {
-            if newline > lineStart {
-                let line = Data(data[lineStart..<newline])
-                let shouldProcess = switch initialHistory {
-                case .none:
-                    true
-                case let .ready(metadataOffset, triggerOffset):
-                    consumed == metadataOffset || consumed >= triggerOffset
-                case .waitingForTrigger:
-                    false
-                }
-                guard shouldProcess else {
-                    let next = data.index(after: newline)
-                    consumed += data.distance(from: lineStart, to: next)
-                    lineStart = next
-                    if lineStart == data.endIndex { break }
-                    continue
-                }
-                let context = RolloutRecordContext(
-                    path: path,
-                    byteOffset: offset + UInt64(consumed),
-                    sessionID: sessionID
-                )
-                let events = try adapter.events(fromRolloutLine: line, context: context)
-                lines += 1
-                produced += events.count
-                for event in events {
-                    if try await repository.apply(event) {
-                        applied += 1
-                        onEvent(event)
-                    }
-                    if sessionID == nil { sessionID = event.sessionID }
-                }
-            }
-            let next = data.index(after: newline)
-            consumed += data.distance(from: lineStart, to: next)
-            lineStart = next
-            if lineStart == data.endIndex { break }
+        // An offline gap larger than one capped read goes to the serial
+        // backfill worker whole (its valve is far larger) — a tail-trimmed
+        // read would silently drop the middle of the session.
+        if offset > 0, fileSize - offset > UInt64(maximumIncrementBytes), let backfill {
+            await backfill.enqueue(sessionID: sessionID, path: path)
+            log.info("rollout_gap_delegated_to_backfill", metadata: .fields([
+                "session": sessionID.rawValue,
+                "path": path,
+                "gap": fileSize - offset,
+            ]))
+            return true
         }
 
-        cursor = RolloutCursor(
+        // A brand-new rollout spawned for a subagent replays the parent's
+        // history first; nothing may be ingested until the trigger record
+        // marks where the subagent's own work starts.
+        if offset == 0 {
+            switch try Self.initialSubagentHistory(url: url) {
+            case .waitingForTrigger:
+                log.debug("rollout_scan_waiting_for_subagent_trigger", metadata: .fields(["path": path]))
+                return false
+            case let .ready(metaLine, triggerOffset):
+                let context = RolloutRecordContext(path: path, byteOffset: 0, sessionID: sessionID)
+                for event in try adapter.events(fromRolloutLine: metaLine, context: context) {
+                    if try await repository.apply(event) { onEvent(event) }
+                }
+                try await repository.saveRolloutCursor(RolloutCursor(
+                    path: path,
+                    byteOffset: UInt64(triggerOffset),
+                    fileSize: fileSize,
+                    sessionID: sessionID
+                ))
+            case .none:
+                break
+            }
+        }
+
+        let report = try await RichSourceCatchUp.run(
+            repository: repository,
+            sessionID: sessionID,
             path: path,
-            byteOffset: offset + UInt64(consumed),
-            fileSize: fileSize,
-            sessionID: sessionID
+            adapter: adapter,
+            maximumBytes: maximumIncrementBytes,
+            onEvent: onEvent
         )
-        try await repository.saveRolloutCursor(cursor!)
-        if lines > 0 {
+        if report.lines > 0 {
             log.info("rollout_scanned", metadata: .fields([
-                "session": sessionID?.rawValue,
+                "session": sessionID.rawValue,
                 "path": path,
-                "from": offset,
-                "to": offset + UInt64(consumed),
-                "lines": lines,
-                "events": produced,
-                "applied": applied,
+                "from": report.fromOffset,
+                "to": report.toOffset,
+                "lines": report.lines,
+                "events": report.events,
+                "applied": report.applied,
             ]))
         }
         return true
     }
 
-    private static func initialSubagentHistory(
-        in data: Data,
-        offset: UInt64
-    ) -> InitialSubagentHistory {
-        guard offset == 0 else { return .none }
+    private static func initialSubagentHistory(url: URL) throws -> InitialSubagentHistory {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        guard let data = try handle.readToEnd(), !data.isEmpty else { return .none }
 
         var lineStart = data.startIndex
         var consumed = 0
-        var metadataOffset: Int?
+        var metaLine: Data?
         var isThreadSpawn = false
 
         while let newline = data[lineStart...].firstIndex(of: 0x0A) {
@@ -301,8 +344,8 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
                ) as? [String: Any],
                let type = object["type"] as? String,
                let payload = object["payload"] as? [String: Any] {
-                if metadataOffset == nil {
-                    metadataOffset = consumed
+                if metaLine == nil {
+                    metaLine = Data(data[lineStart..<newline])
                     let source = payload["source"] as? [String: Any]
                     let subagent = source?["subagent"] as? [String: Any]
                     isThreadSpawn = type == "session_meta"
@@ -311,7 +354,7 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
                 } else if type == "inter_agent_communication_metadata",
                           payload["trigger_turn"] as? Bool == true {
                     return .ready(
-                        metadataOffset: metadataOffset ?? 0,
+                        metaLine: metaLine ?? Data(),
                         triggerOffset: consumed
                     )
                 }
@@ -344,5 +387,5 @@ public final class CodexRolloutWatcher: @unchecked Sendable {
 private enum InitialSubagentHistory {
     case none
     case waitingForTrigger
-    case ready(metadataOffset: Int, triggerOffset: Int)
+    case ready(metaLine: Data, triggerOffset: Int)
 }

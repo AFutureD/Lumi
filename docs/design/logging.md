@@ -5,7 +5,7 @@
 ## 一眼看懂
 
 ```
-[2026-08-23T05:40:12.345Z] [INFO:daemon] [agent] ['trace':3f9a2c1d] events_ingested accepted=3 duplicates=0 received=3 sessions=abc123
+[2026-08-23T05:40:12.345Z] [INFO:daemon] [agent] ['trace':3f9a2c1d] hook_ingested provider=codex events=3 session=abc123
  └─ TIME (UTC ms) ─────┘  └LEVEL:subsystem┘ └category┘ └── trace（有则最前）┘ └──── MESSAGE：事件名 + key=value（业务层写）────┘
 ```
 
@@ -64,7 +64,7 @@ dbLog.error("apply_failed", metadata: .fields(["session": id, "error": error]))
 | category | 含义 | 典型事件 |
 | --- | --- | --- |
 | `lifecycle` | 进程启动 / 停止、配置、服务注册、自动更新、hook 安装 | `daemon_started`、`app_started`、`daemon_auto_update_restarting`、`claude_watcher_started` |
-| `agent` | Agent 接入：hook 入口、transcript / rollout 扫描、事件入库与分发、Mac 端 apply | `hook_ingested`（检出 AaaS 时带 `wrapper=` / `wrapper_agent=`）、`hook_environment`（仅 env **键名**列表；`LUMI_LOG_ENV=1` 抬到 info，否则 `--verbose` 下 debug）、`events_ingested`、`transcript_scanned`、`rollout_scanned`、`stream_publish`、`events_applied` |
+| `agent` | Agent 接入：hook 入口、transcript / rollout 扫描、事件入库与分发、Mac 端 apply | `hook_ingested`（带 AaaS 归属 `aaas=` / `aaas_agent=` / `aaas_term=`）、`hook_environment`（仅 env **键名**列表；`LUMI_LOG_ENV=1` 抬到 info，否则 `--verbose` 下 debug）、`transcript_scanned`、`rollout_scanned`、`stream_publish`、`events_applied` |
 | `convert` | 纯数据转换：adapter 归一化、坏记录、Session 重建、给 iPhone 切片 | `rich_source_line_rejected`、`session_reingested`、`index_prepared`、`session_prepared` |
 | `db` | SQLite 仓库 / 缓存读写 | `session_deleted`、`history_cleared`、`cache_open_failed`、`event_apply_failed` |
 | `ipc` | 本机 Unix socket：请求、事件流、编解码 | `ipc_listening`、`ipc_handled`、`ipc_request`、`ipc_stream_connected`、`ipc_operation_failed`、`reconciled` |

@@ -6,22 +6,41 @@ import Transport
 import Foundation
 import Testing
 
-@Test func serviceIngestsAndListsSessions() async throws {
+private func hookFrame(_ fields: [String: Any]) -> Data {
+    try! JSONSerialization.data(withJSONObject: fields)
+}
+
+@Test func serviceIngestsHookFramesAndListsSessions() async throws {
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
-    let event = AgentIngressEvent(
-        eventID: EventID("event"),
-        sessionID: SessionID("session"),
+    let backfill = TranscriptBackfillQueue(repository: repository)
+    await service.attachHookIngest(HookIngestService(
+        repository: repository,
+        backfill: backfill,
+        codexAdapter: CodexAdapter(threads: FixedThreadIdentities(identities: [:]))
+    ))
+
+    let accepted = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .ingestHook,
+        createdAt: Date(),
         agent: .codex,
-        occurredAt: Date(),
-        lifecycle: .running,
-        phase: .thinking
-    )
-    let accepted = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingest, event: event)))
+        env: [:],
+        data: hookFrame(["session_id": "session", "turn_id": "t1", "cwd": "/tmp", "hook_event_name": "UserPromptSubmit", "prompt": "hi"])
+    )))
     #expect(accepted.payload.status == .accepted)
 
     let listed = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .listSessions)))
     #expect(listed.payload.sessions?.map(\.id) == [SessionID("session")])
+
+    // A frame the daemon cannot decode is rejected, not dropped silently.
+    let rejected = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .ingestHook,
+        createdAt: Date(),
+        agent: .codex,
+        env: [:],
+        data: hookFrame(["hook_event_name": "UserPromptSubmit"])
+    )))
+    #expect(rejected.payload.failure?.code == "malformed_hook")
 
     let cleared = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .clearHistory)))
     #expect(cleared.payload.status == .ok)
@@ -33,36 +52,34 @@ import Testing
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
     let sessionID = SessionID("session-to-delete")
-    let event = AgentIngressEvent(
+    _ = try await repository.apply(AgentIngressEvent(
         eventID: EventID("first-event"),
         sessionID: sessionID,
         agent: .codex,
         occurredAt: Date(timeIntervalSince1970: 100),
         lifecycle: .running,
         phase: .thinking
-    )
-    _ = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingest, event: event)))
+    ))
 
     let deleted = await service.handle(TransportEnvelope(
         payload: IPCRequest(operation: .deleteSession, sessionID: sessionID)
     ))
     #expect(deleted.payload.status == .ok)
 
-    let late = AgentIngressEvent(
+    let late = try await repository.apply(AgentIngressEvent(
         eventID: EventID("late-event"),
         sessionID: sessionID,
         agent: .codex,
         occurredAt: Date(timeIntervalSince1970: 200),
         lifecycle: .running,
         phase: .executing
-    )
-    let ignored = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingest, event: late)))
-    #expect(ignored.payload.status == .ok)
+    ))
+    #expect(late == false)
     let listed = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .listSessions)))
     #expect(listed.payload.sessions?.isEmpty == true)
 }
 
-@Test func serviceBroadcastsHelperDiscardsAndHidesProvisionalSessionsFromHealth() async throws {
+@Test func serviceBroadcastsHookDiscardsAndHidesProvisionalSessionsFromHealth() async throws {
     let repository = InMemorySessionRepository()
     let hub = DaemonSubscriptionHub()
     let capture = EventCapture()
@@ -71,28 +88,40 @@ import Testing
     }
     defer { hub.unsubscribe(subscriptionID) }
     let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash", subscriptions: hub)
+    let backfill = TranscriptBackfillQueue(repository: repository)
+    await service.attachHookIngest(HookIngestService(
+        repository: repository,
+        backfill: backfill,
+        onEvent: { hub.publish($0) }
+    ))
     let ghost = SessionID("ghost")
-    let start = AgentIngressEvent(
-        eventID: EventID("ghost-start"), sessionID: ghost, agent: .claude,
-        occurredAt: Date(timeIntervalSince1970: 100), lifecycle: .starting, phase: .idle
-    )
-    _ = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingestBatch, events: [start])))
+    // A Claude probe: SessionStart with no transcript on disk, no turn ever.
+    let base: [String: Any] = ["session_id": ghost.rawValue, "cwd": "/tmp/none", "transcript_path": "/tmp/none/missing.jsonl"]
+    _ = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .ingestHook,
+        createdAt: Date(timeIntervalSince1970: 100),
+        agent: .claude,
+        env: [:],
+        data: hookFrame(base.merging(["hook_event_name": "SessionStart", "source": "startup"]) { $1 })
+    )))
 
-    // Provisional: retained and served to the helper, but not "active".
+    // Provisional: retained, but not "active".
     let detail = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSession, sessionID: ghost, limit: 1)))
     #expect(detail.payload.session?.summary.isProvisional == true)
     let health = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .health)))
     #expect(health.payload.health?.activeSessionCount == 0)
     #expect(health.payload.health?.retainedSessionCount == 1)
 
-    let discard = AgentIngressEvent(
-        eventID: EventID("ghost-discard"), sessionID: ghost, agent: .claude,
-        occurredAt: Date(timeIntervalSince1970: 102), disposition: .discard
-    )
-    let response = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .ingestBatch, events: [discard])))
+    let response = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .ingestHook,
+        createdAt: Date(timeIntervalSince1970: 102),
+        agent: .claude,
+        env: [:],
+        data: hookFrame(base.merging(["hook_event_name": "SessionEnd", "reason": "other"]) { $1 })
+    )))
     #expect(response.payload.status == .accepted)
     #expect(response.payload.acceptedCount == 1)
-    #expect(capture.events.map(\.eventID) == [EventID("ghost-start"), EventID("ghost-discard")])
+    #expect(capture.events.last?.disposition == .discard)
 
     let listed = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .listSessions)))
     #expect(listed.payload.sessions?.isEmpty == true)
@@ -447,6 +476,93 @@ import Testing
     ])
 }
 
+// The identity sync must mirror the reducer's guards before emitting: a
+// lineage-less `.codex` identity against a stored `.codexSubagent` summary
+// is a diff the reducer refuses (demotesSubagent), so emitting it would
+// mint a fresh accepted-but-ineffective event every poll, forever.
+@Test func identitySyncStaysQuietWhenTheReducerWouldRefuseTheDiff() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-identity-quiet-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = InMemorySessionRepository()
+    let sessionID = SessionID("subagent-session")
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("seed"),
+        sessionID: sessionID,
+        agent: .codexSubagent,
+        occurredAt: Date(timeIntervalSince1970: 100),
+        title: "Hypatia · docs_review",
+        lifecycle: .completed,
+        phase: .idle,
+        lineage: SessionLineage(threadSource: "subagent", parentSessionID: SessionID("parent"))
+    ))
+
+    // The state DB stopped reporting the subagent source: identity resolves
+    // to a bare `.codex` with no lineage and an inherited (nil) title.
+    let capture = EventCapture()
+    let watcher = CodexRolloutWatcher(
+        rootDirectory: directory,
+        repository: repository,
+        threadIdentities: MutableThreadIdentityProvider(identities: [
+            sessionID: CodexThreadIdentity(sessionID: sessionID),
+        ]),
+        onEvent: capture.append
+    )
+    await watcher.scanOnce()
+    await watcher.scanOnce()
+    #expect(capture.events.isEmpty)
+    let summary = try #require(try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary)
+    #expect(summary.agent == .codexSubagent)
+    #expect(summary.title == "Hypatia · docs_review")
+}
+
+// The owning AaaS is the authority on the title: a Paseo-owned session —
+// alive or long ended — keeps its Paseo title even though the identity sync
+// keeps seeing a different native thread name. Agent/lineage still sync.
+@Test func titleSyncLeavesWrapperOwnedSessionsAloneButStillSyncsIdentity() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-aaas-sync-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = InMemorySessionRepository()
+    let sessionID = SessionID("paseo-owned")
+    _ = try await repository.apply(AgentIngressEvent(
+        eventID: EventID("seed"),
+        sessionID: sessionID,
+        agent: .codex,
+        occurredAt: Date(timeIntervalSince1970: 100),
+        title: "[CUA] Paseo 里的标题",
+        lifecycle: .interrupted,
+        phase: .idle,
+        aaas: SessionAaaS(kind: .paseo, agentID: "p-1")
+    ))
+
+    let identity = CodexThreadIdentity(
+        sessionID: sessionID,
+        title: "Native thread title",
+        threadSource: "subagent",
+        agentNickname: "Hypatia",
+        agentPath: "/root/docs_review",
+        parentSessionID: SessionID("parent-session"),
+        subagentDepth: 1,
+        subagentKind: "thread_spawn"
+    )
+    let watcher = CodexRolloutWatcher(
+        rootDirectory: directory,
+        repository: repository,
+        threadIdentities: MutableThreadIdentityProvider(identities: [sessionID: identity])
+    )
+    await watcher.scanOnce()
+    await watcher.scanOnce()
+
+    let summary = try #require(try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary)
+    #expect(summary.title == "[CUA] Paseo 里的标题")
+    #expect(summary.agent == .codexSubagent)
+    #expect(summary.lineage?.parentSessionID == SessionID("parent-session"))
+    #expect(summary.aaas?.kind == .paseo)
+}
+
 @Test func firstRunBaselineIgnoresExistingSessionsAndRecordsNewFiles() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("lumi-baseline-\(UUID().uuidString)", isDirectory: true)
@@ -474,6 +590,152 @@ import Testing
     await watcher.scanOnce()
 
     #expect(try await repository.listSessions(limit: 100).map(\.id) == [SessionID("fresh-session")])
+}
+
+// Upgrade path: a store that ingested sessions before any baseline existed
+// (hook-driven reads predate the always-on watcher) must not have its live
+// sessions ignored or their cursors clobbered by the first-run baseline.
+@Test func firstRunBaselineLeavesAlreadyTrackedSessionsAlone() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-upgrade-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    // A tracked session with a cursor short of the file: the stranded-tail
+    // shape (`turn_aborted` written after the last hook).
+    let tracked = directory.appendingPathComponent("tracked.jsonl")
+    let head = """
+    {"timestamp":"2026-08-29T04:46:20Z","type":"session_meta","payload":{"id":"tracked-session","cwd":"/tmp/project"}}
+    {"timestamp":"2026-08-29T04:46:21Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+
+    """
+    let tail = """
+    {"timestamp":"2026-08-29T04:49:16Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}
+
+    """
+    try Data((head + tail).utf8).write(to: tracked)
+
+    // A known session whose cursor was never claimed (hook-only ingestion).
+    let known = directory.appendingPathComponent("known.jsonl")
+    try Data("""
+    {"timestamp":"2026-08-29T04:00:00Z","type":"session_meta","payload":{"id":"known-session","cwd":"/tmp/project"}}
+
+    """.utf8).write(to: known)
+
+    // Pre-Lumi history: session the store has never seen.
+    let foreign = directory.appendingPathComponent("foreign.jsonl")
+    try Data("""
+    {"timestamp":"2026-08-01T00:00:00Z","type":"session_meta","payload":{"id":"foreign-session","cwd":"/tmp/old"}}
+
+    """.utf8).write(to: foreign)
+
+    let repository = InMemorySessionRepository()
+    for id in ["tracked-session", "known-session"] {
+        _ = try await repository.apply(AgentIngressEvent(
+            eventID: EventID("seed-\(id)"), sessionID: SessionID(id), agent: .codex,
+            occurredAt: Date(timeIntervalSince1970: 100), lifecycle: .running, phase: .thinking
+        ))
+    }
+    try await repository.saveRolloutCursor(RolloutCursor(
+        path: tracked.path,
+        byteOffset: UInt64(head.utf8.count),
+        fileSize: UInt64(head.utf8.count),
+        sessionID: SessionID("tracked-session")
+    ))
+
+    let watcher = CodexRolloutWatcher(rootDirectory: directory, repository: repository)
+    try await watcher.prepareInitialBaseline()
+
+    // Tracked cursor untouched; known session takes over from EOF with its
+    // own id; only the foreign session is ignored.
+    #expect(try await repository.rolloutCursor(path: tracked.path)?.byteOffset == UInt64(head.utf8.count))
+    #expect(try await repository.rolloutCursor(path: known.path)?.sessionID == SessionID("known-session"))
+    #expect(try await !repository.isSessionIgnored(SessionID("tracked-session")))
+    #expect(try await !repository.isSessionIgnored(SessionID("known-session")))
+    #expect(try await repository.isSessionIgnored(SessionID("foreign-session")))
+
+    // The first scan then heals the stranded tail.
+    await watcher.scanOnce()
+    let healed = try await repository.sessionDetail(id: SessionID("tracked-session"), cursor: nil, limit: 100)
+    #expect(healed?.summary.lifecycle == .interrupted)
+    #expect(try await repository.sessionDetail(id: SessionID("foreign-session"), cursor: nil, limit: 1) == nil)
+}
+
+// The motivating bug: an interrupt writes `turn_aborted` to the rollout
+// seconds after the last hook, and no hook ever fires again. The always-on
+// watcher must close the turn from the tail alone.
+@Test func rolloutWatcherClosesATurnAbortedAfterTheLastHook() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-abort-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let rollout = directory.appendingPathComponent("rollout.jsonl")
+    try Data("""
+    {"timestamp":"2026-08-29T04:46:20Z","type":"session_meta","payload":{"id":"aborted-session","cwd":"/tmp/project"}}
+    {"timestamp":"2026-08-29T04:46:21Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+    {"timestamp":"2026-08-29T04:46:22Z","type":"event_msg","payload":{"type":"user_message","message":"open a page"}}
+
+    """.utf8).write(to: rollout)
+
+    let repository = InMemorySessionRepository()
+    let watcher = CodexRolloutWatcher(rootDirectory: directory, repository: repository)
+    await watcher.scanOnce()
+    let sid = SessionID("aborted-session")
+    let running = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    #expect(running?.summary.lifecycle == .running)
+
+    // The interrupt: written to the rollout with no hook to deliver it.
+    let handle = try FileHandle(forWritingTo: rollout)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("""
+    {"timestamp":"2026-08-29T04:49:16Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}
+
+    """.utf8))
+    try handle.close()
+
+    await watcher.scanOnce()
+    let interrupted = try await repository.sessionDetail(id: sid, cursor: nil, limit: 100)
+    #expect(interrupted?.summary.lifecycle == .interrupted)
+    #expect(interrupted?.summary.phase == .idle)
+    #expect(interrupted?.turns.first?.outcome == .aborted)
+}
+
+// Regression for the retired per-line watcher: reading each line with a fresh
+// state lost the current turn and the tool-name pairing. Through the shared
+// catch-up, tool calls and results pair up and every row lands on the turn.
+@Test func rolloutWatcherKeepsTurnAttributionAndToolPairingAcrossLines() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-pairing-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let rollout = directory.appendingPathComponent("rollout.jsonl")
+    try Data("""
+    {"timestamp":"2026-08-29T04:00:00Z","type":"session_meta","payload":{"id":"paired-session","cwd":"/tmp/project"}}
+    {"timestamp":"2026-08-29T04:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+    {"timestamp":"2026-08-29T04:00:02Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"ls"}}
+    {"timestamp":"2026-08-29T04:00:03Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_1","output":"{\\"output\\":\\"ok\\",\\"metadata\\":{\\"exit_code\\":0}}"}}
+    {"timestamp":"2026-08-29T04:00:04Z","type":"event_msg","payload":{"type":"agent_message","message":"Done."}}
+
+    """.utf8).write(to: rollout)
+
+    let repository = InMemorySessionRepository()
+    let watcher = CodexRolloutWatcher(rootDirectory: directory, repository: repository)
+    await watcher.scanOnce()
+
+    let sid = SessionID("paired-session")
+    let detail = try #require(try await repository.sessionDetail(id: sid, cursor: nil, limit: 100))
+    let toolRows = detail.timeline.compactMap { item -> ToolTimelinePayload? in
+        guard case let .tool(tool) = item.payload else { return nil }
+        return tool
+    }
+    #expect(toolRows.count == 2)
+    #expect(toolRows.allSatisfy { $0.toolUseID == "call_1" })
+    // The result row resolves its name from the call seen lines earlier.
+    #expect(toolRows.last?.name == "exec")
+    // Everything after the turn opener is attributed to turn-1.
+    let attributed = detail.timeline.filter { $0.turnID == TurnID("turn-1") }
+    #expect(attributed.count >= 3)
+    #expect(detail.turns.first?.toolCallCount == 1)
 }
 
 private final class EventCapture: @unchecked Sendable {

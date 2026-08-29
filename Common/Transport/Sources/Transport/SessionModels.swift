@@ -239,7 +239,60 @@ public struct TurnSummary: Codable, Hashable, Sendable {
     }
 }
 
+/// The application layer above the agent engine. An agent (codex, claude) is
+/// the engine that runs the session; the AaaS (Agentic AI as a Service) is
+/// the application that hosts it — and the authority on the session's title.
+public enum AaaSKind: String, Codable, Hashable, Sendable {
+    /// The ChatGPT desktop app driving a Codex session.
+    case chatgpt
+    /// The Codex CLI (terminal, IDE extensions — anything not the desktop app).
+    case codex
+    /// The Claude desktop app, including Claude Code sessions it hosts.
+    case claudeDesktop = "claude_desktop"
+    /// The Claude Code CLI in a terminal (or SDK entrypoints).
+    case claudeCode = "claude_code"
+    case paseo
+    case raft
+}
+
+/// A session's AaaS ownership, persisted on the summary. A new enum is safe
+/// inside a new optional field: absent keys decode as `nil` (old summary
+/// blobs included), and all three ends ship together.
+public struct SessionAaaS: Codable, Hashable, Sendable {
+    public let kind: AaaSKind
+    /// The wrapper's own agent id (`PASEO_AGENT_ID` / `SLOCK_AGENT_ID`);
+    /// only Paseo and Raft have one.
+    public let agentID: String?
+    /// The hosting terminal (`TERM_PROGRAM`), when the session runs in one.
+    public let terminalProgram: String?
+
+    public init(kind: AaaSKind, agentID: String? = nil, terminalProgram: String? = nil) {
+        self.kind = kind
+        self.agentID = agentID
+        self.terminalProgram = terminalProgram
+    }
+
+    /// Whether the agent's native title channels (Codex thread names, the
+    /// Claude transcript's `custom-title`) may retitle a session this AaaS
+    /// owns. Paseo / Raft own their titles outright: under their ownership
+    /// every native title — including a `custom-title` rename made inside
+    /// the wrapped CLI — is deliberately suppressed; the wrapper's store is
+    /// the only title source.
+    public var allowsNativeTitle: Bool {
+        switch kind {
+        case .chatgpt, .codex, .claudeDesktop, .claudeCode: true
+        case .paseo, .raft: false
+        }
+    }
+}
+
 public struct SessionLineage: Codable, Hashable, Sendable {
+    /// A lineage with no field set carries no fact — treat it as absent
+    /// wherever "no lineage" has meaning (the subagent demotion guard).
+    public var isEmpty: Bool {
+        self == SessionLineage()
+    }
+
     public let threadSource: String?
     public let parentSessionID: SessionID?
     public let subagentDepth: Int?
@@ -296,6 +349,10 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     /// When the session's first Turn began (earliest turn-scoped event). Never
     /// cleared — a later `resume` / `compact` restart keeps it.
     public let firstTurnAt: Date?
+    /// The application that owns this session (and its title). `nil` for
+    /// sessions ingested before ownership existed and for sessions only ever
+    /// seen by a watcher (no hook frame to detect from).
+    public let aaas: SessionAaaS?
 
     public init(
         id: SessionID,
@@ -311,7 +368,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         needsReview: Bool = false,
         hiddenInNotch: Bool = false,
         lineage: SessionLineage? = nil,
-        firstTurnAt: Date? = nil
+        firstTurnAt: Date? = nil,
+        aaas: SessionAaaS? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -327,6 +385,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.hiddenInNotch = hiddenInNotch
         self.lineage = lineage
         self.firstTurnAt = firstTurnAt
+        self.aaas = aaas
     }
 
     /// The same summary with the review flag and its derived attention bit
@@ -346,7 +405,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             needsReview: needsReview,
             hiddenInNotch: hiddenInNotch,
             lineage: lineage,
-            firstTurnAt: firstTurnAt
+            firstTurnAt: firstTurnAt,
+            aaas: aaas
         )
     }
 
@@ -366,7 +426,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             needsReview: needsReview,
             hiddenInNotch: hidden,
             lineage: lineage,
-            firstTurnAt: firstTurnAt
+            firstTurnAt: firstTurnAt,
+            aaas: aaas
         )
     }
 
@@ -405,6 +466,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case hiddenInNotch
         case lineage
         case firstTurnAt
+        case aaas
     }
 }
 

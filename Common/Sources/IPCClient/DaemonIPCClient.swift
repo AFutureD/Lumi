@@ -42,7 +42,6 @@ public final class DaemonIPCClient: @unchecked Sendable {
             log.log(level: failed ? .warning : .debug, "ipc_request", metadata: .fields([
                 "op": request.operation.rawValue,
                 "session": request.sessionID?.rawValue,
-                "events": request.events?.count,
                 "bytes_out": bytesOut,
                 "status": response.status.rawValue,
                 "failure": response.failure?.code,

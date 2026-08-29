@@ -1,44 +1,57 @@
 # Agent Hook 设计
 
-Codex 与 Claude 接入都由两条互补路径组成：Hook 提供低延迟；持久日志侧 Codex 有 rollout watcher（默认关闭的兜底），Claude 有 transcript watcher（默认开启，覆盖没有任何 hook 的写入，如用户中断）。两条路径都先经过对应 Adapter，再写入同一个 reducer。
+Codex 与 Claude 接入都由两条互补路径组成：Hook 提供低延迟；持久日志侧 Codex 有 rollout watcher，Claude 有 transcript watcher（两者常驻，兜住没有任何 hook 的写入——用户中断正是这种写入）。两条路径都先经过对应 Adapter，再写入同一个 reducer。
 
 ## 目标
 
-- Hook 命令尽快完成，不在 Agent 进程内维护状态；helper 永远以 0 退出，不阻塞 Agent 的工具调用。
+- Hook 命令尽快完成，不在 Agent 进程内做任何解析或维护状态；helper 永远以 0 退出，不阻塞 Agent 的工具调用。
 - 不覆盖用户已有 Hook，包括其他 Agent 状态工具。
 - 原始 Codex / Claude 格式只存在于 Adapter 边界，产品层只处理统一的 **Agent 领域事件**（Session 生命周期、Turn 聚合、Timeline item）。
-- **抽象在 helper 内完成**：helper 同时读取 hook stdin 与该 Session 的 transcript / rollout 增量，产出完备的领域数据后一次性发给 daemon；daemon 只做去重、归并、持久化与分发。
+- **helper 只做转发，daemon 做全部归并**：helper 把 hook 的原始 stdin、agent 类型与白名单环境变量组成一帧交给 daemon；daemon 反序列化、读取 transcript / rollout 增量、归并、去重、持久化与分发。
 - 结构化保留模型配置、上下文和消耗指标；未映射记录默认忽略。
 
-## 双输入结构
+> 边界曾一度前移到 helper（「抽象在 helper 内完成」）。该论证被推翻：env 捕获不等于领域构建（白名单 6 个键随帧转发即可）；hook 进程才是受外部 kill 超时约束的脆弱侧（Codex 仅 3 秒预算）；而「hook 总会送来终态」的可用性假设被 `turn_aborted` 事故证伪——中断把终态写进 rollout 却不触发任何 hook，纯 hook 驱动的读取永远读不到那段尾巴。详见 session-timeline-redesign.md 的实现记录。
+
+## 帧与双输入结构
 
 ```mermaid
 flowchart LR
-    HookJSON["Codex / Claude Hook JSON (stdin)"] --> Helper["Spark\nHelperIngestPipeline"]
-    Rollout["~/.codex/sessions/**/rollout-*-&lt;session&gt;.jsonl"] --> Helper
-    Transcript["~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl"] --> Helper
-    Helper --> Adapter["CodexAdapter / ClaudeAdapter"]
-    Adapter --> Event["AgentIngressEvent[] (ingest_batch)"]
-    Event --> Daemon["DaemonService"]
-    Daemon --> SQLite[("daemon SQLite: sessions / turns / timeline")]
-    Daemon --> Stream["Mac event stream"]
-    Daemon -. get/save_rollout_cursor .-> Helper
+    HookJSON["Codex / Claude Hook JSON (stdin)"] --> Helper["Spark（组帧转发）"]
+    Helper --> Frame["ingest_hook 帧\ncreatedAt / agent / env / data"]
+    Frame --> Service["daemon HookIngestService"]
+    Rollout["~/.codex/sessions/**/rollout-*-&lt;session&gt;.jsonl"] --> Service
+    Transcript["~/.claude/projects/&lt;slug&gt;/&lt;session&gt;.jsonl"] --> Service
+    Service --> Adapter["CodexAdapter / ClaudeAdapter"]
+    Adapter --> Event["AgentIngressEvent[]"]
+    Event --> SQLite[("daemon SQLite: sessions / turns / timeline")]
+    Event --> Stream["Mac event stream"]
 ```
 
-每次 hook 拉起 helper 时的顺序：
+`ingest_hook` 帧的字段：
 
-1. 判定 provider（`--agent codex|claude`，否则按 `CLAUDE_PROJECT_DIR`、`transcript_path`、`prompt_id`/`turn_id` 启发式）。
-2. 定位该 Session 的 rich source（Claude 用 hook 的 `transcript_path`；Codex 在 `CODEX_HOME/sessions` 按文件名后缀 `-<session>.jsonl` 由新到旧查找）。
-3. 向 daemon 取该文件的 cursor 与该 Session 的 summary + 已知 Turn（`get_session limit:1`；最后开放（否则最近）的 Turn 播种 `currentTurnID`），读增量、逐行 reduce。
-4. reduce hook 本身，带上增量读取结束时的 `currentTurnID`（hook 事件挂到这个 Turn，见「Turn 边界」）；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 收口 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。Claude `SessionEnd` 且 rich source 不存在时，先判定「临时会话」（见下节）。
-5. `ingest_batch` 一次发送，成功后再 `save_rollout_cursor`。
+| 字段 | 含义 |
+| --- | --- |
+| `createdAt` | 帧创建时间（RFC 3339）。观测转发延迟；payload 缺 `timestamp` 时作为事发时刻的兜底时钟 |
+| `agent` | Agent 类型，`codex` / `claude`，来自安装器写死的 `--agent`。`auto` 与 provider 探测启发式已删除 |
+| `env` | 环境变量白名单子集：`PASEO_AGENT_ID`、`PASEO_HOME`、`SLOCK_AGENT_ID`、`SLOCK_CLI_TRANSPORT_DIR`、`CLAUDE_PROJECT_DIR`、`CODEX_HOME`。完整 env 含 API key，绝不全量过 socket |
+| `data` | stdin 原始字节，禁止重编码——hook 事件 ID 是对这些字节的 SHA-256 |
+
+`data` 的 JSON 渲染只出现在 helper 的 `hook_frame` 帧日志里（debug 用途），不进帧——帧只携带原始字节一份。
+
+daemon 收到帧后（`HookIngestService`，单 actor、按到达顺序处理）：
+
+1. 按 `agent` 把 `data` 反序列化为类型化 payload——事件名词表是闭合枚举（`HookEventName`，安装器的注册表由它派生）。事件名不在词表内（手工错配的注册、版本偏差）时**降级为仅增量**：照常追平 rich source、记 `hook_event_unsupported`，只是不归并 hook 本身；结构损坏（非 JSON、缺 `session_id`）才整帧拒收。
+2. 定位该 Session 的 rich source（Claude 用 payload 的 `transcript_path`；Codex 在 `CODEX_HOME/sessions`——帧内 env 优先于 daemon 自己的——按文件名后缀 `-<session>.jsonl` 由新到旧查找）。
+3. 经 `RichSourceCatchUp` 追平增量：取 cursor、读、逐行 reduce、逐事件应用、存 cursor（cursor 随追平前进，早于 hook 事件应用；安全性由稳定事件 ID + 幂等去重保证）。增量读取结束时留下的开放 Turn 播种 `currentTurnID`。
+4. reduce hook 本身，带上 `currentTurnID`（hook 事件挂到这个 Turn，见「Turn 边界」）；rich source 可读时 hook 只驱动 lifecycle / phase / Turn 收口 / Session marker，不再产出 message / tool item（避免与 transcript 重复）。Claude `SessionEnd` 且 rich source 不存在时，先判定「临时会话」（见下节）。
+5. 从帧内 env 判定 AaaS 并在批末追加标题事件（见「AaaS 识别」），逐事件应用并发布。
 
 ## 临时会话（第一个 Turn 之前）
 
 **有效性边界 = 第一个 Turn**（transcript 首条 human prompt 记录 / hook-only 兜底的首次 `UserPromptSubmit` / Codex `task_started`）。`SessionStart` 之后、第一个 Turn 之前的 Session 是 **临时会话**：`SessionSummary.isProvisional = lifecycle == .starting && firstTurnAt == nil`（`firstTurnAt` 由 reducer 在首个带 turnID 的事件时写入，之后不变；`resume` / `compact` 重发 `SessionStart` 会把 lifecycle 重置为 `starting`，但 `firstTurnAt` 已有值，所以不算临时）。
 
 - **可见性**：临时会话在主窗口列表、Notch、Relay/iOS 快照里一律不出现（Mac `MacSessionStore` 过滤，daemon `health.activeSessionCount` 同口径）；它仍留在 daemon 与 Mac cache 里，等第一个 Turn 到来时连同 `session_started` marker 一起显示。唯一例外（`SessionSummary.visible`）：被某个可见 Subagent 引用为 parent 的临时会话照常显示——隐藏它会让子代理孤悬在顶层，也没法选中它做 `reingest_session` 修复（历史数据里曾有子代理 rollout 继承的 `session_meta` 给父级建出空壳的情况）。
-- **存在性**：Claude `SessionEnd` 到达时，helper 若发现 transcript 从未落盘且 daemon 仍把该 Session 记为临时（或根本没有）→ 这不是会话，`ClaudeAdapter` 产出 `AgentIngressEvent(disposition: .discard)` 代替 `session_ended`；仓库删除该 Session 并写入 `ignored_sessions` 墓碑，事件照常发布，Mac cache 跑同一段代码收敛。daemon 查询失败时不判定（宁可留下空会话也不误删）。判定只能在 SessionEnd 做：真会话的 SessionStart 同样早于 transcript 创建。Codex 不适用（rollout 从 Session 开始就存在）。
+- **存在性**：Claude `SessionEnd` 到达时，`HookIngestService` 若发现 transcript 从未落盘且仓库仍把该 Session 记为临时（或根本没有）→ 这不是会话，`ClaudeAdapter` 产出 `AgentIngressEvent(disposition: .discard)` 代替 `session_ended`；仓库删除该 Session 并写入 `ignored_sessions` 墓碑，事件照常发布，Mac cache 跑同一段代码收敛。查询失败时不判定（宁可留下空会话也不误删）。判定只能在 SessionEnd 做：真会话的 SessionStart 同样早于 transcript 创建。Codex 不适用（rollout 从 Session 开始就存在）。
 
 典型来源：Claude 桌面 App 为加载斜杠命令 / agent 列表拉起的一次性 CLI（`withTemporaryQuery`，SessionStart→SessionEnd ≈2 s，无 turn、无 transcript，见 [research](../research/claude-desktop-temporary-query.md)），以及启动后未输入即退出的会话。
 
@@ -50,12 +63,12 @@ Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_sess
 2. `RichSourceReader` 从 offset 0 全量读（不截尾），逐行经 ClaudeAdapter / CodexAdapter 归约。
 3. `resetSession`：删 sessions/turns/timeline/cursor 行，不写 tombstone。
 4. 回放：全部 rich 事件（eventID 加 `reingest:<generation>:` 前缀绕过幂等表；timeline item ID 不变）→ 之前 hook-only 的 item：`sessionMarker`（`session_ended` 带 completed/idle，仅当 transcript 里没有更晚活动时才生效）与 Claude `subagent` 起止（父 transcript 不含 sidechain）→ 标题 / lineage（重建结果为默认值时沿用旧值）。
-5. 游标存到 EOF，helper 之后继续增量。
+5. 游标存到 EOF，之后 hook / watcher 继续增量。
 6. Claude 父 Session 额外枚举 `<project>/<session>/subagents/agent-*.jsonl`，每个文件重建一个派生子 Session（reset → 全量归约 → `.meta.json` 标题/lineage → 游标）；这也是给旧记录补出 Claude 子代理子行的方法（选中父 Session 点刷新）。子 Session 自身 reingest 走它的游标路径。
 
 丢失的只有 hook-only 且不可回放的瞬时状态（PermissionRequest 的 waiting_for_approval）。
 
-`SessionReduction` 与 `TurnReduction` 是 daemon 侧唯一的状态归并器；in-daemon 的 `CodexRolloutWatcher` 退居兜底（`LUMI_ROLLOUT_WATCHER=1` 开启，默认关闭）。
+`SessionReduction` 与 `TurnReduction` 是 daemon 侧唯一的状态归并器。
 
 ## Hook 安装
 
@@ -98,7 +111,7 @@ Turn = 一次人类提问到一次收口。两个 agent 的边界信号不同。
 
 hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 
-- hook 事件不自带 Turn 身份：统一挂到 pipeline 从增量读取带回的 `HookIngestOptions.currentTurnID`；只有完全没有 transcript 数据可用（`currentTurnID` 为空且非 rich——文件未落盘、读失败降级、冷启动委托回填）才退回 `prompt_id`。
+- hook 事件不自带 Turn 身份：统一挂到 `HookIngestService` 从增量追平带回的 `HookIngestOptions.currentTurnID`；只有完全没有 transcript 数据可用（`currentTurnID` 为空且非 rich——文件未落盘、读失败降级、冷启动委托回填）才退回 `prompt_id`。
 - rich 时 `UserPromptSubmit` 不建 Turn、不写 prompt——它对注入式续跑同样触发，其文本不能覆盖人类 prompt；开 Turn 全部交给 transcript。
 - `Stop` / `StopFailure` 始终收口当前 Turn：终态记录可能晚于 hook 落盘，而停在 waitingForInput·idle 或 failed 的 Session 不再被 watcher 轮询，hook 是唯一有保证的收口。两路 turnEnd 落同一 item id（`turn_end:<s>:<turn>`）与同一 outcome，先后到达幂等。
 
@@ -164,35 +177,43 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 | `custom-title` | Session 标题 |
 | `queue-operation` / `last-prompt` 等 | 忽略 |
 
-## helper 执行模型
+## helper 执行模型（转发器）
 
-`Spark [--agent codex|claude|auto] [--verbose]` 是一次性 SwiftPM executable，核心在 `HelperIngestPipeline`（`Common/Adapters`），通过 `HelperDaemonPort` 与 daemon 通信（可测试）：
+`Spark --agent codex|claude [--verbose]` 是一次性 SwiftPM executable，零解析零领域逻辑：
 
-1. 读 stdin → 判定 provider → 定位 rich source。
-2. `get_rollout_cursor` + `get_session(limit:1)` 取 cursor 与 Turn。
-3. 读增量（超过 32 MiB 只取尾部并对齐到行首）逐行 reduce；再 reduce hook。
-4. `ingest_batch`（每 200 条一帧，超时 5s）→ 成功后 `save_rollout_cursor`。
-5. 任何失败写 stderr，**仍以 0 退出**。
+1. 读全 stdin；截取白名单 env。
+2. 记一条帧日志 `hook_frame`：帧内容不含 `data`、含 `data` 的 JSON 渲染（连同 createdAt / agent / env；渲染仅入日志，不进帧）——这是「三端日志不记内容」惯例的显式例外，仅落本机 helper.log。
+3. 发一帧 `ingest_hook`（超时 2 秒，低于 Codex hook 的 3 秒预算）；成功记 `hook_forwarded`。
+4. 任何失败（缺 `--agent`、空 stdin、连接失败、daemon 拒收）写 stderr 与 errors.log，**仍以 0 退出**。超时不算丢失：帧到达后 daemon 照常完成处理，响应只是告知。
+5. 帧预算由编解码上限推导（8 MiB 减 64 KiB 头部余量，再按 base64 的 4/3 反算）：超过预算的 stdin 放弃该次转发（rollout / transcript 的内容由 watcher 自愈，丢失的只有这一个 hook 的低延迟信号）。
 
-hook 进程是实时通道，且受 agent 的 hook 超时约束，不做无界工作：daemon 没有该文件的游标（冷启动）且文件超过 1 MiB 时，第 3 步跳过整本回放，改发 `backfill_session` 把历史交给 daemon 的串行回填队列（父 transcript 与 subagent sidechain 同一规则）。此时 hook 以 `richSourceAvailable=false` 摊开自己的 prompt / tool 行占位——回填靠同一套稳定 item ID 覆盖它们；`SessionEnd` 的“从未使用即丢弃”启发式在委托回填时不生效，避免误删真会话。
+hook 帧在 daemon 内应答仍有延迟预算，不做无界工作：daemon 没有该文件的游标（冷启动）且文件超过 1 MiB 时，增量追平跳过整本回放，改把历史交给 daemon 的串行回填队列（`TranscriptBackfillQueue`；父 transcript 与 subagent sidechain 同一规则）。此时 hook 以 `richSourceAvailable=false` 摊开自己的 prompt / tool 行占位——回填靠同一套稳定 item ID 覆盖它们；`SessionEnd` 的“从未使用即丢弃”启发式在委托回填时不生效，避免误删真会话。
 
-## AaaS 识别（Paseo / Raft）
+## AaaS 层（应用层归属与标题）
 
-AaaS（Agentic AI as a Service）指包装受支持 CLI、代管会话的应用，如 Paseo 与 Raft：它们的会话本就经上述 hook 链路进入，AaaS 只额外贡献一个标题。helper 从 hook 进程继承的环境变量识别 AaaS（`AaaS`，`Common/Adapters`），并读其本地落盘取标题：
+服务分两层：**Agent 层**是引擎（codex、claude，即 `AgentProvider`）；**AaaS 层**（Agentic AI as a Service）是承载会话的应用。每个 session 恰好归属一个 AaaS，**session 的标题由拥有它的 AaaS 决定**。检测是全函数（`AaaS.detect(provider:environment:)`，`Common/Adapters`）：用帧内 env 白名单判断是什么 AaaS，构建 AaaS 数据（kind、agentID、terminalProgram、title），永远给出归属。
 
-| AaaS | 识别 env | 标题来源 |
+| AaaS | 判定（按优先级） | 标题来源 |
 | --- | --- | --- |
 | Paseo | `PASEO_AGENT_ID` | `~/.paseo/agents/*/<agentId>.json` 顶层 `title`（`PASEO_HOME` 可改根目录；按 agent id glob，不重算 Paseo 的目录名清洗规则） |
 | Raft | `SLOCK_AGENT_ID` | `$SLOCK_CLI_TRANSPORT_DIR/claude-system-prompt.md` 首行 `You are "<名>"` 的引号内容（Raft 无会话标题概念，agent 名是其唯一持久身份） |
+| ChatGPT | codex 且 `__CFBundleIdentifier` ∈ {com.openai.codex, com.openai.chat}（桌面 App 拉起；实测本机 ChatGPT.app 即 com.openai.codex） | Codex 原生线程名（state 元数据 + `session_index.jsonl`，见「Codex state 元数据」） |
+| Codex | codex 且非 ChatGPT（终端 CLI、IDE 插件等） | 同上（原生线程名） |
+| Claude Desktop | claude 且（`CLAUDE_CODE_ENTRYPOINT` 前缀 claude-desktop（含 -3p）或 `__CFBundleIdentifier`=com.anthropic.claudefordesktop）；Desktop 内承载的 Claude Code 会话也归它（按宿主划分） | transcript 的 `custom-title` 记录 |
+| Claude Code | claude 兜底（entrypoint 为 cli / sdk-* / 缺失） | 同上（`custom-title`） |
 
-语义与约束：
+`terminalProgram` 随归属一并捕获（env `TERM_PROGRAM`，如 ghostty、Apple_Terminal）；Paseo/Raft 优先于桌面/终端信号——包装器可能自己再跑在某个宿主里。
 
-- AaaS 标题**覆盖**原生标题：每次 hook 在事件批**末位**追加一条 identity-only 标题事件（Event ID `wrapper-title:<kind>:<s>:<ts>:<titleHash>`，内容派生、跨进程稳定）。批内按序应用，因此压过 CodexAdapter 每事件附带的原生线程名；每次 hook 重申，AaaS 里改名下个 hook 即跟进，daemon 侧 watcher / 回放造成的临时覆盖也随之自愈。
-- 只作用于 hook 自己的 session：subagent 子会话保留各自的 spawn 描述标题。携带 `discard` 的批不追加（行将删除的会话不需要标题）。
-- 检测永不失败：env 命中但文件缺失/损坏时照常检出（report 记 `wrapper_title_unavailable`），ingest 不受影响。
-- 两组 env 同时存在时按 Paseo → Raft 定序（嵌套包装的边角）。
+归属持久化与标题仲裁：
+
+- **归属持久化**：`HookIngestService` 每次摄取把归属（`SessionAaaS{kind, agentID, terminalProgram}`）附在批内主会话的每个事件上，`SessionReduction` 按 metadata 门归并——不带归属的事件（watcher、回放、reingest）永不清除既有归属；同一会话换宿主 resume 时按最新 hook 改写（预期语义）。subagent 子会话归属留空，标题继续走 spawn 元数据 / 原生链。
+- **仲裁**（落在 `SessionReduction` 的标题门）：归属为 Paseo / Raft 的会话，只有带归属戳的 hook 路径事件才能改标题；不带归属的事件——watcher 追平的 rollout 事件（adapter 会在每条上盖原生线程名）、thread-identity 同步、回放——一律不改标题（状态、agent、lineage 照常落）。ChatGPT / Codex / Claude 系归属与归属未知的旧会话保持原生链。watcher 的 thread-identity 循环另有同判据的前置（避免发无谓事件）。这保证包装器标题在会话结束、再无 hook 重申之后仍然存续。
+- Paseo / Raft 标题事件：每次 hook 在事件批**末位**追加一条 identity-only 标题事件（Event ID `aaas-title:<kind>:<s>:<ts>:<titleHash>`，内容派生、跨进程稳定），批内按序压过 CodexAdapter 每事件附带的原生线程名；AaaS 里改名下个 hook 即跟进。其余 AaaS 不发标题事件——原生链就是它们的标题通道。
+- 只作用于 hook 自己的 session；携带 `discard` 的批不追加标题（行将删除的会话不需要标题）。
+- 检测出包装器但标题文件缺失/损坏时照常检出（report 记 `aaas_title_unavailable`），ingest 不受影响。
 - 红线：绝不读取 `~/.slock/computer/servers/*/runner.state.json`——其中有明文 API key。
-- 已知局限：Codex 会话 `reingest_session` 在 daemon 侧重建（无 AaaS env），标题暂回原生线程名，下个 hook 自愈；Claude 会话的重建无标题产出，靠 reingester 的非默认标题保留直接存续。
+- `reingest_session` 重建没有帧 env：归属从旧 summary 原样存续；Paseo/Raft 归属且非默认标题时旧标题无条件回携（重建只见过原生线程名，而已结束会话没有下个 hook 自愈）。
+- 已知局限：本机制落地前已结束的 Paseo/Raft 会话（无归属记录）不受仲裁保护，watcher 仍按旧行为换回原生名；watcher 发现的无-hook codex 会话归属留空（rollout 的 `session_meta.source` 不可靠——Paseo 走 app-server 也报 "vscode"）。
 
 ## 稳定 ID
 
@@ -202,6 +223,8 @@ AaaS（Agentic AI as a Service）指包装受支持 CLI、代管会话的应用�
 
 ## rollout watcher
 
+`CodexRolloutWatcher`（daemon 内，常驻）兜住没有任何 hook 的 rollout 写入。典型场景即诱因 bug：中断把 `turn_aborted` 写进 rollout 的时刻晚于最后一次 hook，且中断不触发 hook——没有 watcher，该会话永远停在 running·thinking。
+
 ### 扫描范围
 
 - 根目录默认 `~/.codex/sessions`，也可通过 `CODEX_HOME` 改变。
@@ -210,41 +233,38 @@ AaaS（Agentic AI as a Service）指包装受支持 CLI、代管会话的应用�
 - daemon 启动后的第一次 scan 检查所有文件，以恢复 daemon 离线期间追加的内容。
 - 后续只处理新文件或文件尺寸变化的文件。
 
-### 游标
+### 增量归并
 
-每个文件保存：
+扫描走与 hook 路径、backfill 完全相同的 `RichSourceCatchUp` 例程：取游标 → 读（32 MiB 尾部截断）→ 跨行共享 `RolloutReadState`（Turn 归属、tool 配对、channel 仲裁）→ 逐事件应用 → 存游标。watcher 特有的两个前置：
 
-- path
-- 已完整消费到的 byte offset
-- 上次文件大小
-- 已识别 Session ID
-- 更新时间
+- **Session 解析**：游标里的 session id，或读文件头部 `session_meta` 窥探；两者皆无则本轮跳过（下轮文件增长后重试）。
+- **thread-spawn 门**：为 subagent 生成的全新 rollout 先整本复刻父历史；首条 `session_meta` 带 `source.subagent.thread_spawn` 时，在 `inter_agent_communication_metadata(trigger_turn)` 出现前什么都不摄取；出现后只应用 meta 行并把游标直接推到触发点，其余交给常规追平。
 
-只提交以换行结束的完整 JSONL 行。文件截断且小于旧 offset 时从 0 重新解析，幂等表负责拒绝已处理 Event ID。
+游标每文件保存 path、byte offset、文件大小、session id、更新时间；只提交以换行结束的完整行。文件截断且小于旧 offset 时从 0 重新解析（游标里的旧 session id 一并作废），幂等表负责拒绝已处理 Event ID。
 
 ### 首次基线
 
-第一次启动 watcher 时：
+第一次建立基线时（`rollout_baseline_initialized` 未置位），对每个现有 JSONL：
 
-1. 读取每个现有 JSONL 前 128 KiB、最多 100 行，寻找 `session_meta` ID。
-2. 将找到的 Session ID写入 `ignored_sessions`。
-3. 把每个现有文件的 cursor 移到 EOF。
+1. **已有游标的文件跳过**——它已在被读取，首次 scan 会从游标续读（顺带收掉无 hook 的尾巴）。升级路径的关键：hook 驱动摄取早于常驻 watcher 的库里全是这种文件，把它们打成忽略会 tombstone 活会话。
+2. 否则读文件头部（128 KiB、最多 100 行）找 `session_meta` ID；**库里已知该 Session** 的（hook-only 摄取、从未认领游标），以真实 session id 把游标存到 EOF，watcher 从此接管增量。
+3. 只有库里从未见过的 Session 才写入 `ignored_sessions`、以哨兵 id 把游标停在 EOF——避免首装时导入 Lumi 之前的全部历史。
 4. 写入 `rollout_baseline_initialized = 1`。
 
-因此只有之后创建的新 rollout 文件进入 Lumi。已存在 Session 后续追加内容仍被忽略。
+因此新 rollout 文件与已追踪会话进入 Lumi，纯历史文件保持忽略。
 
 ## Claude transcript watcher
 
-`ClaudeTranscriptWatcher`（daemon 内，默认开启，`LUMI_CLAUDE_WATCHER=0` 关闭）弥补 hook 驱动读取的盲区：**用户中断不触发任何 hook**，此后写入 transcript 的一切（中断标记、`custom-title`、最后的 assistant 输出）在下一个 hook 到来前都不可见；用户就此弃置的 Session 会永远停在 Running。
+`ClaudeTranscriptWatcher`（daemon 内，常驻）弥补 hook 驱动读取的盲区：**用户中断不触发任何 hook**，此后写入 transcript 的一切（中断标记、`custom-title`、最后的 assistant 输出）在下一个 hook 到来前都不可见；用户就此弃置的 Session 会永远停在 Running。两个 watcher 都没有环境变量开关——它们是正确性保障的一部分，不是可选项。
 
 与 rollout watcher 不同，它不扫描目录、没有首次基线问题：
 
 - 每个轮询周期（默认 2 秒）取 `listSessions`，只轮询**活跃**的 Claude Session——`starting` / `running` / `compacting`，以及 `waitingForInput` 且 phase 非 `idle`（审批悬挂时按 Esc 同样只写标记）。停在 `waitingForInput · idle` 的已完成 Session 不轮询：它的下一次 transcript 写入必然伴随 `UserPromptSubmit` hook。
 - transcript 路径来自该 Session 的 cursor；从未成功读过的 Session（启动数秒即被中断，hook 触发时文件尚未落盘）退回 `RichSourceLocator` 按 cwd slug 推导。Subagent 子 Session 由 `<parent>:agent:<id>` 解析出父路径推导 sidechain transcript。
-- 读取复用 `RichSourceReader`（cursor 增量、32 MiB 尾部截断、open Turn 归属），事件幂等去重，与 helper 共享同一 cursor——两路并发读同一增量时靠 processed event 去重收敛。
+- 读取复用 `RichSourceCatchUp`（cursor 增量、32 MiB 尾部截断、open Turn 归属），与 hook 触发的追平共享同一 cursor——两路并发读同一增量时靠 processed event 去重收敛。
 - 文件尺寸未变化的路径跳过（同 rollout watcher 的 `scannedFileSizes`）。
 - Session 一旦被标记 Interrupted 便退出活跃集，不再被轮询。
-- watcher 与 `backfill_session` 回填队列共用同一段追平例程（`RichSourceCatchUp`：取游标 → 读 → 应用 → 存游标；从字节 0 读时不继承最新 Turn ID，由历史自己的 Turn 标记归属）。两路并发最多重复读一段增量，靠事件幂等收敛。
+- hook 触发的追平、两个 watcher 与回填队列共用同一段追平例程（`RichSourceCatchUp`：取游标 → 读 → 应用 → 存游标；从字节 0 读时不继承最新 Turn ID，由历史自己的 Turn 标记归属）。多路并发最多重复读一段增量，靠事件幂等收敛。
 
 ## Codex state 元数据
 
@@ -301,9 +321,11 @@ Subagent 新格式通过 `source.subagent.thread_spawn.parent_thread_id` 建立�
 `AgentAdapter` 要求新 Agent 实现两个入口：
 
 ```text
-events(fromHookData:options:) -> [AgentIngressEvent]          // options.richSourceAvailable
+events(fromHook:raw:options:) -> [AgentIngressEvent]           // 类型化 payload + 原始字节 + options.richSourceAvailable
 events(fromRolloutLine:context:state:) -> [AgentIngressEvent]  // state: currentTurnID / toolNames
 ```
+
+hook 入口按 provider 类型化（`CodexHookPayload` / `ClaudeHookPayload`，字段名不带 hook 前缀、CodingKeys 对齐 agent 的 snake_case 原始键，模型对齐官方 schema——Codex 按 codex-rs hooks/schema/generated 的发布版行为，Claude 按官方 hooks 文档，观察到的实测键优先、文档新键作解码回落）；`raw` 仅作事件 ID 哈希输入。事件名对 `HookEventName` 穷尽 switch，编译器保证新事件不会被无声忽略。`AgentAdapter` 协议只约束 rollout 入口——各 provider 的 hook payload 没有共同形状。
 
 新增 Adapter 时必须继续遵守：
 
@@ -317,22 +339,21 @@ events(fromRolloutLine:context:state:) -> [AgentIngressEvent]  // state: current
 
 | 场景 | Hook 路径 | rollout 路径 |
 | --- | --- | --- |
-| daemon 未启动 | helper 非零退出 | daemon 启动后从持久 offset 恢复 |
+| daemon 未启动 | helper 记错误、退出 0；帧丢失 | daemon 启动后 watcher 从持久 offset 恢复 |
 | Hook 未获 Codex 信任 | 不产生低延迟事件 | 新 Session rollout 仍可被 watcher 发现 |
 | 同一输入重复 | processed event 拒绝 | processed event 拒绝 |
 | 乱序输入 | reducer 不回退可见状态 | reducer 不回退可见状态 |
 | 日志只有半行 | 不适用 | 保留旧 offset，等待换行完成 |
 | 用户删除 Session | 后续被动事件被 tombstone 拒绝；**新的用户 prompt / SessionStart 会让 Session 重新出现** | 同左 |
-| daemon 未启动时 hook 到达 | helper 记 stderr、退出 0；该 hook 丢失 | 下次 hook 时按 cursor 补读增量（Claude 的 Turn 开/收由 transcript 自愈；Codex 的 Turn 边界类 hook 不可补） |
+| daemon 未启动时 hook 到达 | helper 记 stderr、退出 0；该帧彻底丢失（helper 无本地归并、无磁盘队列） | rollout / transcript 承载的事实由 watcher 按 cursor 补读自愈；hook-only 事实（PermissionRequest 等瞬时状态）不可恢复 |
 
 ## 当前限制
 
-- helper 只在 hook 到达时读增量；Claude 活跃 Session 由 transcript watcher 每 2 秒兜底，Codex 两次 hook 之间写入的长输出仍延后到下一个 hook 才可见（最晚 `Stop`）。
+- hook 触发的追平与 watcher 轮询（2 秒）之间存在最多一个轮询周期的可见性延迟。
 - 父 Session 被中断时，仍在运行的 Subagent 子 Session 不会级联收口（sidechain transcript 不写中断标记），停留在 running 直至手动 reingest。
-- Codex subagent 自己的 rollout 没有 hook 触发，只能靠父 Session 的 `SubagentStart/Stop` 或开启 daemon watcher 兜底。
-- 未安装 hook 的 Agent 不再被自动发现（rollout watcher 默认关闭）。
 - rollout / transcript 格式不是稳定 API；未知或变化字段必须默认忽略。
-- helper 没有磁盘队列。
+- helper 没有磁盘队列；daemon 不在时的 hook 帧不重放。
+- Codex 0.150 新增 `Interrupt` hook（低延迟收口中断 Turn）；等发布版成为基线后加入 `HookEventName` 与安装器注册，在此之前中断收口由 rollout watcher 承担。
 
 ## 相关文档
 

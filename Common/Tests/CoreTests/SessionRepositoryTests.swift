@@ -206,7 +206,7 @@ import Testing
     // The same guard holds for identity-only events (wrapper titles): the
     // title lands, the subagent verdict stays.
     let identityOnly = AgentIngressEvent(
-        eventID: EventID("wrapper-title"),
+        eventID: EventID("aaas-title"),
         sessionID: current.id,
         agent: .codex,
         occurredAt: date.addingTimeInterval(2),
@@ -215,6 +215,76 @@ import Testing
     let retitled = SessionReduction.summary(applying: identityOnly, to: current)
     #expect(retitled.agent == .codexSubagent)
     #expect(retitled.title == "Paseo title")
+}
+
+// The owning AaaS decides the title: on a Paseo-owned session, a native
+// title riding on a watcher / replay event (no ownership stamp) must not
+// land — while hook-path events (stamped) and the ownership itself do.
+@Test func wrapperOwnedSessionsIgnoreNativeTitlesFromUnstampedEvents() async throws {
+    let date = Date(timeIntervalSince1970: 100)
+    let ownership = SessionAaaS(kind: .paseo, agentID: "p-1")
+    let owned = SessionReduction.summary(applying: AgentIngressEvent(
+        eventID: EventID("hook"),
+        sessionID: SessionID("session"),
+        agent: .codex,
+        occurredAt: date,
+        title: "[CUA] Paseo 标题",
+        lifecycle: .running,
+        phase: .thinking,
+        aaas: ownership
+    ), to: nil)
+    #expect(owned.aaas == ownership)
+    #expect(owned.title == "[CUA] Paseo 标题")
+
+    // A rollout event applied by the watcher: newer, carries the native
+    // thread name and real state — state lands, title does not.
+    let watcherEvent = AgentIngressEvent(
+        eventID: EventID("rollout"),
+        sessionID: owned.id,
+        agent: .codex,
+        occurredAt: date.addingTimeInterval(10),
+        title: "用 shell 依次执行 sleep 1 …",
+        lifecycle: .interrupted,
+        phase: .idle
+    )
+    let closed = SessionReduction.summary(applying: watcherEvent, to: owned)
+    #expect(closed.lifecycle == .interrupted)
+    #expect(closed.title == "[CUA] Paseo 标题")
+    #expect(closed.aaas == ownership)
+
+    // Identity-only native titles (custom-title, thread-identity) are
+    // blocked the same way…
+    let identityOnly = AgentIngressEvent(
+        eventID: EventID("identity"),
+        sessionID: owned.id,
+        agent: .codex,
+        occurredAt: date.addingTimeInterval(20),
+        title: "Native thread title"
+    )
+    #expect(SessionReduction.summary(applying: identityOnly, to: closed).title == "[CUA] Paseo 标题")
+
+    // …while a stamped hook-path event (the next Paseo rename) still lands.
+    let renamed = AgentIngressEvent(
+        eventID: EventID("aaas-title"),
+        sessionID: owned.id,
+        agent: .codex,
+        occurredAt: date.addingTimeInterval(30),
+        title: "改名之后",
+        aaas: ownership
+    )
+    #expect(SessionReduction.summary(applying: renamed, to: closed).title == "改名之后")
+
+    // A ChatGPT-owned session keeps the native chain open.
+    let chatgptOwned = SessionReduction.summary(applying: AgentIngressEvent(
+        eventID: EventID("chatgpt-hook"),
+        sessionID: SessionID("native"),
+        agent: .codex,
+        occurredAt: date,
+        lifecycle: .running,
+        phase: .thinking,
+        aaas: SessionAaaS(kind: .chatgpt)
+    ), to: nil)
+    #expect(SessionReduction.summary(applying: identityOnly, to: chatgptOwned).title == "Native thread title")
 }
 
 @Test func retainedDiagnosticsDoNotReorderVisibleSessionActivity() async throws {

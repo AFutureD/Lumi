@@ -28,7 +28,9 @@
 
 | 概念                                              | 写法                            |
 | ------------------------------------------------- | ------------------------------- |
-| 包装 Agent CLI 并代管会话的第三方应用（Paseo、Raft 等） | AaaS（Agentic AI as a Service） |
+| 运行会话的引擎（Codex、Claude） | Agent |
+| 承载会话的应用层，会话的标题由它决定（ChatGPT、Codex、Claude Desktop、Claude Code、Paseo、Raft） | AaaS（Agentic AI as a Service） |
+| Session 详情 Overview 里显示归属 AaaS 的那一栏（值为上述六个名字之一；注意与 Settings 侧栏的 Application 分组同词不同义） | Application |
 
 ## 配对
 

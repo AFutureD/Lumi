@@ -239,20 +239,33 @@ public struct SessionReingester: Sendable {
         }
     }
 
-    /// Title and lineage come from hooks / state databases as often as from
-    /// the rich source; keep the previous values when the rebuild has none.
+    /// Title, lineage and AaaS ownership come from hooks / state databases
+    /// as often as from the rich source; keep the previous values when the
+    /// rebuild has none. A rebuild has no hook frame, so ownership always
+    /// carries over — and a wrapper-owned (Paseo / Raft) title carries over
+    /// unconditionally: the wrapper's store is the authority, the rebuild
+    /// only ever saw the native thread name, and an ended session has no
+    /// next hook to re-assert it.
     static func identityEvent(previous: SessionSummary, rebuilt: SessionSummary, generation: String) -> AgentIngressEvent? {
         let defaultTitle = "\(rebuilt.agent.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) Session"
-        let title = rebuilt.title == defaultTitle && previous.title != defaultTitle ? previous.title : nil
+        let wrapperOwned = previous.aaas.map { !$0.allowsNativeTitle } ?? false
+        let title = if wrapperOwned, previous.title != defaultTitle {
+            previous.title
+        } else if rebuilt.title == defaultTitle, previous.title != defaultTitle {
+            previous.title
+        } else {
+            String?.none
+        }
         let lineage = rebuilt.lineage == nil ? previous.lineage : nil
-        guard title != nil || lineage != nil else { return nil }
+        guard title != nil || lineage != nil || previous.aaas != nil else { return nil }
         return AgentIngressEvent(
             eventID: EventID("reingest:\(generation):identity"),
             sessionID: previous.id,
             agent: previous.agent,
             occurredAt: rebuilt.updatedAt,
             title: title ?? rebuilt.title,
-            lineage: lineage
+            lineage: lineage,
+            aaas: previous.aaas
         )
     }
 }
@@ -260,20 +273,8 @@ public struct SessionReingester: Sendable {
 extension AgentIngressEvent {
     /// Same event under a rebuild-specific id, so it passes idempotency again.
     func salted(_ generation: String) -> AgentIngressEvent {
-        AgentIngressEvent(
-            eventID: EventID("reingest:\(generation):\(eventID.rawValue)"),
-            sessionID: sessionID,
-            turnID: turnID,
-            agent: agent,
-            occurredAt: occurredAt,
-            title: title,
-            workspace: workspace,
-            lifecycle: lifecycle,
-            phase: phase,
-            turn: turn,
-            timelineItem: timelineItem,
-            lineage: lineage,
-            disposition: disposition
-        )
+        var salted = self
+        salted.eventID = EventID("reingest:\(generation):\(eventID.rawValue)")
+        return salted
     }
 }

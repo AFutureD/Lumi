@@ -1,3 +1,4 @@
+import Transport
 import Foundation
 
 public enum CodexHookInstallerError: Error, Sendable {
@@ -218,19 +219,9 @@ public struct AgentHookConfigInstaller: Sendable {
 
 /// Codex: `~/.codex/hooks.json`.
 public struct CodexHookInstaller: Sendable {
-    public static let supportedEvents = [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PermissionRequest",
-        "PostToolUse",
-        "PreCompact",
-        "PostCompact",
-        "SubagentStart",
-        "SubagentStop",
-        "Stop",
-        "SessionEnd",
-    ]
+    /// Derived from the closed vocabulary in Transport: registration and
+    /// decoding always ship together.
+    public static let supportedEvents = HookEventName.codexEvents.map(\.rawValue)
 
     public let homeDirectory: URL
     private let inner: AgentHookConfigInstaller
@@ -268,26 +259,9 @@ public struct CodexHookInstaller: Sendable {
 
 /// Claude Code: `~/.claude/settings.json` (`hooks` key; other settings preserved).
 public struct ClaudeHookInstaller: Sendable {
-    public static let supportedEvents = [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PermissionRequest",
-        "PermissionDenied",
-        "PostToolUse",
-        "PostToolUseFailure",
-        "PreCompact",
-        "PostCompact",
-        "SubagentStart",
-        "SubagentStop",
-        "Stop",
-        "StopFailure",
-        "SessionEnd",
-        "InstructionsLoaded",
-        "ConfigChange",
-        "CwdChanged",
-        "Notification",
-    ]
+    /// Derived from the closed vocabulary in Transport: registration and
+    /// decoding always ship together.
+    public static let supportedEvents = HookEventName.claudeEvents.map(\.rawValue)
 
     public let homeDirectory: URL
     private let inner: AgentHookConfigInstaller

@@ -142,6 +142,29 @@ import Testing
     #expect(decoded == value)
 }
 
+@Test func ingestHookFrameRoundTripsWithRawBytesIntact() throws {
+    // Hook event IDs are a SHA-256 of the raw stdin bytes: the frame must
+    // return them byte for byte, whatever the payload looks like.
+    let raw = Data("{\"session_id\":\"s\",\"hook_event_name\":\"Stop\",\"note\":\"emoji 🐛 / 中文\"}".utf8)
+    let request = IPCRequest(
+        operation: .ingestHook,
+        createdAt: Date(timeIntervalSince1970: 1_787_978_780.123),
+        agent: .codex,
+        env: ["PASEO_AGENT_ID": "ad98cf62", "CODEX_HOME": "/tmp/.codex"],
+        data: raw
+    )
+    let encoded = try TransportCoding.makeEncoder().encode(request)
+    let decoded = try TransportCoding.makeDecoder().decode(IPCRequest.self, from: encoded)
+
+    #expect(decoded.operation == .ingestHook)
+    #expect(decoded.agent == .codex)
+    #expect(decoded.env == request.env)
+    #expect(decoded.data == raw)
+    // RFC 3339 with milliseconds on the wire.
+    let wire = String(data: encoded, encoding: .utf8) ?? ""
+    #expect(wire.contains("\"createdAt\":\"2026-08-29T"))
+}
+
 @Test func deleteSessionRequestRoundTripsWithItsSessionID() throws {
     let request = IPCRequest(
         operation: .deleteSession,

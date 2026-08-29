@@ -48,21 +48,9 @@ public enum RelayPayloadBatcher {
     ) throws -> [Batch] {
         let chunks = try split(events, oversizedSingle: { event in
             guard event.timelineItem != nil else { return nil }
-            return AgentIngressEvent(
-                eventID: event.eventID,
-                sessionID: event.sessionID,
-                turnID: event.turnID,
-                agent: event.agent,
-                occurredAt: event.occurredAt,
-                title: event.title,
-                workspace: event.workspace,
-                lifecycle: event.lifecycle,
-                phase: event.phase,
-                turn: event.turn,
-                timelineItem: nil,
-                lineage: event.lineage,
-                disposition: event.disposition
-            )
+            var stripped = event
+            stripped.timelineItem = nil
+            return stripped
         }) { chunk in
             RemoteSessionPayload(kind: .sessionMessage, generatedAt: generatedAt, events: chunk)
         }

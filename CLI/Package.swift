@@ -41,8 +41,6 @@ let package = Package(
         .executableTarget(
             name: "Helper",
             dependencies: [
-                .product(name: "Core", package: "Common"),
-                .product(name: "Adapters", package: "Common"),
                 .product(name: "IPCClient", package: "Common"),
                 .product(name: "Diagnostics", package: "Common"),
                 .product(name: "Transport", package: "Transport"),

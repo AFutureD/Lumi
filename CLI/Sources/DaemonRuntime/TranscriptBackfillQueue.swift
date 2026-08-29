@@ -7,11 +7,12 @@ import Foundation
 
 private let log = Logger(label: "agent")
 
-/// One shared routine for "bring a session's rich source into the store":
+/// The one routine for "bring a session's rich source into the store":
 /// read from the daemon's cursor (byte 0 when none), apply every event,
-/// save the advanced cursor. `ClaudeTranscriptWatcher` uses it for live
-/// increments, `TranscriptBackfillQueue` for whole histories — the same
-/// code path, so the two can only ever race harmlessly (events dedupe by
+/// save the advanced cursor. The hook path uses it for the increment ahead
+/// of each hook, `ClaudeTranscriptWatcher` and `CodexRolloutWatcher` for
+/// hook-less tails, `TranscriptBackfillQueue` for whole histories — the same
+/// code path, so callers can only ever race harmlessly (events dedupe by
 /// id, the cursor save is last-writer-wins on identical content).
 enum RichSourceCatchUp {
     struct Report {
@@ -20,6 +21,9 @@ enum RichSourceCatchUp {
         var lines: Int
         var events: Int
         var applied: Int
+        /// Turn left open (or last named) after the read — seeds the hook
+        /// events reduced right after the increment.
+        var finalTurnID: TurnID?
     }
 
     static func run(
@@ -61,15 +65,16 @@ enum RichSourceCatchUp {
             toOffset: read.cursor.byteOffset,
             lines: read.lines,
             events: read.events.count,
-            applied: applied
+            applied: applied,
+            finalTurnID: read.finalTurnID
         )
     }
 }
 
-/// Rebuilds session histories the helper refused to replay inside a hook
-/// (`backfill_session`): a hook process is a real-time channel with an
-/// external kill timeout, so anything unbounded belongs here — one serial
-/// worker inside the daemon, the single writer of the store.
+/// Rebuilds session histories the hook path refuses to replay inline: a
+/// hook frame answers on a latency budget, so anything unbounded belongs
+/// here — one serial worker inside the daemon, the single writer of the
+/// store. Fed by `HookIngestService` on a cold start over a large history.
 public actor TranscriptBackfillQueue {
     private let repository: any SessionRepository
     private let claudeAdapter = ClaudeAdapter()

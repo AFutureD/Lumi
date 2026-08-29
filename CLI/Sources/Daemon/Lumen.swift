@@ -54,21 +54,28 @@ enum LumenMain {
                 codexSessionsDirectory: configuration.codexSessionsDirectory
             )
         )
-        let watcher: CodexRolloutWatcher? = configuration.rolloutWatcherEnabled
-            ? CodexRolloutWatcher(
-                rootDirectory: configuration.codexSessionsDirectory,
-                repository: repository,
-                pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
-                onEvent: { subscriptions.publish($0) }
-            )
-            : nil
-        let claudeWatcher: ClaudeTranscriptWatcher? = configuration.claudeWatcherEnabled
-            ? ClaudeTranscriptWatcher(
-                repository: repository,
-                pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
-                onEvent: { subscriptions.publish($0) }
-            )
-            : nil
+        // Histories too large for one capped read land here: hook-path cold
+        // starts and watcher offline gaps alike.
+        let backfill = TranscriptBackfillQueue(
+            repository: repository,
+            onEvent: { subscriptions.publish($0) }
+        )
+        // Both watchers are load-bearing correctness, not options: hook-less
+        // tail writes (a Codex `turn_aborted` after an interrupt, a Claude
+        // Esc marker) only reach the store through them.
+        let watcher = CodexRolloutWatcher(
+            rootDirectory: configuration.codexSessionsDirectory,
+            repository: repository,
+            pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
+            backfill: backfill,
+            onEvent: { subscriptions.publish($0) }
+        )
+        let claudeWatcher = ClaudeTranscriptWatcher(
+            repository: repository,
+            pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
+            backfill: backfill,
+            onEvent: { subscriptions.publish($0) }
+        )
         let server = DaemonServer(socketPath: configuration.socketPath, service: service)
         // The Relay host lives here, not in the Mac app: paired iPhones keep
         // syncing while the app is closed. Credentials are the daemon's own
@@ -87,22 +94,25 @@ enum LumenMain {
             )
             : nil
         if let relay { await service.attachRelay(relay) }
-        // Histories the helper refuses to replay inside a hook land here.
-        let backfill = TranscriptBackfillQueue(
+        // Forwarded hook frames: the daemon-side pipeline that reads the rich
+        // increment, reduces the hook, and asserts the AaaS wrapper title.
+        let hookIngest = HookIngestService(
             repository: repository,
+            backfill: backfill,
+            codexSessionsDirectory: configuration.codexSessionsDirectory,
             onEvent: { subscriptions.publish($0) }
         )
-        await service.attachBackfill(backfill)
+        await service.attachHookIngest(hookIngest)
 
         do {
-            try await watcher?.prepareInitialBaseline()
+            try await watcher.prepareInitialBaseline()
             try server.start()
         } catch {
             log.error("daemon_start_failed", metadata: .fields(["socket": configuration.socketPath, "error": error]))
             throw error
         }
-        watcher?.start()
-        claudeWatcher?.start()
+        watcher.start()
+        claudeWatcher.start()
         // Announced before the Relay connects: the socket is already
         // serving, and the first Relay round-trip can take a while.
         log.info("daemon_started", metadata: .fields([
@@ -110,16 +120,14 @@ enum LumenMain {
             "fingerprint": executableHash.isEmpty ? nil : String(executableHash.prefix(12)),
             "socket": configuration.socketPath,
             "database": configuration.databasePath,
-            "rollout_watcher": watcher != nil,
-            "claude_watcher": claudeWatcher != nil,
             "relay": relay == nil ? "off" : configuration.relayURL.absoluteString,
             "log_level": logConfiguration.minimumLevel.label.lowercased(),
             "log_directory": logConfiguration.directory,
         ]))
         await relay?.start()
         defer {
-            claudeWatcher?.stop()
-            watcher?.stop()
+            claudeWatcher.stop()
+            watcher.stop()
             server.shutdown()
             log.info("daemon_stopped")
         }

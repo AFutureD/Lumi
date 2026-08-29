@@ -33,21 +33,17 @@ public struct CodexAdapter: AgentAdapter {
 
     // MARK: - Hooks
 
-    public func events(fromHookData data: Data, options: HookIngestOptions) throws -> [AgentIngressEvent] {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AgentAdapterError.malformedJSON
-        }
-        guard let session = root.string("session_id"), !session.isEmpty else {
-            throw AgentAdapterError.missingSessionID
-        }
-
-        let eventName = root.string("hook_event_name") ?? root.string("event_name") ?? "Unknown"
-        let sessionID = SessionID(session)
-        let turnID = root.string("turn_id").map(TurnID.init)
-        let occurredAt = root.date("timestamp") ?? Date()
+    public func events(
+        fromHook payload: CodexHookPayload,
+        raw data: Data,
+        options: HookIngestOptions
+    ) throws -> [AgentIngressEvent] {
+        let sessionID = SessionID(payload.sessionID)
+        let turnID = payload.turnID.map(TurnID.init)
+        let occurredAt = payload.timestamp ?? options.receivedAt
         let eventID = EventID(Self.digest(data: data, prefix: "hook:"))
-        let workspace = root.string("cwd")
-        let model = root.string("model")
+        let workspace = payload.cwd
+        let model = payload.model
         let threadIdentity = threads.identity(for: sessionID)
         let rich = options.richSourceAvailable
 
@@ -103,24 +99,24 @@ public struct CodexAdapter: AgentAdapter {
             )
         }
 
-        let toolName = root.string("tool_name") ?? "Tool"
-        let toolUseID = root.string("tool_use_id")
+        let toolName = payload.toolName ?? "Tool"
+        let toolUseID = payload.toolUseID
 
-        switch eventName {
-        case "SessionStart":
+        switch payload.eventName {
+        case .sessionStart:
             return [event(
                 lifecycle: .starting,
                 phase: .idle,
                 timeline: .sessionMarker(SessionMarkerTimelinePayload(
                     kind: .sessionStarted,
-                    detail: root.string("source"),
+                    detail: payload.source,
                     model: model
                 )),
                 itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted)
             )]
 
-        case "UserPromptSubmit":
-            let prompt = root.string("prompt")
+        case .userPromptSubmit:
+            let prompt = payload.prompt
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
@@ -129,69 +125,70 @@ public struct CodexAdapter: AgentAdapter {
                 itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) }
             )]
 
-        case "PreToolUse":
+        case .preToolUse:
             return [event(
                 lifecycle: .running,
                 phase: .executing,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.summary(ofToolInput: root["tool_input"]),
-                    content: root.jsonValue("tool_input"),
+                    summary: AdapterText.summary(ofToolInput: payload.toolInput?.foundationObject),
+                    content: payload.toolInput,
                     status: .started,
                     toolUseID: toolUseID
                 )),
                 itemID: toolUseID.map { TimelineItemIDs.toolCall(sessionID, toolUseID: $0) }
             )]
 
-        case "PostToolUse":
-            let response = root.dictionary("tool_response") ?? root
-            let failed = response.containsFailure || root.containsFailure
+        case .postToolUse:
+            let response = payload.toolResponse?.foundationObject
+            let failed = (response as? [String: Any])?.containsFailure ?? false
+                || payload.rootIndicatesFailure
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.excerpt(Self.responseText(root["tool_response"])),
-                    content: root.jsonValue("tool_response"),
+                    summary: AdapterText.excerpt(Self.responseText(response)),
+                    content: payload.toolResponse,
                     status: failed ? .failed : .succeeded,
                     toolUseID: toolUseID
                 )),
                 itemID: toolUseID.map { TimelineItemIDs.toolResult(sessionID, toolUseID: $0) }
             )]
 
-        case "PermissionRequest":
+        case .permissionRequest:
             // Permission requests never enter the Timeline; they only mark
             // the session as waiting on the human.
             return [event(lifecycle: .waitingForInput, phase: .waitingForApproval)]
 
-        case "SubagentStart":
-            let agentID = root.string("agent_id") ?? eventID.rawValue
+        case .subagentStart:
+            let agentID = payload.agentID ?? eventID.rawValue
             return [event(
                 lifecycle: .running,
                 phase: .executing,
                 timeline: .subagent(SubagentTimelinePayload(
-                    name: root.string("agent_type") ?? "Subagent",
-                    agentSessionID: root.string("agent_id"),
+                    name: payload.agentType ?? "Subagent",
+                    agentSessionID: payload.agentID,
                     status: .started
                 )),
                 itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "started")
             )]
 
-        case "SubagentStop":
-            let agentID = root.string("agent_id") ?? eventID.rawValue
+        case .subagentStop:
+            let agentID = payload.agentID ?? eventID.rawValue
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: .subagent(SubagentTimelinePayload(
-                    name: root.string("agent_type") ?? "Subagent",
-                    agentSessionID: root.string("agent_id"),
+                    name: payload.agentType ?? "Subagent",
+                    agentSessionID: payload.agentID,
                     status: .completed
                 )),
                 itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "stopped")
             )]
 
-        case "Stop":
-            let last = root.string("last_assistant_message")
+        case .stop:
+            let last = payload.lastAssistantMessage
             return [event(
                 lifecycle: .waitingForInput,
                 phase: .idle,
@@ -200,38 +197,40 @@ public struct CodexAdapter: AgentAdapter {
                 itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
             )]
 
-        case "SessionEnd":
+        case .sessionEnd:
             return [event(
                 lifecycle: .completed,
                 phase: .idle,
                 timeline: .sessionMarker(SessionMarkerTimelinePayload(
                     kind: .sessionEnded,
-                    detail: root.string("reason")
+                    detail: payload.reason
                 )),
                 itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionEnded)
             )]
 
-        case "PreCompact":
+        case .preCompact:
             return [event(
                 lifecycle: .compacting,
                 phase: .compacting,
                 timeline: .sessionMarker(SessionMarkerTimelinePayload(
                     kind: .compactionStarted,
-                    detail: root.string("trigger")
+                    detail: payload.trigger
                 ))
             )]
 
-        case "PostCompact":
+        case .postCompact:
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: .sessionMarker(SessionMarkerTimelinePayload(
                     kind: .compactionEnded,
-                    detail: root.string("trigger")
+                    detail: payload.trigger
                 ))
             )]
 
-        default:
+        case .permissionDenied, .postToolUseFailure, .stopFailure,
+             .instructionsLoaded, .configChange, .cwdChanged, .notification:
+            // Claude-only events; Codex never registers them.
             return []
         }
     }

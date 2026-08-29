@@ -5,7 +5,7 @@
 现状：`Spark` 只做 hook JSON → `AgentIngressEvent` 薄转换；rollout 由 daemon 内 `CodexRolloutWatcher` 另起一路；`TimelineItem` 扁平事件流，UI 只按 `category` 着色，无 Turn 概念、无每行状态、无消息分级。
 
 目标：
-1. **边界前移**：Helper 内完成 Agent 领域抽象（hook stdin + transcript/rollout + sqlite）→ 完备的 Session/Turn 领域数据；daemon 只做去重、持久化、订阅分发。
+1. **领域归并单点化**：hook stdin + transcript/rollout + sqlite → 完备的 Session/Turn 领域数据，在一处完成归并。本方案最初把这一层放进 Helper（「边界前移」，2026-08-19 落地），2026-08-29 反转为 helper 纯转发、归并全部收进 daemon——当前权威描述见 agent-hook.md，反转缘由见 §G 末条。
 2. **两个层级**：**A. Agent 通讯领域**（Session/Turn 消息与生命周期，对齐 `docs/research/hooks-session-turn-model.md`）；**B. Timeline 领域**（UI 行、Tag 分级、泳道、状态）；**A→B 映射**是唯一桥梁。
 3. UI 按设计交接稿 `~/Downloads/design_handoff_notch_and_activity/`（README + 两份 .dc.html）高保真复刻：主窗口 5A Activity 列表 + Notch 5B–5E；Tag 三级 L1/L2/L3；新增 `TURN END`；Claude 图标 `~/Downloads/claude-ai-icon.svg`。
 
@@ -201,5 +201,6 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 | 工具失败降为 L2（2026-08-24 追加） | `TimelineTag.failed.level` L3 → L2：chip 变红色淡底（`DesignHue.red` L2 tint）、泳道格变 `red.s200`，Importance 面板里归入 Process 档；`.turnFailed` / `.aborted` 维持 L3 | 失败与中断的区分：工具失败是过程（回合还在继续），回合失败 / 中断是阶段终点；设计档案 `DESIGN SYSTEM.html` 未改（只在同步设计文件时更新），下次同步时把工具 FAILED 行改为 L2 淡底 |
 | CONTEXT 合并为单档 + 新增 CONFIG（2026-08-24 追加） | `ContextTimelinePayload` 去掉 `scope`（上下文一律 turn 级、不再合并 ×N，`CONTEXT ×N` chip 退役）；新增 `.config`/`ConfigTimelinePayload` → `CONFIG` tag（L1、横跨，Category 面板 Session 组）：Claude `ConfigChange`/`CwdChanged` 与 transcript attachment 里的运行模式（`auto_mode`/`plan_mode`/`plan_mode_exit`/`command_permissions`）、Codex `turn_context`/`thread_settings_applied` 归它；`InstructionsLoaded`、`base_instructions`、attachment、reminder 等仍是 `CONTEXT`（User 泳道）；同时 Claude 停装 `UserPromptExpansion` hook（18 个事件） | 配置是"Agent 怎么跑"，上下文是"模型读什么"；`internalContext` 不再按 kind 提升为会话级 |
 | 泳道跟随过滤（2026-08-24 追加） | Mac `SessionActivityView` 把过滤后的行同时喂给列表和 `SessionActivityTimeline`，`ActivityScrollMap` 只按可见行建（不再有 0 高度行），`ActivityScrollLink.rowsDidRefilter()` 让下一次列表几何报告把 strip 对齐到顶部行；iPhone 无 Activity 过滤，strip 本就每行一格 | 之前 Mac strip 始终画全量、被过滤掉的行保留格子但 0 高度，点格子落到“最近可见行”；现在列表有几行 strip 就有几格，两端一致 |
+| **边界反转：helper 瘦转发 + daemon 全量归并 + watcher 常驻（2026-08-29 追加）** | Spark 退回零解析转发器（`ingest_hook` 帧：createdAt / agent / env 白名单 / data 原始字节 / json debug）；`HelperIngestPipeline` → daemon `HookIngestService`（actor，直连仓库）；adapter hook 路径类型化（`CodexHookPayload`/`ClaudeHookPayload` + `HookEventName` 闭合枚举，安装器词表由枚举派生）；`CodexRolloutWatcher` 重建在 `RichSourceCatchUp` 上并与 `ClaudeTranscriptWatcher` 一同常驻（`LUMI_ROLLOUT_WATCHER`/`LUMI_CLAUDE_WATCHER` 删除）；IPC 删除 `ingest`/`ingest_batch`/`get_rollout_cursor`/`save_rollout_cursor`/`backfill_session`，cursor 由 daemon 单一持有 | 诱因：Paseo 中断 Codex turn，`turn_aborted` 写进 rollout 晚于最后一次 hook 且中断不触发 hook，纯 hook 驱动读取永远读不到，会话永久卡 running·thinking。原论证被推翻：env 捕获≠领域构建（6 个键随帧转发）；hook 进程才是受 kill 超时约束的脆弱侧（Codex 3s，旧 helper 的 5s ingest 超时本身超标）；「hook 总会送来终态」的可用性假设不成立。顺带修复旧 watcher 逐行新建 `RolloutReadState` 丢 Turn 归属/工具配对的缺陷，thread-identity 同步事件 id 改为内容派生幂等 |
 
 验证：Transport 16 / Common 25 / CLI 10 / Mac 21 项测试通过；`xcodebuild` LumiMac 与 IOSFeature 构建成功；用真实 Claude transcript 走 daemon+helper 端到端得到 2 个 Turn、11 对 TOOL/RESULT、标题来自 `custom-title`。

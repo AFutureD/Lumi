@@ -27,6 +27,19 @@ public extension AgentKind {
     }
 }
 
+public extension AaaSKind {
+    var displayName: String {
+        switch self {
+        case .chatgpt: "ChatGPT"
+        case .codex: "Codex"
+        case .claudeDesktop: "Claude Desktop"
+        case .claudeCode: "Claude Code"
+        case .paseo: "Paseo"
+        case .raft: "Raft"
+        }
+    }
+}
+
 public extension SessionLifecycle {
     var displayName: String { rawValue.replacingOccurrences(of: "_", with: " ").capitalized }
 }
@@ -303,15 +316,18 @@ public enum SessionPagePresentationBuilder {
     }
 
     private static func overviewSection(_ summary: SessionSummary) -> SessionSummarySectionPresentation {
-        let agent = summary.agent.displayName == summary.agent.rawValue
-            ? summary.agent.rawValue
-            : "\(summary.agent.displayName) (\(summary.agent.rawValue))"
+        // Engine layer: the provider, with the subagent role as a suffix —
+        // `Codex` / `Codex(subagent)` / `Claude` / `Claude(subagent)`.
+        let agent = summary.agent.isSubagent
+            ? "\(summary.agent.providerName)(subagent)"
+            : summary.agent.providerName
         return SessionSummarySectionPresentation(
             kind: .overview,
             title: "Overview",
             fields: [
                 field("Session ID", summary.id.rawValue, monospaced: true),
                 field("Agent", agent),
+                field("Application", summary.aaas?.kind.displayName),
                 field("Lifecycle", summary.lifecycle.displayName),
                 field("Turn Phase", summary.phase.displayName),
                 field("Needs Attention", summary.needsAttention ? "Yes" : "No"),

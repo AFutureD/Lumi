@@ -20,26 +20,22 @@ public struct ClaudeAdapter: AgentAdapter {
 
     // MARK: - Hooks
 
-    public func events(fromHookData data: Data, options: HookIngestOptions) throws -> [AgentIngressEvent] {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AgentAdapterError.malformedJSON
-        }
-        guard let session = root.string("session_id"), !session.isEmpty else {
-            throw AgentAdapterError.missingSessionID
-        }
-
-        let eventName = root.string("hook_event_name") ?? "Unknown"
-        let parentSessionID = SessionID(session)
-        let occurredAt = root.date("timestamp") ?? Date()
+    public func events(
+        fromHook payload: ClaudeHookPayload,
+        raw data: Data,
+        options: HookIngestOptions
+    ) throws -> [AgentIngressEvent] {
+        let parentSessionID = SessionID(payload.sessionID)
+        let occurredAt = payload.timestamp ?? options.receivedAt
         let eventID = EventID(Self.digest(data: data, prefix: "claude-hook:"))
-        let workspace = root.string("cwd")
+        let workspace = payload.cwd
         // Hooks fired *inside* a subagent (tool calls etc.) carry the parent's
         // `session_id` plus `agent_id` / `agent_type`; they drive the derived
         // child session, not the parent. SubagentStart / Stop are the parent's
         // own events and are handled below (they also open / close the child).
-        let agentID = root.string("agent_id")
-        let isSubagent = agentID != nil && Self.isRealSubagent(root)
-            && eventName != "SubagentStart" && eventName != "SubagentStop"
+        let agentID = payload.agentID
+        let isSubagent = agentID != nil && payload.isRealSubagent
+            && payload.eventName != .subagentStart && payload.eventName != .subagentStop
         let sessionID = isSubagent
             ? ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: agentID!)
             : parentSessionID
@@ -56,9 +52,9 @@ public struct ClaudeAdapter: AgentAdapter {
         // `promptId`. A subagent's own turn id only comes from its transcript.
         let turnID: TurnID? = isSubagent
             ? nil
-            : (options.currentTurnID ?? (rich ? nil : root.string("prompt_id").map(TurnID.init)))
+            : (options.currentTurnID ?? (rich ? nil : payload.promptID.map(TurnID.init)))
         let subagentLineage = isSubagent
-            ? ClaudeSubagentIdentity.lineage(parent: parentSessionID, agentType: root.string("agent_type"), meta: nil)
+            ? ClaudeSubagentIdentity.lineage(parent: parentSessionID, agentType: payload.agentType, meta: nil)
             : nil
 
         func event(
@@ -105,7 +101,7 @@ public struct ClaudeAdapter: AgentAdapter {
             phase: TurnPhase,
             suffix: String
         ) -> AgentIngressEvent {
-            let agentType = root.string("agent_type")
+            let agentType = payload.agentType
             return AgentIngressEvent(
                 eventID: EventID(eventID.rawValue + suffix),
                 sessionID: ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: agentID),
@@ -130,7 +126,7 @@ public struct ClaudeAdapter: AgentAdapter {
             return TurnSummary(
                 id: turnID,
                 sessionID: sessionID,
-                index: root.int("turn_number"),
+                index: payload.turnNumber,
                 phase: phase,
                 prompt: prompt,
                 startedAt: occurredAt,
@@ -140,27 +136,27 @@ public struct ClaudeAdapter: AgentAdapter {
             )
         }
 
-        let toolName = root.string("tool_name") ?? "Tool"
-        let toolUseID = root.string("tool_use_id")
+        let toolName = payload.toolName ?? "Tool"
+        let toolUseID = payload.toolUseID
 
-        switch eventName {
-        case "SessionStart":
+        switch payload.eventName {
+        case .sessionStart:
             return [event(
                 lifecycle: .starting,
                 phase: .idle,
                 timeline: .sessionMarker(SessionMarkerTimelinePayload(
                     kind: .sessionStarted,
-                    detail: root.string("source"),
-                    model: root.string("model")
+                    detail: payload.source,
+                    model: payload.model
                 )),
                 itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionStarted)
             )]
 
-        case "UserPromptSubmit":
+        case .userPromptSubmit:
             // Turn opening (and the prompt) belongs to the transcript when it
             // is readable: this hook also fires for injected resumes, whose
             // text must not overwrite the human prompt of the open Turn.
-            let prompt = root.string("prompt")
+            let prompt = payload.prompt
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
@@ -169,105 +165,108 @@ public struct ClaudeAdapter: AgentAdapter {
                 itemID: turnID.map { TimelineItemIDs.userPrompt(sessionID, turnID: $0) }
             )]
 
-        case "PreToolUse":
+        case .preToolUse:
             return [event(
                 lifecycle: .running,
                 phase: .executing,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.summary(ofToolInput: root["tool_input"]),
-                    content: root.jsonValue("tool_input"),
+                    summary: AdapterText.summary(ofToolInput: payload.toolInput?.foundationObject),
+                    content: payload.toolInput,
                     status: .started,
                     toolUseID: toolUseID
                 )),
                 itemID: toolUseID.map { TimelineItemIDs.toolCall(sessionID, toolUseID: $0) }
             )]
 
-        case "PostToolUse":
-            let result = root["tool_result"] ?? root["tool_response"]
-            let failed = (result as? [String: Any])?.containsFailure ?? false
+        case .postToolUse:
+            let result = payload.toolResult ?? payload.toolResponse
+            let failed = (result?.foundationObject as? [String: Any])?.containsFailure ?? false
+            var content = [String: JSONValue]()
+            content["tool_result"] = payload.toolResult
+            content["tool_response"] = payload.toolResponse
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.excerpt(CodexAdapter.responseText(result)),
-                    content: root.jsonValue(keys: ["tool_result", "tool_response"]),
+                    summary: AdapterText.excerpt(CodexAdapter.responseText(result?.foundationObject)),
+                    content: content.isEmpty ? nil : .object(content),
                     status: failed ? .failed : .succeeded,
                     toolUseID: toolUseID
                 )),
                 itemID: toolUseID.map { TimelineItemIDs.toolResult(sessionID, toolUseID: $0) }
             )]
 
-        case "PostToolUseFailure":
+        case .postToolUseFailure:
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.excerpt(root.string("error")) ?? "failed",
-                    content: root.jsonValue("error"),
+                    summary: AdapterText.excerpt(payload.error) ?? "failed",
+                    content: payload.error.map(JSONValue.string),
                     status: .failed,
                     toolUseID: toolUseID
                 )),
                 itemID: toolUseID.map { TimelineItemIDs.toolResult(sessionID, toolUseID: $0) }
             )]
 
-        case "PermissionRequest":
+        case .permissionRequest:
             return [event(lifecycle: .waitingForInput, phase: .waitingForApproval)]
 
-        case "PermissionDenied":
+        case .permissionDenied:
             return [event(lifecycle: .running, phase: .thinking)]
 
-        case "SubagentStart":
-            guard Self.isRealSubagent(root) else { return [] }
-            let agentID = root.string("agent_id") ?? eventID.rawValue
-            let childSessionID = root.string("agent_id").map {
+        case .subagentStart:
+            guard payload.isRealSubagent else { return [] }
+            let agentID = payload.agentID ?? eventID.rawValue
+            let childSessionID = payload.agentID.map {
                 ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: $0)
             }
             var events = [event(
                 lifecycle: .running,
                 phase: .executing,
                 timeline: .subagent(SubagentTimelinePayload(
-                    name: root.string("agent_type") ?? "Subagent",
+                    name: payload.agentType ?? "Subagent",
                     agentSessionID: childSessionID?.rawValue,
                     status: .started
                 )),
                 itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "started")
             )]
-            if let agentID = root.string("agent_id") {
+            if let agentID = payload.agentID {
                 events.append(childEvent(agentID: agentID, lifecycle: .running, phase: .thinking, suffix: ":child"))
             }
             return events
 
-        case "SubagentStop":
-            guard Self.isRealSubagent(root) else { return [] }
-            let agentID = root.string("agent_id") ?? eventID.rawValue
-            let childSessionID = root.string("agent_id").map {
+        case .subagentStop:
+            guard payload.isRealSubagent else { return [] }
+            let agentID = payload.agentID ?? eventID.rawValue
+            let childSessionID = payload.agentID.map {
                 ClaudeSubagentIdentity.sessionID(parent: parentSessionID, agentID: $0)
             }
             var events = [event(
                 lifecycle: .running,
                 phase: .thinking,
                 timeline: .subagent(SubagentTimelinePayload(
-                    name: root.string("agent_type") ?? "Subagent",
+                    name: payload.agentType ?? "Subagent",
                     agentSessionID: childSessionID?.rawValue,
                     status: .completed
                 )),
                 itemID: TimelineItemIDs.subagent(sessionID, agentID: agentID, phase: "stopped")
             )]
-            if let agentID = root.string("agent_id") {
+            if let agentID = payload.agentID {
                 events.append(childEvent(agentID: agentID, lifecycle: .completed, phase: .idle, suffix: ":child"))
             }
             return events
 
-        case "Stop":
+        case .stop:
             // Closes the current Turn even when the terminal transcript record
             // has not been flushed by hook time — the watcher skips a parked
             // session, so the hook is the only guaranteed close. When the
             // transcript record was (or is later) read, both sides target the
             // same Turn and turn-end item id, so the close is idempotent.
-            let last = root.string("last_assistant_message")
+            let last = payload.lastAssistantMessage
             return [event(
                 lifecycle: .waitingForInput,
                 phase: .idle,
@@ -276,10 +275,10 @@ public struct ClaudeAdapter: AgentAdapter {
                 itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
             )]
 
-        case "StopFailure":
+        case .stopFailure:
             // Same close-guarantee as Stop: the transcript's API-error record
             // may lag the hook, and a failed session is not polled again.
-            let message = [root.string("error_type"), root.string("error_message")].compactMap { $0 }.joined(separator: " · ")
+            let message = [payload.errorType, payload.errorMessage].compactMap { $0 }.joined(separator: " · ")
             return [event(
                 lifecycle: .failed,
                 phase: .idle,
@@ -288,8 +287,8 @@ public struct ClaudeAdapter: AgentAdapter {
                 itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
             )]
 
-        case "SessionEnd":
-            // Ended before its first Turn: not a session. The pipeline sets
+        case .sessionEnd:
+            // Ended before its first Turn: not a session. The service sets
             // this from daemon state + transcript absence; see HookIngestOptions.
             if options.sessionNeverUsed {
                 return [event(disposition: .discard)]
@@ -297,47 +296,52 @@ public struct ClaudeAdapter: AgentAdapter {
             return [event(
                 lifecycle: .completed,
                 phase: .idle,
-                timeline: .sessionMarker(SessionMarkerTimelinePayload(kind: .sessionEnded, detail: root.string("reason"))),
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(kind: .sessionEnded, detail: payload.reason)),
                 itemID: TimelineItemIDs.sessionMarker(sessionID, .sessionEnded)
             )]
 
-        case "PreCompact":
+        case .preCompact:
             return [event(
                 lifecycle: .compacting,
                 phase: .compacting,
-                timeline: .sessionMarker(SessionMarkerTimelinePayload(kind: .compactionStarted, detail: root.string("trigger")))
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(kind: .compactionStarted, detail: payload.trigger))
             )]
 
-        case "PostCompact":
+        case .postCompact:
             return [event(
                 lifecycle: .running,
                 phase: .thinking,
-                timeline: .sessionMarker(SessionMarkerTimelinePayload(kind: .compactionEnded, detail: root.string("trigger")))
+                timeline: .sessionMarker(SessionMarkerTimelinePayload(kind: .compactionEnded, detail: payload.trigger))
             )]
 
-        case "InstructionsLoaded":
-            let path = root.string("file_path") ?? "instructions"
+        case .instructionsLoaded:
+            let path = payload.filePath ?? "instructions"
             return [event(
                 timeline: .context(ContextTimelinePayload(
                     kind: "instructions",
-                    summary: [URL(fileURLWithPath: path).lastPathComponent, root.string("load_reason")].compactMap { $0 }.joined(separator: " · "),
+                    summary: [URL(fileURLWithPath: path).lastPathComponent, payload.loadReason ?? payload.reason]
+                        .compactMap { $0 }.joined(separator: " · "),
                     content: .string(path)
                 )),
                 itemID: TimelineItemIDs.diagnostic(sessionID, key: "context:instructions:\(path)")
             )]
 
-        case "ConfigChange":
-            let path = root.string("file_path") ?? ""
+        case .configChange:
+            let path = payload.filePath ?? ""
             return [event(
                 timeline: .config(ConfigTimelinePayload(
                     kind: "config_change",
-                    summary: [root.string("source"), URL(fileURLWithPath: path).lastPathComponent].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                    summary: [payload.configSource, URL(fileURLWithPath: path).lastPathComponent]
+                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
                     content: .string(path)
                 ))
             )]
 
-        case "CwdChanged":
-            let newCwd = root.string("new_cwd")
+        case .cwdChanged:
+            let newCwd = payload.newCwd
+            var content = [String: JSONValue]()
+            content["old_cwd"] = payload.oldCwd.map(JSONValue.string)
+            content["new_cwd"] = newCwd.map(JSONValue.string)
             return [AgentIngressEvent(
                 eventID: eventID,
                 sessionID: sessionID,
@@ -353,15 +357,15 @@ public struct ClaudeAdapter: AgentAdapter {
                     payload: .config(ConfigTimelinePayload(
                         kind: "cwd_changed",
                         summary: newCwd,
-                        content: root.jsonValue(keys: ["old_cwd", "new_cwd"])
+                        content: content.isEmpty ? nil : .object(content)
                     ))
                 )
             )]
 
-        case "Notification":
+        case .notification:
             // Notification types that mean "a human is needed" surface as
             // waiting; the rest are not modeled.
-            switch root.string("notification_type") {
+            switch payload.notificationType {
             case "permission_prompt", "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog":
                 return [event(lifecycle: .waitingForInput, phase: .waitingForApproval)]
             case "idle_prompt":
@@ -369,9 +373,6 @@ public struct ClaudeAdapter: AgentAdapter {
             default:
                 return []
             }
-
-        default:
-            return []
         }
     }
 
@@ -784,15 +785,6 @@ public struct ClaudeAdapter: AgentAdapter {
         "[Request interrupted by user]",
         "[Request interrupted by user for tool use]",
     ]
-
-    /// Claude Code forks an internal query after every Stop (a few seconds
-    /// later) that fires `SubagentStop` with an empty `agent_type`, no paired
-    /// `SubagentStart` and no subagent transcript. It is not a subagent of the
-    /// session; folding it in would flip a finished turn back to running.
-    public static func isRealSubagent(_ root: [String: Any]) -> Bool {
-        guard let type = root.string("agent_type") else { return false }
-        return !type.trimmingCharacters(in: .whitespaces).isEmpty
-    }
 
     private static func digest(data: Data, prefix: String) -> String {
         prefix + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

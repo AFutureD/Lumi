@@ -54,7 +54,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 **Info**
 
 - 三张指标卡：tokens、context、elapsed（运行中的 Session 每秒走动）。
-- 分组：Overview（Session ID、Agent、Lifecycle、Turn Phase、Needs Attention、Started）、Lineage（有来源信息时显示）、Model、Usage。
+- 分组：Overview（Session ID、Agent、Application、Lifecycle、Turn Phase、Needs Attention、Started；Agent 显示为 Codex / Codex(subagent) / Claude / Claude(subagent)，Application 是承载会话的 AaaS 应用）、Lineage（有来源信息时显示）、Model、Usage。
 
 **右上 `···`**
 

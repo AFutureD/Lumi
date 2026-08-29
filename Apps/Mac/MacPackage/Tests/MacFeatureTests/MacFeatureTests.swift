@@ -949,6 +949,7 @@ private func nookSession(
     #expect(overview.fields.map(\.label) == [
         "Session ID",
         "Agent",
+        "Application",
         "Lifecycle",
         "Turn Phase",
         "Needs Attention",

@@ -54,7 +54,8 @@ private func noisyText(bytes: Int) -> String {
             timelineItem: TimelineItem(
                 id: TimelineItemID(id), sessionID: SessionID("s"), occurredAt: date,
                 payload: .message(MessageTimelinePayload(role: .assistant, text: text))
-            )
+            ),
+            aaas: SessionAaaS(kind: .paseo, agentID: "p-1")
         )
     }
     let events = (0..<20).map { event("e-\($0)", text: noisyText(bytes: 100_000)) }
@@ -70,6 +71,9 @@ private func noisyText(bytes: Int) -> String {
     #expect(delivered.map(\.eventID) == [small.eventID, huge.eventID])
     #expect(delivered[1].timelineItem == nil)
     #expect(delivered[1].phase == .executing)
+    // Stripping the timeline item must keep every other field — the AaaS
+    // ownership included, or the iPhone mirror's title gate never arms.
+    #expect(delivered[1].aaas == SessionAaaS(kind: .paseo, agentID: "p-1"))
 }
 
 @Test func sessionPartitionerSplitsOversizedSessionsWithTurnsOnPartZero() throws {

@@ -21,7 +21,7 @@ import Testing
             sessionID: SessionID("session-1"),
             title: "Authoritative thread title"
         )]
-    )).events(fromHookData: data)
+    )).events(fromHook: CodexHookPayload(data: data), raw: data, options: .hookOnly)
     #expect(events.count == 1)
     #expect(events[0].lifecycle == .running)
     #expect(events[0].phase == .thinking)
@@ -461,6 +461,34 @@ import Testing
         }
         #expect(end.outcome == .aborted)
     }
+}
+
+// A capped read that starts at a nonzero cursor must land its new cursor at
+// EOF, not past it: `fileSize - data.count` is already absolute. (Regression:
+// the offset was added instead of assigned, overshooting by the start offset
+// and making the next scan misread the file as truncated and replay it.)
+@Test func cappedReadFromANonzeroCursorKeepsTheCursorInBounds() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("reader-cap-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("rollout.jsonl").path
+    let line = "{\"type\":\"ignored_record\"}\n"
+    let content = String(repeating: line, count: 200)
+    try content.write(toFile: path, atomically: true, encoding: .utf8)
+    let fileSize = UInt64(content.utf8.count)
+    let offset = UInt64(line.utf8.count * 50)
+
+    let read = try RichSourceReader.read(
+        path: path,
+        sessionID: SessionID("session-1"),
+        adapter: CodexAdapter(threads: FixedThreadIdentities(identities: [:])),
+        fromOffset: offset,
+        maximumBytes: line.utf8.count * 20
+    )
+    #expect(read.cursor.byteOffset == fileSize)
+    #expect(read.cursor.fileSize == fileSize)
+    #expect(read.lines <= 20)
 }
 
 struct FixedThreadIdentities: CodexThreadIdentityProviding {

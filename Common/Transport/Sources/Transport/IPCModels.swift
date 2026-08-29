@@ -11,19 +11,22 @@ public enum SessionDisposition: String, Codable, Hashable, Sendable {
 }
 
 public struct AgentIngressEvent: Codable, Hashable, Sendable {
-    public let eventID: EventID
-    public let sessionID: SessionID
-    public let turnID: TurnID?
-    public let agent: AgentKind
-    public let occurredAt: Date
-    public let title: String?
-    public let workspace: String?
-    public let lifecycle: SessionLifecycle?
-    public let phase: TurnPhase?
-    public let turn: TurnSummary?
-    public let timelineItem: TimelineItem?
-    public let lineage: SessionLineage?
-    public let disposition: SessionDisposition?
+    public var eventID: EventID
+    public var sessionID: SessionID
+    public var turnID: TurnID?
+    public var agent: AgentKind
+    public var occurredAt: Date
+    public var title: String?
+    public var workspace: String?
+    public var lifecycle: SessionLifecycle?
+    public var phase: TurnPhase?
+    public var turn: TurnSummary?
+    public var timelineItem: TimelineItem?
+    public var lineage: SessionLineage?
+    /// AaaS ownership asserted by the hook path; events from other sources
+    /// (watchers, replays) carry `nil` and never clear a stored ownership.
+    public var aaas: SessionAaaS?
+    public var disposition: SessionDisposition?
 
     public init(
         eventID: EventID,
@@ -38,6 +41,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         turn: TurnSummary? = nil,
         timelineItem: TimelineItem? = nil,
         lineage: SessionLineage? = nil,
+        aaas: SessionAaaS? = nil,
         disposition: SessionDisposition? = nil
     ) {
         self.eventID = eventID
@@ -52,6 +56,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         self.turn = turn
         self.timelineItem = timelineItem
         self.lineage = lineage
+        self.aaas = aaas
         self.disposition = disposition
     }
 
@@ -68,6 +73,7 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         case turn
         case timelineItem
         case lineage
+        case aaas
         case disposition
     }
 
@@ -85,12 +91,14 @@ public struct AgentIngressEvent: Codable, Hashable, Sendable {
         turn = try c.decodeIfPresent(TurnSummary.self, forKey: .turn)
         timelineItem = try c.decodeIfPresent(TimelineItem.self, forKey: .timelineItem)
         lineage = try c.decodeIfPresent(SessionLineage.self, forKey: .lineage)
+        aaas = try c.decodeIfPresent(SessionAaaS.self, forKey: .aaas)
         disposition = try c.decodeIfPresent(SessionDisposition.self, forKey: .disposition)
     }
 }
 
-/// Byte-offset watermark into an agent transcript / rollout file. Owned by
-/// the daemon; the helper reads and advances it over IPC.
+/// Byte-offset watermark into an agent transcript / rollout file. Owned and
+/// advanced exclusively by the daemon (hook-triggered catch-up, watchers,
+/// backfill); it never crosses the IPC surface.
 public struct RolloutCursor: Codable, Hashable, Sendable {
     public let path: String
     public let byteOffset: UInt64
@@ -114,8 +122,10 @@ public struct RolloutCursor: Codable, Hashable, Sendable {
 }
 
 public enum IPCOperation: Hashable, Sendable {
-    case ingest
-    case ingestBatch
+    /// One hook invocation, forwarded verbatim by the helper: the raw stdin
+    /// bytes plus the agent kind and a whitelisted environment subset. The
+    /// daemon does all parsing and domain reduction.
+    case ingestHook
     case listSessions
     case getSession
     case deleteSession
@@ -124,13 +134,7 @@ public enum IPCOperation: Hashable, Sendable {
     case subscribe
     case health
     case clearHistory
-    case getRolloutCursor
-    case saveRolloutCursor
     case reingestSession
-    /// The helper found a session the daemon has no cursor for and a history
-    /// too large to replay inside a hook: the daemon rebuilds it off the hook
-    /// path, from the given transcript / rollout file.
-    case backfillSession
     case relayStatus
     case relayRevokeDevice
     case relayRemoveDevice
@@ -142,8 +146,7 @@ public enum IPCOperation: Hashable, Sendable {
 
     public var rawValue: String {
         switch self {
-        case .ingest: "ingest"
-        case .ingestBatch: "ingest_batch"
+        case .ingestHook: "ingest_hook"
         case .listSessions: "list_sessions"
         case .getSession: "get_session"
         case .deleteSession: "delete_session"
@@ -152,10 +155,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .subscribe: "subscribe"
         case .health: "health"
         case .clearHistory: "clear_history"
-        case .getRolloutCursor: "get_rollout_cursor"
-        case .saveRolloutCursor: "save_rollout_cursor"
         case .reingestSession: "reingest_session"
-        case .backfillSession: "backfill_session"
         case .relayStatus: "relay_status"
         case .relayRevokeDevice: "relay_revoke_device"
         case .relayRemoveDevice: "relay_remove_device"
@@ -173,8 +173,7 @@ extension IPCOperation: Codable {
         let container = try decoder.singleValueContainer()
         let value = try container.decode(String.self)
         self = switch value {
-        case "ingest": .ingest
-        case "ingest_batch": .ingestBatch
+        case "ingest_hook": .ingestHook
         case "list_sessions": .listSessions
         case "get_session": .getSession
         case "delete_session": .deleteSession
@@ -183,10 +182,7 @@ extension IPCOperation: Codable {
         case "subscribe": .subscribe
         case "health": .health
         case "clear_history": .clearHistory
-        case "get_rollout_cursor": .getRolloutCursor
-        case "save_rollout_cursor": .saveRolloutCursor
         case "reingest_session": .reingestSession
-        case "backfill_session": .backfillSession
         case "relay_status": .relayStatus
         case "relay_revoke_device": .relayRevokeDevice
         case "relay_remove_device": .relayRemoveDevice
@@ -207,13 +203,23 @@ extension IPCOperation: Codable {
 
 public struct IPCRequest: Codable, Hashable, Sendable {
     public let operation: IPCOperation
-    public let event: AgentIngressEvent?
-    public let events: [AgentIngressEvent]?
     public let sessionID: SessionID?
     public let cursor: PaginationCursor?
     public let limit: Int?
-    public let path: String?
-    public let rolloutCursor: RolloutCursor?
+    /// `ingest_hook`: frame creation time (RFC 3339 on the wire). Observes
+    /// forwarding latency and is the fallback clock for payloads that carry
+    /// no `timestamp` of their own.
+    public let createdAt: Date?
+    /// `ingest_hook`: which agent's hook fired, from the helper's `--agent`.
+    public let agent: AgentProvider?
+    /// `ingest_hook`: whitelisted environment subset of the hook process.
+    /// Never the whole environment — it carries API keys.
+    public let env: [String: String]?
+    /// `ingest_hook`: the hook's stdin, verbatim. Hook event IDs are a
+    /// SHA-256 of these exact bytes, so no re-encoding is allowed. The
+    /// helper's own `hook_frame` log carries a JSON rendering; the frame
+    /// itself ships the bytes once.
+    public let data: Data?
     /// `relay_revoke_device` / `relay_remove_device`: the paired iPhone.
     public let deviceID: DeviceID?
     /// `relay_pairing_decide`: Match (`true`) or Don't match (`false`).
@@ -221,37 +227,37 @@ public struct IPCRequest: Codable, Hashable, Sendable {
 
     public init(
         operation: IPCOperation,
-        event: AgentIngressEvent? = nil,
-        events: [AgentIngressEvent]? = nil,
         sessionID: SessionID? = nil,
         cursor: PaginationCursor? = nil,
         limit: Int? = nil,
-        path: String? = nil,
-        rolloutCursor: RolloutCursor? = nil,
+        createdAt: Date? = nil,
+        agent: AgentProvider? = nil,
+        env: [String: String]? = nil,
+        data: Data? = nil,
         deviceID: DeviceID? = nil,
         approved: Bool? = nil
     ) {
         self.operation = operation
-        self.event = event
-        self.events = events
         self.sessionID = sessionID
         self.cursor = cursor
         self.limit = limit
-        self.path = path
-        self.rolloutCursor = rolloutCursor
+        self.createdAt = createdAt
+        self.agent = agent
+        self.env = env
+        self.data = data
         self.deviceID = deviceID
         self.approved = approved
     }
 
     private enum CodingKeys: String, CodingKey {
         case operation
-        case event
-        case events
         case sessionID
         case cursor
         case limit
-        case path
-        case rolloutCursor
+        case createdAt
+        case agent
+        case env
+        case data
         case deviceID
         case approved
     }
@@ -259,13 +265,13 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         operation = try c.decode(IPCOperation.self, forKey: .operation)
-        event = try c.decodeIfPresent(AgentIngressEvent.self, forKey: .event)
-        events = try c.decodeIfPresent([AgentIngressEvent].self, forKey: .events)
         sessionID = try c.decodeIfPresent(SessionID.self, forKey: .sessionID)
         cursor = try c.decodeIfPresent(PaginationCursor.self, forKey: .cursor)
         limit = try c.decodeIfPresent(Int.self, forKey: .limit)
-        path = try c.decodeIfPresent(String.self, forKey: .path)
-        rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+        agent = try c.decodeIfPresent(AgentProvider.self, forKey: .agent)
+        env = try c.decodeIfPresent([String: String].self, forKey: .env)
+        data = try c.decodeIfPresent(Data.self, forKey: .data)
         deviceID = try c.decodeIfPresent(DeviceID.self, forKey: .deviceID)
         approved = try c.decodeIfPresent(Bool.self, forKey: .approved)
     }
@@ -349,7 +355,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     /// daemon's side, possibly made from another end (an iPhone).
     public let summary: SessionSummary?
     public let acceptedCount: Int?
-    public let rolloutCursor: RolloutCursor?
     public let failure: IPCFailure?
     /// `relay_status` / `relay_refresh_devices` / `relay_revoke_device`.
     public let relay: RelayHostStatus?
@@ -365,7 +370,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         event: AgentIngressEvent? = nil,
         summary: SessionSummary? = nil,
         acceptedCount: Int? = nil,
-        rolloutCursor: RolloutCursor? = nil,
         failure: IPCFailure? = nil,
         relay: RelayHostStatus? = nil,
         pairing: RelayPairingSession? = nil
@@ -377,7 +381,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.event = event
         self.summary = summary
         self.acceptedCount = acceptedCount
-        self.rolloutCursor = rolloutCursor
         self.failure = failure
         self.relay = relay
         self.pairing = pairing
@@ -391,7 +394,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case event
         case summary
         case acceptedCount
-        case rolloutCursor
         case failure
         case relay
         case pairing
@@ -406,7 +408,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         event = try c.decodeIfPresent(AgentIngressEvent.self, forKey: .event)
         summary = try c.decodeIfPresent(SessionSummary.self, forKey: .summary)
         acceptedCount = try c.decodeIfPresent(Int.self, forKey: .acceptedCount)
-        rolloutCursor = try c.decodeIfPresent(RolloutCursor.self, forKey: .rolloutCursor)
         failure = try c.decodeIfPresent(IPCFailure.self, forKey: .failure)
         relay = try c.decodeIfPresent(RelayHostStatus.self, forKey: .relay)
         pairing = try c.decodeIfPresent(RelayPairingSession.self, forKey: .pairing)

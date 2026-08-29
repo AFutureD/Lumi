@@ -69,6 +69,21 @@ public enum JSONValue: Codable, Hashable, Sendable {
     }
 }
 
+public extension JSONValue {
+    /// Foundation representation (`String` / `NSNumber` / `[Any]` /
+    /// `[String: Any]` / `NSNull`), for helpers that inspect loose JSON.
+    var foundationObject: Any {
+        switch self {
+        case let .object(value): value.mapValues(\.foundationObject)
+        case let .array(value): value.map(\.foundationObject)
+        case let .string(value): value
+        case let .number(value): value as NSDecimalNumber
+        case let .boolean(value): value
+        case .null: NSNull()
+        }
+    }
+}
+
 public enum JSONValueError: Error, Equatable, Sendable {
     case unsupportedType(String)
     case unsupportedNumber(String)

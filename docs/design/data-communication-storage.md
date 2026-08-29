@@ -87,10 +87,7 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 
 | 操作 | 用途 | 连接形态 |
 | --- | --- | --- |
-| `ingest` | 提交一个归一化事件 | 短连接请求 |
-| `ingest_batch` | helper 一次提交一批事件（每帧 ≤200 条） | 短连接请求 |
-| `get_rollout_cursor` / `save_rollout_cursor` | helper 读取 / 推进 transcript 游标（游标由 daemon 持有） | 短连接请求 |
-| `backfill_session` | helper 冷启动遇到无游标且历史过大（> 1 MiB）的 Session：把 `{sessionID, path}` 交给 daemon 的串行回填队列后立即返回 `accepted`。队列从游标（无则字节 0）读整个 rich source、逐事件应用（幂等去重、状态时钟拦截过期状态）、存游标；游标建立前的重复请求由队列去重 | 短连接请求 |
+| `ingest_hook` | helper 转发一次 hook 调用：`{createdAt, agent, env 白名单, data 原始字节}`（payload 的 JSON 渲染只进 helper 帧日志，不进帧）。daemon 反序列化 payload、经 `RichSourceCatchUp` 追平 transcript / rollout 增量、归并 hook、识别 AaaS 标题并逐事件应用（游标由 daemon 单一持有，不再过 IPC；冷启动大历史内部交给串行回填队列）。响应只是告知——helper 超时后 daemon 照常完成 | 短连接请求（helper 超时 2s） |
 | `list_sessions` | 查询全部 Summary（对账索引） | 短连接请求 |
 | `get_session` | 分页查询一个 Session 的 Timeline（全量只按单 Session 传输） | 短连接请求 |
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |

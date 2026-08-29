@@ -63,21 +63,32 @@ public struct HookIngestOptions: Hashable, Sendable {
     /// rich source available, hook events attach to this Turn — the hook's
     /// own `prompt_id` changes on injected resumes and would mint ghost Turns.
     public var currentTurnID: TurnID?
+    /// When the hook frame was created (the helper's clock). Fallback
+    /// `occurredAt` for payloads that carry no `timestamp` of their own.
+    public var receivedAt: Date
 
-    public init(richSourceAvailable: Bool = false, sessionNeverUsed: Bool = false, currentTurnID: TurnID? = nil) {
+    public init(
+        richSourceAvailable: Bool = false,
+        sessionNeverUsed: Bool = false,
+        currentTurnID: TurnID? = nil,
+        receivedAt: Date = Date()
+    ) {
         self.richSourceAvailable = richSourceAvailable
         self.sessionNeverUsed = sessionNeverUsed
         self.currentTurnID = currentTurnID
+        self.receivedAt = receivedAt
     }
 
     public static let hookOnly = HookIngestOptions(richSourceAvailable: false)
     public static let withRichSource = HookIngestOptions(richSourceAvailable: true)
 }
 
+/// The rollout / transcript side of an adapter. Hook reduction is typed per
+/// provider (`CodexHookPayload` / `ClaudeHookPayload`) and lives on the
+/// concrete adapters — providers share no hook payload shape.
 public protocol AgentAdapter: Sendable {
     var agentKind: AgentKind { get }
 
-    func events(fromHookData data: Data, options: HookIngestOptions) throws -> [AgentIngressEvent]
     func events(
         fromRolloutLine data: Data,
         context: RolloutRecordContext,
@@ -86,10 +97,6 @@ public protocol AgentAdapter: Sendable {
 }
 
 public extension AgentAdapter {
-    func events(fromHookData data: Data) throws -> [AgentIngressEvent] {
-        try events(fromHookData: data, options: .hookOnly)
-    }
-
     func events(fromRolloutLine data: Data, context: RolloutRecordContext) throws -> [AgentIngressEvent] {
         var state = RolloutReadState()
         return try events(fromRolloutLine: data, context: context, state: &state)
