@@ -122,15 +122,16 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 
 | 层 | 并发模型 |
 | --- | --- |
+| daemon 生命周期 | swift-service-lifecycle `ServiceGroup`：SIGTERM / SIGINT 优雅关停，按注册逆序停服务（Relay → watcher → server → 回填队列最后清空），干净退出码 0 |
 | daemon repository | Swift actor + GRDB `DatabaseQueue` |
 | daemon service | Swift actor |
-| Unix socket server | POSIX：一条 accept 线程；每连接一条读线程 + 一条写线程（有界出站队列，超限断连） |
+| Unix socket server | 结构化并发 actor：非阻塞 fd 的就绪等待经 DispatchSource 桥接回续体，不占线程；每连接一个子任务（请求并发处理、单写者任务串行发帧，有界出站队列超限断连） |
 | Unix socket client | POSIX 阻塞调用（非阻塞 fd + poll deadline）；订阅流有专用读线程 |
-| daemon subscription hub | `NSLock` 保护 subscriber 字典 |
-| rollout watcher | 单个 Task + lock 保护文件尺寸缓存 |
+| daemon subscription hub | `Mutex` 保护 subscriber 字典，同步扇出 |
+| rollout watcher | actor（Service）：`run()` 轮询循环，文件尺寸缓存是 actor 状态 |
 | Mac/iOS controllers | `@MainActor` |
 | Mac event apply | 主 Actor 管理的 Task，50ms 合并 |
-| Relay host | daemon 内 `RelayHostService` actor：单串行发送循环；事件 1s 合并；每设备序号先落盘 |
+| Relay host | daemon 内 `RelayHostService` actor（Service）：`run()` 下结构化子循环——连接循环、单串行发送循环、事件 1s 合并、独立推送队列、定时 job 通道；每设备序号先落盘 |
 | WebSocket client | Swift actor 包装 `URLSessionWebSocketTask` |
 | Durable Object | Cloudflare 单对象串行事件模型 |
 

@@ -7,7 +7,29 @@ import Testing
 
 /// Drives `RelayHostService` through an in-memory relay: a device end sends
 /// sealed requests and reads the sealed answers, the hub publishes events.
-private struct RelayHarness {
+/// The host runs as a held task; `stop()` is cancellation, like the daemon's
+/// ServiceGroup shutdown.
+private final class RelayHarness {
+    private var runTask: Task<Void, Never>?
+
+    /// Starts `run()` and waits for the connection to come up, matching the
+    /// old start()-returns-connected contract the tests were written against.
+    func start() async {
+        guard runTask == nil else { return }
+        let service = service
+        runTask = Task { try? await service.run() }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await !service.status().connected, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func stop() async {
+        runTask?.cancel()
+        await runTask?.value
+        runTask = nil
+    }
+
     let repository = InMemorySessionRepository()
     let hub = DaemonSubscriptionHub()
     let link = RelayInMemoryLink()
@@ -83,7 +105,7 @@ private struct RelayHarness {
 
     /// Starts the host and opens the device end.
     func connect() async throws -> any RelayFrameTransport {
-        await service.start()
+        await start()
         let device = link.makeDeviceTransport(deviceID)
         try await device.connect(hostID: try hostCredentials.hostID, role: .device(deviceID), token: "token")
         // The first message on a device socket is the presence flag.
@@ -204,7 +226,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(seen.map(\.frame.sequence) == [1, 2])
     let persisted = RelayHostStateStore(path: harness.statePath)
     #expect(persisted.current(for: harness.deviceID) == 2)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostServesFullSessionsTimelineTailsAndRemovals() async throws {
@@ -232,7 +254,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     let detail = try #require(RelayFrameReduction.assemble(parts: tail.map(\.payload)))
     #expect(detail.timeline.map(\.id) == [TimelineItemID("a-item-3"), TimelineItemID("a-item-4")])
     #expect(detail.turns.count == 1)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostPushesEventsInfoAndRemovalsOnlyToSyncedDevices() async throws {
@@ -268,7 +290,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     let removed = try await harness.collect(from: device) { $0.kind == .sessionRemoved }
     #expect(removed.last?.payload.sessionIDs == [SessionID("a")])
     #expect(removed.last?.payload.requestID == nil)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostHealsASequenceCursorTheRelayReportsAsBehind() async throws {
@@ -289,7 +311,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device, sequence: 2)
     let second = try await harness.collect(from: device) { $0.kind == .sessionIndex }
     #expect(second.last?.frame.sequence == 41)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func anIPhoneReviewReachesTheMacThroughTheLocalStream() async throws {
@@ -319,7 +341,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     }
     #expect(streamed.snapshot.map(\.id) == [SessionID("a")])
     #expect(streamed.snapshot.first?.needsReview == false)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostNudgesADeviceAfterTheRelayRejectsItsSequence() async throws {
@@ -335,12 +357,12 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.link.sendErrorToHost(RelayErrorMessage(code: "non_monotonic_sequence", sequence: 2, lastSequence: 40, deviceID: harness.deviceID))
     let nudge = try await harness.collect(from: device) { $0.kind == .health }
     #expect(nudge.last?.frame.sequence == 41)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostPairsAnIPhoneThroughCodeSASAndMatch() async throws {
     let harness = RelayHarness(preregisterDevice: false)
-    await harness.service.start()
+    await harness.start()
     let device = harness.link.makeDeviceTransport(harness.deviceID)
     try await device.connect(hostID: try harness.hostCredentials.hostID, role: .device(harness.deviceID), token: "token")
     _ = try await device.next() // presence
@@ -388,12 +410,12 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("first")), via: device)
     let seen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
     #expect(seen.last?.payload.requestID == RequestID("first"))
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostDeclinesAnUnansweredPairingAndIgnoresUnpinnedKeys() async throws {
     let harness = RelayHarness(preregisterDevice: false, pairingDecisionTimeout: .milliseconds(150))
-    await harness.service.start()
+    await harness.start()
     let device = harness.link.makeDeviceTransport(harness.deviceID)
     try await device.connect(hostID: try harness.hostCredentials.hostID, role: .device(harness.deviceID), token: "token")
     _ = try await device.next() // presence
@@ -423,7 +445,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     let declined = try await harness.service.decidePairing(approved: false)
     #expect(declined.outcome?.kind == .rejected)
     #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostKeepsOneLivePairingSessionAndFollowsCancellations() async throws {
@@ -451,7 +473,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.service.cancelPairing()
     #expect(await harness.service.pairingSession() == nil)
     #expect(await harness.rest.sessions[third.sessionID]?.state == .cancelled)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostKeepsAnExpiredCodeOnScreenInsteadOfReplacingIt() async throws {
@@ -502,7 +524,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.service.cancelPairing()
     #expect(await harness.service.pairingSession() == nil)
     #expect(await harness.rest.cancelRequests.isEmpty)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostReconnectsAfterTheRelayDropsItAndForgetsActiveDevices() async throws {
@@ -531,7 +553,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     harness.hub.publish(AgentIngressEvent(eventID: EventID("e"), sessionID: SessionID("x"), agent: .codex, occurredAt: Date(), phase: .thinking))
     try await Task.sleep(for: .milliseconds(100))
     #expect(await harness.link.hostSent.count == sent)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostRevokesAndRemovesDevices() async throws {
@@ -545,7 +567,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.service.remove(deviceID: harness.deviceID)
     #expect(await harness.service.status().devices.isEmpty)
     #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostAlertsAPairedButDisconnectedIPhoneOverAPNs() async throws {
@@ -554,7 +576,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
     // Start the host only: the device is paired (listed by the relay) but
     // never opens a socket — exactly the case push notifications exist for.
-    await harness.service.start()
+    await harness.start()
 
     let event = AgentIngressEvent(
         eventID: EventID("turn-end"), sessionID: SessionID("a"), agent: .codex, occurredAt: Date(),
@@ -575,7 +597,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(sent.first?.sessionID == SessionID("a"))
     // The alert names its targets: only the key-verified device.
     #expect(sent.first?.deviceIDs == [harness.deviceID])
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostNeverAlertsAnUnverifiedDevice() async throws {
@@ -585,7 +607,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     let harness = RelayHarness(pinDeviceKey: false)
     let base = Date()
     try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
-    await harness.service.start()
+    await harness.start()
     // Wait for the device list: without it the push gate would skip for the
     // wrong reason (no devices at all) and prove nothing.
     for _ in 0..<300 where await harness.service.status().devices.isEmpty {
@@ -604,14 +626,14 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     harness.hub.publish(event)
     try await Task.sleep(for: .milliseconds(150))
     #expect(await harness.rest.sentNotifications.isEmpty)
-    await harness.service.stop()
+    await harness.stop()
 }
 
 @Test func hostNeverAlertsForReplayedOldEvents() async throws {
     let harness = RelayHarness()
     let base = Date().addingTimeInterval(-3_600)
     try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
-    await harness.service.start()
+    await harness.start()
 
     // A backfill replays a turn end from an hour ago: no alert.
     let event = AgentIngressEvent(
@@ -625,5 +647,5 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     harness.hub.publish(event)
     try await Task.sleep(for: .milliseconds(150))
     #expect(await harness.rest.sentNotifications.isEmpty)
-    await harness.service.stop()
+    await harness.stop()
 }

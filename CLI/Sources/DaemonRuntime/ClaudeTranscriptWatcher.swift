@@ -2,6 +2,7 @@ import Adapters
 import Core
 import Diagnostics
 import Logging
+import ServiceLifecycle
 import Transport
 import Foundation
 
@@ -19,7 +20,7 @@ private let lifecycleLog = Logger(label: "lifecycle")
 /// session stays Running forever. Unlike `CodexRolloutWatcher` it never scans
 /// a directory: only sessions already in the repository and still active are
 /// polled, so there is no first-run baseline to establish.
-public final class ClaudeTranscriptWatcher: @unchecked Sendable {
+public actor ClaudeTranscriptWatcher: Service {
     private let repository: any SessionRepository
     private let homeDirectory: URL
     private let pollIntervalSeconds: Double
@@ -27,8 +28,6 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
     private let backfill: TranscriptBackfillQueue?
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
     private let adapter = ClaudeAdapter()
-    private let lock = NSLock()
-    private var task: Task<Void, Never>?
     private var scannedFileSizes: [String: UInt64] = [:]
 
     public init(
@@ -47,25 +46,19 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
         self.onEvent = onEvent
     }
 
-    public func start() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard task == nil else { return }
-        task = Task { [weak self] in
-            await self?.run()
-        }
+    public func run() async throws {
         lifecycleLog.info("claude_watcher_started", metadata: .fields(["poll_seconds": pollIntervalSeconds]))
-    }
-
-    public func stop() {
-        lock.lock()
-        let currentTask = task
-        task = nil
-        lock.unlock()
-        currentTask?.cancel()
-        if currentTask != nil {
-            lifecycleLog.info("claude_watcher_stopped")
+        await cancelWhenGracefulShutdown {
+            while !Task.isCancelled {
+                await self.scanOnce()
+                do {
+                    try await Task.sleep(for: .milliseconds(Int64(max(250, self.pollIntervalSeconds * 1_000))))
+                } catch {
+                    break
+                }
+            }
         }
+        lifecycleLog.info("claude_watcher_stopped")
     }
 
     public func scanOnce() async {
@@ -173,25 +166,10 @@ public final class ClaudeTranscriptWatcher: @unchecked Sendable {
     }
 
     private func needsScan(path: String, fileSize: UInt64) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return scannedFileSizes[path] != fileSize
+        scannedFileSizes[path] != fileSize
     }
 
     private func markScanned(path: String, fileSize: UInt64) {
-        lock.lock()
         scannedFileSizes[path] = fileSize
-        lock.unlock()
-    }
-
-    private func run() async {
-        while !Task.isCancelled {
-            await scanOnce()
-            do {
-                try await Task.sleep(for: .milliseconds(Int64(max(250, pollIntervalSeconds * 1_000))))
-            } catch {
-                return
-            }
-        }
     }
 }

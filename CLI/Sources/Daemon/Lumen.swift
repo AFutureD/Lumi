@@ -5,6 +5,7 @@ import Diagnostics
 import Logging
 import Persistence
 import Remote
+import ServiceLifecycle
 import Foundation
 
 private let log = Logger(label: "lifecycle")
@@ -104,17 +105,18 @@ enum LumenMain {
         )
         await service.attachHookIngest(hookIngest)
 
+        // Ordered, before anything serves: the baseline must exist before a
+        // hook frame or the poll loop can touch rollout cursors, and the
+        // eager listen means a bad socket path fails the launch outright.
         do {
             try await watcher.prepareInitialBaseline()
-            try server.start()
+            try await server.listen()
         } catch {
             log.error("daemon_start_failed", metadata: .fields(["socket": configuration.socketPath, "error": error]))
             throw error
         }
-        watcher.start()
-        claudeWatcher.start()
         // Announced before the Relay connects: the socket is already
-        // serving, and the first Relay round-trip can take a while.
+        // listening, and the first Relay round-trip can take a while.
         log.info("daemon_started", metadata: .fields([
             "version": DaemonService.version,
             "fingerprint": executableHash.isEmpty ? nil : String(executableHash.prefix(12)),
@@ -124,14 +126,21 @@ enum LumenMain {
             "log_level": logConfiguration.minimumLevel.label.lowercased(),
             "log_directory": logConfiguration.directory,
         ]))
-        await relay?.start()
-        defer {
-            claudeWatcher.stop()
-            watcher.stop()
-            server.shutdown()
-            log.info("daemon_stopped")
-        }
-        try server.wait()
-        await relay?.stop()
+
+        // Shutdown runs in reverse: the Relay detaches first, the watchers
+        // stop producing, the server drains its connections, and the backfill
+        // queue — last — flushes whatever the others enqueued on the way out.
+        // SIGTERM (launchd unregister) therefore exits 0 and stays down
+        // (KeepAlive.SuccessfulExit=false); a service failure exits non-zero
+        // and launchd relaunches.
+        var services: [any Service] = [backfill, server, watcher, claudeWatcher]
+        if let relay { services.append(relay) }
+        let group = ServiceGroup(configuration: .init(
+            services: services.map { ServiceGroupConfiguration.ServiceConfiguration(service: $0) },
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: Logger(label: "lifecycle")
+        ))
+        try await group.run()
+        log.info("daemon_stopped")
     }
 }

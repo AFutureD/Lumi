@@ -1,4 +1,5 @@
 import Remote
+import Synchronization
 import Foundation
 
 /// Where the daemon keeps its Relay host registration (host id, host secret,
@@ -32,23 +33,18 @@ public struct KeychainRelayHostCredentialStore: RelayHostCredentialStoring {
 }
 
 /// Tests and smoke runs: credentials live only in this process.
-public final class InMemoryRelayHostCredentialStore: RelayHostCredentialStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var credentials: RelayHostCredentials?
+public final class InMemoryRelayHostCredentialStore: RelayHostCredentialStoring, Sendable {
+    private let credentials: Mutex<RelayHostCredentials?>
 
     public init(credentials: RelayHostCredentials? = nil) {
-        self.credentials = credentials
+        self.credentials = Mutex(credentials)
     }
 
     public func load() throws -> RelayHostCredentials? {
-        lock.lock()
-        defer { lock.unlock() }
-        return credentials
+        credentials.withLock { $0 }
     }
 
     public func save(_ credentials: RelayHostCredentials) throws {
-        lock.lock()
-        self.credentials = credentials
-        lock.unlock()
+        self.credentials.withLock { $0 = credentials }
     }
 }

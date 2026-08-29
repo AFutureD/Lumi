@@ -2,6 +2,7 @@ import Core
 import Diagnostics
 import Logging
 import Remote
+import ServiceLifecycle
 import Transport
 import Foundation
 
@@ -18,7 +19,7 @@ private let pairingLog = Logger(label: "pairing")
 /// One serial send loop does all outbound work — read → prepare once → seal
 /// per device → reserve sequences (persisted first) → send — so an answer is
 /// always on the wire before any push that follows it.
-public actor RelayHostService {
+public actor RelayHostService: Service {
     public typealias HealthProvider = @Sendable () async -> DaemonHealth?
     public typealias ConnectionObserver = @Sendable (Bool) async -> Void
 
@@ -33,6 +34,11 @@ public actor RelayHostService {
         case summaries([SessionID])
         case removed([SessionID], requestID: RequestID?, device: DeviceID?)
         case health(DaemonHealth, device: DeviceID?)
+        /// An iPhone opened sessions: repository writes + local stream, then
+        /// `session_info` to the other iPhones — behind pending answers.
+        case reviewed([SessionID])
+        /// After a sequence heal: fetch fresh health and nudge that device.
+        case healthNudge(device: DeviceID)
     }
 
     private let repository: any SessionRepository
@@ -67,25 +73,33 @@ public actor RelayHostService {
     private var unverifiedLogged: Set<DeviceID> = []
     /// Devices that asked for the index on this connection: pushes go only to them.
     private var activeDevices: Set<DeviceID> = []
-    private var subscriptionID: UUID?
     private var pendingEvents: [AgentIngressEvent] = []
+    /// A coalesce job is already sleeping; the next event rides it.
+    private var eventFlushScheduled = false
     /// Push cooldown bookkeeping: when each session last alerted. Pruned on
     /// every drain — entries older than the cooldown are dead weight.
     private var lastPushAt: [SessionID: Date] = [:]
-    /// Alert-worthy events waiting for the single push task. One task drains
-    /// them in arrival order; overlapping tasks would race the cooldown reads
+    /// Alert-worthy events waiting for the push loop. One loop drains them in
+    /// arrival order; overlapping consumers would race the cooldown reads
     /// across suspension points and send duplicates.
     private var pendingPushEvents: [PushNotificationPolicy.NotableEvent] = []
-    private var pushTask: Task<Void, Never>?
-    private var eventFlushTask: Task<Void, Never>?
-    private var receiveTask: Task<Void, Never>?
-    private var refreshTask: Task<Void, Never>?
-    private var reconnectTask: Task<Void, Never>?
-    private var healthTask: Task<Void, Never>?
     private var lastHealth: DaemonHealth?
     private var queue: [WorkItem] = []
-    private var drainTask: Task<Void, Never>?
-    private var stopped = false
+
+    // run()'s child loops feed on these; the producer sides are safe to call
+    // before run() starts — yields buffer until the loop consumes them.
+    private let events: AsyncStream<AgentIngressEvent>
+    private let eventsIn: AsyncStream<AgentIngressEvent>.Continuation
+    private let sendSignals: AsyncStream<Void>
+    private let sendSignalIn: AsyncStream<Void>.Continuation
+    private let pushSignals: AsyncStream<Void>
+    private let pushSignalIn: AsyncStream<Void>.Continuation
+    /// Timer jobs (event coalescing, pairing expiry / decision timeouts) run
+    /// as children of run(): shutdown reaps every sleeper. Late fires are
+    /// harmless — each job's target re-checks its own guard.
+    private let jobs: AsyncStream<@Sendable () async -> Void>
+    private let jobsIn: AsyncStream<@Sendable () async -> Void>.Continuation
+
     /// The one pairing session this Mac has going (code on screen, maybe an
     /// iPhone waiting for Match). The Mac app drives rotation: it starts a
     /// new one when the page opens, on New code, or after an outcome was
@@ -102,8 +116,6 @@ public actor RelayHostService {
         var pending: RelayPairingPending?
         var pendingDevicePublicKey: Data?
         var outcome: RelayPairingOutcome?
-        var decisionTask: Task<Void, Never>?
-        var expiryTask: Task<Void, Never>?
     }
 
     public init(
@@ -140,30 +152,34 @@ public actor RelayHostService {
         self.healthInterval = healthInterval
         self.pairingCodeLifetime = pairingCodeLifetime
         self.pairingDecisionTimeout = pairingDecisionTimeout
+        (events, eventsIn) = AsyncStream.makeStream(of: AgentIngressEvent.self)
+        (sendSignals, sendSignalIn) = AsyncStream.makeStream(of: Void.self)
+        (pushSignals, pushSignalIn) = AsyncStream.makeStream(of: Void.self)
+        (jobs, jobsIn) = AsyncStream.makeStream(of: (@Sendable () async -> Void).self)
     }
 
     // MARK: - Lifecycle
 
-    public func start() async {
-        guard !stopped else { return }
-        if subscriptionID == nil {
-            subscriptionID = subscriptions.subscribe { [weak self] message in
-                guard let self, case let .event(event) = message else { return }
-                Task { await self.enqueueEvent(event) }
+    /// The whole host under one structured root: the connection loop plus the
+    /// event/send/push/job consumers, all reaped together on shutdown. One
+    /// call per instance — the feeding streams are consumed once.
+    public func run() async throws {
+        let subscriptionID = subscriptions.subscribe { [eventsIn] message in
+            guard case let .event(event) = message else { return }
+            eventsIn.yield(event)
+        }
+        await cancelWhenGracefulShutdown {
+            await withDiscardingTaskGroup { group in
+                group.addTask { await self.consumeEvents() }
+                group.addTask { await self.runSendLoop() }
+                group.addTask { await self.runPushLoop() }
+                group.addTask { await self.runJobs() }
+                // Returning early (a sticky 401/403) leaves the loops serving
+                // the local side; the service itself stays alive.
+                await self.runConnectionLoop()
             }
         }
-        await connect()
-    }
-
-    public func stop() async {
-        stopped = true
-        if let subscriptionID { subscriptions.unsubscribe(subscriptionID) }
-        subscriptionID = nil
-        pushTask?.cancel()
-        pushTask = nil
-        pendingPushEvents = []
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        subscriptions.unsubscribe(subscriptionID)
         await cancelLivePairing(notifyRelay: false)
         await tearDownConnection()
         log.info("relay_host_stopped")
@@ -198,9 +214,11 @@ public actor RelayHostService {
             expiresAt: Date().addingTimeInterval(pairingCodeLifetime.timeInterval),
             hostSecret: credentials.hostSecret
         )
-        var live = LivePairing(sessionID: created.sessionID, code: created.code, expiresAt: created.expiresAt, nonce: nonce)
+        let live = LivePairing(sessionID: created.sessionID, code: created.code, expiresAt: created.expiresAt, nonce: nonce)
         let sessionID = created.sessionID
-        live.expiryTask = Task { [weak self] in
+        // Late fires no-op: `pairingExpired` re-checks the session id and the
+        // expired mark, so a job outliving this code cannot expire its successor.
+        jobsIn.yield { [weak self] in
             try? await Task.sleep(for: .seconds(max(0, created.expiresAt.timeIntervalSinceNow)))
             guard !Task.isCancelled else { return }
             await self?.pairingExpired(sessionID)
@@ -228,8 +246,6 @@ public actor RelayHostService {
               let credentials else {
             throw RelayPairingError.noPendingDevice
         }
-        live.decisionTask?.cancel()
-        live.decisionTask = nil
         try await rest.decidePairing(hostID: credentials.hostID, sessionID: live.sessionID, approved: approved, hostSecret: credentials.hostSecret)
         if approved {
             do {
@@ -264,8 +280,6 @@ public actor RelayHostService {
 
     private func cancelLivePairing(notifyRelay: Bool) async {
         guard let live = pairing else { return }
-        live.decisionTask?.cancel()
-        live.expiryTask?.cancel()
         pairing = nil
         pairingLog.info("pairing_cancelled", metadata: .fields([
             "session": Self.shortPairingID(live.sessionID),
@@ -289,10 +303,6 @@ public actor RelayHostService {
     /// replacement it did not ask for.
     private func pairingExpired(_ sessionID: String) {
         guard var live = pairing, live.sessionID == sessionID, live.expiredAt == nil else { return }
-        live.decisionTask?.cancel()
-        live.decisionTask = nil
-        live.expiryTask?.cancel()
-        live.expiryTask = nil
         let hadPending = live.pending != nil
         live.pending = nil
         live.pendingDevicePublicKey = nil
@@ -339,7 +349,10 @@ public actor RelayHostService {
         }
         pairingLog.info("pairing_revealed", metadata: .fields(["session": Self.shortPairingID(live.sessionID)]))
         let sessionID = live.sessionID
-        pairing?.decisionTask = Task { [weak self, pairingDecisionTimeout] in
+        // Guarded like the expiry job: `declineUnanswered` requires the same
+        // session with a still-pending device, so an answered or replaced
+        // pairing ignores the timeout.
+        jobsIn.yield { [weak self, pairingDecisionTimeout] in
             try? await Task.sleep(for: pairingDecisionTimeout)
             guard !Task.isCancelled else { return }
             await self?.declineUnanswered(sessionID)
@@ -367,9 +380,7 @@ public actor RelayHostService {
             pairingExpired(sessionID)
             return
         }
-        guard let live = pairing, live.sessionID == sessionID else { return }
-        live.decisionTask?.cancel()
-        live.expiryTask?.cancel()
+        guard pairing?.sessionID == sessionID else { return }
         pairing = nil
     }
 
@@ -463,33 +474,84 @@ public actor RelayHostService {
 
     // MARK: - Connection
 
-    private func connect() async {
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        guard !stopped else { return }
-        do {
-            let credentials = try await ensureCredentials()
-            let transport = transportFactory.makeTransport(baseURL: credentials.relayURL)
-            try await transport.connect(hostID: credentials.hostID, role: .host, token: credentials.hostSecret)
-            self.transport = transport
-            isConnected = true
-            lastError = nil
-            activeDevices = []
-            log.info("relay_connected", metadata: .fields(["relay": credentials.relayURL, "host": credentials.hostID.rawValue]))
-            await onConnectionChange(true)
-            await refreshDevices()
-            startReceiveLoop(transport)
-            startRefreshLoop()
-            startHealthLoop()
-        } catch {
-            isConnected = false
-            lastError = String(describing: error)
-            log.error("relay_connect_failed", metadata: .fields([
-                "relay": relayURL,
-                "reconnect": Self.shouldReconnect(after: error),
-                "error": error,
-            ]))
-            scheduleReconnect(after: error)
+    /// One loop owns the connection's whole life: connect → serve until the
+    /// receive loop reports the loss → tear down → delay → again. A sticky
+    /// identity rejection (401/403) ends the loop instead of retrying it.
+    private func runConnectionLoop() async {
+        while !Task.isCancelled {
+            do {
+                let credentials = try await ensureCredentials()
+                let transport = transportFactory.makeTransport(baseURL: credentials.relayURL)
+                try await transport.connect(hostID: credentials.hostID, role: .host, token: credentials.hostSecret)
+                self.transport = transport
+                isConnected = true
+                lastError = nil
+                activeDevices = []
+                log.info("relay_connected", metadata: .fields(["relay": credentials.relayURL, "host": credentials.hostID.rawValue]))
+                await onConnectionChange(true)
+                await refreshDevices()
+                let lostError = await serveConnection(transport)
+                if Task.isCancelled {
+                    // Shutdown, not a loss: run()'s cleanup tears down.
+                    return
+                }
+                isConnected = false
+                lastError = lostError.map { String(describing: $0) }
+                log.warning("relay_connection_lost", metadata: .fields([
+                    "active_devices": activeDevices.count,
+                    "reconnect": lostError.map(Self.shouldReconnect(after:)) ?? true,
+                    "error": lostError,
+                ]))
+                await tearDownConnection()
+                await onConnectionChange(false)
+                if let lostError, !Self.shouldReconnect(after: lostError) { return }
+            } catch {
+                isConnected = false
+                lastError = String(describing: error)
+                log.error("relay_connect_failed", metadata: .fields([
+                    "relay": relayURL,
+                    "reconnect": Self.shouldReconnect(after: error),
+                    "error": error,
+                ]))
+                guard Self.shouldReconnect(after: error) else { return }
+            }
+            log.debug("relay_reconnect_scheduled", metadata: .fields(["delay_ms": reconnectDelay.milliseconds]))
+            try? await Task.sleep(for: reconnectDelay)
+        }
+    }
+
+    /// Serves one live connection: the receive loop next to the periodic
+    /// device-refresh and health timers. Ends when the receive loop does
+    /// (connection loss, or cancellation), returning its terminal error.
+    private func serveConnection(_ transport: any RelayFrameTransport) async -> (any Error)? {
+        await withTaskGroup(of: (any Error)??.self) { group in
+            group.addTask { await .some(self.receiveLoop(transport)) }
+            group.addTask {
+                // `next()` has no native cancellation; this sentinel sleeps
+                // until the group is cancelled, then disconnects (idempotent
+                // on both transports) so the receive loop unblocks.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(3600))
+                }
+                await transport.disconnect()
+                return nil
+            }
+            group.addTask {
+                await self.refreshLoop()
+                return nil
+            }
+            group.addTask {
+                await self.healthLoop()
+                return nil
+            }
+            var lost: (any Error)? = nil
+            while let finished = await group.next() {
+                if case let .some(terminal) = finished {
+                    lost = terminal
+                    group.cancelAll()
+                }
+            }
+            return lost
         }
     }
 
@@ -536,85 +598,42 @@ public actor RelayHostService {
         return current
     }
 
-    private func startReceiveLoop(_ transport: any RelayFrameTransport) {
-        receiveTask?.cancel()
-        receiveTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    let message = try await transport.next()
-                    await self?.handle(message)
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    await self?.connectionLost(error)
-                    return
-                }
+    /// Returns the error that ended the connection; `nil` when it ended by
+    /// cancellation (shutdown).
+    private func receiveLoop(_ transport: any RelayFrameTransport) async -> (any Error)? {
+        while !Task.isCancelled {
+            do {
+                let message = try await transport.next()
+                await handle(message)
+            } catch {
+                return Task.isCancelled ? nil : error
             }
+        }
+        return nil
+    }
+
+    private func refreshLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: deviceRefreshInterval)
+            guard !Task.isCancelled else { return }
+            await refreshDevices()
         }
     }
 
-    private func startRefreshLoop() {
-        refreshTask?.cancel()
-        refreshTask = Task { [weak self, deviceRefreshInterval] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: deviceRefreshInterval)
-                guard !Task.isCancelled else { return }
-                await self?.refreshDevices()
-            }
+    private func healthLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: healthInterval)
+            guard !Task.isCancelled else { return }
+            await pushHealthIfChanged()
         }
-    }
-
-    private func startHealthLoop() {
-        healthTask?.cancel()
-        healthTask = Task { [weak self, healthInterval] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: healthInterval)
-                guard !Task.isCancelled else { return }
-                await self?.pushHealthIfChanged()
-            }
-        }
-    }
-
-    private func connectionLost(_ error: Error) async {
-        guard isConnected || transport != nil else { return }
-        isConnected = false
-        lastError = String(describing: error)
-        log.warning("relay_connection_lost", metadata: .fields([
-            "active_devices": activeDevices.count,
-            "reconnect": Self.shouldReconnect(after: error),
-            "error": error,
-        ]))
-        await tearDownConnection()
-        await onConnectionChange(false)
-        scheduleReconnect(after: error)
     }
 
     private func tearDownConnection() async {
-        receiveTask?.cancel()
-        receiveTask = nil
-        refreshTask?.cancel()
-        refreshTask = nil
-        healthTask?.cancel()
-        healthTask = nil
         activeDevices = []
         let transport = self.transport
         self.transport = nil
         isConnected = false
         await transport?.disconnect()
-    }
-
-    private func scheduleReconnect(after error: Error) {
-        guard !stopped, Self.shouldReconnect(after: error), reconnectTask == nil else { return }
-        log.debug("relay_reconnect_scheduled", metadata: .fields(["delay_ms": reconnectDelay.milliseconds]))
-        reconnectTask = Task { [weak self, reconnectDelay] in
-            try? await Task.sleep(for: reconnectDelay)
-            guard !Task.isCancelled, let self else { return }
-            await self.clearReconnectAndConnect()
-        }
-    }
-
-    private func clearReconnectAndConnect() async {
-        reconnectTask = nil
-        await connect()
     }
 
     private static func shouldReconnect(after error: Error) -> Bool {
@@ -693,17 +712,7 @@ public actor RelayHostService {
         case .sessionReviewed:
             // An iPhone opened the session: the Mac window and the Notch turn
             // grey through the local stream, other iPhones through `session_info`.
-            let ids = payload.sessionIDs ?? []
-            Task { [weak self] in
-                guard let self else { return }
-                for id in ids {
-                    try? await self.repository.markSessionReviewed(id)
-                    if let summary = try? await self.repository.sessionDetail(id: id, cursor: nil, limit: 1)?.summary {
-                        self.subscriptions.publish(summary: summary)
-                    }
-                }
-                await self.summariesChanged(ids)
-            }
+            enqueue(.reviewed(payload.sessionIDs ?? []))
         default:
             log.warning("request_kind_ignored", metadata: .fields(["device": deviceID.rawValue, "kind": payload.kind.rawValue]))
         }
@@ -761,25 +770,27 @@ public actor RelayHostService {
         // The Relay forwards nothing about the rejection, so nudge it with a
         // health frame on the healed cursor; the gap makes the iPhone index.
         activeDevices.remove(deviceID)
-        Task { [weak self] in
-            guard let self, let health = await self.healthProvider() else { return }
-            await self.enqueue(.health(health, device: deviceID))
-        }
+        enqueue(.healthNudge(device: deviceID))
     }
 
     // MARK: - Events
 
-    private func enqueueEvent(_ event: AgentIngressEvent) {
-        pendingEvents.append(event)
-        guard eventFlushTask == nil else { return }
-        eventFlushTask = Task { [weak self, eventCoalesceInterval] in
-            try? await Task.sleep(for: eventCoalesceInterval)
-            await self?.flushEvents()
+    /// Single consumer of the hub's event stream: appends in publish order
+    /// (the fix for the racy Task-per-event fan-in) and arms one coalesce job.
+    private func consumeEvents() async {
+        for await event in events {
+            pendingEvents.append(event)
+            guard !eventFlushScheduled else { continue }
+            eventFlushScheduled = true
+            jobsIn.yield { [weak self, eventCoalesceInterval] in
+                try? await Task.sleep(for: eventCoalesceInterval)
+                await self?.flushEvents()
+            }
         }
     }
 
     private func flushEvents() {
-        eventFlushTask = nil
+        eventFlushScheduled = false
         let events = pendingEvents
         pendingEvents = []
         guard !events.isEmpty else { return }
@@ -806,19 +817,17 @@ public actor RelayHostService {
         let notable = PushNotificationPolicy.notableEvents(events, now: Date())
         guard !notable.isEmpty else { return }
         pendingPushEvents.append(contentsOf: notable)
-        guard pushTask == nil else { return }
-        pushTask = Task { [weak self] in
-            await self?.drainPushQueue()
-        }
+        pushSignalIn.yield(())
     }
 
-    private func drainPushQueue() async {
-        while !Task.isCancelled, !pendingPushEvents.isEmpty {
-            let notable = pendingPushEvents
-            pendingPushEvents = []
-            await sendPush(for: notable)
+    private func runPushLoop() async {
+        for await _ in pushSignals {
+            while !Task.isCancelled, !pendingPushEvents.isEmpty {
+                let notable = pendingPushEvents
+                pendingPushEvents = []
+                await sendPush(for: notable)
+            }
         }
-        pushTask = nil
     }
 
     private func sendPush(for notable: [PushNotificationPolicy.NotableEvent]) async {
@@ -899,23 +908,33 @@ public actor RelayHostService {
 
     private func enqueue(_ item: WorkItem) {
         queue.append(item)
-        guard drainTask == nil else { return }
-        drainTask = Task { [weak self] in
-            await self?.drain()
+        sendSignalIn.yield(())
+    }
+
+    /// The single consumer of the FIFO work queue: an answer is always on the
+    /// wire before any push enqueued after it.
+    private func runSendLoop() async {
+        for await _ in sendSignals {
+            while !Task.isCancelled, !queue.isEmpty {
+                let item = queue.removeFirst()
+                do {
+                    try await process(item)
+                } catch {
+                    lastError = String(describing: error)
+                    log.error("relay_send_failed", metadata: .fields(["item": item.logName, "queued": queue.count, "error": error]))
+                }
+            }
         }
     }
 
-    private func drain() async {
-        while !queue.isEmpty {
-            let item = queue.removeFirst()
-            do {
-                try await process(item)
-            } catch {
-                lastError = String(describing: error)
-                log.error("relay_send_failed", metadata: .fields(["item": item.logName, "queued": queue.count, "error": error]))
+    /// Timer jobs run as children of this loop; group cancellation reaps
+    /// every sleeper at shutdown.
+    private func runJobs() async {
+        await withDiscardingTaskGroup { group in
+            for await job in jobs {
+                group.addTask { await job() }
             }
         }
-        drainTask = nil
     }
 
     private func process(_ item: WorkItem) async throws {
@@ -1008,6 +1027,18 @@ public actor RelayHostService {
             guard !targets.isEmpty else { return }
             let prepared = try RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))
             try await send([prepared], to: targets)
+        case let .reviewed(ids):
+            for id in ids {
+                try? await repository.markSessionReviewed(id)
+                if let summary = try? await repository.sessionDetail(id: id, cursor: nil, limit: 1)?.summary {
+                    subscriptions.publish(summary: summary)
+                }
+            }
+            summariesChanged(ids)
+        case let .healthNudge(device):
+            guard let health = await healthProvider() else { return }
+            let prepared = try RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))
+            try await send([prepared], to: [device])
         }
     }
 
@@ -1103,7 +1134,7 @@ private extension RelayHostService.WorkItem {
         switch self {
         case let .index(_, requestID), let .fetch(_, requestID, _), let .timeline(_, requestID, _, _), let .removed(_, requestID, _):
             requestID?.rawValue
-        case .events, .summaries, .health:
+        case .events, .summaries, .health, .reviewed, .healthNudge:
             nil
         }
     }
@@ -1117,6 +1148,8 @@ private extension RelayHostService.WorkItem {
         case .summaries: "summaries"
         case .removed: "removed"
         case .health: "health"
+        case .reviewed: "reviewed"
+        case .healthNudge: "health_nudge"
         }
     }
 }

@@ -159,8 +159,9 @@ private func hookFrame(_ fields: [String: Any]) -> Data {
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: socketPath, executableHash: "test-hash")
     let server = DaemonServer(socketPath: socketPath, service: service)
-    try server.start()
-    defer { server.shutdown() }
+    try await server.listen()
+    let running = Task { try? await server.run() }
+    defer { running.cancel() }
 
     let permissions = try FileManager.default.attributesOfItem(atPath: socketPath)[.posixPermissions] as? NSNumber
     #expect(permissions?.intValue == 0o600)
@@ -239,8 +240,9 @@ private func hookFrame(_ fields: [String: Any]) -> Data {
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: socketPath, executableHash: "test-hash")
     let server = DaemonServer(socketPath: socketPath, service: service)
-    try server.start()
-    defer { server.shutdown() }
+    try await server.listen()
+    let running = Task { try? await server.run() }
+    defer { running.cancel() }
 
     let sessionID = SessionID("huge")
     let date = Date(timeIntervalSince1970: 1_700_000_000)
@@ -1011,7 +1013,8 @@ private func waitUntil(
         repository: repository, socketPath: socketPath, executableHash: "test-hash", subscriptions: hub
     )
     let server = DaemonServer(socketPath: socketPath, service: service)
-    try server.start()
+    try await server.listen()
+    let running = Task { try? await server.run() }
 
     let capture = StreamCapture()
     let subscriber = DaemonEventSubscriber()
@@ -1036,7 +1039,8 @@ private func waitUntil(
     try await waitUntil("both events") { capture.snapshot.events.count == 2 }
     #expect(capture.snapshot.events.map(\.eventID) == [EventID("stream-1"), EventID("stream-2")])
 
-    server.shutdown()
+    running.cancel()
+    await running.value
     try await waitUntil("server disconnect") { capture.snapshot.disconnects == 1 }
     #expect(subscriber.isRunning == false)
     #expect(capture.snapshot.disconnects == 1)
@@ -1048,8 +1052,9 @@ private func waitUntil(
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: socketPath, executableHash: "test-hash")
     let server = DaemonServer(socketPath: socketPath, service: service)
-    try server.start()
-    defer { server.shutdown() }
+    try await server.listen()
+    let running = Task { try? await server.run() }
+    defer { running.cancel() }
 
     let capture = StreamCapture()
     let subscriber = DaemonEventSubscriber()
@@ -1076,12 +1081,27 @@ private func waitUntil(
     try await waitUntil("second disconnect") { capture.snapshot.disconnects == 2 }
 }
 
-// MARK: - POSIX DaemonServer semantics over the real socket
+// MARK: - DaemonServer semantics over the real socket
+
+/// A listening server with its `run()` held as a task; `shutdown()` is the
+/// cancellation-based replacement for the old blocking shutdown call.
+private struct RunningServer {
+    let server: DaemonServer
+    let service: DaemonService
+    let hub: DaemonSubscriptionHub
+    let socketPath: String
+    let task: Task<Void, Never>
+
+    func shutdown() async {
+        task.cancel()
+        await task.value
+    }
+}
 
 private func makeSocketServer(
     outboundByteBudget: Int = 64 << 20,
     hub: DaemonSubscriptionHub = DaemonSubscriptionHub()
-) throws -> (server: DaemonServer, service: DaemonService, hub: DaemonSubscriptionHub, socketPath: String) {
+) async throws -> RunningServer {
     let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
     let service = DaemonService(
         repository: InMemorySessionRepository(),
@@ -1090,8 +1110,11 @@ private func makeSocketServer(
         subscriptions: hub
     )
     let server = DaemonServer(socketPath: socketPath, service: service, outboundByteBudget: outboundByteBudget)
-    try server.start()
-    return (server, service, hub, socketPath)
+    // Eager listen: clients may connect the moment this returns; run() picks
+    // the backlog up.
+    try await server.listen()
+    let task = Task { _ = try? await server.run() }
+    return RunningServer(server: server, service: service, hub: hub, socketPath: socketPath, task: task)
 }
 
 private func rawUnixConnect(_ socketPath: String) -> Int32 {
@@ -1114,8 +1137,9 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
 }
 
 @Test func oneConnectionRunsRequestsConcurrentlyAndAnswersEveryRequestID() async throws {
-    let (server, _, _, socketPath) = try makeSocketServer()
-    defer { server.shutdown() }
+    let running = try await makeSocketServer()
+    defer { running.task.cancel() }
+    let socketPath = running.socketPath
 
     let connection = try FrameConnection.connect(socketPath: socketPath, deadline: ContinuousClock.now + .seconds(5))
     defer { connection.close() }
@@ -1137,8 +1161,9 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
 }
 
 @Test func aMalformedFrameGetsAnErrorFrameAndTheConnectionStaysUsable() async throws {
-    let (server, _, _, socketPath) = try makeSocketServer()
-    defer { server.shutdown() }
+    let running = try await makeSocketServer()
+    defer { running.task.cancel() }
+    let socketPath = running.socketPath
 
     let connection = try FrameConnection.connect(socketPath: socketPath, deadline: ContinuousClock.now + .seconds(5))
     defer { connection.close() }
@@ -1157,8 +1182,9 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
 }
 
 @Test func anOversizedInboundHeaderDropsOnlyThatConnection() async throws {
-    let (server, _, _, socketPath) = try makeSocketServer()
-    defer { server.shutdown() }
+    let running = try await makeSocketServer()
+    defer { running.task.cancel() }
+    let socketPath = running.socketPath
 
     let descriptor = rawUnixConnect(socketPath)
     defer { close(descriptor) }
@@ -1176,8 +1202,9 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
 
 @Test func aSubscriberThatStopsReadingIsDroppedWithoutStallingTheOthers() async throws {
     let hub = DaemonSubscriptionHub()
-    let (server, _, _, socketPath) = try makeSocketServer(outboundByteBudget: 4096, hub: hub)
-    defer { server.shutdown() }
+    let running = try await makeSocketServer(outboundByteBudget: 4096, hub: hub)
+    defer { running.task.cancel() }
+    let socketPath = running.socketPath
 
     let capture = StreamCapture()
     let healthy = DaemonEventSubscriber()
@@ -1229,8 +1256,9 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
     #expect(capture.snapshot.disconnects == 0)
 }
 
-@Test func shutdownUnblocksWaitAndRemovesTheSocketFile() async throws {
-    let (server, _, _, socketPath) = try makeSocketServer()
+@Test func cancellingRunDrainsConnectionsAndRemovesTheSocketFile() async throws {
+    let running = try await makeSocketServer()
+    let socketPath = running.socketPath
     let capture = StreamCapture()
     let subscriber = DaemonEventSubscriber()
     try subscriber.start(
@@ -1242,19 +1270,14 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
     )
     try await waitUntil("subscriber ack") { capture.snapshot.health >= 1 }
 
-    let waitReturned = StreamCapture()
-    let waiter = Thread {
-        try? server.wait()
-        waitReturned.recordDisconnect()
-    }
-    waiter.start()
-    server.shutdown()
-    try await waitUntil("wait() returned") { waitReturned.snapshot.disconnects == 1 }
+    // run() finishes only after every connection's teardown; by then the
+    // socket file must be gone.
+    await running.shutdown()
     #expect(!FileManager.default.fileExists(atPath: socketPath))
     try await waitUntil("subscriber saw the shutdown") { capture.snapshot.disconnects == 1 }
 }
 
-@Test func startThrowsWhenTheSocketPathHoldsARegularFile() throws {
+@Test func listenThrowsWhenTheSocketPathHoldsARegularFile() async throws {
     let socketPath = "/tmp/as-\(UUID().uuidString.prefix(8)).sock"
     defer { try? FileManager.default.removeItem(atPath: socketPath) }
     FileManager.default.createFile(atPath: socketPath, contents: Data("x".utf8))
@@ -1264,5 +1287,5 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
         executableHash: "test-hash"
     )
     let server = DaemonServer(socketPath: socketPath, service: service)
-    #expect(throws: DaemonServerError.self) { try server.start() }
+    await #expect(throws: DaemonServerError.self) { try await server.listen() }
 }

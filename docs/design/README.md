@@ -19,7 +19,7 @@
 | 范围 | 当前状态 | 关键边界 |
 | --- | --- | --- |
 | Agent | 已实现 Codex 与 Claude Code（含各自的 Subagent） | `AgentAdapter` 允许以后增加其他 Agent |
-| 本地服务 | 已实现 | 每台 Mac 一个 daemon、一个 Unix socket（POSIX 实现，无第三方网络栈） |
+| 本地服务 | 已实现 | 每台 Mac 一个 daemon、一个 Unix socket（原生 socket + Swift Concurrency，无第三方网络栈；SIGTERM 优雅关停） |
 | macOS | 已实现开发预览 | AppKit 主界面；OpenNook/SwiftUI 只负责 Notch 和 Notch 设置内容 |
 | iOS | 已实现开发预览 | UIKit，只读；每台 Mac 一个独立通道和 SQLite 文件 |
 | Relay | 已部署开发版本 | TypeScript Worker + 每台 Mac 一个 Durable Object |

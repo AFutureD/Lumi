@@ -1,5 +1,6 @@
 import Diagnostics
 import Logging
+import Synchronization
 import Transport
 import Foundation
 
@@ -15,30 +16,32 @@ public enum DaemonStreamMessage: Sendable {
 
 /// In-process fan-out for the daemon's single local stream. Subscribers are
 /// macOS app channels and the Relay host, never individual Sessions.
-public final class DaemonSubscriptionHub: @unchecked Sendable {
+///
+/// Deliberately synchronous: every handler is a non-suspending closure (a
+/// yield into a connection's or the Relay's stream), so publishing from any
+/// isolation never reorders deliveries across publishers.
+public final class DaemonSubscriptionHub: Sendable {
     public typealias Handler = @Sendable (DaemonStreamMessage) -> Void
 
-    private let lock = NSLock()
-    private var handlers: [UUID: Handler] = [:]
+    private let handlers = Mutex<[UUID: Handler]>([:])
 
     public init() {}
 
     @discardableResult
     public func subscribe(_ handler: @escaping Handler) -> UUID {
         let id = UUID()
-        lock.lock()
-        handlers[id] = handler
-        let count = handlers.count
-        lock.unlock()
+        let count = handlers.withLock {
+            $0[id] = handler
+            return $0.count
+        }
         log.debug("stream_subscribed", metadata: .fields(["subscriber": id.uuidString.prefix(8), "subscribers": count]))
         return id
     }
 
     public func unsubscribe(_ id: UUID) {
-        lock.lock()
-        let removed = handlers.removeValue(forKey: id) != nil
-        let count = handlers.count
-        lock.unlock()
+        let (removed, count) = handlers.withLock {
+            ($0.removeValue(forKey: id) != nil, $0.count)
+        }
         if removed {
             log.debug("stream_unsubscribed", metadata: .fields(["subscriber": id.uuidString.prefix(8), "subscribers": count]))
         }
@@ -53,9 +56,7 @@ public final class DaemonSubscriptionHub: @unchecked Sendable {
     }
 
     public func publish(_ message: DaemonStreamMessage) {
-        lock.lock()
-        let current = Array(handlers.values)
-        lock.unlock()
+        let current = handlers.withLock { Array($0.values) }
         if log.logLevel <= .debug {
             switch message {
             case let .event(event):

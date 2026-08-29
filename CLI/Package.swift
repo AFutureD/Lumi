@@ -14,6 +14,10 @@ let package = Package(
         .package(name: "Common", path: "../Common"),
         .package(name: "Transport", path: "../Common/Transport"),
         .package(
+            url: "https://github.com/swift-server/swift-service-lifecycle.git",
+            exact: "2.12.0"
+        ),
+        .package(
             url: "https://github.com/swiftlang/swift-testing.git",
             revision: "swift-6.2.4-RELEASE"
         ),
@@ -28,6 +32,7 @@ let package = Package(
                 .product(name: "Diagnostics", package: "Common"),
                 .product(name: "Remote", package: "Common"),
                 .product(name: "Transport", package: "Transport"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ]
         ),
         .executableTarget(
@@ -36,6 +41,7 @@ let package = Package(
                 "DaemonRuntime",
                 .product(name: "Diagnostics", package: "Common"),
                 .product(name: "Persistence", package: "Common"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ]
         ),
         .executableTarget(
@@ -56,6 +62,7 @@ let package = Package(
                 .product(name: "Diagnostics", package: "Common"),
                 .product(name: "Remote", package: "Common"),
                 .product(name: "Transport", package: "Transport"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
                 .product(name: "Testing", package: "swift-testing"),
             ]
         ),

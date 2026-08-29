@@ -17,6 +17,7 @@
 - 采集链路更皮实：注册表与二进制版本偏差带来的未知 hook 事件降级为「只读增量」而不再整帧丢弃；daemon 离线期间积累的超大 rollout/transcript 断档交给串行回填整段补读，不再只吃尾部；修复大断档续读时游标越界导致整本重放的偏移计算。
 - Helper 环境变量诊断日志保留：`LUMI_LOG_ENV=1`（或 `--verbose`）时每次 hook 记录一行 env 键名列表（只记键名，不记值）。
 - Helper 转发的环境白名单新增 `TERM_PROGRAM`、`__CFBundleIdentifier`、`CLAUDE_CODE_ENTRYPOINT`（AaaS 归属判定用，均无敏感信息）；daemon 的 `hook_ingested` 日志键 `wrapper/wrapper_agent` 改为 `aaas/aaas_agent/aaas_term`。
+- daemon（Lumen）整体迁移到 swift-service-lifecycle + 结构化并发：收到 SIGTERM/SIGINT（如 Mac App 重装 daemon、launchd unregister）时按序优雅关停——Relay 先断开、watcher 停扫、IPC 连接排空、回填队列最后清空——以退出码 0 干净退出并删除 socket 文件，不再被直接杀死；期间入队的补读不再丢失。
 - [Lumi for Mac] - 修复 Codex hook 授权链路的线程优先级反转（Thread Performance Checker 告警）：app-server 应答读取移到专属高优先级线程，等待也不再占用 Swift Concurrency 线程池；codex 进程意外退出时授权立即失败返回，不再干等 15 秒超时。
 
 ### 配对与同步

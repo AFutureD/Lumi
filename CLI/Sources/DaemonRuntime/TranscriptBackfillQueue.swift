@@ -2,6 +2,7 @@ import Adapters
 import Core
 import Diagnostics
 import Logging
+import ServiceLifecycle
 import Transport
 import Foundation
 
@@ -75,7 +76,7 @@ enum RichSourceCatchUp {
 /// hook frame answers on a latency budget, so anything unbounded belongs
 /// here — one serial worker inside the daemon, the single writer of the
 /// store. Fed by `HookIngestService` on a cold start over a large history.
-public actor TranscriptBackfillQueue {
+public actor TranscriptBackfillQueue: Service {
     private let repository: any SessionRepository
     private let claudeAdapter = ClaudeAdapter()
     private let codexAdapter = CodexAdapter()
@@ -83,7 +84,8 @@ public actor TranscriptBackfillQueue {
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
     private var pendingPaths: [SessionID: String] = [:]
     private var order: [SessionID] = []
-    private var worker: Task<Void, Never>?
+    private let signals: AsyncStream<Void>
+    private let signal: AsyncStream<Void>.Continuation
 
     public init(
         repository: any SessionRepository,
@@ -93,28 +95,43 @@ public actor TranscriptBackfillQueue {
         self.repository = repository
         self.maximumIncrementBytes = maximumIncrementBytes
         self.onEvent = onEvent
+        (signals, signal) = AsyncStream.makeStream(of: Void.self)
     }
 
     public func enqueue(sessionID: SessionID, path: String) {
         if pendingPaths[sessionID] == nil { order.append(sessionID) }
         pendingPaths[sessionID] = path
-        guard worker == nil else { return }
-        worker = Task { await self.drain() }
+        signal.yield(())
     }
 
-    /// Waits for everything queued so far — the deterministic entry point for
-    /// tests and for shutdown.
+    /// Drains everything queued so far — the deterministic entry point for
+    /// tests and for shutdown. An entry leaves the queue under actor
+    /// isolation before its (awaiting) backfill starts, so a concurrent
+    /// `run()` never processes the same session twice.
     public func flush() async {
-        await worker?.value
+        while let next = popNext() {
+            await backfill(sessionID: next.sessionID, path: next.path)
+        }
     }
 
-    private func drain() async {
+    public func run() async throws {
+        await cancelWhenGracefulShutdown {
+            for await _ in self.signals {
+                await self.flush()
+            }
+        }
+        // Shut down after the watchers and the hook path: whatever they
+        // queued before stopping still reaches the store.
+        await flush()
+    }
+
+    private func popNext() -> (sessionID: SessionID, path: String)? {
         while !order.isEmpty {
             let sessionID = order.removeFirst()
             guard let path = pendingPaths.removeValue(forKey: sessionID) else { continue }
-            await backfill(sessionID: sessionID, path: path)
+            return (sessionID, path)
         }
-        worker = nil
+        return nil
     }
 
     private func backfill(sessionID: SessionID, path: String) async {
