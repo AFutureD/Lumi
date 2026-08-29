@@ -18,6 +18,9 @@ private let log = Logger(label: "agent")
 /// Always exits 0: a hook exit code of 2 would block the agent's tool call,
 /// and a monitoring failure must never do that. Problems go to stderr and to
 /// `helper.log`; `--verbose` mirrors every line (debug included) to stderr.
+/// `SPARK_LOG_LEVEL` sets the helper's log level (over `LUMI_LOG_LEVEL`);
+/// `SPARK_DEBUG_ENV_VALUE=1|true` additionally logs the full inherited
+/// environment with values — local log only, never the frame.
 @main
 enum SparkMain {
     /// The only environment keys that cross the socket. The full inherited
@@ -66,6 +69,12 @@ enum SparkMain {
             standardErrorPrefix: "Spark:",
             standardErrorMinimumLevel: verbose ? .debug : .warning
         )
+        // `SPARK_LOG_LEVEL` overrides `LUMI_LOG_LEVEL` for the helper alone;
+        // `--verbose` still wins over both.
+        if let level = ProcessInfo.processInfo.environment["SPARK_LOG_LEVEL"]
+            .flatMap(Logger.Level.init(lenient:)) {
+            configuration.minimumLevel = level
+        }
         if verbose { configuration.minimumLevel = .debug }
         Diagnostics.bootstrap(configuration)
         let started = ContinuousClock.now
@@ -100,15 +109,21 @@ enum SparkMain {
         }
 
         let environment = ProcessInfo.processInfo.environment
-        // Key names only, never values: the inherited environment carries
-        // API keys and tokens. `LUMI_LOG_ENV=1` lifts the line to info so a
-        // wrapper app's markers can be diagnosed without --verbose.
-        let dumpRequested = environment["LUMI_LOG_ENV"] == "1"
-        log.log(level: dumpRequested ? .info : .debug, "hook_environment", metadata: .fields([
-            "keys": environment.keys.sorted().joined(separator: ","),
-        ]))
         let env = environmentWhitelist.reduce(into: [String: String]()) { result, key in
             if let value = environment[key] { result[key] = value }
+        }
+        // The whitelisted subset never carries secrets: always log it at
+        // info, key and value. The full inherited environment does carry API
+        // keys and tokens, so it renders only behind
+        // `SPARK_DEBUG_ENV_VALUE=1|true` — local log only, the frame still
+        // ships nothing beyond the whitelist.
+        log.info("hook_environment", metadata: .fields([
+            "env": env.keys.sorted().map { "\($0)=\(env[$0] ?? "")" }.joined(separator: ","),
+        ]))
+        if ["1", "true"].contains(environment["SPARK_DEBUG_ENV_VALUE"]?.lowercased() ?? "") {
+            log.info("hook_environment_values", metadata: .fields([
+                "env": environment.keys.sorted().map { "\($0)=\(environment[$0] ?? "")" }.joined(separator: ","),
+            ]))
         }
         let json = input.count <= maximumLoggedJSONBytes ? jsonText(input) : nil
         let createdAt = Date()
