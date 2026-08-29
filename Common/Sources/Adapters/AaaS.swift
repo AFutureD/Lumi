@@ -11,7 +11,9 @@ import Foundation
 /// - Raft stamps `SLOCK_AGENT_ID` and keeps no session title anywhere local;
 ///   the agent's display name is its only durable identity, recoverable from
 ///   the first line of the system prompt file in `SLOCK_CLI_TRANSPORT_DIR`
-///   (`You are "Fable", an AI agent in Raft …`).
+///   (`You are "Fable", an AI agent in Raft …`). Its daemon's utility
+///   sessions (account-usage polls) carry only `SLOCK_HOME`; that alone
+///   still means Raft, with no agent id and no title.
 /// - ChatGPT is the OpenAI desktop app driving Codex: launched processes
 ///   inherit its `__CFBundleIdentifier` (observed `com.openai.codex`; the
 ///   historic `com.openai.chat` is accepted too).
@@ -69,6 +71,12 @@ public struct AaaS: Hashable, Sendable {
                 terminalProgram: terminal,
                 title: raftTitle(environment: environment)
             )
+        }
+        // Raft's daemon also spawns utility sessions (e.g. its account-usage
+        // poll) that are not agent launches: they inherit only `SLOCK_HOME`.
+        // Still Raft's — classified as such with no agent id and no title.
+        if nonEmpty(environment["SLOCK_HOME"]) != nil {
+            return AaaS(kind: .raft, terminalProgram: terminal)
         }
         let bundle = nonEmpty(environment["__CFBundleIdentifier"])
         switch provider {

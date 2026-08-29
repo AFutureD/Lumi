@@ -24,7 +24,7 @@ enum SparkMain {
     /// environment carries API keys and tokens and must never be forwarded.
     static let environmentWhitelist = [
         "PASEO_AGENT_ID", "PASEO_HOME",
-        "SLOCK_AGENT_ID", "SLOCK_CLI_TRANSPORT_DIR",
+        "SLOCK_AGENT_ID", "SLOCK_CLI_TRANSPORT_DIR", "SLOCK_HOME",
         "CLAUDE_PROJECT_DIR", "CODEX_HOME",
         // AaaS-layer detection: the hosting app and terminal. None of these
         // carry secrets.

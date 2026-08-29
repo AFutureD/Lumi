@@ -101,6 +101,22 @@ private func writePaseoAgent(home: URL, workspace: String, agentID: String, json
     #expect(aaas.title == "Fable")
 }
 
+@Test func raftDetectsOnSlockHomeAloneWithNoAgentIDAndNoTitle() throws {
+    let home = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    // Raft's daemon utility sessions (its account-usage poll) inherit only
+    // SLOCK_HOME — no agent id, no transport dir.
+    let aaas = AaaS.detect(
+        provider: .claude,
+        environment: ["SLOCK_HOME": "/Users/x/.slock", "TERM_PROGRAM": "ghostty", "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"],
+        homeDirectory: home
+    )
+    #expect(aaas.kind == .raft)
+    #expect(aaas.agentID == nil)
+    #expect(aaas.title == nil)
+    #expect(aaas.terminalProgram == "ghostty")
+}
+
 @Test func raftDetectsWithoutATitleWhenThePromptIsMissingOrUnrecognized() throws {
     let transport = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: transport) }
