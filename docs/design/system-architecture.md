@@ -162,7 +162,7 @@ flowchart TD
 
 ### daemon
 
-1. 创建权限为 `0700` 的 Application Support 目录。
+1. 创建权限为 `0700` 的 Application Support 目录（根目录与 daemon 自己的 `Lumen/` 子目录）；旧布局中位于根目录的数据库与 relay state 一次性迁入 `Lumen/`。
 2. 打开并迁移 daemon SQLite。
 3. 第一次运行时把已存在 rollout 文件标为基线，不导入旧 Session。
 4. 启动 Unix socket，socket 权限设为 `0600`。

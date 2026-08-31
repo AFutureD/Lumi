@@ -22,7 +22,7 @@ Lumi aggregates multiple Codex Agents and Sessions on one Mac, displays them in 
 | Relay | Ray | Worker `lumi-relay` | `https://relay.lumi.huanan.app` |
 | Notch surface | Halo | — | part of the Mac app |
 
-Data lives under `~/Library/Application Support/Lumi` (daemon socket, databases, helper copy), logs under `~/Library/Logs/Lumi`, os_log subsystems `app.huanan.lumi.<daemon|helper|app|ios>`, environment overrides `LUMI_*`, pairing links `lumi://pair?...`. Wording for user-facing text is in [Glossary.md](../Glossary.md).
+Data lives under `~/Library/Application Support/Lumi`: the daemon socket (`daemon.sock`) and helper copy (`bin/Spark`) at the root as shared contracts, the daemon's database and relay state under `Lumen/`, and the Mac app's sync cache under `Storage/`. Logs go to `~/Library/Logs/Lumi`, os_log subsystems `app.huanan.lumi.<daemon|helper|app|ios>`, environment overrides `LUMI_*`, pairing links `lumi://pair?...`. Wording for user-facing text is in [Glossary.md](../Glossary.md).
 
 ## Product topology
 

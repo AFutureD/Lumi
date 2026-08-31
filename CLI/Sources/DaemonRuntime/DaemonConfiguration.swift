@@ -3,6 +3,10 @@ import Foundation
 
 public struct DaemonConfiguration: Hashable, Sendable {
     public let supportDirectory: URL
+    /// The daemon's own state lives one level below the shared support root
+    /// (`Lumi/Lumen/`): the database and the relay host state. The socket and
+    /// the installed helper stay at the root — they are shared contracts.
+    public let daemonDirectory: URL
     public let socketPath: String
     public let databasePath: String
     public let codexSessionsDirectory: URL
@@ -33,25 +37,35 @@ public struct DaemonConfiguration: Hashable, Sendable {
         relayCredentialService: String = KeychainRelayHostCredentialStore.defaultService
     ) {
         self.supportDirectory = supportDirectory
+        let daemonDirectory = supportDirectory.appendingPathComponent(
+            LumiPaths.daemonSubdirectory,
+            isDirectory: true
+        )
+        self.daemonDirectory = daemonDirectory
         self.socketPath = socketPath
         self.databasePath = databasePath
         self.codexSessionsDirectory = codexSessionsDirectory
         self.rolloutPollIntervalSeconds = rolloutPollIntervalSeconds
         self.relayURL = relayURL
         self.relayEnabled = relayEnabled
-        self.relayStatePath = relayStatePath ?? supportDirectory.appendingPathComponent("relay-host-state.json").path
+        self.relayStatePath = relayStatePath ?? daemonDirectory.appendingPathComponent("relay-host-state.json").path
         self.relayCredentialService = relayCredentialService
     }
 
     public static func `default`(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        applicationSupportDirectory: URL = LumiPaths.applicationSupportBase()
     ) -> DaemonConfiguration {
-        let supportDirectory = environment["LUMI_SUPPORT_DIRECTORY"]
-            .map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? homeDirectory.appendingPathComponent("Library/Application Support/Lumi", isDirectory: true)
+        let supportDirectory = LumiPaths.supportDirectory(
+            environment: environment,
+            applicationSupportDirectory: applicationSupportDirectory
+        )
         let databasePath = environment["LUMI_DATABASE"]
-            ?? supportDirectory.appendingPathComponent("sessions.sqlite3").path
+            ?? supportDirectory
+                .appendingPathComponent(LumiPaths.daemonSubdirectory, isDirectory: true)
+                .appendingPathComponent("sessions.sqlite3")
+                .path
         let codexHome = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent(".codex", isDirectory: true)
 
@@ -59,7 +73,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
             supportDirectory: supportDirectory,
             socketPath: DaemonEndpoint.defaultSocketPath(
                 environment: environment,
-                homeDirectory: homeDirectory
+                applicationSupportDirectory: applicationSupportDirectory
             ),
             databasePath: databasePath,
             codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true),
@@ -74,14 +88,16 @@ public struct DaemonConfiguration: Hashable, Sendable {
     }
 
     public func prepareFileSystem() throws {
-        try FileManager.default.createDirectory(
-            at: supportDirectory,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: supportDirectory.path
-        )
+        for directory in [supportDirectory, daemonDirectory] {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directory.path
+            )
+        }
     }
 }

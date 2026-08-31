@@ -29,6 +29,9 @@ enum LumenMain {
             log.error("support_directory_unavailable", metadata: .fields(["path": configuration.supportDirectory, "error": error]))
             throw error
         }
+        // Legacy layout (state at the support root) moves into `Lumen/`
+        // before the database opens; a no-op on every start after the first.
+        DaemonStorageMigration.run(configuration: configuration)
         // The filter engine is the repository's filter evaluator (consulted
         // on each session's first user message), so it exists first (empty)
         // and gets the stored rules right after the database opens — before

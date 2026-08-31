@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 数据存储
+
+- 本机数据布局按归属分目录：daemon（Lumen）的数据库与 relay state 移入 `Application Support/Lumi/Lumen/`，Mac App 的同步缓存移至 `Lumi/Storage/cache.sqlite`；`daemon.sock` 与 `bin/Spark` 留在根目录不变。升级后首次启动自动完成一次性迁移，无需重新同步。`LUMI_SUPPORT_DIRECTORY` 现在同时移动 socket 默认路径（此前只移数据库与 relay state）。
+
 ### 会话过滤
 
 - [Lumi for Mac] - “Settings > Agents”新增 Filters：一组规则把幽灵 Session（测试、`~/tmp` 一次性调用等）挡在所有界面之外——命中的新 Session 照常入库，但不出现在主窗口列表和 Notch，不同步到 iPhone，也不发推送。规则内条件取与、规则间取或；字段有 Agent、Application、User message（首条用户消息）、Folder（含子目录）；规则可就地编辑、拖拽排序、停用与删除。判定在 Session 首条用户消息到达时做一次并永久冻结，改规则不追溯已有 Session；规则存在 daemon，Clear history 不清规则。斜杠命令、Raft 这类从不开回合的会话同样参与判定（User message 规则按记录原文匹配，`<command-name>` 记录用 contains 才能命中命令名）。

@@ -1,3 +1,4 @@
+import IPCClient
 import Transport
 import Foundation
 
@@ -226,18 +227,25 @@ public struct CodexHookInstaller: Sendable {
     public let homeDirectory: URL
     private let inner: AgentHookConfigInstaller
 
-    public init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    public init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        applicationSupportDirectory: URL = LumiPaths.applicationSupportBase()
+    ) {
         self.homeDirectory = homeDirectory
         inner = AgentHookConfigInstaller(
             configURL: homeDirectory.appendingPathComponent(".codex/hooks.json"),
-            installedHelperURL: Self.installedHelperURL(homeDirectory: homeDirectory),
+            installedHelperURL: Self.installedHelperURL(applicationSupportDirectory: applicationSupportDirectory),
             supportedEvents: Self.supportedEvents,
             helperArguments: ["--agent", "codex"]
         )
     }
 
-    public static func installedHelperURL(homeDirectory: URL) -> URL {
-        homeDirectory.appendingPathComponent("Library/Application Support/Lumi/bin/Spark")
+    /// `Lumi/bin/Spark` never moves: this absolute path is written into the
+    /// external agent configs and covered by Codex's trusted hash.
+    public static func installedHelperURL(
+        applicationSupportDirectory: URL = LumiPaths.applicationSupportBase()
+    ) -> URL {
+        applicationSupportDirectory.appendingPathComponent("Lumi/bin/Spark")
     }
 
     public var hooksURL: URL { inner.configURL }
@@ -266,11 +274,14 @@ public struct ClaudeHookInstaller: Sendable {
     public let homeDirectory: URL
     private let inner: AgentHookConfigInstaller
 
-    public init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    public init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        applicationSupportDirectory: URL = LumiPaths.applicationSupportBase()
+    ) {
         self.homeDirectory = homeDirectory
         inner = AgentHookConfigInstaller(
             configURL: homeDirectory.appendingPathComponent(".claude/settings.json"),
-            installedHelperURL: CodexHookInstaller.installedHelperURL(homeDirectory: homeDirectory),
+            installedHelperURL: CodexHookInstaller.installedHelperURL(applicationSupportDirectory: applicationSupportDirectory),
             supportedEvents: Self.supportedEvents,
             helperArguments: ["--agent", "claude"],
             timeoutSeconds: 5

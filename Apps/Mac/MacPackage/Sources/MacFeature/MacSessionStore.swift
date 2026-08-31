@@ -64,7 +64,21 @@ public final class MacSessionStore {
     ) {
         self.socketPath = socketPath
         self.client = client
-        let resolvedCachePath = cachePath ?? Self.defaultCachePath()
+        let resolvedCachePath: String
+        if let cachePath {
+            resolvedCachePath = cachePath
+        } else {
+            resolvedCachePath = Self.defaultCachePath()
+            // Only the default path participates in the one-time layout
+            // migration: an explicit path (parameter or `LUMI_MAC_CACHE`)
+            // is an isolated cache with no legacy twin.
+            if ProcessInfo.processInfo.environment["LUMI_MAC_CACHE"]?.isEmpty != false {
+                Self.migrateLegacyCache(
+                    from: Self.legacyDefaultCachePath(),
+                    to: resolvedCachePath
+                )
+            }
+        }
         self.cachePath = resolvedCachePath
         do {
             cache = try SQLiteSessionRepository(path: resolvedCachePath)
@@ -819,6 +833,10 @@ public final class MacSessionStore {
         observers.values.forEach { $0() }
     }
 
+    /// The app's synchronized session cache, by function under the shared
+    /// support root: `Lumi/Storage/cache.sqlite`.
+    private static let cacheRelativePath = "Storage/cache.sqlite"
+
     private static func defaultCachePath() -> String {
         // `LUMI_MAC_CACHE` isolates the Mac cache the way `LUMI_SOCKET`
         // isolates the daemon: an app pointed at a scratch daemon must not
@@ -826,10 +844,56 @@ public final class MacSessionStore {
         if let override = ProcessInfo.processInfo.environment["LUMI_MAC_CACHE"], !override.isEmpty {
             return override
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Lumi/Mac", isDirectory: true)
-            .appendingPathComponent("sessions.sqlite3")
+        return LumiPaths.supportDirectory()
+            .appendingPathComponent(cacheRelativePath)
             .path
+    }
+
+    /// Pre-2026-08-31 layout: `Lumi/Mac/sessions.sqlite3`.
+    private static func legacyDefaultCachePath() -> String {
+        LumiPaths.supportDirectory()
+            .appendingPathComponent("Mac/sessions.sqlite3")
+            .path
+    }
+
+    /// One-time move-and-rename of the legacy cache trio into `Storage/`.
+    /// Sidecars first, main file last, so an interrupted run re-enters on the
+    /// next launch. The cache is rebuildable from the daemon, so a collision
+    /// resolves by deleting the legacy files rather than keeping both.
+    nonisolated static func migrateLegacyCache(
+        from legacyPath: String,
+        to newPath: String,
+        fileManager: FileManager = .default
+    ) {
+        guard legacyPath != newPath, fileManager.fileExists(atPath: legacyPath) else { return }
+        do {
+            if fileManager.fileExists(atPath: newPath) {
+                for suffix in ["-wal", "-shm", ""] where fileManager.fileExists(atPath: legacyPath + suffix) {
+                    try fileManager.removeItem(atPath: legacyPath + suffix)
+                }
+                dbLog.info("cache_removed_legacy", metadata: .fields(["path": legacyPath]))
+            } else {
+                try fileManager.createDirectory(
+                    atPath: (newPath as NSString).deletingLastPathComponent,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+                for suffix in ["-wal", "-shm", ""] where fileManager.fileExists(atPath: legacyPath + suffix) {
+                    try fileManager.moveItem(atPath: legacyPath + suffix, toPath: newPath + suffix)
+                }
+                dbLog.info("cache_migrated", metadata: .fields(["from": legacyPath, "to": newPath]))
+            }
+            let legacyDirectory = (legacyPath as NSString).deletingLastPathComponent
+            if let remaining = try? fileManager.contentsOfDirectory(atPath: legacyDirectory), remaining.isEmpty {
+                try fileManager.removeItem(atPath: legacyDirectory)
+            }
+        } catch {
+            dbLog.error("cache_migration_failed", metadata: .fields([
+                "from": legacyPath,
+                "to": newPath,
+                "error": error,
+            ]))
+        }
     }
 }
 

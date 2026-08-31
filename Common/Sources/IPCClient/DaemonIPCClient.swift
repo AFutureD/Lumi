@@ -255,15 +255,17 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
 public enum DaemonEndpoint {
     public static func defaultSocketPath(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        applicationSupportDirectory: URL = LumiPaths.applicationSupportBase()
     ) -> String {
         if let override = environment["LUMI_SOCKET"], !override.isEmpty {
             return override
         }
-        return homeDirectory
-            .appendingPathComponent("Library/Application Support/Lumi", isDirectory: true)
-            .appendingPathComponent("daemon.sock")
-            .path
+        return LumiPaths.supportDirectory(
+            environment: environment,
+            applicationSupportDirectory: applicationSupportDirectory
+        )
+        .appendingPathComponent(LumiPaths.socketFileName)
+        .path
     }
 }
 
