@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-31
+
 ### 数据存储
 
 - 本机数据布局按归属分目录：daemon（Lumen）的数据库与 relay state 移入 `Application Support/Lumi/Lumen/`，Mac App 的同步缓存移至 `Lumi/Storage/cache.sqlite`；`daemon.sock` 与 `bin/Spark` 留在根目录不变。升级后首次启动自动完成一次性迁移，无需重新同步。`LUMI_SUPPORT_DIRECTORY` 现在同时移动 socket 默认路径（此前只移数据库与 relay state）。
@@ -130,7 +132,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/AFutureD/Lumi/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/AFutureD/Lumi/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/AFutureD/Lumi/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/AFutureD/Lumi/compare/v0.1.1...v0.1.2
