@@ -164,3 +164,34 @@ private func summary(
     #expect(unsafe.count == 32)
     #expect(unsafe.allSatisfy { $0.isHexDigit })
 }
+
+@Test func filterHiddenSessionsAndTheirSubagentsNeverAlert() {
+    let hiddenRoot = SessionSummary(
+        id: SessionID("ghost"), agent: .claude, title: "Ghost",
+        lifecycle: .running, phase: .idle,
+        startedAt: now, updatedAt: now, lastActivityAt: now,
+        hiddenByFilter: true,
+        firstTurnAt: now
+    )
+    // The child's own flag is false — it inherits the parent's verdict. Its
+    // parent being "retained" would already mute it, so drop the parent from
+    // retainedParents to prove the filter gate is what silences it.
+    let summaries = [
+        hiddenRoot,
+        summary("ghost-child", parent: "ghost"),
+        summary("loud"),
+    ]
+    let notable = PushNotificationPolicy.notableEvents([
+        event("e1", session: "ghost", payload: .turnEnd(TurnEndTimelinePayload(outcome: .failed))),
+        event("e2", session: "ghost-child", payload: .turnEnd(TurnEndTimelinePayload(outcome: .failed))),
+        event("e3", session: "loud", payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "Done."))),
+    ], now: now)
+    let candidates = PushNotificationPolicy.candidates(
+        notable: notable,
+        summaries: Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) }),
+        retainedParents: [],
+        lastPushAt: [:],
+        now: now
+    )
+    #expect(candidates.map(\.sessionID) == [SessionID("loud")])
+}

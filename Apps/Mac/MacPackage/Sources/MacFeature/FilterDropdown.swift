@@ -32,16 +32,17 @@ enum FilterPanelLeading: Hashable, Sendable {
 }
 
 /// One option row. `count` is the pre-filter count of the current session;
-/// a 0 stays in the list, dimmed.
+/// a 0 stays in the list, dimmed. Both `leading` and `count` are optional:
+/// the Settings filter-value panel draws plain name rows.
 struct FilterPanelOption: Hashable, Sendable, Identifiable {
     let id: String
-    let leading: FilterPanelLeading
+    let leading: FilterPanelLeading?
     let name: String
     var description: String?
-    let count: Int
+    let count: Int?
     let isSelected: Bool
 
-    init(id: String, leading: FilterPanelLeading, name: String, description: String? = nil, count: Int, isSelected: Bool) {
+    init(id: String, leading: FilterPanelLeading? = nil, name: String, description: String? = nil, count: Int? = nil, isSelected: Bool) {
         self.id = id
         self.leading = leading
         self.name = name
@@ -64,7 +65,7 @@ struct FilterPanelSection: Hashable, Sendable, Identifiable {
         self.options = options
     }
 
-    var count: Int { options.reduce(0) { $0 + $1.count } }
+    var count: Int { options.reduce(0) { $0 + ($1.count ?? 0) } }
 
     /// Tri-state of the header checkbox: on when every option is selected,
     /// off when none is, mixed otherwise.
@@ -175,10 +176,20 @@ struct FilterTriggerButton: View {
 
 // MARK: - Panel content
 
+/// Row affordance: multi-select checkbox rows (the Activity filter), or
+/// single-select checkmark-only rows (a Settings `is` value panel).
+enum FilterPanelSelectionStyle: Hashable, Sendable {
+    case checkbox
+    case checkmark
+}
+
 /// The panel's rows: group title, then per section an optional tri-state
 /// header and its option rows. The whole row toggles, not only the box.
 struct FilterDropdownPanel: View {
     let model: FilterPanelModel
+    /// §3.4 fixes 232; the Settings value panel matches its trigger instead.
+    var width: Double = DesignSystem.FilterDropdown.Panel.width
+    var selectionStyle: FilterPanelSelectionStyle = .checkbox
     let onToggleOption: (String) -> Void
     let onToggleSection: (String) -> Void
 
@@ -208,7 +219,7 @@ struct FilterDropdownPanel: View {
                             }
                         }
                         ForEach(section.options) { option in
-                            FilterOptionRow(option: option, height: model.rowHeight) {
+                            FilterOptionRow(option: option, height: model.rowHeight, selectionStyle: selectionStyle) {
                                 onToggleOption(option.id)
                             }
                         }
@@ -217,7 +228,7 @@ struct FilterDropdownPanel: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(width: P.width, height: model.panelHeight)
+        .frame(width: width, height: model.panelHeight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(model.title) filter")
     }
@@ -268,6 +279,7 @@ private struct FilterSectionHeaderRow: View {
 private struct FilterOptionRow: View {
     let option: FilterPanelOption
     let height: Double
+    var selectionStyle: FilterPanelSelectionStyle = .checkbox
     let action: () -> Void
 
     @State private var isHovered = false
@@ -278,7 +290,19 @@ private struct FilterOptionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: P.gap) {
-                FilterCheckbox(state: option.isSelected ? .on : .off)
+                switch selectionStyle {
+                case .checkbox:
+                    FilterCheckbox(state: option.isSelected ? .on : .off)
+                case .checkmark:
+                    // Single-select: only a check, no box (handoff 5f).
+                    CheckMarkShape()
+                        .stroke(
+                            option.isSelected ? Color(F.optionName) : .clear,
+                            style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
+                        )
+                        .frame(width: P.checkWidth, height: P.checkHeight)
+                        .frame(width: P.checkbox, height: P.checkbox)
+                }
                 leading
                 VStack(alignment: .leading, spacing: 0) {
                     Text(option.name)
@@ -293,10 +317,12 @@ private struct FilterOptionRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Text("\(option.count)")
-                    .designText(DesignSystem.Typography.subheadline)
-                    .monospacedDigit()
-                    .foregroundStyle(Color(F.countText))
+                if let count = option.count {
+                    Text("\(count)")
+                        .designText(DesignSystem.Typography.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(Color(F.countText))
+                }
             }
             .padding(.horizontal, P.horizontalPadding)
             .frame(height: height)
@@ -309,7 +335,7 @@ private struct FilterOptionRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .accessibilityLabel(option.name)
-        .accessibilityValue("\(option.count)")
+        .accessibilityValue(option.count.map { "\($0)" } ?? (option.isSelected ? "Selected" : "Not selected"))
         .accessibilityAddTraits(option.isSelected ? .isSelected : [])
     }
 
@@ -320,6 +346,8 @@ private struct FilterOptionRow: View {
             FilterLeadingPill(label: label, style: style, width: P.tagWidth)
         case let .chip(label, style):
             FilterLeadingPill(label: label, style: style, width: P.levelChipWidth)
+        case nil:
+            EmptyView()
         }
     }
 }
@@ -447,6 +475,7 @@ final class FilterDropdownPresenter {
     private var hosting: NSHostingView<FilterDropdownChrome>?
     private weak var hostWindow: NSWindow?
     private var anchorRect: CGRect = .zero
+    private var panelWidth: Double = DesignSystem.FilterDropdown.Panel.width
     private var onDismiss: (() -> Void)?
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
@@ -464,6 +493,7 @@ final class FilterDropdownPresenter {
         self.onDismiss = onDismiss
         hostWindow = host
         anchorRect = anchorView.convert(anchorView.bounds, to: nil)
+        panelWidth = content.width
 
         let chrome = FilterDropdownChrome(content: content, inset: Self.shadowInset)
         let hosting = NSHostingView(rootView: chrome)
@@ -486,6 +516,7 @@ final class FilterDropdownPresenter {
 
     func update(id: String, content: FilterDropdownPanel) {
         guard presentedID == id, let window, let hosting else { return }
+        panelWidth = content.width
         hosting.rootView = FilterDropdownChrome(content: content, inset: Self.shadowInset)
         let target = frame(for: content.model)
         if target != window.frame {
@@ -511,7 +542,7 @@ final class FilterDropdownPresenter {
         guard let host = hostWindow else { return .zero }
         let panel = DesignSystem.FilterDropdown.Panel.self
         let anchor = host.convertToScreen(anchorRect)
-        let size = CGSize(width: panel.width, height: model.panelHeight)
+        let size = CGSize(width: panelWidth, height: model.panelHeight)
         var x = anchor.maxX - size.width
         x = max(host.frame.minX + panel.offset, min(x, host.frame.maxX - panel.offset - size.width))
         let y = anchor.minY - panel.offset - size.height

@@ -5,40 +5,29 @@ import Foundation
 /// a loaded `SessionDetail` next to their cache: fold one event in the way
 /// `apply` does, or merge a partial copy the way `mergeSession` does.
 public enum SessionDetailReduction {
-    /// `apply(event)` on a loaded detail: summary and turn through the shared
-    /// reducers, the timeline item upserted by id under the `occurredAt >=`
-    /// rule, rows kept in `(occurredAt, id)` order.
+    /// `apply(event)` on a loaded detail: summary through the shared reducer,
+    /// the timeline item upserted by id under the `occurredAt >=` rule, rows
+    /// kept in `(occurredAt, id)` order, and turns projected back from the
+    /// merged timeline — the same pure fold every store uses.
     public static func applying(_ event: AgentIngressEvent, to detail: SessionDetail) -> SessionDetail {
         let summary = SessionReduction.summary(applying: event, to: detail.summary)
-        var turns = detail.turns
-        if let turnID = event.turnID ?? event.turn?.id {
-            let current = turns.first { $0.id == turnID }
-            if let turn = TurnReduction.summary(applying: event, to: current) {
-                turns.removeAll { $0.id == turnID }
-                turns.append(turn)
-                turns.sort { lhs, rhs in
-                    if lhs.startedAt == rhs.startedAt { return lhs.id.rawValue < rhs.id.rawValue }
-                    return lhs.startedAt < rhs.startedAt
-                }
-            }
-        }
         let timeline = event.timelineItem.map { merge([$0], into: detail.timeline) } ?? detail.timeline
-        return SessionDetail(summary: summary, turns: turns, timeline: timeline)
+        return SessionDetail(
+            summary: summary,
+            turns: TurnProjection.turns(from: timeline, sessionID: summary.id),
+            timeline: timeline
+        )
     }
 
     /// `mergeSession(partial)` on a loaded detail: the partial's summary wins,
-    /// its turns replace same-id turns, its rows upsert into the timeline.
+    /// its rows upsert into the timeline, and turns are re-projected from the
+    /// merged rows (the partial's own `turns` are derivable and ignored).
     public static func merging(_ partial: SessionDetail, into detail: SessionDetail) -> SessionDetail {
-        var turnsByID = Dictionary(detail.turns.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        for turn in partial.turns { turnsByID[turn.id] = turn }
-        let turns = turnsByID.values.sorted { lhs, rhs in
-            if lhs.startedAt == rhs.startedAt { return lhs.id.rawValue < rhs.id.rawValue }
-            return lhs.startedAt < rhs.startedAt
-        }
+        let timeline = merge(partial.timeline, into: detail.timeline)
         return SessionDetail(
             summary: partial.summary,
-            turns: turns,
-            timeline: merge(partial.timeline, into: detail.timeline)
+            turns: TurnProjection.turns(from: timeline, sessionID: partial.summary.id),
+            timeline: timeline
         )
     }
 

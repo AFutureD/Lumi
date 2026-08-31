@@ -187,9 +187,12 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
             startedAt: base, updatedAt: base.addingTimeInterval(Double(items)), lastActivityAt: base.addingTimeInterval(Double(items))
         ),
         turns: [TurnSummary(id: TurnID("\(id)-turn"), sessionID: sessionID, phase: .thinking, startedAt: base)],
+        // Turn-scoped rows: turns are projected from the timeline now, so the
+        // fixture's turn surfaces through its items, not the array above.
         timeline: (0..<items).map { index in
             TimelineItem(
                 id: TimelineItemID("\(id)-item-\(index)"), sessionID: sessionID,
+                turnID: TurnID("\(id)-turn"),
                 occurredAt: base.addingTimeInterval(Double(index)),
                 payload: .message(MessageTimelinePayload(role: .assistant, text: "line \(index)"))
             )
@@ -647,5 +650,73 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     harness.hub.publish(event)
     try await Task.sleep(for: .milliseconds(150))
     #expect(await harness.rest.sentNotifications.isEmpty)
+    await harness.stop()
+}
+
+// Filter-hidden sessions are withheld from every device path: the index (so
+// synced iPhones prune their copies), fetches and timeline tails (answered
+// like a removed session), and the event / summary fan-out. A subagent child
+// of a hidden parent is withheld transitively even though its own flag is
+// false.
+@Test func hostWithholdsFilterHiddenSessionsFromDevices() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    var ghost = sampleDetail("ghost", items: 1, at: base)
+    ghost = SessionDetail(
+        summary: ghost.summary.withHiddenByFilter(true),
+        turns: ghost.turns,
+        timeline: ghost.timeline
+    )
+    try await harness.repository.replaceSession(ghost)
+    let child = sampleDetail("ghost-child", items: 1, at: base)
+    try await harness.repository.replaceSession(SessionDetail(
+        summary: SessionSummary(
+            id: child.summary.id, agent: .codexSubagent, title: "child",
+            lifecycle: .running, phase: .thinking,
+            startedAt: base, updatedAt: base, lastActivityAt: base,
+            lineage: SessionLineage(parentSessionID: SessionID("ghost"))
+        ),
+        turns: child.turns,
+        timeline: child.timeline
+    ))
+    let device = try await harness.connect()
+
+    // Index: only the visible session.
+    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("r1")), via: device)
+    let indexSeen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    let entries = try #require(RelayFrameReduction.assembleIndex(parts: indexSeen.map(\.payload).filter { $0.kind == .sessionIndex }))
+    #expect(entries.map(\.summary.id) == [SessionID("a")])
+
+    // Fetch: hidden ids answer like removed ones; the child transitively.
+    try await harness.request(RemoteSessionPayload(
+        kind: .fetchSession, requestID: RequestID("f"),
+        sessionIDs: [SessionID("a"), SessionID("ghost"), SessionID("ghost-child")]
+    ), via: device, sequence: 2)
+    let fetched = try await harness.collect(from: device) { $0.kind == .sessionRemoved && $0.sessionIDs == [SessionID("ghost-child")] }
+    #expect(fetched.map(\.payload).filter { $0.kind == .sessionFull }.count == 1)
+    let removedIDs = fetched.map(\.payload).filter { $0.kind == .sessionRemoved }.compactMap(\.sessionIDs)
+    #expect(removedIDs == [[SessionID("ghost")], [SessionID("ghost-child")]])
+
+    // Timeline tail of a hidden session: removed as well.
+    try await harness.request(RemoteSessionPayload(
+        kind: .fetchTimelineSince, requestID: RequestID("t"),
+        sessionIDs: [SessionID("ghost")], since: base
+    ), via: device, sequence: 3)
+    let tail = try await harness.collect(from: device) { $0.kind == .sessionRemoved }
+    #expect(tail.last?.payload.sessionIDs == [SessionID("ghost")])
+
+    // Event fan-out: the hidden session's later updates never leave the host.
+    let ghostEvent = AgentIngressEvent(eventID: EventID("ge"), sessionID: SessionID("ghost"), agent: .codex, occurredAt: base.addingTimeInterval(10), phase: .executing)
+    let visibleEvent = AgentIngressEvent(eventID: EventID("ve"), sessionID: SessionID("a"), agent: .codex, occurredAt: base.addingTimeInterval(11), phase: .executing)
+    harness.hub.publish(ghostEvent)
+    harness.hub.publish(visibleEvent)
+    let messages = try await harness.collect(from: device) { $0.kind == .sessionMessage }
+    #expect(messages.last?.payload.events?.map(\.eventID) == [EventID("ve")])
+
+    // Summary fan-out: same gate.
+    await harness.service.summariesChanged([SessionID("ghost"), SessionID("a")])
+    let info = try await harness.collect(from: device) { $0.kind == .sessionInfo }
+    #expect(info.last?.payload.summaries?.map(\.id) == [SessionID("a")])
     await harness.stop()
 }

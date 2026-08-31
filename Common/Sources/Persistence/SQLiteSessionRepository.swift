@@ -7,8 +7,16 @@ public actor SQLiteSessionRepository: SessionRepository {
     private let database: DatabaseQueue
     private let encoder = TransportCoding.makeEncoder()
     private let decoder = TransportCoding.makeDecoder()
+    /// Only the daemon installs one; the Mac and iPhone mirrors open their
+    /// databases without it and keep the streamed verdict.
+    private let sessionFilter: (any SessionFilterEvaluating)?
+    /// Memoized `TurnProjection` results, dropped whenever a session's
+    /// timeline rows change (summary-only writes leave it alone). The actor
+    /// serializes access; an entry is a few KB per session.
+    private var turnsCache: [SessionID: [TurnSummary]] = [:]
 
-    public init(path: String) throws {
+    public init(path: String, sessionFilter: (any SessionFilterEvaluating)? = nil) throws {
+        self.sessionFilter = sessionFilter
         let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: directory,
@@ -145,41 +153,81 @@ public actor SQLiteSessionRepository: SessionRepository {
                 WHERE json_extract(CAST(summary AS TEXT), '$.phase') = 'subagent_running';
                 """)
         }
+        // Backfill `hiddenByFilter` into summaries written before the flag
+        // existed so strict decoding keeps working (no rules existed, so
+        // every old session is visible), and create the rule storage. The
+        // rules are settings, not session history: `deleteAllSessions`
+        // (clear history) and per-session deletes must never touch them.
+        //
+        // The orphan sweep must come first: GRDB ends every migration with a
+        // full-database foreign-key check, so child rows whose session is
+        // already gone — however they got stranded — fail THIS migration on
+        // a database the previous versions ran happily, and the daemon
+        // crash-loops before it can serve.
+        migrator.registerMigration("lumi-v7-session-filters") { db in
+            try db.execute(sql: """
+                DELETE FROM turns WHERE session_id NOT IN (SELECT id FROM sessions);
+                DELETE FROM timeline WHERE session_id NOT IN (SELECT id FROM sessions);
+                UPDATE sessions SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.hiddenByFilter', json('false')
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.hiddenByFilter') IS NULL;
+                CREATE TABLE IF NOT EXISTS session_filters (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    position INTEGER NOT NULL,
+                    rule BLOB NOT NULL
+                );
+                """)
+        }
+        // Two changes shipped together. The `turns` table was a second copy
+        // of what the timeline already records — `TurnProjection` now derives
+        // turn aggregates on read, so the table goes (v2 still creates it on
+        // fresh databases; v3/v7 still reference it and run first, in order).
+        // `filterEvaluated` backfills to true: every pre-existing session is
+        // frozen as already judged — moving the filter trigger to "first user
+        // message" must not retroactively evaluate old sessions.
+        migrator.registerMigration("lumi-v8-drop-turns-filter-latch") { db in
+            try db.execute(sql: """
+                DROP TABLE IF EXISTS turns;
+                UPDATE sessions SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.filterEvaluated', json('true')
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.filterEvaluated') IS NULL;
+                """)
+        }
         try migrator.migrate(database)
     }
 
-    private static func fetchTurns(_ db: Database, sessionID: SessionID, decoder: JSONDecoder) throws -> [TurnSummary] {
+    /// Turn aggregates derived on read (the `turns` table is gone): decode
+    /// only the turn-relevant rows — SQL filters out the reasoning/context
+    /// bulk — and fold them with `TurnProjection`.
+    private static func projectedTurns(_ db: Database, sessionID: SessionID, decoder: JSONDecoder) throws -> [TurnSummary] {
         let data = try Data.fetchAll(
             db,
-            sql: "SELECT summary FROM turns WHERE session_id = ? ORDER BY started_at ASC, turn_id ASC",
+            sql: """
+                SELECT item FROM timeline
+                WHERE session_id = ?
+                  AND json_extract(CAST(item AS TEXT), '$.turnID') IS NOT NULL
+                  AND json_extract(CAST(item AS TEXT), '$.payload.type')
+                      IN ('message', 'tool', 'subagent', 'turn_end', 'error')
+                ORDER BY occurred_at ASC, id ASC
+                """,
             arguments: [sessionID.rawValue]
         )
-        return try data.map { try decoder.decode(TurnSummary.self, from: $0) }
-    }
-
-    private static func upsertTurn(_ db: Database, _ turn: TurnSummary, encoder: JSONEncoder) throws {
-        try db.execute(
-            sql: """
-                INSERT INTO turns(session_id, turn_id, started_at, summary)
-                VALUES(?, ?, ?, ?)
-                ON CONFLICT(session_id, turn_id) DO UPDATE SET
-                    started_at = excluded.started_at,
-                    summary = excluded.summary
-                """,
-            arguments: [
-                turn.sessionID.rawValue,
-                turn.id.rawValue,
-                turn.startedAt.timeIntervalSince1970,
-                try encoder.encode(turn),
-            ]
-        )
+        let items = try data.map { try decoder.decode(TimelineItem.self, from: $0) }
+        return TurnProjection.turns(from: items, sessionID: sessionID)
     }
 
     @discardableResult
     public func apply(_ event: AgentIngressEvent) async throws -> Bool {
         let encoder = encoder
         let decoder = decoder
-        return try await database.write { db in
+        let sessionFilter = sessionFilter
+        let applied = try await database.write { db in
             // Dedupe first: a replayed event must never un-ignore a session.
             let duplicate = try Bool.fetchOne(
                 db,
@@ -218,7 +266,16 @@ public actor SQLiteSessionRepository: SessionRepository {
                 arguments: [event.sessionID.rawValue]
             )
             let current = try currentData.map { try decoder.decode(SessionSummary.self, from: $0) }
-            let summary = SessionReduction.summary(applying: event, to: current)
+            var summary = SessionReduction.summary(applying: event, to: current)
+            // The one-shot filter verdict, committed atomically with the
+            // event carrying the session's first user message. Latch first —
+            // the parked verdict frame must carry it so mirrors converge.
+            if SessionReduction.startsFilterEvaluation(summary, from: current, event: event) {
+                summary = summary.withFilterEvaluated(true)
+                if let sessionFilter, sessionFilter.shouldHide(summary: summary, event: event) {
+                    summary = summary.withHiddenByFilter(true)
+                }
+            }
             try db.execute(
                 sql: """
                     INSERT INTO sessions(id, summary, updated_at, last_activity_at)
@@ -235,18 +292,6 @@ public actor SQLiteSessionRepository: SessionRepository {
                     summary.lastActivityAt.timeIntervalSince1970,
                 ]
             )
-
-            if let turnID = event.turnID ?? event.turn?.id {
-                let currentTurnData = try Data.fetchOne(
-                    db,
-                    sql: "SELECT summary FROM turns WHERE session_id = ? AND turn_id = ?",
-                    arguments: [event.sessionID.rawValue, turnID.rawValue]
-                )
-                let currentTurn = try currentTurnData.map { try decoder.decode(TurnSummary.self, from: $0) }
-                if let turn = TurnReduction.summary(applying: event, to: currentTurn) {
-                    try Self.upsertTurn(db, turn, encoder: encoder)
-                }
-            }
 
             if let item = event.timelineItem {
                 try db.execute(
@@ -273,6 +318,10 @@ public actor SQLiteSessionRepository: SessionRepository {
             )
             return true
         }
+        if applied, event.timelineItem != nil || event.disposition == .discard {
+            turnsCache.removeValue(forKey: event.sessionID)
+        }
+        return applied
     }
 
     public func listSessions(limit: Int) async throws -> [SessionSummary] {
@@ -293,7 +342,8 @@ public actor SQLiteSessionRepository: SessionRepository {
         limit: Int
     ) async throws -> SessionDetail? {
         let decoder = decoder
-        return try await database.read { db in
+        let cachedTurns = turnsCache[id]
+        let detail = try await database.read { db -> SessionDetail? in
             guard let summaryData = try Data.fetchOne(
                 db,
                 sql: "SELECT summary FROM sessions WHERE id = ?",
@@ -315,12 +365,46 @@ public actor SQLiteSessionRepository: SessionRepository {
             let items = try data.map { try decoder.decode(TimelineItem.self, from: $0) }
             return SessionDetail(
                 summary: summary,
-                turns: try Self.fetchTurns(db, sessionID: id, decoder: decoder),
+                turns: try cachedTurns ?? Self.projectedTurns(db, sessionID: id, decoder: decoder),
                 timeline: Array(items.prefix(pageSize)),
                 nextCursor: items.count > pageSize
                     ? PaginationCursor(value: String(offset + pageSize))
                     : nil
             )
+        }
+        if cachedTurns == nil, let detail { turnsCache[id] = detail.turns }
+        return detail
+    }
+
+    /// The summary alone — for callers that broadcast or inspect summary-only
+    /// state. Deliberately skips the timeline and the turn projection.
+    public func sessionSummary(id: SessionID) async throws -> SessionSummary? {
+        let decoder = decoder
+        return try await database.read { db in
+            guard let data = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [id.rawValue]
+            ) else { return nil }
+            return try decoder.decode(SessionSummary.self, from: data)
+        }
+    }
+
+    public func currentTurnID(sessionID: SessionID) async throws -> TurnID? {
+        let decoder = decoder
+        return try await database.read { db in
+            guard let data = try Data.fetchOne(
+                db,
+                sql: """
+                    SELECT item FROM timeline
+                    WHERE session_id = ?
+                      AND json_extract(CAST(item AS TEXT), '$.turnID') IS NOT NULL
+                    ORDER BY occurred_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                arguments: [sessionID.rawValue]
+            ) else { return nil }
+            return try decoder.decode(TimelineItem.self, from: data).turnID
         }
     }
 
@@ -410,6 +494,7 @@ public actor SQLiteSessionRepository: SessionRepository {
     /// is untouched so client-side event dedupe survives the replace.
     public func replaceSession(_ detail: SessionDetail) async throws {
         let encoder = encoder
+        turnsCache.removeValue(forKey: detail.summary.id)
         try await database.write { db in
             let summary = detail.summary
             // The authoritative source brought the session back; a local
@@ -431,9 +516,6 @@ public actor SQLiteSessionRepository: SessionRepository {
                     summary.lastActivityAt.timeIntervalSince1970,
                 ]
             )
-            for turn in detail.turns {
-                try Self.upsertTurn(db, turn, encoder: encoder)
-            }
             for item in detail.timeline {
                 try db.execute(
                     sql: """
@@ -453,7 +535,8 @@ public actor SQLiteSessionRepository: SessionRepository {
 
     @discardableResult
     public func pruneSessions(keeping ids: Set<SessionID>) async throws -> Int {
-        try await database.write { db in
+        turnsCache = turnsCache.filter { ids.contains($0.key) }
+        return try await database.write { db in
             try db.execute(sql: "CREATE TEMP TABLE IF NOT EXISTS keep(id TEXT PRIMARY KEY)")
             try db.execute(sql: "DELETE FROM keep")
             for id in ids {
@@ -468,7 +551,8 @@ public actor SQLiteSessionRepository: SessionRepository {
     }
 
     public func deleteAllSessions() async throws -> Int {
-        try await database.write { db in
+        turnsCache.removeAll()
+        return try await database.write { db in
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sessions") ?? 0
             try db.execute(sql: """
                 INSERT OR IGNORE INTO ignored_sessions(id) SELECT id FROM sessions;
@@ -481,7 +565,7 @@ public actor SQLiteSessionRepository: SessionRepository {
 
     @discardableResult
     public func deleteSession(id: SessionID) async throws -> [SessionID] {
-        try await database.write { db in
+        let removed = try await database.write { db in
             // The lineage subtree goes with the root: subagents can spawn
             // subagents, so walk `$.lineage.parentSessionID` transitively.
             let doomed = try String.fetchAll(
@@ -510,6 +594,8 @@ public actor SQLiteSessionRepository: SessionRepository {
             }
             return existed
         }
+        for id in removed { turnsCache.removeValue(forKey: id) }
+        return removed
     }
 
     public func sessionIndex(limit: Int) async throws -> [SessionIndexEntry] {
@@ -560,6 +646,7 @@ public actor SQLiteSessionRepository: SessionRepository {
 
     public func mergeSession(_ detail: SessionDetail) async throws {
         let encoder = encoder
+        turnsCache.removeValue(forKey: detail.summary.id)
         try await database.write { db in
             let summary = detail.summary
             try db.execute(
@@ -582,9 +669,6 @@ public actor SQLiteSessionRepository: SessionRepository {
                     summary.lastActivityAt.timeIntervalSince1970,
                 ]
             )
-            for turn in detail.turns {
-                try Self.upsertTurn(db, turn, encoder: encoder)
-            }
             for item in detail.timeline {
                 try db.execute(
                     sql: """
@@ -614,7 +698,8 @@ public actor SQLiteSessionRepository: SessionRepository {
         limit: Int
     ) async throws -> SessionDetail? {
         let decoder = decoder
-        return try await database.read { db in
+        let cachedTurns = turnsCache[id]
+        let detail = try await database.read { db -> SessionDetail? in
             guard let summaryData = try Data.fetchOne(
                 db,
                 sql: "SELECT summary FROM sessions WHERE id = ?",
@@ -636,17 +721,19 @@ public actor SQLiteSessionRepository: SessionRepository {
             let items = try data.map { try decoder.decode(TimelineItem.self, from: $0) }
             return SessionDetail(
                 summary: summary,
-                turns: try Self.fetchTurns(db, sessionID: id, decoder: decoder),
+                turns: try cachedTurns ?? Self.projectedTurns(db, sessionID: id, decoder: decoder),
                 timeline: Array(items.prefix(pageSize)),
                 nextCursor: items.count > pageSize
                     ? PaginationCursor(value: String(offset + pageSize))
                     : nil
             )
         }
+        if cachedTurns == nil, let detail { turnsCache[id] = detail.turns }
+        return detail
     }
 
-    /// Hides a session for good: tombstone the id and drop the row (timeline
-    /// and turns cascade). Shared by manual deletion and helper discards.
+    /// Hides a session for good: tombstone the id and drop the row (the
+    /// timeline cascades). Shared by manual deletion and helper discards.
     private static func tombstone(_ db: Database, _ id: SessionID) throws {
         try db.execute(
             sql: "INSERT OR IGNORE INTO ignored_sessions(id) VALUES(?)",
@@ -704,13 +791,14 @@ public actor SQLiteSessionRepository: SessionRepository {
     }
 
     public func resetSession(id: SessionID) async throws -> Bool {
-        try await database.write { db in
+        turnsCache.removeValue(forKey: id)
+        return try await database.write { db in
             let existed = try Bool.fetchOne(
                 db,
                 sql: "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)",
                 arguments: [id.rawValue]
             ) ?? false
-            // turns / timeline cascade from the session row.
+            // The timeline cascades from the session row.
             try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [id.rawValue])
             try db.execute(sql: "DELETE FROM rollout_cursors WHERE session_id = ?", arguments: [id.rawValue])
             return existed
@@ -790,6 +878,49 @@ public actor SQLiteSessionRepository: SessionRepository {
                 sql: "UPDATE sessions SET summary = ? WHERE id = ?",
                 arguments: [try encoder.encode(summary), sessionID.rawValue]
             )
+        }
+    }
+
+    public func setSessionFilterVerdict(_ sessionID: SessionID, hiddenByFilter: Bool, filterEvaluated: Bool) async throws {
+        let encoder = encoder
+        let decoder = decoder
+        try await database.write { db in
+            guard let data = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [sessionID.rawValue]
+            ) else { return }
+            let summary = try decoder.decode(SessionSummary.self, from: data)
+                .withHiddenByFilter(hiddenByFilter)
+                .withFilterEvaluated(filterEvaluated)
+            try db.execute(
+                sql: "UPDATE sessions SET summary = ? WHERE id = ?",
+                arguments: [try encoder.encode(summary), sessionID.rawValue]
+            )
+        }
+    }
+
+    public func sessionFilterRules() async throws -> [SessionFilterRule] {
+        let decoder = decoder
+        return try await database.read { db in
+            let rows = try Data.fetchAll(
+                db,
+                sql: "SELECT rule FROM session_filters ORDER BY position ASC"
+            )
+            return try rows.map { try decoder.decode(SessionFilterRule.self, from: $0) }
+        }
+    }
+
+    public func setSessionFilterRules(_ rules: [SessionFilterRule]) async throws {
+        let encoder = encoder
+        try await database.write { db in
+            try db.execute(sql: "DELETE FROM session_filters")
+            for (position, rule) in rules.enumerated() {
+                try db.execute(
+                    sql: "INSERT INTO session_filters(id, position, rule) VALUES(?, ?, ?)",
+                    arguments: [rule.id.rawValue, position, try encoder.encode(rule)]
+                )
+            }
         }
     }
 

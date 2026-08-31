@@ -193,3 +193,81 @@ import Testing
     let visible = SessionSummary.visible([stubParent, child, probe, real]).map(\.id.rawValue)
     #expect(visible == ["parent", "child", "real"])
 }
+
+@Test func sessionFilterRulesRoundTripBothValueShapes() throws {
+    let rules = [
+        SessionFilterRule(
+            id: SessionFilterRuleID("r1"),
+            isEnabled: true,
+            conditions: [
+                SessionFilterCondition(field: .agent, op: .is, value: .text("codex")),
+                SessionFilterCondition(field: .folder, op: .is, value: .text("/tmp/x")),
+            ]
+        ),
+        SessionFilterRule(
+            id: SessionFilterRuleID("r2"),
+            isEnabled: false,
+            conditions: [
+                SessionFilterCondition(field: .application, op: .contains, value: .options(["paseo", "raft"])),
+                SessionFilterCondition(field: .message, op: .startsWith, value: .text("test:")),
+            ]
+        ),
+    ]
+    let encoded = try TransportCoding.makeEncoder().encode(rules)
+    let decoded = try TransportCoding.makeDecoder().decode([SessionFilterRule].self, from: encoded)
+    #expect(decoded == rules)
+
+    // The value's shape is its tag: a bare string vs a bare array.
+    let json = String(decoding: encoded, as: UTF8.self)
+    #expect(json.contains(#""value":"codex""#))
+    #expect(json.contains(#""value":["paseo","raft"]"#))
+}
+
+@Test func sessionFilterUnknownEnumValuesAreDecodingErrors() throws {
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(SessionFilterField.self, from: Data("\"model\"".utf8))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(SessionFilterOperator.self, from: Data("\"matches_regex\"".utf8))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(SessionFilterValue.self, from: Data("42".utf8))
+    }
+}
+
+@Test func sessionFilterIPCOperationsRoundTrip() throws {
+    for (op, raw) in [(IPCOperation.getSessionFilters, "\"get_session_filters\""), (.setSessionFilters, "\"set_session_filters\"")] {
+        let encoded = try JSONEncoder().encode(op)
+        #expect(String(decoding: encoded, as: UTF8.self) == raw)
+        #expect(try JSONDecoder().decode(IPCOperation.self, from: encoded) == op)
+    }
+    let request = IPCRequest(
+        operation: .setSessionFilters,
+        filters: [SessionFilterRule(conditions: [SessionFilterCondition(field: .agent, op: .is, value: .text("claude"))])]
+    )
+    let decoded = try TransportCoding.makeDecoder().decode(
+        IPCRequest.self,
+        from: TransportCoding.makeEncoder().encode(request)
+    )
+    #expect(decoded.filters == request.filters)
+}
+
+@Test func filterHiddenIDsAreTransitiveOverLineage() {
+    let date = Date(timeIntervalSince1970: 10)
+    func make(_ id: String, parent: String? = nil, hidden: Bool = false) -> SessionSummary {
+        SessionSummary(
+            id: SessionID(id), agent: .codex, title: "T",
+            lifecycle: .running, phase: .thinking,
+            startedAt: date, updatedAt: date, lastActivityAt: date,
+            hiddenByFilter: hidden,
+            lineage: parent.map { SessionLineage(parentSessionID: SessionID($0)) }
+        )
+    }
+    let hidden = SessionSummary.filterHiddenIDs([
+        make("root", hidden: true),
+        make("child", parent: "root"),
+        make("other"),
+        make("other-child", parent: "other"),
+    ])
+    #expect(hidden == [SessionID("root"), SessionID("child")])
+}

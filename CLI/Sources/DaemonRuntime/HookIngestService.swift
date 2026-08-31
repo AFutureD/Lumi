@@ -345,10 +345,10 @@ public actor HookIngestService {
     /// query must never delete real work.
     private func sessionNeverUsed(_ sessionID: SessionID) async -> Bool {
         do {
-            guard let detail = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1) else {
+            guard let summary = try await repository.sessionSummary(id: sessionID) else {
                 return true
             }
-            return detail.summary.isProvisional
+            return summary.isProvisional
         } catch {
             return false
         }

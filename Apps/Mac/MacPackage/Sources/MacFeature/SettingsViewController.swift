@@ -25,7 +25,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .general: "Launch behavior"
         case .notch: "Appearance and interaction"
         case .daemon: "Local service and history"
-        case .agents: "Codex integration"
+        case .agents: "Integrations and filters"
         case .about: "Version and updates"
         }
     }
@@ -35,7 +35,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .general: "Choose how Lumi starts on this Mac."
         case .notch: "Configure the Notch surface, screen, size, and interaction."
         case .daemon: "The local service collects Codex events and writes them to SQLite."
-        case .agents: "Manage integrations that send Session events to the daemon."
+        case .agents: "Integrations that report Session events, and filters that drop ghost Sessions."
         case .about: "Version, framework and update information."
         }
     }

@@ -8,9 +8,10 @@ import Testing
 /// both repository implementations.
 private let base = Date(timeIntervalSince1970: 1_000)
 
-private func item(_ id: String, session: String, at offset: TimeInterval, text: String = "x") -> TimelineItem {
+private func item(_ id: String, session: String, at offset: TimeInterval, text: String = "x", turn: String? = nil) -> TimelineItem {
     TimelineItem(
         id: TimelineItemID(id), sessionID: SessionID(session),
+        turnID: turn.map(TurnID.init),
         occurredAt: base.addingTimeInterval(offset),
         payload: .message(MessageTimelinePayload(role: .assistant, text: text))
     )
@@ -61,10 +62,12 @@ private func assertSyncPrimitives(_ repository: any SessionRepository) async thr
     _ = try await repository.deleteSession(id: SessionID("b"))
     try await repository.mergeSession(detail("b", items: [item("b1", session: "b", at: 2)]))
     #expect(try await repository.sessionDetail(id: SessionID("b"), cursor: nil, limit: 10)?.timeline.map(\.id) == [TimelineItemID("b1")])
+    // Turns are a projection of the timeline now: the merged partial's own
+    // `turns` are ignored, and the turn-scoped row below is what surfaces t1.
     try await repository.mergeSession(detail(
         "a",
         turns: [TurnSummary(id: TurnID("t1"), sessionID: SessionID("a"), phase: .thinking, startedAt: base)],
-        items: [item("a2", session: "a", at: 5, text: "replaced"), item("a3", session: "a", at: 9)]
+        items: [item("a2", session: "a", at: 5, text: "replaced"), item("a3", session: "a", at: 9, turn: "t1")]
     ))
     let merged = try #require(try await repository.sessionDetail(id: SessionID("a"), cursor: nil, limit: 10))
     #expect(merged.timeline.map(\.id) == [TimelineItemID("a1"), TimelineItemID("a2"), TimelineItemID("a3")])
@@ -102,4 +105,54 @@ private func assertSyncPrimitives(_ repository: any SessionRepository) async thr
     let (repository, directory) = try temporaryRepository()
     defer { try? FileManager.default.removeItem(at: directory) }
     try await assertSyncPrimitives(repository)
+}
+
+private func turnItemEvent(_ eventID: String, session: String, turn: String, at offset: TimeInterval, payload: TimelinePayload) -> AgentIngressEvent {
+    let sessionID = SessionID(session)
+    return AgentIngressEvent(
+        eventID: EventID(eventID), sessionID: sessionID, turnID: TurnID(turn), agent: .codex,
+        occurredAt: base.addingTimeInterval(offset),
+        lifecycle: .running, phase: .thinking,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("item-\(eventID)"), sessionID: sessionID, turnID: TurnID(turn),
+            occurredAt: base.addingTimeInterval(offset),
+            payload: payload
+        )
+    )
+}
+
+// The projected turns are memoized per session; a timeline write must drop
+// the memo, and summary-only reads/writes must neither pay for nor stale it.
+@Test func projectedTurnsStayFreshAcrossCachedAndSummaryOnlyAccess() async throws {
+    let (grdb, directory) = try temporaryRepository()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    for repository in [InMemorySessionRepository(), grdb] as [any SessionRepository] {
+        _ = try await repository.apply(turnItemEvent("e1", session: "s", turn: "t1", at: 1,
+            payload: .message(MessageTimelinePayload(role: .user, text: "go"))))
+
+        let first = try await repository.sessionDetail(id: SessionID("s"), cursor: nil, limit: 10)
+        #expect(first?.turns.map(\.id) == [TurnID("t1")])
+        #expect(first?.turns.first?.isOpen == true)
+        // Second read is served from the memo — same result.
+        let cached = try await repository.sessionDetail(id: SessionID("s"), cursor: nil, limit: 10)
+        #expect(cached?.turns == first?.turns)
+
+        // A summary-only read skips the projection and matches the detail.
+        let summary = try await repository.sessionSummary(id: SessionID("s"))
+        #expect(summary == first?.summary)
+        #expect(try await repository.sessionSummary(id: SessionID("ghost")) == nil)
+
+        // A timeline write invalidates the memo: the close shows up.
+        _ = try await repository.apply(turnItemEvent("e2", session: "s", turn: "t1", at: 5,
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "Done."))))
+        let closed = try await repository.sessionDetail(id: SessionID("s"), cursor: nil, limit: 10)
+        #expect(closed?.turns.first?.outcome == .completed)
+        #expect(closed?.turns.first?.lastAssistantMessage == "Done.")
+
+        // A summary-only write leaves the memo valid and visible state fresh.
+        try await repository.markSessionReviewed(SessionID("s"))
+        let reviewed = try await repository.sessionDetail(id: SessionID("s"), cursor: nil, limit: 10)
+        #expect(reviewed?.summary.needsReview == false)
+        #expect(reviewed?.turns.first?.outcome == .completed)
+    }
 }

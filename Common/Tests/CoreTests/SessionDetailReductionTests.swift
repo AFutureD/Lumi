@@ -5,9 +5,9 @@ import Testing
 
 private let base = Date(timeIntervalSince1970: 1_000)
 
-private func item(_ id: String, at offset: TimeInterval, text: String = "x") -> TimelineItem {
+private func item(_ id: String, at offset: TimeInterval, text: String = "x", turn: String = "t1") -> TimelineItem {
     TimelineItem(
-        id: TimelineItemID(id), sessionID: SessionID("s"), turnID: TurnID("t1"),
+        id: TimelineItemID(id), sessionID: SessionID("s"), turnID: TurnID(turn),
         occurredAt: base.addingTimeInterval(offset),
         payload: .message(MessageTimelinePayload(role: .assistant, text: text))
     )
@@ -31,7 +31,10 @@ private func item(_ id: String, at offset: TimeInterval, text: String = "x") -> 
     #expect(applied.summary.phase == .executing)
     #expect(applied.summary.updatedAt == base.addingTimeInterval(5))
     #expect(applied.turns.map(\.id) == [TurnID("t1")])
-    #expect(applied.turns.first?.phase == .executing)
+    // Projected turns carry the fixed `.idle` phase; the live phase lives on
+    // the summary.
+    #expect(applied.turns.first?.phase == .idle)
+    #expect(applied.turns.first?.lastAssistantMessage == "x")
     #expect(applied.timeline.map(\.id) == [TimelineItemID("a"), TimelineItemID("b")])
 
     // An older copy of a row never regresses the newer one.
@@ -62,7 +65,7 @@ private func item(_ id: String, at offset: TimeInterval, text: String = "x") -> 
             TurnSummary(id: TurnID("t1"), sessionID: SessionID("s"), phase: .idle, startedAt: base),
             TurnSummary(id: TurnID("t2"), sessionID: SessionID("s"), phase: .idle, startedAt: base.addingTimeInterval(6)),
         ],
-        timeline: [item("b", at: 5, text: "replaced"), item("c", at: 9)]
+        timeline: [item("b", at: 5, text: "replaced"), item("c", at: 9, turn: "t2")]
     )
     let merged = SessionDetailReduction.merging(partial, into: detail)
     #expect(merged.summary.lifecycle == .completed)

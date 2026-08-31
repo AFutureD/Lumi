@@ -1392,9 +1392,11 @@ private func reconcileDetail(_ id: String, items: Int, updatedAt: TimeInterval) 
             firstTurnAt: date
         ),
         turns: [TurnSummary(id: TurnID("\(id)-turn"), sessionID: sessionID, phase: .thinking, prompt: "hi", startedAt: date)],
+        // Turn-scoped rows: turns are projected from the timeline now.
         timeline: (0..<items).map { index in
             TimelineItem(
                 id: TimelineItemID("\(id)-item-\(index)"), sessionID: sessionID,
+                turnID: TurnID("\(id)-turn"),
                 occurredAt: date.addingTimeInterval(Double(index)),
                 payload: .message(MessageTimelinePayload(role: .assistant, text: "Update \(index)"))
             )

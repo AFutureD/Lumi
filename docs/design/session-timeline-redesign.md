@@ -183,10 +183,10 @@ Notch 模型补充：`HaloSession` 增 `turnEnded`、`agentKind`；面板内 lis
 |---|---|---|
 | A 层 Session / Turn 模型 | `Transport`：`SessionLifecycle` +`compacting`；`TurnPhase` +`compacting`（`subagentRunning` 曾短暂存在，2026-08-25 并入 `executing`）；新增 `TurnSummary`/`TurnOutcome`；`SessionDetail.turns`；`AgentKind` +`claude`/`claudeSubagent` | 增量式扩展，旧数据可解码 |
 | A 层消息 | `TimelinePayload` 新增 `.reasoning` `.context(scope: session|turn)` `.sessionMarker` `.turnEnd`；`ToolTimelinePayload.toolUseID` | 保留 `.modelConfiguration`/`.usageMetrics`/`.internalContext` 作为元数据或历史数据 |
-| daemon 表 `turns / turn_messages / session_messages` | 只新增 `turns` 表；消息仍存 `timeline`（Session 级消息 `turnID == nil`） | 语义相同、迁移更小 |
+| daemon 表 `turns / turn_messages / session_messages` | 只新增 `turns` 表；消息仍存 `timeline`（Session 级消息 `turnID == nil`）。2026-08-31 起 `turns` 表随 lumi-v8 删除，Turn 聚合由 `TurnProjection` 读时从 timeline 现算 | 语义相同、迁移更小；后收敛为 timeline 单一事实源 |
 | A→B `TimelineProjection` | `Transport/TimelineProjection.swift`（`TimelineTag`/`TimelineLane`/`TimelineAttentionLevel`/`TimelineRow`） | 含 SUBAGENT 原地更新、TURN END 追加并把末条 ASSISTANT 标为 succeeded、RESULT 从配对 TOOL 补名、同时间戳排序 marker→context→user→其他 |
 | `.modelConfiguration` → 行 | **不显示为行**（页头 Model 区仍读取）；行级配置另走 `.config` | Claude transcript 每条 assistant 都会重发模型配置，作为行会落在 Turn 中间 |
-| Helper `AgentDomainReducer` | `HelperIngestPipeline` + `CodexAdapter`/`ClaudeAdapter`（`Common/Adapters`），`HelperDaemonPort` 抽象 | 状态机体现在两个 Adapter 的映射表 + daemon `SessionReduction`/`TurnReduction` |
+| Helper `AgentDomainReducer` | `HelperIngestPipeline` + `CodexAdapter`/`ClaudeAdapter`（`Common/Adapters`），`HelperDaemonPort` 抽象 | 状态机体现在两个 Adapter 的映射表 + daemon `SessionReduction`（`TurnReduction` 2026-08-31 随 turns 表移除，读侧由 `TurnProjection` 取代） |
 | rollout 迁入 Helper、cursor 走 IPC | 已实现；`ingest_batch`、`get/save_rollout_cursor` | daemon `CodexRolloutWatcher` 保留，`LUMI_ROLLOUT_WATCHER=1` 开启，默认关 |
 | 权限不进 Timeline | `PermissionRequest` 只置 lifecycle/phase | — |
 | 删除 Session 后的行为 | 被动事件仍被拒绝；新 prompt / SessionStart 使其复活 | 原来永久隐藏会吞掉恢复会话的 hook |

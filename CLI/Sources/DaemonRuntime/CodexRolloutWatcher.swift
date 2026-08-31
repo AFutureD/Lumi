@@ -100,7 +100,7 @@ public actor CodexRolloutWatcher: Service {
             if try await repository.rolloutCursor(path: fileURL.path) != nil { continue }
             let sessionID = existingSessionID(in: fileURL)
             if let sessionID,
-               try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1) != nil {
+               try await repository.sessionSummary(id: sessionID) != nil {
                 // Known session without a cursor: its history arrived over
                 // hooks; the watcher takes over from EOF.
                 try await repository.saveRolloutCursor(RolloutCursor(

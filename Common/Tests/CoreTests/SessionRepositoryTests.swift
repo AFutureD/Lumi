@@ -772,7 +772,14 @@ private func promptEvent(_ sessionID: SessionID, id: String, at: TimeInterval) -
         occurredAt: Date(timeIntervalSince1970: at),
         lifecycle: .running,
         phase: .thinking,
-        turn: TurnSummary(id: TurnID("turn-\(id)"), sessionID: sessionID, phase: .thinking, prompt: "hi", startedAt: Date(timeIntervalSince1970: at))
+        turn: TurnSummary(id: TurnID("turn-\(id)"), sessionID: sessionID, phase: .thinking, prompt: "hi", startedAt: Date(timeIntervalSince1970: at)),
+        timelineItem: TimelineItem(
+            id: TimelineItemIDs.userPrompt(sessionID, turnID: TurnID("turn-\(id)")),
+            sessionID: sessionID,
+            turnID: TurnID("turn-\(id)"),
+            occurredAt: Date(timeIntervalSince1970: at),
+            payload: .message(MessageTimelinePayload(role: .user, text: "hi"))
+        )
     )
 }
 
@@ -916,12 +923,23 @@ private func assertDiscardSemantics(_ repository: any SessionRepository) async t
         #expect(try await repository.listSessions(limit: 100).count == 3)
     }
     // Simulate a database from before the sweep: drop the migration marker
-    // and reopen, which re-runs it on the existing rows.
+    // and reopen, which re-runs it on the existing rows. v3 predates the
+    // turns-table drop (lumi-v8) and references the table, so re-running it
+    // needs the table back — empty, like the sessions it sweeps had it.
     try await DatabaseQueue(path: path).write { db in
         try db.execute(
             sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
             arguments: ["lumi-v3-sweep-empty-claude-sessions"]
         )
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS turns (
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                started_at REAL NOT NULL,
+                summary BLOB NOT NULL,
+                PRIMARY KEY(session_id, turn_id)
+            );
+            """)
     }
     let reopened = try SQLiteSessionRepository(path: path)
     let remaining = try await reopened.listSessions(limit: 100).map(\.id)

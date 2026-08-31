@@ -4,12 +4,12 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 
 ## 统一业务模型
 
-> 两层模型：**Agent 领域**（`SessionSummary` / `TurnSummary` / `TimelineItem`，helper 产出、daemon 存储）与 **Timeline 领域**（`TimelineRow`：tag L1/L2/L3、lane、status，由 `TimelineProjection.rows(from:)` 纯函数投影，不落库）。详见 [Session Timeline 重构方案](session-timeline-redesign.md)。
+> 两层模型：**Agent 领域**（`SessionSummary` / `TurnSummary` / `TimelineItem`；summary 与 timeline 落库，`TurnSummary` 由 `TurnProjection` 读时投影）与 **Timeline 领域**（`TimelineRow`：tag L1/L2/L3、lane、status，由 `TimelineProjection.rows(from:)` 纯函数投影，不落库）。详见 [Session Timeline 重构方案](session-timeline-redesign.md)。
 
 
 跨进程和跨设备模型由 `Transport` 唯一声明：
 
-- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力 / 待查看标记（`needsAttention` / `needsReview`）、Notch 归档标记（`hiddenInNotch`：只把 Session 从 Notch 隐藏，Mac / iOS 照常显示；新 prompt 或会话重启时清除）、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
+- `SessionSummary`：Agent、标题、工作目录、生命周期、Turn 阶段、时间、注意力 / 待查看标记（`needsAttention` / `needsReview`）、Notch 归档标记（`hiddenInNotch`：只把 Session 从 Notch 隐藏，Mac / iOS 照常显示；新 prompt 或会话重启时清除）、过滤判定标记（`hiddenByFilter` + 闩 `filterEvaluated`：daemon 在 Session 首条用户消息（按消息分类判定，含斜杠命令这类不开 Turn 的记录）到达时按过滤规则判一次并冻结，之后规则改动、复活、reingest 都不改它；闩区分「判过没命中」与「还没判」；Mac / Notch 读时隐藏——隐藏父 Session 连同其 Subagent 组传递性隐藏——Relay 全口径扣留使数据不进 iPhone；镜像的 reducer 只 sticky 携带，从不重算）、可选 Subagent lineage，以及 `firstTurnAt`（首个 Turn 时间；`isProvisional = lifecycle == starting && firstTurnAt == nil` 表示"第一个 Turn 之前的临时会话"，UI 不显示）。
 - `SessionDetail`：一个 Summary、完整或分页 Timeline、下一页游标。
 - `TimelineItem`：稳定 ID、Session ID、可选 Turn ID、时间和 payload。
 - `TimelinePayload`：消息、reasoning、工具、计划、子 Agent、错误、上下文（session / turn）、session marker、turn end、模型配置、内部上下文、消耗指标。
@@ -32,7 +32,7 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 | Codex state | 外部只读元数据源 | Thread 标题、主 Session / Subagent 类型和 lineage；不复制整张表 | `${CODEX_HOME:-~/.codex}/state_5.sqlite` 的 `threads` |
 | daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记 | `~/Library/Application Support/Lumi/sessions.sqlite3` |
 | Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Lumi/Mac/sessions.sqlite3` |
-| iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session、Turn、Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
+| iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session 与 Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
 | daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `app.huanan.lumi.daemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
 | daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、Mac 点 Match 时钉住的设备公钥 | `~/Library/Application Support/Lumi/relay-host-state.json`（0600） |
 | iOS Keychain | 通道身份 | 每台 Mac 各自的 Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `app.huanan.lumi.ios.relay`（account `device-channels-v4`） |
@@ -48,12 +48,14 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 | 表 | 用途 | 关键规则 |
 | --- | --- | --- |
 | `sessions` | 当前 Session Summary | `id` 主键；按 `last_activity_at` 倒序读取 |
-| `turns` | Turn 聚合（`TurnSummary`：phase、prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage） | `(session_id, turn_id)` 主键；由 `TurnReduction` 从事件归并；随 Session 级联删除（migration `lumi-v2-turns`） |
 | `timeline` | Timeline item（Agent 领域消息） | `id` 主键；Session 外键级联删除；按时间与 ID 排序；跨来源同 ID 覆盖 |
 | `processed_events` | 幂等键 | 同一个 Event ID 只应用一次 |
 | `rollout_cursors` | JSONL 增量位置 | 保存文件路径、byte offset、文件大小和 Session ID |
 | `ignored_sessions` | 删除/基线/helper discard tombstone | 阻止后到事件重新创建 Session；仅新的 prompt / SessionStart（未处理过的事件）能复活，重放的事件先被 `processed_events` 拒绝；客户端 `replaceSession` / `mergeSession` 会清该 Session 的本地墓碑（以 daemon 为准） |
 | `metadata` | repository 状态 | 当前保存首次 rollout baseline 标记 |
+| `session_filters` | 过滤规则（用户设置，不是会话历史） | 一行一条规则：`id` 主键 + `position` 排序 + `rule` JSON BLOB；整表替换写入。只有 daemon 读写（镜像里这张表恒空）。`clear_history` / 单条删除都不碰它（migration `lumi-v7-session-filters`） |
+
+`turns` 表已在 migration `lumi-v8` 删除：Turn 聚合（`TurnSummary`：prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage）改为读取时由 `TurnProjection` 从 timeline 的 turn-scoped 行现算——时间线是唯一事实源，`SessionDetail.turns` 的 API 与 wire 形状不变，写入方传来的 `turns` 被忽略。
 
 migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下的空 Claude 会话（`completed`、无 Turn、timeline 只有 session marker）并写墓碑——它们按现在的规则本来不会存在。
 
@@ -93,7 +95,7 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
 | `mark_session_reviewed` | 人打开了 Session：清除 `needsReview` | 短连接请求 |
 | `mark_session_hidden_in_notch` | 人在 Notch 点了 Archive：置 `hiddenInNotch`（仅 Notch 隐藏；新 prompt 或会话重启时由 reducer 清除） | 短连接请求 |
-| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / turns / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；Claude 父 Session 连同 sidechain 子 Agent 一起重建，用户已删除（tombstone）的子 Agent 保持删除；返回重建后的 SessionDetail。不走事件流：调用方把返回的 detail 写入本地缓存并跟一次对账，daemon 把重建的每个 Session 作为未请求的 `session_full` 推给已同步 iPhone | 短连接请求（15s） |
+| `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；Claude 父 Session 连同 sidechain 子 Agent 一起重建，用户已删除（tombstone）的子 Agent 保持删除；返回重建后的 SessionDetail。不走事件流：调用方把返回的 detail 写入本地缓存并跟一次对账，daemon 把重建的每个 Session 作为未请求的 `session_full` 推给已同步 iPhone | 短连接请求（15s） |
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
 | `health` | daemon 状态（含 `relayConnected`） | 短连接请求 |
 | `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
@@ -104,6 +106,8 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 | `relay_pairing_cancel` | 离开配对页：取消会话，码立刻作废 | 短连接请求 |
 | `relay_revoke_device` / `relay_refresh_devices` | 撤销一台 iPhone / 重新拉设备列表，都返回最新状态 | 短连接请求 |
 | `relay_remove_device` | 删除一台已撤销 iPhone 的记录（Relay 记录 + daemon 钉住的钥匙一起删），返回最新状态 | 短连接请求 |
+| `get_session_filters` | 读取 daemon 存储的过滤规则（有序全量） | 短连接请求（Settings · Agents 面板出现时） |
+| `set_session_filters` | 整表替换过滤规则：校验（≤100 条、条件非空、运算符合法）后写入 `session_filters` 表并同步进内存判定引擎。规则改动不追溯已有 Session——判定在 Session 首条用户消息到达时做一次并冻结在 `hiddenByFilter` 上（`filterEvaluated` 闩保证只判一次），因此不 publish、不通知 Relay | 短连接请求 |
 
 daemon 的 socket 服务端跑在结构化并发上（原生 socket，无第三方网络栈）：accept 与每连接的收发都是服务 `run()` 下的子任务，就绪等待经 DispatchSource 桥接、不占线程，每连接内请求并发处理、由单写者任务串行发帧；Session 在协议内多路复用，不为 Session 创建连接。每连接的出站队列有字节上限，只有停止读取的客户端才会积满——超限即断开，Mac 端按既有路径重连并 reconcile 补数。响应在发送前检查 8 MiB frame 上限：超限时改发 `response_too_large` 失败帧（不重试、提示缩小分页），而不是发出一个客户端注定拒收的帧。
 

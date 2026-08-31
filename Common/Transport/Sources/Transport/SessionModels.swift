@@ -242,7 +242,7 @@ public struct TurnSummary: Codable, Hashable, Sendable {
 /// The application layer above the agent engine. An agent (codex, claude) is
 /// the engine that runs the session; the AaaS (Agentic AI as a Service) is
 /// the application that hosts it — and the authority on the session's title.
-public enum AaaSKind: String, Codable, Hashable, Sendable {
+public enum AaaSKind: String, Codable, Hashable, Sendable, CaseIterable {
     /// The ChatGPT desktop app driving a Codex session.
     case chatgpt
     /// The Codex CLI (terminal, IDE extensions — anything not the desktop app).
@@ -345,6 +345,16 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     /// Every other surface (Mac window, iOS) still shows the session. Cleared
     /// when the human engages the session again (a new prompt or a restart).
     public let hiddenInNotch: Bool
+    /// The daemon's frozen filter verdict, stamped once when the session's
+    /// first user message arrived; later rule edits never change it, and
+    /// unlike `hiddenInNotch` resurrection does not clear it. Mac window and
+    /// Notch hide the session at read time; the Relay host withholds it from
+    /// iPhones entirely.
+    public let hiddenByFilter: Bool
+    /// The once-only latch for that verdict: `hiddenByFilter == false` alone
+    /// cannot distinguish "judged and visible" from "not judged yet". Set
+    /// together with the verdict and carried forever.
+    public let filterEvaluated: Bool
     public let lineage: SessionLineage?
     /// When the session's first Turn began (earliest turn-scoped event). Never
     /// cleared — a later `resume` / `compact` restart keeps it.
@@ -367,6 +377,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         needsAttention: Bool = false,
         needsReview: Bool = false,
         hiddenInNotch: Bool = false,
+        hiddenByFilter: Bool = false,
+        filterEvaluated: Bool = false,
         lineage: SessionLineage? = nil,
         firstTurnAt: Date? = nil,
         aaas: SessionAaaS? = nil
@@ -383,6 +395,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.needsAttention = needsAttention
         self.needsReview = needsReview
         self.hiddenInNotch = hiddenInNotch
+        self.hiddenByFilter = hiddenByFilter
+        self.filterEvaluated = filterEvaluated
         self.lineage = lineage
         self.firstTurnAt = firstTurnAt
         self.aaas = aaas
@@ -404,6 +418,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             needsAttention: needsAttention,
             needsReview: needsReview,
             hiddenInNotch: hiddenInNotch,
+            hiddenByFilter: hiddenByFilter,
+            filterEvaluated: filterEvaluated,
             lineage: lineage,
             firstTurnAt: firstTurnAt,
             aaas: aaas
@@ -425,6 +441,54 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             needsAttention: needsAttention,
             needsReview: needsReview,
             hiddenInNotch: hidden,
+            hiddenByFilter: hiddenByFilter,
+            filterEvaluated: filterEvaluated,
+            lineage: lineage,
+            firstTurnAt: firstTurnAt,
+            aaas: aaas
+        )
+    }
+
+    /// The same summary with the frozen filter verdict replaced.
+    public func withHiddenByFilter(_ hidden: Bool) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            agent: agent,
+            title: title,
+            workspace: workspace,
+            lifecycle: lifecycle,
+            phase: phase,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            lastActivityAt: lastActivityAt,
+            needsAttention: needsAttention,
+            needsReview: needsReview,
+            hiddenInNotch: hiddenInNotch,
+            hiddenByFilter: hidden,
+            filterEvaluated: filterEvaluated,
+            lineage: lineage,
+            firstTurnAt: firstTurnAt,
+            aaas: aaas
+        )
+    }
+
+    /// The same summary with the filter latch replaced.
+    public func withFilterEvaluated(_ evaluated: Bool) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            agent: agent,
+            title: title,
+            workspace: workspace,
+            lifecycle: lifecycle,
+            phase: phase,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            lastActivityAt: lastActivityAt,
+            needsAttention: needsAttention,
+            needsReview: needsReview,
+            hiddenInNotch: hiddenInNotch,
+            hiddenByFilter: hiddenByFilter,
+            filterEvaluated: evaluated,
             lineage: lineage,
             firstTurnAt: firstTurnAt,
             aaas: aaas
@@ -451,6 +515,30 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         return summaries.filter { !$0.isProvisional || parentsOfVisible.contains($0.id) }
     }
 
+    /// The transitive filter-hidden set: every summary carrying the frozen
+    /// verdict plus everything whose parent chain reaches one — a hidden
+    /// parent hides its whole subagent group, children are never promoted to
+    /// orphans. Shared by the Mac read filter and the Relay withholding so
+    /// the two surfaces cannot diverge.
+    public static func filterHiddenIDs(_ summaries: [SessionSummary]) -> Set<SessionID> {
+        let parents = Dictionary(uniqueKeysWithValues: summaries.compactMap { summary in
+            summary.lineage?.parentSessionID.map { (summary.id, $0) }
+        })
+        var hidden = Set(summaries.filter(\.hiddenByFilter).map(\.id))
+        for summary in summaries {
+            var seen = Set<SessionID>()
+            var cursor = summary.id
+            while let parent = parents[cursor], seen.insert(cursor).inserted {
+                if hidden.contains(parent) {
+                    hidden.insert(summary.id)
+                    break
+                }
+                cursor = parent
+            }
+        }
+        return hidden
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case agent
@@ -464,6 +552,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case needsAttention
         case needsReview
         case hiddenInNotch
+        case hiddenByFilter
+        case filterEvaluated
         case lineage
         case firstTurnAt
         case aaas

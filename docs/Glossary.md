@@ -32,6 +32,20 @@
 | 承载会话的应用层，会话的标题由它决定（ChatGPT、Codex、Claude Desktop、Claude Code、Paseo、Raft） | AaaS（Agentic AI as a Service） |
 | Session 详情 Overview 里显示归属 AaaS 的那一栏（值为上述六个名字之一；注意与 Settings 侧栏的 Application 分组同词不同义） | Application |
 
+## Settings · Agents
+
+| 概念 | 界面用词 | 中文写法 |
+| ---- | -------- | -------- |
+| 向 Lumi 上报 Session 事件的各个 agent 接入（装 / 卸 / 信任） | Integrations | 接入 |
+| 把幽灵 Session 挡在列表外的那组规则（Settings 里编辑） | Filters | 过滤规则 |
+| 一条规则 | Filter | 规则 |
+| 测试、一次性调用等不想在列表里看到的 Session | ghost Session | 幽灵 Session |
+| 规则的四个字段 | Agent · Application · User message · Folder | 不翻译 |
+| 规则的运算 | is · contains · starts with | 不翻译 |
+
+- Filters 里的 Application 与 Session 详情 Overview 的 Application 栏同义（AaaS 六个名字之一）。
+- 同词不同义：Activity 时间线里按 Category / Importance 筛行的控件也叫过滤器，但那是看时的显示筛选，与 Settings 的 Filters（决定 Session 是否被隐藏）是两回事。
+
 ## 配对
 
 | 概念                                   | 界面用词         | 中文写法 |

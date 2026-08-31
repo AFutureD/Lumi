@@ -21,7 +21,7 @@
 1. 在侧边栏选择“Settings”，再在中栏选择“Daemon”并点击“Install & Start daemon”。
    - 系统反馈：Daemon 面板显示 Running 与运行信息。
    - 规则引用：[MAC-R-001](../modules/mac-session-view.md#mac-r-001-daemon-决定实时可用性)。
-2. 在中栏选择“Agents”，在你使用的 Agent 卡片（Codex / Claude Code）点击“Install Hook”。
+2. 在中栏选择“Agents”，在 Integrations 列表里你使用的 Agent 行（Codex / Claude Code）点击“Install”。
    - 系统反馈：卡片显示 integration installed；Codex 卡片随后显示“Trusted by Codex”。
    - 数据变化：只增加 Lumi Hook，其他集成保留，写入前留有备份；Codex 的信任记录只针对 Lumi 自己的处理项写入。
    - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](../modules/mac-session-view.md#mac-r-021-自动向-codex-申请-hook-信任)。
@@ -65,7 +65,7 @@
 ### Codex 未信任 Hook
 
 - 用户看到：Hook 已安装但 Codex Session 不再更新；“Settings > Agents”的 Codex 卡片提示还有处理项未被信任，或提示无法确认信任状态。
-- 可执行动作：点击卡片上的“Authorize”（或“Check again”）；仍不成功再到 Codex `/hooks` 手动信任。
+- 可执行动作：点击 Codex 行的“Trust”；仍不成功再到 Codex `/hooks` 手动信任。
 - 数据影响：现有其他 Hooks 不变，只为 Lumi 自己的处理项写入信任记录。
 
 ### 列表为空

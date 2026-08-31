@@ -947,11 +947,22 @@ public actor RelayHostService: Service {
         }
     }
 
+    /// The transitive filter-hidden set, read fresh per work item. Verdicts
+    /// are frozen, so this is cheap and stable; withholding here (index,
+    /// fetch, timeline, events, summaries) is what keeps hidden sessions off
+    /// iPhones entirely — a hidden id answers like a removed one, and the
+    /// device's reconcile prunes any copy it already holds.
+    private func filterHiddenIDs() async throws -> Set<SessionID> {
+        SessionSummary.filterHiddenIDs(try await repository.listSessions(limit: Self.indexLimit))
+    }
+
     private func run(_ item: WorkItem) async throws {
         let now = Date()
         switch item {
         case let .index(device, requestID):
-            let entries = try await repository.sessionIndex(limit: Self.indexLimit)
+            let allEntries = try await repository.sessionIndex(limit: Self.indexLimit)
+            let hidden = SessionSummary.filterHiddenIDs(allEntries.map(\.summary))
+            let entries = allEntries.filter { !hidden.contains($0.summary.id) }
             let parts = try RelayPayloadBatcher.indexParts(entries, requestID: requestID, generatedAt: now)
             convertLog.info("index_prepared", metadata: .fields(["device": device.rawValue, "sessions": entries.count, "parts": parts.count]))
             try await send(parts.map(\.prepared), to: [device])
@@ -962,8 +973,9 @@ public actor RelayHostService: Service {
                 try await send([prepared], to: [device])
             }
         case let .fetch(device, requestID, ids):
+            let hidden = try await filterHiddenIDs()
             for id in ids {
-                if let detail = try await fetchFullDetail(id) {
+                if !hidden.contains(id), let detail = try await fetchFullDetail(id) {
                     let parts = try RelaySessionPartitioner.parts(for: detail, kind: .sessionFull, requestID: requestID, generatedAt: now)
                     convertLog.info("session_prepared", metadata: .fields([
                         "device": device.rawValue,
@@ -981,7 +993,7 @@ public actor RelayHostService: Service {
                 }
             }
         case let .timeline(device, requestID, id, since):
-            if let detail = try await fetchTimelineSince(id, since: since) {
+            if try await !filterHiddenIDs().contains(id), let detail = try await fetchTimelineSince(id, since: since) {
                 let parts = try RelaySessionPartitioner.parts(for: detail, kind: .sessionTimeline, requestID: requestID, generatedAt: now)
                 convertLog.info("session_prepared", metadata: .fields([
                     "device": device.rawValue,
@@ -999,15 +1011,19 @@ public actor RelayHostService: Service {
             }
         case let .events(events):
             guard !activeDevices.isEmpty else { return }
+            let hidden = try await filterHiddenIDs()
+            let events = events.filter { !hidden.contains($0.sessionID) }
+            guard !events.isEmpty else { return }
             let batches = try RelayPayloadBatcher.eventBatches(events, generatedAt: now)
             log.info("events_pushed", metadata: .fields(["events": events.count, "batches": batches.count, "devices": activeDevices.count]))
             try await send(batches.map(\.prepared), to: Array(activeDevices))
         case let .summaries(ids):
             guard !activeDevices.isEmpty else { return }
+            let hidden = try await filterHiddenIDs()
             var summaries: [SessionSummary] = []
-            for id in ids {
-                if let detail = try await repository.sessionDetail(id: id, cursor: nil, limit: 1) {
-                    summaries.append(detail.summary)
+            for id in ids where !hidden.contains(id) {
+                if let summary = try await repository.sessionSummary(id: id) {
+                    summaries.append(summary)
                 }
             }
             guard !summaries.isEmpty else { return }
@@ -1030,7 +1046,7 @@ public actor RelayHostService: Service {
         case let .reviewed(ids):
             for id in ids {
                 try? await repository.markSessionReviewed(id)
-                if let summary = try? await repository.sessionDetail(id: id, cursor: nil, limit: 1)?.summary {
+                if let summary = try? await repository.sessionSummary(id: id) {
                     subscriptions.publish(summary: summary)
                 }
             }

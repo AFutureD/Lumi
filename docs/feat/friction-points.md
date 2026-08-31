@@ -19,14 +19,14 @@
 
 ## Codex 未信任 Hook
 
-**用户会看到**：daemon 已连接、Hook 显示已安装，但 Codex Session 完全不出现，或停在某个时间点不再更新。Codex 侧没有任何报错——它只是不运行未信任的 Hook。“Settings > Agents”的 Codex 卡片会显示还有几个处理项未被信任；Codex 没有应答时则显示 Hook trust could not be verified。
+**用户会看到**：daemon 已连接、Hook 显示已安装，但 Codex Session 完全不出现，或停在某个时间点不再更新。Codex 侧没有任何报错——它只是不运行未信任的 Hook。“Settings > Agents”的 Codex 行会以警示色显示还有几个处理项未被信任；Codex 没有应答时副标题显示 trust unverified。
 
 **为什么会发生**：Codex 按处理项在 `hooks.json` 中的位置记录信任。任何工具改写这个文件，位置一变，信任就失效。Lumi 在每次启动时自动重新申请（[MAC-R-021](modules/mac-session-view.md#mac-r-021-自动向-codex-申请-hook-信任)），这里处理的是自动申请没有成功的情况。
 
 **恢复步骤**：
 
 1. 在 Settings 中栏选择“Agents”。
-2. 卡片提示未信任时点“Authorize”；提示无法确认时点“Check again”（先确认 Codex 已安装且能启动）。
+2. Codex 行提示未信任时点“Trust”；副标题提示 trust unverified 时先确认 Codex 已安装且能启动，再点一次“Trust”。
 3. 若按钮之后仍提示未信任，在 Codex 打开 `/hooks`，核对 Lumi 命令后手动信任。
 
 **完成信号**：卡片改为显示“Trusted by Codex”，新 Session 的首个 Hook 事件到达后 Mac 列表自动更新。
@@ -214,6 +214,21 @@ Mac 上的码在中途换掉或过期，也按第一种处理——回到输码�
 **完成信号**：Lumi 重新打开，“Settings > About”显示新版本；取消时当前版本与 Session 历史保持不变。
 
 相关文档：[软件更新](modules/software-updates.md) / [让 Lumi 保持最新](journeys/keep-lumi-up-to-date.md)
+
+## Filter 规则没有生效
+
+**用户会看到**：在“Settings > Agents”建了 Filters 规则，但目标 Session 仍出现在列表里。
+
+**为什么会发生**：判定只在每条 Session 的首条用户消息到达时做一次，之后永久冻结——建规则前已经存在的 Session 不会被回头隐藏（[MAC-R-025](modules/mac-session-view.md#mac-r-025-filters-在-session-首条用户消息判一次并冻结)）。另一个常见原因是 User message 规则按记录原文匹配：斜杠命令的记录以 `<command-name>` 标签开头，`starts with /usage` 这样的条件匹配不到，要用 `contains`。
+
+**恢复步骤**：
+
+1. 确认规则开关是开的（停用的规则整行半透明，不参与判断）。
+2. 斜杠命令类规则改用 `contains` 匹配命令名（如 `contains /usage`）。
+3. 已经在列表里的旧 Session 不受新规则影响；不想看到就直接删除它。
+4. 规则改好后，下一条命中的新 Session 会被隐藏——它照常入库，只是不显示。
+
+**完成信号**：之后产生的同类 Session 不再出现在主窗口、Notch 和 iPhone。
 
 ## 仍无法恢复：先看日志
 

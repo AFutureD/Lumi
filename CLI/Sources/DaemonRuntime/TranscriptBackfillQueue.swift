@@ -40,15 +40,15 @@ enum RichSourceCatchUp {
         // Reading from byte 0 must not inherit the newest known turn: the
         // history's own turn markers attribute its early records. The bridge
         // turn id is only for continuing a partially read source.
-        let turns = fromOffset == 0
-            ? []
-            : try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.turns ?? []
+        let initialTurnID = fromOffset == 0
+            ? nil
+            : try await repository.currentTurnID(sessionID: sessionID)
         let read = try RichSourceReader.read(
             path: path,
             sessionID: sessionID,
             adapter: adapter,
             fromOffset: fromOffset,
-            initialTurnID: (turns.last(where: { $0.isOpen }) ?? turns.last)?.id,
+            initialTurnID: initialTurnID,
             maximumBytes: maximumBytes
         )
         var applied = 0

@@ -6,6 +6,7 @@ import Logging
 import Persistence
 import Remote
 import ServiceLifecycle
+import Transport
 import Foundation
 
 private let log = Logger(label: "lifecycle")
@@ -28,14 +29,33 @@ enum LumenMain {
             log.error("support_directory_unavailable", metadata: .fields(["path": configuration.supportDirectory, "error": error]))
             throw error
         }
+        // The filter engine is the repository's filter evaluator (consulted
+        // on each session's first user message), so it exists first (empty)
+        // and gets the stored rules right after the database opens — before
+        // anything listens or watches.
+        let filterEngine = SessionFilterEngine()
         let repository: SQLiteSessionRepository
         do {
-            repository = try SQLiteSessionRepository(path: configuration.databasePath)
+            repository = try SQLiteSessionRepository(
+                path: configuration.databasePath,
+                sessionFilter: filterEngine
+            )
+            filterEngine.update(rules: try await repository.sessionFilterRules())
         } catch {
             dbLog.error("database_open_failed", metadata: .fields(["path": configuration.databasePath, "error": error]))
             throw error
         }
         let subscriptions = DaemonSubscriptionHub()
+        // Every ingest path publishes through this closure so a session
+        // hidden on its first user message follows the triggering event with
+        // the stamped summary frame — mirrors apply the event first (their
+        // own reduction knows nothing of the rules), then the verdict.
+        let publish: @Sendable (AgentIngressEvent) -> Void = { event in
+            subscriptions.publish(event)
+            if let verdict = filterEngine.takeVerdict(for: event.sessionID) {
+                subscriptions.publish(summary: verdict)
+            }
+        }
         let executableHash: String
         do {
             executableHash = try ExecutableFingerprint.currentExecutable()
@@ -59,7 +79,7 @@ enum LumenMain {
         // starts and watcher offline gaps alike.
         let backfill = TranscriptBackfillQueue(
             repository: repository,
-            onEvent: { subscriptions.publish($0) }
+            onEvent: publish
         )
         // Both watchers are load-bearing correctness, not options: hook-less
         // tail writes (a Codex `turn_aborted` after an interrupt, a Claude
@@ -69,13 +89,13 @@ enum LumenMain {
             repository: repository,
             pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
             backfill: backfill,
-            onEvent: { subscriptions.publish($0) }
+            onEvent: publish
         )
         let claudeWatcher = ClaudeTranscriptWatcher(
             repository: repository,
             pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
             backfill: backfill,
-            onEvent: { subscriptions.publish($0) }
+            onEvent: publish
         )
         let server = DaemonServer(socketPath: configuration.socketPath, service: service)
         // The Relay host lives here, not in the Mac app: paired iPhones keep
@@ -101,9 +121,10 @@ enum LumenMain {
             repository: repository,
             backfill: backfill,
             codexSessionsDirectory: configuration.codexSessionsDirectory,
-            onEvent: { subscriptions.publish($0) }
+            onEvent: publish
         )
         await service.attachHookIngest(hookIngest)
+        await service.attachSessionFilters(filterEngine)
 
         // Ordered, before anything serves: the baseline must exist before a
         // hook frame or the poll loop can touch rollout cursors, and the

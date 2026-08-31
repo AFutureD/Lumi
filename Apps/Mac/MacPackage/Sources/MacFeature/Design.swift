@@ -94,6 +94,9 @@ enum Design {
         static let cardCornerRadius: CGFloat = DS.Radius.card
         /// Settings cards stop growing past this; a readability limit, not a design value.
         static let cardMaximumWidth: CGFloat = 640
+        /// The Agents pane (Integrations + Filters) runs wider — the filter
+        /// rows carry condition chips and an in-place editor (handoff page 5).
+        static let settingsWideCardMaximumWidth: CGFloat = 860
         static let settingsRowMinimumHeight: CGFloat = DS.Metrics.settingsRowMinimumHeight
         static let settingsRowInsets = NSEdgeInsets(top: DS.Spacing.l, leading: DS.Spacing.xl, bottom: DS.Spacing.l, trailing: DS.Spacing.xl)
         static let factRowHeight: CGFloat = DS.Metrics.factRowHeight
@@ -164,6 +167,7 @@ enum Design {
             static let activityHairline = SwiftUI.Color(DS.Surface.separator)
             static let chevron = SwiftUI.Color(DS.Ink.chevron)
             static let destructiveText = SwiftUI.Color(DS.Ink.destructive)
+            static let warningText = SwiftUI.Color(DS.Ink.warning)
             static let accent = SwiftUI.Color(DS.Ink.accent)
         }
     }

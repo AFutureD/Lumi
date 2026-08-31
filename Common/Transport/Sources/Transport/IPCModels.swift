@@ -143,6 +143,8 @@ public enum IPCOperation: Hashable, Sendable {
     case relayPairingState
     case relayPairingDecide
     case relayPairingCancel
+    case getSessionFilters
+    case setSessionFilters
 
     public var rawValue: String {
         switch self {
@@ -164,6 +166,8 @@ public enum IPCOperation: Hashable, Sendable {
         case .relayPairingState: "relay_pairing_state"
         case .relayPairingDecide: "relay_pairing_decide"
         case .relayPairingCancel: "relay_pairing_cancel"
+        case .getSessionFilters: "get_session_filters"
+        case .setSessionFilters: "set_session_filters"
         }
     }
 }
@@ -191,6 +195,8 @@ extension IPCOperation: Codable {
         case "relay_pairing_state": .relayPairingState
         case "relay_pairing_decide": .relayPairingDecide
         case "relay_pairing_cancel": .relayPairingCancel
+        case "get_session_filters": .getSessionFilters
+        case "set_session_filters": .setSessionFilters
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown IPC operation: \(value)")
         }
     }
@@ -224,6 +230,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     public let deviceID: DeviceID?
     /// `relay_pairing_decide`: Match (`true`) or Don't match (`false`).
     public let approved: Bool?
+    /// `set_session_filters`: the whole rule list, in user order.
+    public let filters: [SessionFilterRule]?
 
     public init(
         operation: IPCOperation,
@@ -235,7 +243,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         env: [String: String]? = nil,
         data: Data? = nil,
         deviceID: DeviceID? = nil,
-        approved: Bool? = nil
+        approved: Bool? = nil,
+        filters: [SessionFilterRule]? = nil
     ) {
         self.operation = operation
         self.sessionID = sessionID
@@ -247,6 +256,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.data = data
         self.deviceID = deviceID
         self.approved = approved
+        self.filters = filters
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -260,6 +270,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case data
         case deviceID
         case approved
+        case filters
     }
 
     public init(from decoder: Decoder) throws {
@@ -274,6 +285,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         data = try c.decodeIfPresent(Data.self, forKey: .data)
         deviceID = try c.decodeIfPresent(DeviceID.self, forKey: .deviceID)
         approved = try c.decodeIfPresent(Bool.self, forKey: .approved)
+        filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
     }
 }
 
@@ -361,6 +373,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     /// `relay_pairing_start` / `relay_pairing_state` / `relay_pairing_decide`:
     /// the daemon's live pairing session, `nil` when there is none.
     public let pairing: RelayPairingSession?
+    /// `get_session_filters` / `set_session_filters`: the stored rule list.
+    public let filters: [SessionFilterRule]?
 
     public init(
         status: IPCResponseStatus,
@@ -372,7 +386,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         acceptedCount: Int? = nil,
         failure: IPCFailure? = nil,
         relay: RelayHostStatus? = nil,
-        pairing: RelayPairingSession? = nil
+        pairing: RelayPairingSession? = nil,
+        filters: [SessionFilterRule]? = nil
     ) {
         self.status = status
         self.sessions = sessions
@@ -384,6 +399,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.failure = failure
         self.relay = relay
         self.pairing = pairing
+        self.filters = filters
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -397,6 +413,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case failure
         case relay
         case pairing
+        case filters
     }
 
     public init(from decoder: Decoder) throws {
@@ -411,5 +428,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         failure = try c.decodeIfPresent(IPCFailure.self, forKey: .failure)
         relay = try c.decodeIfPresent(RelayHostStatus.self, forKey: .relay)
         pairing = try c.decodeIfPresent(RelayPairingSession.self, forKey: .pairing)
+        filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
     }
 }

@@ -139,7 +139,7 @@ public struct SessionReingester: Sendable {
             let childID = ClaudeSubagentIdentity.sessionID(parent: parent, agentID: agentID)
             let read = try RichSourceReader.read(path: path, sessionID: childID, adapter: claudeAdapter, fromOffset: 0)
             guard !read.events.isEmpty else { continue }
-            let previousChild = try await repository.sessionDetail(id: childID, cursor: nil, limit: 1)?.summary
+            let previousChild = try await repository.sessionSummary(id: childID)
             if previousChild == nil, try await repository.isSessionIgnored(childID) { continue }
             ids.append(childID)
             _ = try await repository.resetSession(id: childID)
@@ -169,7 +169,10 @@ public struct SessionReingester: Sendable {
     /// cannot restore them: `needsReview` is cleared only by the human opening
     /// the session, and the rebuilt turn ends would flip it green again;
     /// `hiddenInNotch` is set only by the human archiving from the Notch, and
-    /// the rebuilt user prompts would unhide it.
+    /// the rebuilt user prompts would unhide it. The filter verdict and its
+    /// latch are frozen one-shots: the replay re-evaluates against the
+    /// *current* rules, so the previous pair is restored unconditionally, in
+    /// both directions.
     private func restoreHumanFlags(from previous: SessionSummary, on sessionID: SessionID) async throws {
         if !previous.needsReview {
             try await repository.markSessionReviewed(sessionID)
@@ -177,6 +180,11 @@ public struct SessionReingester: Sendable {
         if previous.hiddenInNotch {
             try await repository.markSessionHiddenInNotch(sessionID)
         }
+        try await repository.setSessionFilterVerdict(
+            sessionID,
+            hiddenByFilter: previous.hiddenByFilter,
+            filterEvaluated: previous.filterEvaluated
+        )
     }
 
     // MARK: - Pieces

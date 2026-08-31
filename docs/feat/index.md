@@ -9,12 +9,12 @@ Lumi 把一台 Mac 上多个 Agent（Codex 与 Claude Code）、多个 Session �
 ## 立即开始
 
 1. 打开 Mac App，在侧边栏选择“Settings”。
-2. 在中栏选择“Daemon”并点击“Install & Start daemon”，再在“Agents”里给你使用的 Agent（Codex / Claude Code）点击“Install Hook”。
+2. 在中栏选择“Daemon”并点击“Install & Start daemon”，再在“Agents”的 Integrations 列表里给你使用的 Agent（Codex / Claude Code）点击“Install”。
 3. 在 Agent 里提交一次任务，回到“Sessions”查看状态和时间线。
 
 完成信号：Session 出现在中栏列表；新 Agent 事件到达时，列表和详情自动更新。
 
-Codex 只运行它信任过的 Hook，而且不信任时不给任何提示。安装 Hook 和每次启动 App 都会自动补上这份信任，所以正常情况不需要做别的；只有自动授权没成功时，“Settings > Agents”才会出现提示和“Authorize”按钮。
+Codex 只运行它信任过的 Hook，而且不信任时不给任何提示。安装 Hook 和每次启动 App 都会自动补上这份信任，所以正常情况不需要做别的；只有自动授权没成功时，“Settings > Agents”的 Codex 行才会出现警示副标题和“Trust”按钮。
 
 ## 功能模块
 
@@ -22,7 +22,7 @@ Codex 只运行它信任过的 Hook，而且不信任时不给任何提示。安
 
 Mac 主窗口参考系统 Mail.app 的“导航—列表—详情”三栏：Session 列表按创建时间倒序，两行式行内即可看到标题、状态、最近更新时间、模型与 Subagent 状态；详情由 Activity 主区（可切换密度的横向时间轴，按消息类别与重要性 L1–L3 过滤）和 Inspector（Token / Context / Elapsed 指标与 Session 信息）组成。关闭主窗口不退出 Lumi，Dock 图标随窗口隐藏，Notch 和同步照常运行。
 
-Notch 紧凑状态只占屏幕顶部一小条，展开后列出最近七天内活动过的主 Session；Turn 结束或失败时自动展开并短暂提示，回合开始不打扰；处理完的 Session 可以就地归档出 Notch，主窗口和 iPhone 不受影响。外部产生的 Session 内容只在 App 启动、手动刷新和收到 Agent 事件时同步；历史不会自动过期，删除由用户决定。
+Notch 紧凑状态只占屏幕顶部一小条，展开后列出最近七天内活动过的主 Session；Turn 结束或失败时自动展开并短暂提示，回合开始不打扰；处理完的 Session 可以就地归档出 Notch，主窗口和 iPhone 不受影响。外部产生的 Session 内容只在 App 启动、手动刷新和收到 Agent 事件时同步；历史不会自动过期，删除由用户决定。测试、一次性调用这类幽灵 Session 可以在“Settings > Agents”配 Filters 规则：命中的新 Session 照常记录，但不出现在主窗口、Notch，也不进 iPhone。
 
 [查看模块详情](modules/mac-session-view.md)
 

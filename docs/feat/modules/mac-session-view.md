@@ -38,7 +38,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 3. 右栏——详情。
    - 工具栏：Session 标题 + 三个动作按钮（Refresh、Delete Session、Toggle Inspector）；标题下方一条 subheader 显示 Agent 胶囊、状态药丸和工作目录。
    - Inspector：右侧 288 pt。顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段；由 Toggle Inspector 显隐，状态在重启后保留。
-   - Activity：独占主区，按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；用户键入的斜杠命令按键入的原样（如 `/usage`）显示为用户消息，而不是上下文；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。
+   - Activity：独占主区，按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；用户键入的斜杠命令显示为用户消息（内容为记录原文，含 `<command-name>` 等标签），而不是上下文；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。
    - Activity 粘顶 header：标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮。默认 User、Model、Exec 三行横向时间轴（Session 开始/结束、压缩与配置横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；密度偏好在重启后保留。
    - Activity 交互：点击任一时间轴方格跳到对应记录并短暂高亮；点击记录行查看原始 JSON；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
 4. 窗口缩放只改变右栏中 Activity 主区的宽度；侧栏、中栏和 Inspector 保持各自宽度。
@@ -91,8 +91,8 @@ Mac 主窗口的状态视觉：
 2. 点击“Install & Start daemon”。
    - 系统反馈：Daemon 面板显示连接和运行状态。
    - 规则引用：[MAC-R-001](#mac-r-001-daemon-决定实时可用性)。
-3. 在中栏选择“Agents”。页面按 Agent 分为 Codex 和 Claude Code 两张卡片，各自有独立的“Install Hook”按钮；给你在用的 Agent 点击安装（两个都用就都装）。
-   - 系统反馈：卡片显示 integration installed；Codex 卡片随后显示“Trusted by Codex”和处理项数量（Claude Code 无信任环节）。
+3. 在中栏选择“Agents”。Integrations 列表一行一个 Agent（Codex、Claude Code），给你在用的 Agent 点行尾的“Install”（两个都用就都装）。
+   - 系统反馈：该行副标题变为 Installed；Codex 行随后显示已信任的处理项数量（Claude Code 无信任环节）。
    - 数据结果：只追加 Lumi Hook，不覆盖其他集成，写入前在配置文件旁保留一份备份；Codex 的信任记录只针对 Lumi 自己的处理项写入。
    - 规则引用：[MAC-R-002](#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)。
 4. 新建一个 Agent Session 并提交任务。
@@ -132,6 +132,16 @@ Mac 主窗口的状态视觉：
 ### 过滤 Session 列表
 
 在工具栏中栏段的“Filter sessions”输入文字，列表只保留标题、Agent 名或工作目录包含该文字的 Session；命中的 Subagent 会连同父级一起保留。清空文字恢复完整列表；没有命中时显示 No matching Sessions。
+
+### 隐藏幽灵 Session（Filters）
+
+测试、`~/tmp` 里的一次性调用这类不想再看到的 Session，可以用“Settings > Agents”的 Filters 规则挡在所有界面之外：命中规则的新 Session 照常记录，但不出现在主窗口列表、Notch，也不同步到 iPhone、不发推送。
+
+- 语义：默认显示所有 Session；命中任一启用规则的被隐藏。一条规则内的条件全部满足才算命中（and），多条规则之间取或。
+- 条件字段：Agent（Codex / Claude）、Application（承载会话的应用，如 Paseo）、User message（首条用户消息，contains / starts with，按记录原文匹配——斜杠命令记录含 `<command-name>` 标签，匹配命令名要用 contains）、Folder（工作目录，选中的文件夹及其子目录都算命中）。
+- 编辑就地完成：`+ Add Filter…` 追加一条默认规则（Agent is Codex）并立刻展开编辑；已有规则点铅笔展开，一次只有一行可编辑；Cancel 回滚（新建行直接消失），Done 保存。规则行可以拖拽排序、用开关停用（保留但不参与判断）、点 × 删除。
+- 生效时机：规则只对新 Session 生效——在它的首条用户消息到达时判一次，之后不再改变；改规则不会隐藏或放出已有 Session。斜杠命令、Raft 这类从不开回合的会话也会被判定。空值条件不命中任何 Session。
+- 规则引用：[MAC-R-025](#mac-r-025-filters-在-session-首条用户消息判一次并冻结)。
 
 ### 过滤 Activity
 
@@ -179,7 +189,9 @@ Activity 标题右侧有两枚下拉按钮：
   - Session history 卡片：标题显示保存的 Session 条数和磁盘占用；点“Clear history…”并在确认框（Clear Lumi Session history?）点“Clear History”即清空 Lumi 保存的全部 Session 与时间线，Agent 自身历史不受影响。
   - Logs 卡片：显示日志目录（`~/Library/Logs/Lumi`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。
   - 升级 App 后不需要手动 Reinstall：启动时发现 daemon 版本过期或起不来会自动重装（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
-- **Agents**：Codex 与 Claude Code 两张卡片，各自显示 integration installed / not installed、配置文件位置和 Install Hook / Remove Hook 按钮；Codex 卡片在已安装时多一行 Hook 信任状态（[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)）。
+- **Agents**：两组内容。
+  - Integrations：一张卡片列出全部 Agent（Codex、Claude Code），每行是图标、名称、等宽配置文件路径和状态副标题，行尾一个按钮表示当前动作——未安装 Install、已安装 Remove（红字）；Codex 已安装但未被信任时按钮换成蓝色的 Trust（Remove 移进右键菜单），副标题以警示色说明 Session 会停止上报（[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)）。
+  - Filters：隐藏幽灵 Session 的规则列表，见[隐藏幽灵 Session](#隐藏幽灵-sessionfilters)与 [MAC-R-025](#mac-r-025-filters-在-session-首条用户消息判一次并冻结)。
 - **About**：显示版本与 build、更新通道与自动检查状态（如 `Stable · Automatic checks on`），提供“Check for Updates…”和系统 About 面板入口；完整行为见[软件更新](software-updates.md)。
 
 ## 规则
@@ -193,7 +205,7 @@ Activity 标题右侧有两枚下拉按钮：
 
 ### MAC-R-002 安装不替换现有 Hooks
 
-- 条件：用户在 Codex 或 Claude Code 卡片点击“Install Hook”。
+- 条件：用户在 Integrations 列表的 Codex 或 Claude Code 行点击“Install”。
 - 行为：只追加尚不存在的 Lumi Hook；每次写入前在配置文件旁保留一份 `.lumi-backup` 备份。
 - 结果：其他集成继续保留。
 - 限制或例外：写入 Codex 的 hooks.json 会让它已有的信任记录失效，因此安装后立即执行 [MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)。
@@ -228,7 +240,7 @@ Activity 标题右侧有两枚下拉按钮：
 
 ### MAC-R-007 移除集成只移除 Lumi
 
-- 条件：用户在 Codex 或 Claude Code 卡片点击“Remove Hook”。
+- 条件：用户在 Integrations 列表的 Codex 或 Claude Code 行点击“Remove”（Codex 未信任时 Remove 在该行的右键菜单里）。
 - 行为：只删除该 Agent 配置中 Lumi helper 对应的处理项。
 - 结果：其他 Hook 保留；另一个 Agent 的安装不受影响。
 - 限制或例外：daemon 仍可运行；停止全部采集还需停止并卸载 daemon。
@@ -367,18 +379,18 @@ Activity 标题右侧有两枚下拉按钮：
 
 - 条件：Hook 已安装（Codex 或 Claude Code），且 Mac App 启动时自带的 helper 与已安装副本不一致（按文件内容逐字节比对）。
 - 行为：启动时自动把 helper 更新为当前版本，并把 Hook 配置刷新到当前事件集——补上新增事件、移除 Lumi 不再监听的事件下自己的处理项；配置完全一致时不写任何文件。
-- 结果：升级 App 后 Hook 立即获得新采集能力，无需重新点击“Install Hook”。
+- 结果：升级 App 后 Hook 立即获得新采集能力，无需重新点击“Install”。
 - 限制或例外：从未安装过 Hook 时启动不做任何事；配置刷新仍只触碰 Lumi 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。
 
 ### MAC-R-021 自动向 Codex 申请 Hook 信任
 
-- 条件：Codex Hook 已安装。发生在点击“Install Hook”之后，以及每次 App 启动时。
+- 条件：Codex Hook 已安装。发生在点击“Install”之后，以及每次 App 启动时。
 - 行为：向 Codex 询问它当前怎么看待各个处理项，为其中未被信任的 Lumi 处理项写入信任，然后再问一次以确认结果。整个过程只涉及命令为 Lumi helper 的处理项，其他工具的 Hook 一律不读取也不改写。
-- 结果：用户不必手动审核就能继续收到 Session 事件；“Settings > Agents”的 Codex 卡片显示“Trusted by Codex”和处理项数量。
+- 结果：用户不必手动审核就能继续收到 Session 事件；“Settings > Agents”的 Codex 行副标题显示已信任的处理项数量。
 - 限制或例外：
   - Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。
-  - 本机没有 Codex、或 Codex 版本还没有信任机制时不显示这一行。
-  - 仍有处理项未被信任时，卡片提示未信任数量并提供“Authorize”按钮；Codex 没有应答（无法确认信任状态）时，卡片提示 Hook trust could not be verified 并提供“Check again”按钮。两者仍失败则需要用户在 Codex `/hooks` 中手动信任。
+  - 本机没有 Codex、或 Codex 版本还没有信任机制时副标题只显示 Installed。
+  - 仍有处理项未被信任时，Codex 行的副标题以警示色提示未信任数量与“Session 会停止上报”，行尾按钮换成蓝色的“Trust”（Remove 移进右键菜单）；Codex 没有应答（无法确认信任状态）时副标题提示 trust unverified。仍失败则需要用户在 Codex `/hooks` 中手动信任。
 
 ### MAC-R-022 启动时自动更新已安装的 daemon
 
@@ -405,13 +417,23 @@ Activity 标题右侧有两枚下拉按钮：
 - 结果：启用 Lumi 后从未再使用的旧 Session 不会出现；在一条旧 Session 里再发一条请求，它会带着完整历史出现在列表里。
 - 限制或例外：从未产生过任何 Turn 的 Claude Session 会在会话结束时被丢弃，不进入列表；升级迁移也会一次性清掉历史上残留的这类空 Session。已被用户删除的 Session 需重新满足进入条件才会回来（[MAC-R-012](#mac-r-012-历史由用户决定删除)）。
 
+### MAC-R-025 Filters 在 Session 首条用户消息判一次并冻结
+
+- 条件：“Settings > Agents”存在至少一条启用的 Filter 规则，一条新 Session 的首条用户消息到达（斜杠命令这类不开回合的用户消息也算）。
+- 行为：按当时的规则判定一次（User message 规则匹配这条消息的记录原文）。命中即隐藏：这条 Session（连同它的整组 Subagent）不出现在主窗口列表和 Notch，不同步到已配对 iPhone，也不发推送；数据照常记录在 daemon。判定结果永久冻结——之后改规则、删规则、Session 复活或刷新重算都不改变它。
+- 结果：幽灵 Session 不再打扰任何界面；正常 Session 不会因为后加的规则消失。
+- 限制或例外：
+  - 停用的规则不参与判定；值为空的条件不命中任何 Session。
+  - 规则只在这台 Mac 的 daemon 上判定与存储；Clear history 清掉的是 Session，规则保留。
+  - 被隐藏的 Session 目前没有查看入口（计划后续提供显示开关）；daemon 的 Stored sessions 计数包含它们。
+
 ## 空状态与故障
 
 - **No Sessions**：daemon 在线，但还没有 Session 进入 Lumi，或用户已删除全部记录。
 - **No matching Sessions**：过滤词没有命中任何 Session；清空搜索框恢复。
 - **No active Sessions**（Notch）：没有符合展示条件的 Session（都已被归档，或都超过七天没有活动）；历史仍可在主窗口查看。
 - **Daemon unavailable**（Notch 空态与 Settings）：保留本地已同步内容供查看；恢复 daemon 后点击刷新图标（Refresh）。
-- **Codex 未信任 Hook**：Codex 不运行未信任的 Hook，也不给提示，表现为 Session 停更；在“Settings > Agents”点击“Authorize”（或 Codex 无应答时点“Check again”），仍失败则在 Codex `/hooks` 中手动信任。
+- **Codex 未信任 Hook**：Codex 不运行未信任的 Hook，也不给提示，表现为 Session 停更；在“Settings > Agents”的 Codex 行点击“Trust”，仍失败则在 Codex `/hooks` 中手动信任。
 
 更多恢复步骤见[用户摩擦点](../friction-points.md)。
 

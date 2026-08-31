@@ -295,7 +295,9 @@ public final class MacSessionStore {
     /// This never performs an additional daemon refresh.
     public func snapshotDetails() async throws -> [SessionDetail] {
         guard let cache else { throw MacSessionStoreError.cacheUnavailable }
-        let summaries = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
+        let visible = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
+        let hiddenByFilter = SessionSummary.filterHiddenIDs(visible)
+        let summaries = visible.filter { !hiddenByFilter.contains($0.id) }
         if let cachedSnapshotDetails,
            cachedSnapshotDetails.count == summaries.count,
            summaries.allSatisfy({ cachedSnapshotDetails[$0.id] != nil }) {
@@ -566,8 +568,14 @@ public final class MacSessionStore {
             // Provisional sessions (no Turn yet) stay in the cache but never
             // reach the list, the Notch or the Relay — except a provisional
             // parent of a visible subagent, which stays so the tree holds and
-            // the user can refresh (reingest) it.
-            let updated = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
+            // the user can refresh (reingest) it. Filter-hidden sessions (and
+            // their subagent groups) stay cached too — reconcile keeps them,
+            // and a future "show hidden" toggle only needs to skip this line —
+            // but reach neither the list nor the Notch, which both feed from
+            // `sessions`.
+            let visible = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
+            let hiddenByFilter = SessionSummary.filterHiddenIDs(visible)
+            let updated = visible.filter { !hiddenByFilter.contains($0.id) }
             try await refreshModelStamps(for: updated, events: appliedEvents)
             let previousSessions = sessions
             let previousDetail = selectedSession
@@ -812,7 +820,13 @@ public final class MacSessionStore {
     }
 
     private static func defaultCachePath() -> String {
-        FileManager.default.homeDirectoryForCurrentUser
+        // `LUMI_MAC_CACHE` isolates the Mac cache the way `LUMI_SOCKET`
+        // isolates the daemon: an app pointed at a scratch daemon must not
+        // reconcile (and prune) the real cache.
+        if let override = ProcessInfo.processInfo.environment["LUMI_MAC_CACHE"], !override.isEmpty {
+            return override
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Lumi/Mac", isDirectory: true)
             .appendingPathComponent("sessions.sqlite3")
             .path

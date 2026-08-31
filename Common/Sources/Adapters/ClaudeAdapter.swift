@@ -504,14 +504,15 @@ public struct ClaudeAdapter: AgentAdapter {
                             suffix: next(),
                             itemID: turnID.map { TimelineItemIDs.turnEnd(sessionID, turnID: $0) }
                         ))
-                    } else if let invocation = Self.commandInvocation(trimmed) {
-                        // The user typed this slash command; the tags are only
-                        // Claude Code's serialization of it. It stays
-                        // turn-neutral: a local command never reaches the
-                        // model, and a prompt-expanding one opens its Turn on
-                        // the expanded prompt record.
+                    } else if trimmed.hasPrefix("<command-name>") {
+                        // The user typed this slash command; Claude Code
+                        // serialized it as XML-ish tags. Kept as an ordinary
+                        // user message with its raw content — deliberately
+                        // unparsed — and turn-neutral: a local command never
+                        // reaches the model, and a prompt-expanding one opens
+                        // its Turn on the expanded prompt record.
                         events.append(makeEvent(
-                            timeline: .message(MessageTimelinePayload(role: .user, text: invocation)),
+                            timeline: .message(MessageTimelinePayload(role: .user, text: trimmed)),
                             suffix: next(),
                             includeWorkspace: true
                         ))
@@ -834,23 +835,9 @@ public struct ClaudeAdapter: AgentAdapter {
         return (remaining, reminders)
     }
 
-    /// A slash-command record — `<command-name>/usage</command-name>` plus
-    /// `<command-message>` / `<command-args>` siblings. Unlike the other
-    /// injected tags this is something the user typed, so it renders as their
-    /// message; this reassembles the typed form, `/name args`.
-    static func commandInvocation(_ text: String) -> String? {
-        guard text.hasPrefix("<command-name>") else { return nil }
-        func tag(_ name: String) -> String? {
-            guard let open = text.range(of: "<\(name)>"),
-                  let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex) else { return nil }
-            return String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        guard let name = tag("command-name"), !name.isEmpty else { return nil }
-        guard let args = tag("command-args"), !args.isEmpty else { return name }
-        return "\(name) \(args)"
-    }
-
     /// `<local-command-caveat>` / `<local-command-stdout>` / `<task-notification>` etc.
+    /// (`<command-name>` records never reach here — the user typed those, so
+    /// the block loop keeps them as plain user messages, raw.)
     static func injectedKind(_ text: String) -> String? {
         guard text.hasPrefix("<"), let close = text.firstIndex(of: ">") else { return nil }
         let tag = text[text.index(after: text.startIndex)..<close]

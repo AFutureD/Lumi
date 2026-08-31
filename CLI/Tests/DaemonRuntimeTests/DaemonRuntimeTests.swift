@@ -1289,3 +1289,78 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
     let server = DaemonServer(socketPath: socketPath, service: service)
     await #expect(throws: DaemonServerError.self) { try await server.listen() }
 }
+
+@Test func serviceStoresAndValidatesSessionFilters() async throws {
+    let repository = InMemorySessionRepository()
+    let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
+    let engine = SessionFilterEngine()
+    await service.attachSessionFilters(engine)
+
+    // Empty until anything is stored.
+    let empty = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSessionFilters)))
+    #expect(empty.payload.status == .ok)
+    #expect(empty.payload.filters == [])
+
+    let rules = [
+        SessionFilterRule(conditions: [SessionFilterCondition(field: .agent, op: .is, value: .text("codex"))]),
+        SessionFilterRule(isEnabled: false, conditions: [SessionFilterCondition(field: .folder, op: .is, value: .text("/tmp"))]),
+    ]
+    let set = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setSessionFilters, filters: rules)))
+    #expect(set.payload.status == .ok)
+    #expect(set.payload.filters == rules)
+    // Stored in the repository AND live in the engine.
+    #expect(try await repository.sessionFilterRules() == rules)
+    #expect(engine.currentRules() == rules)
+    let got = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSessionFilters)))
+    #expect(got.payload.filters == rules)
+
+    // Missing list and invalid shapes are rejected without touching state.
+    let missing = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setSessionFilters)))
+    #expect(missing.payload.failure?.code == "missing_filters")
+    let conditionless = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .setSessionFilters,
+        filters: [SessionFilterRule(conditions: [])]
+    )))
+    #expect(conditionless.payload.failure?.code == "invalid_filter")
+    let wrongOperator = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .setSessionFilters,
+        filters: [SessionFilterRule(conditions: [SessionFilterCondition(field: .folder, op: .contains, value: .text("/tmp"))])]
+    )))
+    #expect(wrongOperator.payload.failure?.code == "invalid_filter")
+    #expect(try await repository.sessionFilterRules() == rules)
+}
+
+@Test func filterEngineHidesOnTheFirstUserMessageAndHandsTheVerdictToThePublisher() async throws {
+    let engine = SessionFilterEngine()
+    engine.update(rules: [
+        SessionFilterRule(conditions: [SessionFilterCondition(field: .message, op: .startsWith, value: .text("test:"))]),
+    ])
+    let repository = InMemorySessionRepository(sessionFilter: engine)
+    let sessionID = SessionID("s")
+
+    let start = AgentIngressEvent(
+        eventID: EventID("e1"), sessionID: sessionID, agent: .codex,
+        occurredAt: Date(timeIntervalSince1970: 10), lifecycle: .starting, phase: .idle
+    )
+    _ = try await repository.apply(start)
+    #expect(engine.takeVerdict(for: sessionID) == nil)
+
+    let firstMessage = AgentIngressEvent(
+        eventID: EventID("e2"), sessionID: sessionID, turnID: TurnID("t"), agent: .codex,
+        occurredAt: Date(timeIntervalSince1970: 20), lifecycle: .running, phase: .thinking,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("m1"), sessionID: sessionID, turnID: TurnID("t"),
+            occurredAt: Date(timeIntervalSince1970: 20),
+            payload: .message(MessageTimelinePayload(role: .user, text: "test: probe"))
+        )
+    )
+    _ = try await repository.apply(firstMessage)
+    // The publisher drains exactly one stamped summary, once — carrying the
+    // verdict AND the latch, so mirrors converge.
+    let verdict = engine.takeVerdict(for: sessionID)
+    #expect(verdict?.hiddenByFilter == true)
+    #expect(verdict?.filterEvaluated == true)
+    #expect(engine.takeVerdict(for: sessionID) == nil)
+    let stored = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary
+    #expect(stored?.hiddenByFilter == true)
+}

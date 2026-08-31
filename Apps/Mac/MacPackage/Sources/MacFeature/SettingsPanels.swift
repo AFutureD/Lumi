@@ -28,8 +28,10 @@ final class SettingsModel: ObservableObject {
 
     let version: String
     let build: String
-    let hookLocation = "~/.codex/hooks.json · Spark --agent codex"
-    let claudeHookLocation = "~/.claude/settings.json · Spark --agent claude"
+    let hookLocation = "~/.codex/hooks.json"
+    let claudeHookLocation = "~/.claude/settings.json"
+    /// The Filters group's own state; shares this model's error surface.
+    let filterRules = SessionFilterRulesModel()
     /// `~/Library/Logs/Lumi` — daemon.log, helper.log, app.log and errors.log.
     let logDirectory = LogConfiguration.defaultDirectory()
     var logDirectoryDescription: String {
@@ -355,105 +357,137 @@ struct AgentsSettingsPanel: View {
 
     var body: some View {
         SettingsPanelScroll {
-            SettingsSection(title: "Codex") {
+            SettingsSection(title: "Integrations", maxWidth: Design.Layout.settingsWideCardMaximumWidth) {
                 SettingsCard {
-                    HStack(spacing: 12) {
-                        Group {
-                            if let image = AgentIcons.image(for: .codex, pointSize: 20) {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .frame(width: 20, height: 20)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.hookInstalled ? "Codex integration installed" : "Codex integration not installed")
-                                .font(Design.Font.UI.rowTitle)
-                            Text(model.hookLocation)
-                                .font(Design.Font.UI.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Button { model.toggleCodexHook() } label: {
-                            Text(model.hookInstalled ? "Remove Hook" : "Install Hook")
-                                .foregroundStyle(model.hookInstalled ? Design.Color.UI.destructiveText : .primary)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 52)
-                    if model.hookInstalled { trustRow }
+                    codexRow
                     Divider()
-                    SettingsFootnote(text: "Hooks go into ~/.codex/hooks.json. Installing the integration preserves existing Hook handlers.")
+                    claudeRow
+                    Divider()
+                    SettingsFootnote(text: "Hooks go into each agent's own config file. Installing or removing keeps other tools' handlers.")
                 }
             }
-            SettingsSection(title: "Claude Code") {
-                SettingsCard {
-                    HStack(spacing: 12) {
-                        Group {
-                            if let image = AgentIcons.image(for: .claude, pointSize: 20) {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .frame(width: 20, height: 20)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.claudeHookInstalled ? "Claude Code integration installed" : "Claude Code integration not installed")
-                                .font(Design.Font.UI.rowTitle)
-                            Text(model.claudeHookLocation)
-                                .font(Design.Font.UI.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Button { model.toggleClaudeHook() } label: {
-                            Text(model.claudeHookInstalled ? "Remove Hook" : "Install Hook")
-                                .foregroundStyle(model.claudeHookInstalled ? Design.Color.UI.destructiveText : .primary)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 52)
-                    Divider()
-                    SettingsFootnote(text: "Hooks go into the `hooks` key of ~/.claude/settings.json; other settings and other tools' hooks are preserved. The helper reads the session transcript on every hook.")
-                }
-            }
+            SessionFiltersGroup(model: model.filterRules)
         }
-        .onAppear { model.reload() }
+        .onAppear {
+            model.reload()
+            model.filterRules.presentError = model.presentError
+            model.filterRules.load()
+        }
     }
 
     /// Codex only runs handlers it has trusted, and it fails silently when it
-    /// has not — so the state is shown whenever the hook is installed, and the
-    /// row turns actionable the moment ingest would stop.
-    @ViewBuilder private var trustRow: some View {
-        switch model.codexHookTrust {
-        case .unsupported, .noHooks:
-            EmptyView()
-        case let .trusted(count):
-            Divider()
-            SettingsFactRow(
-                label: "Hook trust",
-                value: "Trusted by Codex · \(count) handler\(count == 1 ? "" : "s")"
-            )
-        case let .untrusted(keys):
-            Divider()
-            SettingsRow(
-                title: "Codex has not trusted \(keys.count) handler\(keys.count == 1 ? "" : "s")",
-                subtitle: "Sessions stop arriving until these are trusted. If authorizing fails, run /hooks in Codex.",
-                titleFont: Design.Font.UI.rowTitle
-            ) {
-                Button(model.isAuthorizingCodexHooks ? "Authorizing…" : "Authorize") { model.authorizeCodexHooks() }
+    /// has not — so an untrusted install swaps the main button for the one
+    /// action that restores ingest (`Trust`) and moves `Remove` into the
+    /// row's context menu.
+    @ViewBuilder private var codexRow: some View {
+        let untrusted = codexUntrusted
+        IntegrationRow(
+            icon: AgentIcons.image(for: .codex, pointSize: 20),
+            name: "Codex",
+            configPath: model.hookLocation,
+            subtitle: codexSubtitle,
+            isWarning: untrusted,
+            isInstalled: model.hookInstalled
+        ) {
+            if untrusted {
+                Button(model.isAuthorizingCodexHooks ? "Trusting…" : "Trust") { model.authorizeCodexHooks() }
+                    .buttonStyle(.borderedProminent)
                     .disabled(model.isAuthorizingCodexHooks)
-            }
-        case .failed:
-            Divider()
-            SettingsRow(
-                title: "Hook trust could not be verified",
-                subtitle: "Codex did not answer. Open Codex and run /hooks to check the Lumi handlers.",
-                titleFont: Design.Font.UI.rowTitle
-            ) {
-                Button(model.isAuthorizingCodexHooks ? "Checking…" : "Check again") { model.authorizeCodexHooks() }
-                    .disabled(model.isAuthorizingCodexHooks)
+            } else if model.hookInstalled {
+                Button { model.toggleCodexHook() } label: {
+                    Text("Remove").foregroundStyle(Design.Color.UI.destructiveText)
+                }
+            } else {
+                Button("Install") { model.toggleCodexHook() }
             }
         }
+        .contextMenu {
+            if untrusted {
+                Button("Remove") { model.toggleCodexHook() }
+            }
+        }
+    }
+
+    @ViewBuilder private var claudeRow: some View {
+        IntegrationRow(
+            icon: AgentIcons.image(for: .claude, pointSize: 20),
+            name: "Claude Code",
+            configPath: model.claudeHookLocation,
+            subtitle: model.claudeHookInstalled ? "Installed" : "Not installed",
+            isWarning: false,
+            isInstalled: model.claudeHookInstalled
+        ) {
+            if model.claudeHookInstalled {
+                Button { model.toggleClaudeHook() } label: {
+                    Text("Remove").foregroundStyle(Design.Color.UI.destructiveText)
+                }
+            } else {
+                Button("Install") { model.toggleClaudeHook() }
+            }
+        }
+    }
+
+    private var codexUntrusted: Bool {
+        if case .untrusted = model.codexHookTrust { return true }
+        return false
+    }
+
+    private var codexSubtitle: String {
+        guard model.hookInstalled else { return "Not installed" }
+        return switch model.codexHookTrust {
+        case let .trusted(count):
+            "Installed · \(count) handler\(count == 1 ? "" : "s")"
+        case let .untrusted(keys):
+            "Codex has not trusted \(keys.count) handler\(keys.count == 1 ? "" : "s") — Sessions stop arriving"
+        case .failed:
+            "Installed · trust unverified — run /hooks in Codex to check"
+        case .unsupported, .noHooks:
+            "Installed"
+        }
+    }
+}
+
+/// One integration: 20pt icon, name with the mono config path on the same
+/// baseline, a state (or warning) subtitle, and a single trailing button.
+private struct IntegrationRow<Action: View>: View {
+    let icon: NSImage?
+    let name: String
+    let configPath: String
+    let subtitle: String
+    let isWarning: Bool
+    let isInstalled: Bool
+    @ViewBuilder let action: () -> Action
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                if let icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                }
+            }
+            .opacity(isInstalled ? 1 : 0.55)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(name)
+                        .font(Design.Font.UI.rowTitle)
+                    Text(configPath)
+                        .font(Design.Font.UI.monoSmall)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(subtitle)
+                    .font(Design.Font.UI.caption)
+                    .foregroundStyle(isWarning ? AnyShapeStyle(Design.Color.UI.warningText) : AnyShapeStyle(.secondary))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            action()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(minHeight: 52)
     }
 }
 

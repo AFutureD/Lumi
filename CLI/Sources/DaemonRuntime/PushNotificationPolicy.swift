@@ -75,8 +75,13 @@ public enum PushNotificationPolicy {
             if let current = latest[event.sessionID], current.occurredAt > event.occurredAt { continue }
             latest[event.sessionID] = event
         }
+        // A filter-hidden session (or a subagent inside a hidden parent's
+        // group) never alerts: it reaches no UI on any device, and the alert
+        // title would leak a title the iPhone was never sent.
+        let hiddenByFilter = SessionSummary.filterHiddenIDs(Array(summaries.values))
         return latest.values.compactMap { event in
-            guard let summary = summaries[event.sessionID], !summary.isProvisional else { return nil }
+            guard let summary = summaries[event.sessionID], !summary.isProvisional,
+                  !hiddenByFilter.contains(event.sessionID) else { return nil }
             if let parent = summary.lineage?.parentSessionID, retainedParents.contains(parent) { return nil }
             if let last = lastPushAt[event.sessionID], now.timeIntervalSince(last) < cooldown { return nil }
             return Candidate(

@@ -23,6 +23,9 @@ public extension DesignSystem {
         public static let accent = Palette.blue.s600
         /// 破坏性 — destructive button label (Red 700); the button stays Bordered.
         public static let destructive = Palette.red.s700
+        /// 警示 — warning subtitles (an installed integration Codex has not
+        /// trusted); macOS Settings · Agents handoff.
+        public static let warning = DesignColor(hex: 0x8A5A28)
 
         // macOS design canvas extras.
 

@@ -70,7 +70,12 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     let read = try RichSourceReader.read(path: path, sessionID: SessionID(session), adapter: ClaudeAdapter(), fromOffset: 0)
     let payloads = read.events.compactMap { $0.timelineItem?.payload }
     let messages: [MessageTimelinePayload] = payloads.compactMap { if case .message(let m) = $0 { m } else { nil } }
-    #expect(messages.map(\.text) == ["/usage", "/review --fix high"])
+    // Raw content, deliberately unparsed: the record stays exactly the user
+    // message Claude Code wrote.
+    #expect(messages.map(\.text) == [
+        "<command-name>/usage</command-name>\n<command-message>usage</command-message>\n<command-args></command-args>",
+        "<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args>--fix high</command-args>",
+    ])
     #expect(messages.allSatisfy { $0.role == .user })
     let contexts: [ContextTimelinePayload] = payloads.compactMap { if case .context(let c) = $0 { c } else { nil } }
     #expect(contexts.map(\.kind) == ["local_command_caveat"])
@@ -278,6 +283,46 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     #expect(!report.detail.summary.needsAttention)
     #expect(report.detail.summary.statusTone == .gray)
     #expect(report.detail.summary.hiddenInNotch)
+}
+
+// The filter verdict is frozen at first-turn start; a rebuild replays events
+// against whatever rules exist NOW, so the previous verdict must win in both
+// directions — hidden stays hidden after the rules were deleted, and visible
+// stays visible after a rule that would now match was added.
+@Test func reingestKeepsTheFrozenFilterVerdictInBothDirections() async throws {
+    struct AlwaysHide: SessionFilterEvaluating {
+        func shouldHide(summary: SessionSummary, event: AgentIngressEvent) -> Bool { true }
+    }
+    let session = "acacacac-1111-2222-3333-444444444444"
+    let sid = SessionID(session)
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let projectDir = home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let path = projectDir.appendingPathComponent("\(session).jsonl").path
+    try jsonl(claudeTranscript(session: session, prompt: "p1")).write(toFile: path, atomically: true, encoding: .utf8)
+    let adapter = ClaudeAdapter()
+
+    // Visible stays visible: the replay runs with an evaluator that would
+    // hide everything, but the previous summary was visible.
+    let hideAll = InMemorySessionRepository(sessionFilter: AlwaysHide())
+    let live = try RichSourceReader.read(path: path, sessionID: sid, adapter: adapter, fromOffset: 0)
+    for event in live.events { _ = try await hideAll.apply(event) }
+    try await hideAll.saveRolloutCursor(live.cursor)
+    try await hideAll.setSessionFilterVerdict(sid, hiddenByFilter: false, filterEvaluated: true)
+    let visible = try await SessionReingester(repository: hideAll, claudeAdapter: adapter, homeDirectory: home)
+        .reingest(sessionID: sid, generation: "g1")
+    #expect(!visible.detail.summary.hiddenByFilter)
+
+    // Hidden stays hidden: no evaluator at all (rules deleted), but the
+    // previous summary carried the verdict.
+    let noRules = InMemorySessionRepository()
+    for event in live.events { _ = try await noRules.apply(event) }
+    try await noRules.saveRolloutCursor(live.cursor)
+    try await noRules.setSessionFilterVerdict(sid, hiddenByFilter: true, filterEvaluated: true)
+    let hidden = try await SessionReingester(repository: noRules, claudeAdapter: adapter, homeDirectory: home)
+        .reingest(sessionID: sid, generation: "g2")
+    #expect(hidden.detail.summary.hiddenByFilter)
 }
 
 @Test func reingestKeepsCompletedLifecycleFromSessionEnd() async throws {

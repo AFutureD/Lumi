@@ -21,6 +21,7 @@ public actor DaemonService {
     private var relayConnected = false
     private var relay: RelayHostService?
     private var hookIngest: HookIngestService?
+    private var filterEngine: SessionFilterEngine?
     public nonisolated let subscriptions: DaemonSubscriptionHub
 
     public init(
@@ -55,10 +56,16 @@ public actor DaemonService {
         hookIngest = service
     }
 
+    /// The live rules copy consulted at ingest; `set_session_filters` keeps
+    /// it in step with the repository's stored rules.
+    public func attachSessionFilters(_ engine: SessionFilterEngine) {
+        filterEngine = engine
+    }
+
     /// The same health the `health` IPC answers with.
     /// Streams a summary-only change (reviewed, archived) to local subscribers.
     private func publishSummary(_ id: SessionID) async {
-        guard let summary = try? await repository.sessionDetail(id: id, cursor: nil, limit: 1)?.summary else { return }
+        guard let summary = try? await repository.sessionSummary(id: id) else { return }
         subscriptions.publish(summary: summary)
     }
 
@@ -273,6 +280,34 @@ public actor DaemonService {
                     payload = failure(code: "relay_unavailable", message: "The daemon runs without a Relay connection.")
                 } else {
                     payload = failure(code: "missing_device_id", message: "The remove request has no device id.")
+                }
+            case .getSessionFilters:
+                payload = IPCResponse(status: .ok, filters: try await repository.sessionFilterRules())
+            case .setSessionFilters:
+                if let filters = envelope.payload.filters {
+                    if filters.count > 100 {
+                        payload = failure(code: "too_many_filters", message: "At most 100 filter rules are supported.")
+                    } else if let invalid = filters.first(where: { rule in
+                        rule.conditions.isEmpty
+                            || rule.conditions.contains { !$0.field.allowedOperators.contains($0.op) }
+                    }) {
+                        payload = failure(
+                            code: "invalid_filter",
+                            message: "Rule \(invalid.id.rawValue) has no conditions or an operator its field does not support."
+                        )
+                    } else {
+                        // Rule edits never touch existing sessions: verdicts
+                        // are frozen, so nothing is published or relayed.
+                        try await repository.setSessionFilterRules(filters)
+                        filterEngine?.update(rules: filters)
+                        dbLog.info("session_filters_updated", metadata: .fields([
+                            "rules": filters.count,
+                            "enabled": filters.count(where: \.isEnabled),
+                        ]))
+                        payload = IPCResponse(status: .ok, filters: filters)
+                    }
+                } else {
+                    payload = failure(code: "missing_filters", message: "The set_session_filters request has no rule list.")
                 }
             }
             return response(requestID: envelope.requestID, payload: payload)

@@ -4,6 +4,7 @@ import SwiftUI
 /// `15/700` section title → 14pt-radius card → rows separated by hairlines.
 struct SettingsSection<Content: View>: View {
     let title: String
+    var maxWidth: CGFloat = Design.Layout.cardMaximumWidth
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -12,7 +13,7 @@ struct SettingsSection<Content: View>: View {
                 .font(Design.Font.UI.section)
             content()
         }
-        .frame(maxWidth: Design.Layout.cardMaximumWidth, alignment: .leading)
+        .frame(maxWidth: maxWidth, alignment: .leading)
     }
 }
 

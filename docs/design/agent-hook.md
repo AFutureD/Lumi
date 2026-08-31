@@ -68,11 +68,11 @@ Mac 工具栏刷新按钮在有选中 Session 时先请求 daemon `reingest_sess
 
 丢失的只有 hook-only 且不可回放的瞬时状态（PermissionRequest 的 waiting_for_approval）。
 
-`SessionReduction` 与 `TurnReduction` 是 daemon 侧唯一的状态归并器。
+`SessionReduction` 是 daemon 侧唯一的状态归并器；Turn 聚合不再归并落库，由 `TurnProjection` 读取时从 timeline 现算（2026-08-31 随 `turns` 表一起移除 `TurnReduction`）。
 
 ## Hook 安装
 
-入口：macOS App 的 `Settings > Agents > Install Hook`。
+入口：macOS App 的 “Settings > Agents” Integrations 列表，对应 Agent 行的 `Install`。
 
 安装过程：
 
@@ -94,7 +94,7 @@ Turn = 一次人类提问到一次收口。两个 agent 的边界信号不同。
 
 **Claude**：transcript 是边界的唯一权威，按内容判定；`prompt_id` 不参与——注入式续跑（task notification、排队补发的伴随 prompt）每次都携带新 `prompt_id`，按它建 Turn 会给每次续跑多造一个幽灵 Turn。
 
-- **开**：user 记录且 `origin.kind == "human"`（斜杠命令也算；中断标记即使带 human origin 也只收口，不开）。子代理 transcript 没有 human origin：种子与追加的普通 prompt 文本（非注入标签、非中断标记、非工具结果）即开 Turn。
+- **开**：user 记录且 `origin.kind == "human"`（中断标记即使带 human origin 也只收口，不开）。斜杠命令记录**不开 Turn**——真实落盘的 `<command-name>` 记录不带 `origin`，它保持为普通 user message（原文、turn-neutral），提示词展开类命令的 Turn 开在展开后的 prompt 记录上。子代理 transcript 没有 human origin：种子与追加的普通 prompt 文本（非注入标签、非中断标记、非工具结果）即开 Turn。
 - **命名**：开 Turn 的记录以自己的 `promptId`（缺则 `uuid`）作 TurnID。首个 prompt 的 hook `prompt_id` 与它一致，hook 兜底自然落在同一 Turn。
 - **归属**：开与收之间的所有记录——包括带新 `promptId` 的注入式续跑——都归当前 Turn。增量读取以 daemon 已存的最后开放（否则最近一个）Turn 播种 `RolloutReadState.currentTurnID`。
 - **收**：assistant 记录的终态 `stop_reason`，按下表分类。用户中断（Esc）不发任何 hook，收口靠 transcript 的中断标记（见映射表）。
@@ -167,7 +167,7 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 
 | record / block | 结果 |
 | --- | --- |
-| `user` 字符串或 `text` block | `message(user)`；开 Turn 的记录以首个普通文本写 Turn.prompt 并占稳定 prompt item id（`user_prompt:<s>:<turn>`），其余文本是独立行；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 等标签块为 `context(<tag>)` |
+| `user` 字符串或 `text` block | `message(user)`；开 Turn 的记录以首个普通文本写 Turn.prompt 并占稳定 prompt item id（`user_prompt:<s>:<turn>`），其余文本是独立行；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 开头的斜杠命令记录保持为 `message(user)` **原文不解析**（turn-neutral）；其余 `<local-command-stdout>` 等标签块为 `context(<tag>)` |
 | `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
 | `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)`；content = 原始 `content` block + 顶层 `toolUseResult` 全文 |
 | `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |

@@ -8,6 +8,9 @@ public protocol SessionRepository: Sendable {
     func apply(_ event: AgentIngressEvent) async throws -> Bool
     func listSessions(limit: Int) async throws -> [SessionSummary]
     func sessionDetail(id: SessionID, cursor: PaginationCursor?, limit: Int) async throws -> SessionDetail?
+    /// The summary alone — for summary-only broadcasts and checks. Skips the
+    /// timeline read and the turn projection entirely.
+    func sessionSummary(id: SessionID) async throws -> SessionSummary?
     /// Atomically installs one authoritative session: clears its tombstone,
     /// then replaces summary, turns and timeline wholesale. Never touches
     /// processed events — client-side event dedupe must survive.
@@ -38,6 +41,9 @@ public protocol SessionRepository: Sendable {
     /// `occurredAt >= since`, paged like `sessionDetail` (`cursor` is the
     /// offset inside the filtered rows).
     func timelineSince(id: SessionID, since: Date, cursor: PaginationCursor?, limit: Int) async throws -> SessionDetail?
+    /// The turn a transcript increment continues: the turnID of the newest
+    /// turn-scoped timeline item (`TurnProjection.currentTurnID`).
+    func currentTurnID(sessionID: SessionID) async throws -> TurnID?
     func rolloutCursor(path: String) async throws -> RolloutCursor?
     /// Newest cursor recorded for the session, i.e. where its transcript /
     /// rollout lives.
@@ -56,6 +62,16 @@ public protocol SessionRepository: Sendable {
     /// `SessionSummary.hiddenInNotch`. Only re-engaging the session (a new
     /// prompt or a restart) clears it, via `SessionReduction`.
     func markSessionHiddenInNotch(_ sessionID: SessionID) async throws
+    /// Overwrites the frozen filter verdict and its latch, in either
+    /// direction. Only the reingester calls this — a rebuild replays events
+    /// against the current rules, and the previous verdict must win over
+    /// that re-evaluation.
+    func setSessionFilterVerdict(_ sessionID: SessionID, hiddenByFilter: Bool, filterEvaluated: Bool) async throws
+    /// The stored filter rules, in user order. Settings, not history:
+    /// `deleteAllSessions` (clear history) must leave them untouched.
+    func sessionFilterRules() async throws -> [SessionFilterRule]
+    /// Replaces the whole rule list (the write model of the Settings editor).
+    func setSessionFilterRules(_ rules: [SessionFilterRule]) async throws
     func isRolloutBaselineInitialized() async throws -> Bool
     func markRolloutBaselineInitialized() async throws
 }
@@ -95,6 +111,13 @@ public enum SessionReduction {
         let hiddenInNotch = event.resurrectsHiddenSession
             ? false
             : (current?.hiddenInNotch ?? false)
+        // The frozen filter verdict and its once-only latch: stamped by the
+        // daemon repository when the session's first user message arrives,
+        // then carried forever. Never recomputed here — mirrors replay this
+        // reduction without the rules — and unlike hiddenInNotch,
+        // resurrection does not clear either.
+        let hiddenByFilter = current?.hiddenByFilter ?? false
+        let filterEvaluated = current?.filterEvaluated ?? false
         // The tiers a human should act on: approval orange, unreviewed green,
         // failure red.
         let needsAttention = switch SessionStatusTone.resolve(
@@ -171,84 +194,29 @@ public enum SessionReduction {
             needsAttention: needsAttention,
             needsReview: needsReview,
             hiddenInNotch: hiddenInNotch,
+            hiddenByFilter: hiddenByFilter,
+            filterEvaluated: filterEvaluated,
             lineage: eventLineage ?? current?.lineage,
             firstTurnAt: firstTurnAt,
             aaas: aaas
         )
     }
-}
 
-/// Folds one ingress event into the Turn aggregate it belongs to. Works for
-/// helpers that send an explicit `turn` and for bare events that only carry
-/// `turnID` + a timeline item (phase, prompt, counters are derived).
-public enum TurnReduction {
-    public static func summary(
-        applying event: AgentIngressEvent,
-        to current: TurnSummary?
-    ) -> TurnSummary? {
-        guard let turnID = event.turnID ?? event.turn?.id else { return nil }
-        var base = current ?? TurnSummary(
-            id: turnID,
-            sessionID: event.sessionID,
-            phase: event.phase ?? .idle,
-            startedAt: event.occurredAt
-        )
-        if let explicit = event.turn {
-            base = base.merging(explicit)
-        }
-
-        var phase = event.turn?.phase ?? event.phase ?? base.phase
-        var prompt = base.prompt
-        var endedAt = base.endedAt
-        var outcome = base.outcome
-        var toolCalls = base.toolCallCount
-        var subagents = base.subagentCount
-        var lastAssistant = base.lastAssistantMessage
-
-        if let payload = event.timelineItem?.payload {
-            switch payload {
-            case let .message(message):
-                if message.role == .user, prompt == nil { prompt = message.text }
-                if message.role == .assistant { lastAssistant = message.text }
-            case let .tool(tool):
-                if tool.status == .started { toolCalls += 1 }
-            case let .subagent(subagent):
-                if subagent.status == .started { subagents += 1 }
-            case let .turnEnd(end):
-                endedAt = endedAt ?? event.occurredAt
-                outcome = outcome ?? end.outcome
-                if let message = end.message { lastAssistant = message }
-                phase = .idle
-            case let .error(error):
-                if outcome == nil, !error.recoverable {
-                    outcome = .failed
-                    endedAt = event.occurredAt
-                }
-            default:
-                break
-            }
-        }
-        // A closed turn never regresses to an in-flight phase from a late
-        // event — a straggling hook, or backfilled history older than the
-        // close (the counters above still fold in, they were never counted).
-        if outcome != nil, event.turn?.outcome == nil,
-           event.timelineItem == nil || (base.endedAt.map { event.occurredAt <= $0 } ?? false) {
-            phase = base.phase
-        }
-
-        return TurnSummary(
-            id: base.id,
-            sessionID: base.sessionID,
-            index: base.index,
-            phase: phase,
-            prompt: prompt,
-            startedAt: min(base.startedAt, event.occurredAt),
-            endedAt: endedAt,
-            outcome: outcome,
-            toolCallCount: toolCalls,
-            subagentCount: subagents,
-            lastAssistantMessage: lastAssistant
-        )
+    /// Whether this event is the one the filter verdict is evaluated on: the
+    /// session's first user-classified message — a timeline item whose
+    /// payload is `.message(role: .user)` — judged by classification, never
+    /// by `event.turn?.prompt` or raw hook fields. Once per session (the
+    /// `filterEvaluated` latch), and never for subagent threads, which
+    /// inherit the parent's fate (`SessionSummary.filterHiddenIDs`).
+    public static func startsFilterEvaluation(
+        _ summary: SessionSummary,
+        from current: SessionSummary?,
+        event: AgentIngressEvent
+    ) -> Bool {
+        guard current?.filterEvaluated != true else { return false }
+        guard case let .message(message)? = event.timelineItem?.payload,
+              message.role == .user else { return false }
+        return summary.lineage?.parentSessionID == nil && !summary.agent.isSubagent
     }
 }
 
@@ -269,13 +237,16 @@ public extension AgentIngressEvent {
 public actor InMemorySessionRepository: SessionRepository {
     private var sessions: [SessionID: SessionSummary] = [:]
     private var timeline: [SessionID: [TimelineItem]] = [:]
-    private var turns: [SessionID: [TurnID: TurnSummary]] = [:]
     private var eventIDs: Set<EventID> = []
     private var cursors: [String: RolloutCursor] = [:]
     private var ignoredSessionIDs: Set<SessionID> = []
     private var rolloutBaselineInitialized = false
+    private var filterRules: [SessionFilterRule] = []
+    private let sessionFilter: (any SessionFilterEvaluating)?
 
-    public init() {}
+    public init(sessionFilter: (any SessionFilterEvaluating)? = nil) {
+        self.sessionFilter = sessionFilter
+    }
 
     @discardableResult
     public func apply(_ event: AgentIngressEvent) async throws -> Bool {
@@ -287,7 +258,6 @@ public actor InMemorySessionRepository: SessionRepository {
             ignoredSessionIDs.insert(event.sessionID)
             sessions.removeValue(forKey: event.sessionID)
             timeline.removeValue(forKey: event.sessionID)
-            turns.removeValue(forKey: event.sessionID)
             eventIDs.insert(event.eventID)
             return true
         }
@@ -297,14 +267,17 @@ public actor InMemorySessionRepository: SessionRepository {
         }
         eventIDs.insert(event.eventID)
 
-        sessions[event.sessionID] = SessionReduction.summary(
-            applying: event,
-            to: sessions[event.sessionID]
-        )
-        if let turnID = event.turnID ?? event.turn?.id,
-           let turn = TurnReduction.summary(applying: event, to: turns[event.sessionID]?[turnID]) {
-            turns[event.sessionID, default: [:]][turnID] = turn
+        let current = sessions[event.sessionID]
+        var summary = SessionReduction.summary(applying: event, to: current)
+        if SessionReduction.startsFilterEvaluation(summary, from: current, event: event) {
+            // Latch first — even without an evaluator installed — so every
+            // mirror converges; the parked verdict frame must carry it too.
+            summary = summary.withFilterEvaluated(true)
+            if let sessionFilter, sessionFilter.shouldHide(summary: summary, event: event) {
+                summary = summary.withHiddenByFilter(true)
+            }
         }
+        sessions[event.sessionID] = summary
         if let item = event.timelineItem {
             var items = timeline[event.sessionID, default: []]
             if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
@@ -333,6 +306,10 @@ public actor InMemorySessionRepository: SessionRepository {
         )
     }
 
+    public func sessionSummary(id: SessionID) async throws -> SessionSummary? {
+        sessions[id]
+    }
+
     public func sessionDetail(
         id: SessionID,
         cursor: PaginationCursor?,
@@ -356,10 +333,11 @@ public actor InMemorySessionRepository: SessionRepository {
     }
 
     private func sortedTurns(_ id: SessionID) -> [TurnSummary] {
-        (turns[id]?.values).map(Array.init)?.sorted {
-            if $0.startedAt == $1.startedAt { return $0.id.rawValue < $1.id.rawValue }
-            return $0.startedAt < $1.startedAt
-        } ?? []
+        TurnProjection.turns(from: timeline[id, default: []], sessionID: id)
+    }
+
+    public func currentTurnID(sessionID: SessionID) async throws -> TurnID? {
+        TurnProjection.currentTurnID(in: timeline[sessionID, default: []])
     }
 
     public func replaceSession(_ detail: SessionDetail) async throws {
@@ -369,7 +347,6 @@ public actor InMemorySessionRepository: SessionRepository {
         ignoredSessionIDs.remove(id)
         sessions[id] = detail.summary
         timeline[id] = detail.timeline
-        turns[id] = Dictionary(uniqueKeysWithValues: detail.turns.map { ($0.id, $0) })
     }
 
     @discardableResult
@@ -378,7 +355,6 @@ public actor InMemorySessionRepository: SessionRepository {
         for id in pruned {
             sessions.removeValue(forKey: id)
             timeline.removeValue(forKey: id)
-            turns.removeValue(forKey: id)
         }
         return pruned.count
     }
@@ -388,7 +364,6 @@ public actor InMemorySessionRepository: SessionRepository {
         ignoredSessionIDs.formUnion(sessions.keys)
         sessions.removeAll()
         timeline.removeAll()
-        turns.removeAll()
         eventIDs.removeAll()
         return count
     }
@@ -411,7 +386,6 @@ public actor InMemorySessionRepository: SessionRepository {
             ignoredSessionIDs.insert(member)
             sessions.removeValue(forKey: member)
             timeline.removeValue(forKey: member)
-            turns.removeValue(forKey: member)
         }
         return existed.sorted { $0.rawValue < $1.rawValue }
     }
@@ -436,9 +410,6 @@ public actor InMemorySessionRepository: SessionRepository {
         let id = detail.summary.id
         ignoredSessionIDs.remove(id)
         sessions[id] = detail.summary
-        var turnsByID = turns[id, default: [:]]
-        for turn in detail.turns { turnsByID[turn.id] = turn }
-        turns[id] = turnsByID
         var items = timeline[id, default: []]
         for item in detail.timeline {
             if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
@@ -486,7 +457,6 @@ public actor InMemorySessionRepository: SessionRepository {
 
     public func resetSession(id: SessionID) async throws -> Bool {
         timeline.removeValue(forKey: id)
-        turns.removeValue(forKey: id)
         cursors = cursors.filter { $0.value.sessionID != id }
         return sessions.removeValue(forKey: id) != nil
     }
@@ -507,6 +477,19 @@ public actor InMemorySessionRepository: SessionRepository {
     public func markSessionHiddenInNotch(_ sessionID: SessionID) async throws {
         guard let summary = sessions[sessionID] else { return }
         sessions[sessionID] = summary.withHiddenInNotch(true)
+    }
+
+    public func setSessionFilterVerdict(_ sessionID: SessionID, hiddenByFilter: Bool, filterEvaluated: Bool) async throws {
+        guard let summary = sessions[sessionID] else { return }
+        sessions[sessionID] = summary.withHiddenByFilter(hiddenByFilter).withFilterEvaluated(filterEvaluated)
+    }
+
+    public func sessionFilterRules() async throws -> [SessionFilterRule] {
+        filterRules
+    }
+
+    public func setSessionFilterRules(_ rules: [SessionFilterRule]) async throws {
+        filterRules = rules
     }
 
     public func isRolloutBaselineInitialized() async throws -> Bool {
