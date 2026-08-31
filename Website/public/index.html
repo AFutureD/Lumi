@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" id="top">
+<html lang="en" id="top">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -65,6 +65,28 @@ nav {
 .nav-links a:hover { color: var(--accent); }
 .nav-links a.nav-download { color: var(--accent); }
 .nav-links a.nav-download:hover { color: var(--accent-hover); }
+
+.lang-toggle {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  height: 28px;
+  min-width: 44px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.lang-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.lang-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* ---------- Hero ---------- */
 
@@ -438,6 +460,8 @@ footer {
   h1 { font-size: 42px; line-height: 48px; }
   .stack-stage { align-self: center; max-width: 100%; }
   .stack { transform-origin: top left; }
+
+  .nav-links { gap: 18px; }
 }
 
 /* No-JS fallback for the fixed 504×452 card stack; the inline script
@@ -506,22 +530,23 @@ footer {
       <span>Lumi</span>
     </div>
     <div class="nav-links">
-      <a href="#features">功能</a>
+      <a href="#features" data-i18n="nav_features">Features</a>
       <a href="https://github.com/AFutureD/Lumi">GitHub</a>
-      <a class="nav-download" href="/download">Download</a>
+      <a class="nav-download" href="/download" data-i18n="nav_download">Download</a>
+      <button type="button" class="lang-toggle" aria-label="切换到中文">EN</button>
     </div>
   </nav>
 
   <header class="hero">
     <div class="hero-copy">
-      <div class="eyebrow">FOR PEOPLE WHO RUN AGENTS</div>
-      <h1>Know when your agents need you.</h1>
-      <p class="hero-sub">回合结束、任务失败、中途被打断——需要你的那一刻，Lumi 会找到你。其余时间，它保持安静。</p>
+      <div class="eyebrow" data-i18n="hero_eyebrow">FOR PEOPLE WHO RUN AGENTS</div>
+      <h1 data-i18n="hero_h1">Know when your agents need you.</h1>
+      <p class="hero-sub" data-i18n="hero_sub">Turns end, tasks fail, work gets interrupted — the moment your agents need you, Lumi finds you. The rest of the time, it stays quiet.</p>
       <div class="cta-row">
-        <a class="btn btn-primary" href="/download">Download for Mac</a>
-        <a class="btn btn-ghost" href="https://testflight.apple.com/join/uYcSWMzV">Join TestFlight →</a>
+        <a class="btn btn-primary" href="/download" data-i18n="btn_download_mac">Download for Mac</a>
+        <a class="btn btn-ghost" href="https://testflight.apple.com/join/uYcSWMzV" data-i18n="btn_testflight">Join TestFlight →</a>
       </div>
-      <div class="hero-fineprint">iPhone 端 Beta 测试中 · Apple silicon · macOS 26</div>
+      <div class="hero-fineprint" data-i18n="hero_fineprint">iPhone app in beta · Apple silicon · macOS 26</div>
     </div>
 
     <div class="stack-stage">
@@ -571,122 +596,131 @@ footer {
   </header>
 
   <section class="tagline">
-    <div>Your agents keep moving.</div>
-    <div class="dim">You only step in when it matters.</div>
+    <div data-i18n="tagline_1">Your agents keep moving.</div>
+    <div class="dim" data-i18n="tagline_2">You only step in when it matters.</div>
   </section>
 
   <section class="features" id="features">
 
     <div class="feature feature-iphone">
       <div class="copy">
-        <div class="eyebrow">01 — IPHONE</div>
-        <h2>离开 Mac，也不会错过需要你的时刻。</h2>
-        <p>回合结束、失败或被中断，iPhone 收到推送，点开直达 Session 详情——该回去还是继续待着，十秒判断。</p>
-        <p>一台 iPhone 连多台 Mac；Mac App 关着照样同步，离线时缓存照样能翻。</p>
-        <p class="fineprint">只读设计——看得见，改不了。目前通过 TestFlight 提供。</p>
+        <div class="eyebrow" data-i18n="f1_eyebrow">01 — IPHONE</div>
+        <h2 data-i18n="f1_h2">Away from your Mac? Don't miss what needs you.</h2>
+        <p data-i18n="f1_p1">When a turn ends, fails, or gets interrupted, your iPhone gets a push. Tap through to the Session — ten seconds to decide whether to head back or keep waiting.</p>
+        <p data-i18n="f1_p2">One iPhone pairs with multiple Macs; sync continues while the Mac app is closed, and the local cache stays browsable offline.</p>
+        <p class="fineprint" data-i18n="f1_fineprint">Read-only by design — you can see it, you can't change it. Currently available via TestFlight.</p>
       </div>
-      <img src="/assets/ios-sessions.png" alt="iPhone Sessions 列表" width="1179" height="2556" loading="lazy">
+      <img src="/assets/ios-sessions.png" alt="iPhone Sessions list" data-i18n-alt="f1_alt" width="1179" height="2556" loading="lazy">
     </div>
 
     <div class="feature feature-notch">
-      <img src="/assets/notch-list-clean.png" alt="Notch 展开后的 Session 列表" width="1980" height="1302" loading="lazy">
+      <img src="/assets/notch-list-clean.png" alt="Session list expanded from the Notch" data-i18n-alt="f2_alt" width="1980" height="1302" loading="lazy">
       <div class="copy">
-        <div class="eyebrow">02 — NOTCH</div>
-        <h2>人在 Mac 前，一抬眼就够了。</h2>
-        <p>平时只是顶部一小条；回合结束或失败才自动展开提示，过程一概不打扰。</p>
-        <p>打扰你的每一次，都是真的需要你。</p>
+        <div class="eyebrow" data-i18n="f2_eyebrow">02 — NOTCH</div>
+        <h2 data-i18n="f2_h2">At your Mac, a glance is enough.</h2>
+        <p data-i18n="f2_p1">Most of the time it's just a thin strip at the top. It expands only when a turn ends or fails — nothing in between.</p>
+        <p data-i18n="f2_p2">Every interruption means you're actually needed.</p>
       </div>
     </div>
 
     <div class="feature feature-mac">
       <div class="copy">
-        <div class="eyebrow">03 — MAC</div>
-        <h2>被叫回来，完整历史都在。</h2>
-        <p>三栏窗口，像看邮件一样看 Session：谁在等你一眼可见，时间轴还原它停在哪一步，Token、Context、耗时随手可查。</p>
+        <div class="eyebrow" data-i18n="f3_eyebrow">03 — MAC</div>
+        <h2 data-i18n="f3_h2">Called back? The full history is right here.</h2>
+        <p data-i18n="f3_p1">A three-column window — read Sessions the way you read email: who's waiting is obvious at a glance, the timeline shows exactly where it stopped, and tokens, context, and duration are one click away.</p>
       </div>
-      <img src="/assets/mac-main.png" alt="Mac 三栏主窗口" width="2640" height="1516" loading="lazy">
+      <img src="/assets/mac-main.png" alt="Mac three-column main window" data-i18n-alt="f3_alt" width="2640" height="1516" loading="lazy">
     </div>
 
   </section>
 
   <section class="privacy">
-    <h2>Your Session content is encrypted for each paired iPhone.</h2>
-    <p>Relay forwards encrypted Session payloads — it stores nothing and reads nothing. The daemon on your Mac is the only source of truth; your iPhone keeps its own local cache.</p>
+    <h2 data-i18n="privacy_h2">Your Session content is encrypted for each paired iPhone.</h2>
+    <p data-i18n="privacy_p">Relay forwards encrypted Session payloads — it stores nothing and reads nothing. The daemon on your Mac is the only source of truth; your iPhone keeps its own local cache.</p>
     <div class="diagram">
-      <div class="node"><div class="name">Mac</div><div class="role">daemon</div></div>
+      <div class="node">
+        <div class="name" data-i18n="privacy_node1_name">Mac</div>
+        <div class="role" data-i18n="privacy_node1_role">daemon</div>
+      </div>
       <div class="wire"></div>
-      <div class="node node-relay"><div class="name">Relay</div><div class="role">forwards only</div></div>
+      <div class="node node-relay">
+        <div class="name" data-i18n="privacy_node2_name">Relay</div>
+        <div class="role" data-i18n="privacy_node2_role">forwards only</div>
+      </div>
       <div class="wire"></div>
-      <div class="node"><div class="name">iPhone</div><div class="role">local cache</div></div>
+      <div class="node">
+        <div class="name" data-i18n="privacy_node3_name">iPhone</div>
+        <div class="role" data-i18n="privacy_node3_role">local cache</div>
+      </div>
     </div>
-    <div class="diagram-caption">END-TO-END ENCRYPTED CHANNEL</div>
+    <div class="diagram-caption" data-i18n="privacy_caption">END-TO-END ENCRYPTED CHANNEL</div>
     <div class="privacy-foot">
-      <span>Push notifications carry only the Session title and status — never the content.</span>
+      <span data-i18n="privacy_foot">Push notifications carry only the Session title and status — never the content.</span>
       <!-- TODO: Privacy 页面上线后恢复 “Read the privacy policy →” 链接 -->
     </div>
   </section>
 
   <section class="how">
-    <h2>Three steps, then forget about it.</h2>
+    <h2 data-i18n="how_h2">Three steps, then forget about it.</h2>
     <div>
       <div class="step">
         <span class="num">01</span>
-        <span class="title">Connect Lumi</span>
-        <span class="body">Install Lumi for Mac, start the daemon, and enable the Hook for the agents you use. One-time setup, about a minute.</span>
+        <span class="title" data-i18n="how_step1_title">Connect Lumi</span>
+        <span class="body" data-i18n="how_step1_body">Install Lumi for Mac, start the daemon, and enable the Hook for the agents you use. One-time setup, about a minute.</span>
       </div>
       <div class="step">
         <span class="num">02</span>
-        <span class="title">Keep working</span>
-        <span class="body">Use your agents exactly as you do now — nothing about your workflow changes. Lumi picks up every new Session and keeps its Activity updating as work happens.</span>
+        <span class="title" data-i18n="how_step2_title">Keep working</span>
+        <span class="body" data-i18n="how_step2_body">Use your agents exactly as you do now — nothing about your workflow changes. Lumi picks up every new Session and keeps its Activity updating as work happens.</span>
       </div>
       <div class="step">
         <span class="num">03</span>
-        <span class="title">Check what matters</span>
-        <span class="body">When a Session needs you, it finds you — a glance at the Notch, the full timeline in Lumi for Mac, or a push on your paired iPhone.</span>
+        <span class="title" data-i18n="how_step3_title">Check what matters</span>
+        <span class="body" data-i18n="how_step3_body">When a Session needs you, it finds you — a glance at the Notch, the full timeline in Lumi for Mac, or a push on your paired iPhone.</span>
       </div>
     </div>
   </section>
 
   <section class="faq">
-    <h2>常见问题</h2>
+    <h2 data-i18n="faq_h2">FAQ</h2>
     <div class="faq-grid">
       <details open>
-        <summary>支持哪些 agent？</summary>
-        <div>当前支持主流 coding agent，后续持续扩展。</div>
+        <summary data-i18n="faq_1_q">Which agents are supported?</summary>
+        <div data-i18n="faq_1_a">The mainstream coding agents are supported today, with more to come.</div>
       </details>
       <details open>
-        <summary>会不会很吵？</summary>
-        <div>不会。只有回合结束、失败、中断三种时刻会提醒你，过程性事件全部静默。</div>
+        <summary data-i18n="faq_2_q">Will it be noisy?</summary>
+        <div data-i18n="faq_2_a">No. You're only notified when a turn ends, fails, or gets interrupted. Everything in between stays silent.</div>
       </details>
       <details>
-        <summary>关掉窗口 Lumi 还在吗？</summary>
-        <div>在。Notch 和同步照常运行。</div>
+        <summary data-i18n="faq_3_q">Does Lumi keep running when I close the window?</summary>
+        <div data-i18n="faq_3_a">Yes. The Notch and sync continue to run.</div>
       </details>
       <details>
-        <summary>需要账号吗？</summary>
-        <div>不需要。配对用 6 位码 + 双端数字比对，不经过任何账号体系。</div>
+        <summary data-i18n="faq_4_q">Do I need an account?</summary>
+        <div data-i18n="faq_4_a">No. Pairing uses a 6-character code plus a numeric comparison on both sides — no account system involved.</div>
       </details>
       <details>
-        <summary>iPhone 能操控 agent 吗？</summary>
-        <div>不能，v1 是刻意设计的只读。</div>
+        <summary data-i18n="faq_5_q">Can the iPhone control the agent?</summary>
+        <div data-i18n="faq_5_a">No — v1 is deliberately read-only.</div>
       </details>
       <details>
-        <summary>系统要求？</summary>
-        <div>Mac 端 Apple silicon + macOS 26，iPhone 端 iOS 26。</div>
+        <summary data-i18n="faq_6_q">System requirements?</summary>
+        <div data-i18n="faq_6_a">Apple silicon + macOS 26 on the Mac; iOS 26 on the iPhone.</div>
       </details>
     </div>
   </section>
 
   <section class="closing">
-    <div class="line">Your agents will need you.</div>
-    <div class="line dim">到时候，别靠运气知道。</div>
+    <div class="line" data-i18n="closing_1">Your agents will need you.</div>
+    <div class="line dim" data-i18n="closing_2">When they do, don't leave it to luck.</div>
     <div class="cta-row">
-      <a class="btn btn-primary" href="/download">Download for Mac</a>
-      <a class="btn btn-ghost" href="https://testflight.apple.com/join/uYcSWMzV">Join TestFlight →</a>
+      <a class="btn btn-primary" href="/download" data-i18n="btn_download_mac">Download for Mac</a>
+      <a class="btn btn-ghost" href="https://testflight.apple.com/join/uYcSWMzV" data-i18n="btn_testflight">Join TestFlight →</a>
     </div>
     <div class="closing-links">
-      <a href="https://github.com/AFutureD/Lumi/blob/main/docs/FEAT.md">文档</a> ·
-      <a href="https://github.com/AFutureD/Lumi/blob/main/CHANGELOG.md">更新日志</a>
+      <a href="https://github.com/AFutureD/Lumi/blob/main/docs/FEAT.md" data-i18n="closing_docs">Docs</a> ·
+      <a href="https://github.com/AFutureD/Lumi/blob/main/CHANGELOG.md" data-i18n="closing_changelog">Changelog</a>
     </div>
   </section>
 
@@ -698,7 +732,7 @@ footer {
     <div class="foot-links">
       <a href="https://github.com/AFutureD/Lumi">GitHub</a>
       <!-- TODO: Privacy / Terms 页面上线后在此恢复链接 -->
-      <a href="#top">Back to top</a>
+      <a href="#top" data-i18n="footer_back">Back to top</a>
     </div>
     <span>© 2026 Lumi</span>
   </footer>
@@ -717,6 +751,194 @@ footer {
     }
     fit();
     addEventListener('resize', fit);
+  })();
+
+  // Language toggle: prefer saved choice, otherwise follow the browser's
+  // primary language; anything non-Chinese falls back to English.
+  (function () {
+    var STORAGE_KEY = 'lumi.lang';
+    var translations = {
+      en: {
+        title: 'Lumi — Know when your agents need you',
+        description: 'Track agent sessions from Mac and iPhone with clear status, complete Activity, read-only remote viewing, and encrypted device sync.',
+        nav_features: 'Features',
+        nav_download: 'Download',
+        hero_eyebrow: 'FOR PEOPLE WHO RUN AGENTS',
+        hero_h1: 'Know when your agents need you.',
+        hero_sub: 'Turns end, tasks fail, work gets interrupted — the moment your agents need you, Lumi finds you. The rest of the time, it stays quiet.',
+        btn_download_mac: 'Download for Mac',
+        btn_testflight: 'Join TestFlight →',
+        hero_fineprint: 'iPhone app in beta · Apple silicon · macOS 26',
+        tagline_1: 'Your agents keep moving.',
+        tagline_2: 'You only step in when it matters.',
+        f1_eyebrow: '01 — IPHONE',
+        f1_h2: "Away from your Mac? Don't miss what needs you.",
+        f1_p1: 'When a turn ends, fails, or gets interrupted, your iPhone gets a push. Tap through to the Session — ten seconds to decide whether to head back or keep waiting.',
+        f1_p2: 'One iPhone pairs with multiple Macs; sync continues while the Mac app is closed, and the local cache stays browsable offline.',
+        f1_fineprint: "Read-only by design — you can see it, you can't change it. Currently available via TestFlight.",
+        f1_alt: 'iPhone Sessions list',
+        f2_eyebrow: '02 — NOTCH',
+        f2_h2: 'At your Mac, a glance is enough.',
+        f2_p1: "Most of the time it's just a thin strip at the top. It expands only when a turn ends or fails — nothing in between.",
+        f2_p2: "Every interruption means you're actually needed.",
+        f2_alt: 'Session list expanded from the Notch',
+        f3_eyebrow: '03 — MAC',
+        f3_h2: 'Called back? The full history is right here.',
+        f3_p1: "A three-column window — read Sessions the way you read email: who's waiting is obvious at a glance, the timeline shows exactly where it stopped, and tokens, context, and duration are one click away.",
+        f3_alt: 'Mac three-column main window',
+        privacy_h2: 'Your Session content is encrypted for each paired iPhone.',
+        privacy_p: 'Relay forwards encrypted Session payloads — it stores nothing and reads nothing. The daemon on your Mac is the only source of truth; your iPhone keeps its own local cache.',
+        privacy_node1_name: 'Mac',
+        privacy_node1_role: 'daemon',
+        privacy_node2_name: 'Relay',
+        privacy_node2_role: 'forwards only',
+        privacy_node3_name: 'iPhone',
+        privacy_node3_role: 'local cache',
+        privacy_caption: 'END-TO-END ENCRYPTED CHANNEL',
+        privacy_foot: 'Push notifications carry only the Session title and status — never the content.',
+        how_h2: 'Three steps, then forget about it.',
+        how_step1_title: 'Connect Lumi',
+        how_step1_body: 'Install Lumi for Mac, start the daemon, and enable the Hook for the agents you use. One-time setup, about a minute.',
+        how_step2_title: 'Keep working',
+        how_step2_body: 'Use your agents exactly as you do now — nothing about your workflow changes. Lumi picks up every new Session and keeps its Activity updating as work happens.',
+        how_step3_title: 'Check what matters',
+        how_step3_body: 'When a Session needs you, it finds you — a glance at the Notch, the full timeline in Lumi for Mac, or a push on your paired iPhone.',
+        faq_h2: 'FAQ',
+        faq_1_q: 'Which agents are supported?',
+        faq_1_a: 'The mainstream coding agents are supported today, with more to come.',
+        faq_2_q: 'Will it be noisy?',
+        faq_2_a: "No. You're only notified when a turn ends, fails, or gets interrupted. Everything in between stays silent.",
+        faq_3_q: 'Does Lumi keep running when I close the window?',
+        faq_3_a: 'Yes. The Notch and sync continue to run.',
+        faq_4_q: 'Do I need an account?',
+        faq_4_a: 'No. Pairing uses a 6-character code plus a numeric comparison on both sides — no account system involved.',
+        faq_5_q: 'Can the iPhone control the agent?',
+        faq_5_a: 'No — v1 is deliberately read-only.',
+        faq_6_q: 'System requirements?',
+        faq_6_a: 'Apple silicon + macOS 26 on the Mac; iOS 26 on the iPhone.',
+        closing_1: 'Your agents will need you.',
+        closing_2: "When they do, don't leave it to luck.",
+        closing_docs: 'Docs',
+        closing_changelog: 'Changelog',
+        footer_back: 'Back to top',
+        lang_toggle_label: 'EN',
+        lang_toggle_aria: '切换到中文'
+      },
+      zh: {
+        title: 'Lumi — 知道 Agent 何时需要你',
+        description: '在 Mac 和 iPhone 上追踪 Agent Session：清晰的状态、完整的 Activity、只读的远程查看、加密的设备同步。',
+        nav_features: '功能',
+        nav_download: '下载',
+        hero_eyebrow: '为使用 AGENT 的人打造',
+        hero_h1: '知道 Agent 何时需要你。',
+        hero_sub: '回合结束、任务失败、中途被打断——需要你的那一刻，Lumi 会找到你。其余时间，它保持安静。',
+        btn_download_mac: '下载 Mac 版',
+        btn_testflight: '加入 TestFlight →',
+        hero_fineprint: 'iPhone 端 Beta 测试中 · Apple silicon · macOS 26',
+        tagline_1: 'Agent 一直在跑。',
+        tagline_2: '只有该你出手时，你才出手。',
+        f1_eyebrow: '01 — IPHONE',
+        f1_h2: '离开 Mac，也不会错过需要你的时刻。',
+        f1_p1: '回合结束、失败或被中断，iPhone 收到推送，点开直达 Session 详情——该回去还是继续待着，十秒判断。',
+        f1_p2: '一台 iPhone 连多台 Mac；Mac App 关着照样同步，离线时缓存照样能翻。',
+        f1_fineprint: '只读设计——看得见，改不了。目前通过 TestFlight 提供。',
+        f1_alt: 'iPhone Sessions 列表',
+        f2_eyebrow: '02 — NOTCH',
+        f2_h2: '人在 Mac 前，一抬眼就够了。',
+        f2_p1: '平时只是顶部一小条；回合结束或失败才自动展开提示，过程一概不打扰。',
+        f2_p2: '打扰你的每一次，都是真的需要你。',
+        f2_alt: 'Notch 展开后的 Session 列表',
+        f3_eyebrow: '03 — MAC',
+        f3_h2: '被叫回来，完整历史都在。',
+        f3_p1: '三栏窗口，像看邮件一样看 Session：谁在等你一眼可见，时间轴还原它停在哪一步，Token、Context、耗时随手可查。',
+        f3_alt: 'Mac 三栏主窗口',
+        privacy_h2: '每台配对的 iPhone，都有独立的 Session 内容加密通道。',
+        privacy_p: 'Relay 只负责转发加密后的 Session 数据——不存储，也无法读取。Mac 上的 daemon 是唯一的真源；iPhone 有自己的本地缓存。',
+        privacy_node1_name: 'Mac',
+        privacy_node1_role: 'daemon',
+        privacy_node2_name: 'Relay',
+        privacy_node2_role: '只转发',
+        privacy_node3_name: 'iPhone',
+        privacy_node3_role: '本地缓存',
+        privacy_caption: '端到端加密通道',
+        privacy_foot: '推送通知只包含 Session 标题和状态——不包含内容。',
+        how_h2: '三步接入，之后就把它忘了。',
+        how_step1_title: '接入 Lumi',
+        how_step1_body: '安装 Lumi for Mac，启动 daemon，为你使用的 Agent 开启 Hook。一次设置，大约一分钟。',
+        how_step2_title: '照常工作',
+        how_step2_body: '继续像以前一样使用你的 Agent——工作流不变。Lumi 会自动接收新的 Session，实时更新它的 Activity。',
+        how_step3_title: '只看真正重要的',
+        how_step3_body: '当一个 Session 需要你时，它会找到你——瞥一眼 Notch、在 Lumi for Mac 查看完整时间轴，或在配对的 iPhone 上接收推送。',
+        faq_h2: '常见问题',
+        faq_1_q: '支持哪些 agent？',
+        faq_1_a: '当前支持主流 coding agent，后续持续扩展。',
+        faq_2_q: '会不会很吵？',
+        faq_2_a: '不会。只有回合结束、失败、中断三种时刻会提醒你，过程性事件全部静默。',
+        faq_3_q: '关掉窗口 Lumi 还在吗？',
+        faq_3_a: '在。Notch 和同步照常运行。',
+        faq_4_q: '需要账号吗？',
+        faq_4_a: '不需要。配对用 6 位码 + 双端数字比对，不经过任何账号体系。',
+        faq_5_q: 'iPhone 能操控 agent 吗？',
+        faq_5_a: '不能，v1 是刻意设计的只读。',
+        faq_6_q: '系统要求？',
+        faq_6_a: 'Mac 端 Apple silicon + macOS 26，iPhone 端 iOS 26。',
+        closing_1: '你的 Agent 会需要你。',
+        closing_2: '到时候，别靠运气知道。',
+        closing_docs: '文档',
+        closing_changelog: '更新日志',
+        footer_back: '回到顶部',
+        lang_toggle_label: '中',
+        lang_toggle_aria: 'Switch to English'
+      }
+    };
+
+    function detectLang() {
+      try {
+        var saved = localStorage.getItem(STORAGE_KEY);
+        if (saved === 'zh' || saved === 'en') return saved;
+      } catch (e) {}
+      var nav = ((navigator.language || navigator.userLanguage) || '').toLowerCase();
+      return nav.indexOf('zh') === 0 ? 'zh' : 'en';
+    }
+
+    function apply(lang) {
+      var dict = translations[lang] || translations.en;
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+      var nodes = document.querySelectorAll('[data-i18n]');
+      for (var i = 0; i < nodes.length; i++) {
+        var val = dict[nodes[i].getAttribute('data-i18n')];
+        if (val != null) nodes[i].textContent = val;
+      }
+      var alts = document.querySelectorAll('[data-i18n-alt]');
+      for (var j = 0; j < alts.length; j++) {
+        var altVal = dict[alts[j].getAttribute('data-i18n-alt')];
+        if (altVal != null) alts[j].setAttribute('alt', altVal);
+      }
+      if (dict.title) document.title = dict.title;
+      var meta = document.querySelector('meta[name="description"]');
+      if (meta && dict.description) meta.setAttribute('content', dict.description);
+      var ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle && dict.title) ogTitle.setAttribute('content', dict.title);
+      var ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc && dict.description) ogDesc.setAttribute('content', dict.description);
+      var toggle = document.querySelector('.lang-toggle');
+      if (toggle) {
+        toggle.textContent = dict.lang_toggle_label;
+        toggle.setAttribute('aria-label', dict.lang_toggle_aria);
+      }
+    }
+
+    var current = detectLang();
+    apply(current);
+
+    var toggle = document.querySelector('.lang-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', function () {
+        current = current === 'zh' ? 'en' : 'zh';
+        try { localStorage.setItem(STORAGE_KEY, current); } catch (e) {}
+        apply(current);
+      });
+    }
   })();
 </script>
 </body>
