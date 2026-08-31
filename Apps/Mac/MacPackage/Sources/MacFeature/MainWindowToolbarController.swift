@@ -7,6 +7,9 @@ struct MainWindowToolbarActions {
     var search: (String) -> Void = { _ in }
     var toggleInspector: () -> Void = {}
     var settingsTitle: () -> String = { "" }
+    /// Confirmation and batch delete live with the Sessions list, which
+    /// also owns the post-delete selection move.
+    var deleteSelectedSessions: () -> Void = {}
 }
 
 /// Unified toolbar with three tracked sections:
@@ -54,7 +57,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
 
     /// Re-reads titles and enabled states without touching item layout.
     func updateState() {
-        deleteItem?.isEnabled = store.selectedSession != nil
+        deleteItem?.isEnabled = !store.selectedIDs.isEmpty
         updateTitle()
     }
 
@@ -238,7 +241,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
             symbol: "trash",
             action: #selector(confirmDelete)
         )
-        item.isEnabled = store.selectedSession != nil
+        item.isEnabled = !store.selectedIDs.isEmpty
         deleteItem = item
         return item
     }
@@ -263,17 +266,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     }
 
     @objc private func confirmDelete() {
-        guard let window, let session = store.selectedSession else { return }
-        let alert = NSAlert()
-        alert.messageText = "Delete this Session?"
-        alert.informativeText = "“\(session.summary.title)” and its timeline will be removed from this Mac, the daemon, and connected iPhones."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.store.deleteSession(session.summary.id)
-        }
+        actions.deleteSelectedSessions()
     }
 
     private func updateTitle() {
@@ -281,7 +274,12 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         let text: String
         switch selectedTab {
         case .sessions:
-            if let detail = store.selectedSession {
+            // A multi-selection is announced here — the detail pane below
+            // keeps showing the lead session, and this makes the real
+            // deletion scope visible.
+            if store.selectedIDs.count > 1 {
+                text = "\(store.selectedIDs.count) Sessions Selected"
+            } else if let detail = store.selectedSession {
                 text = SessionListRowPresentation(session: detail.summary).title
             } else {
                 text = "Select a Session"

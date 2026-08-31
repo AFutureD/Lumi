@@ -35,6 +35,10 @@ public final class MacSessionStore {
     /// invalidation is discarded instead of resurrecting the stale value.
     private var modelStampEpoch: UInt64 = 0
     public private(set) var selectedSession: SessionDetail?
+    /// The whole selection, in selection-recency order: session blocks from
+    /// a multi-select, or a single subagent line. The last element is the
+    /// natural lead fallback when the lead itself is deselected.
+    public private(set) var selectedIDs: [SessionID] = []
     public private(set) var health: DaemonHealth?
     public private(set) var connectionError: String?
     public private(set) var dataRevision: UInt64 = 0
@@ -120,18 +124,40 @@ public final class MacSessionStore {
         return id
     }
 
+    /// The session driving the detail pane, synchronously — set before the
+    /// async detail load lands, so views can paint selection immediately.
+    public var leadSelectedID: SessionID? {
+        pendingSelectionID ?? selectedSession?.summary.id
+    }
+
     public func select(_ sessionID: SessionID?) {
-        guard let sessionID else {
-            guard pendingSelectionID != nil || selectedSession != nil else { return }
-            pendingSelectionID = nil
-            selectedSession = nil
-            notifyObservers()
+        setSelection(sessionID.map { [$0] } ?? [], lead: sessionID)
+    }
+
+    /// Replaces the selection as a whole. `ids` keeps selection-recency
+    /// order; `lead` (one of `ids`, or nil to clear the detail pane) is the
+    /// session whose detail loads.
+    public func setSelection(_ ids: [SessionID], lead: SessionID?) {
+        var seen = Set<SessionID>()
+        let unique = ids.filter { seen.insert($0).inserted }
+        let selectionChanged = unique != selectedIDs
+        selectedIDs = unique
+        guard let lead else {
+            if pendingSelectionID != nil || selectedSession != nil {
+                pendingSelectionID = nil
+                selectedSession = nil
+                notifyObservers()
+            } else if selectionChanged {
+                notifyObservers()
+            }
             return
         }
         // Selecting is viewing — even a re-click of the already selected row
         // clears a review flag a fresh turn end may have raised.
-        markSessionReviewed(sessionID)
-        guard pendingSelectionID != sessionID || selectedSession?.summary.id != sessionID else { return }
+        markSessionReviewed(lead)
+        if selectionChanged { notifyObservers() }
+        guard pendingSelectionID != lead || selectedSession?.summary.id != lead else { return }
+        let sessionID = lead
         pendingSelectionID = sessionID
         guard let cache else { return }
         Task {
@@ -266,20 +292,33 @@ public final class MacSessionStore {
     }
 
     public func deleteSession(_ sessionID: SessionID) {
+        deleteSessions([sessionID])
+    }
+
+    /// One batch for a multi-selection: all cache rows go in one pass with a
+    /// single reload, then one IPC round per session and a single reconcile.
+    /// A daemon failure mid-batch surfaces as a connection error and the
+    /// reconcile restores whatever the daemon still holds.
+    public func deleteSessions(_ sessionIDs: [SessionID]) {
+        guard !sessionIDs.isEmpty else { return }
         Task {
             do {
-                // Optimistic local delete: the row leaves the UI at once; the
+                // Optimistic local delete: the rows leave the UI at once; the
                 // local tombstone swallows in-flight stragglers exactly like
                 // the daemon's, and reconcile converges on the daemon's truth
                 // either way.
                 if let cache {
-                    _ = try await cache.deleteSession(id: sessionID)
+                    for sessionID in sessionIDs {
+                        _ = try await cache.deleteSession(id: sessionID)
+                    }
                     cachedSnapshotDetails = nil
                     await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
                 }
-                let response = try await request(IPCRequest(operation: .deleteSession, sessionID: sessionID))
-                if let failure = response.failure { throw failure }
-                dbLog.info("session_delete_requested", metadata: .fields(["session": sessionID.rawValue]))
+                for sessionID in sessionIDs {
+                    let response = try await request(IPCRequest(operation: .deleteSession, sessionID: sessionID))
+                    if let failure = response.failure { throw failure }
+                    dbLog.info("session_delete_requested", metadata: .fields(["session": sessionID.rawValue]))
+                }
                 scheduleReconcile()
             } catch {
                 handleConnectionFailure(error, action: "delete_session")
@@ -613,6 +652,14 @@ public final class MacSessionStore {
 
             sessions = updated
             pendingSelectionID = selectedID
+            // Sessions that left the cache leave the multi-selection too; a
+            // lead that had to fall back collapses the set to itself.
+            let prunedSelection = selectedIDs.filter { id in updated.contains { $0.id == id } }
+            selectedIDs = if let selectedID, prunedSelection.contains(selectedID) {
+                prunedSelection
+            } else {
+                selectedID.map { [$0] } ?? []
+            }
             selectedSession = detail
             notifyObservers(
                 dataChanged: persistedDataChanged

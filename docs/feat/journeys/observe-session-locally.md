@@ -46,9 +46,9 @@
 
 点击工具栏右侧的刷新图标（Refresh）。daemon 先从对话记录重算当前选中的 Session，再同步全部 Session 的当前数据；列表、数量或详情变化代表结果已显示，数据无变化时没有单独的完成提示。
 
-### 删除单个 Session
+### 删除 Session
 
-选择 Session，点击工具栏右侧的删除图标（Delete Session），再在确认框点击“Delete”。该 Session 从 daemon、Mac 与在线 iPhone 中移除；删除 Main Session 时其下的全部 Subagent 一并移除。随后选择会转到剩余列表中的 Session，删除最后一条时中栏显示 No Sessions、右栏显示 Select a Session。点击“Cancel”则不改变数据。
+选中一条或多条 Session（Shift 连选、⌘ 点选、⌘A 全选），从工具栏删除图标（Delete Session）、列表右键菜单或 ⌘⌫ 进入同一确认框，点击“Delete”。这些 Session 从 daemon、Mac 与在线 iPhone 中移除；删除 Main Session 时其下的全部 Subagent 一并移除。随后选择落到相邻的下一条，删除最后一批时中栏显示 No Sessions、右栏显示 Select a Session。点击“Cancel”则不改变数据。
 
 ### 清空全部历史
 

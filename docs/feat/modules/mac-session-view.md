@@ -8,7 +8,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 
 - **入口**：启动 Lumi；侧边栏包含“Sessions”“iPhone”“Settings”。
 - **前置条件**：Apple silicon Mac，macOS 26 或更高版本；daemon 已安装并运行。
-- **主要结果**：用户可在列表查看 Session 标题、Agent 和状态，在 Activity 中查看完整活动历史，在 Inspector 中查看 Token / Context / Elapsed 指标与 Session 信息；也可按标题过滤列表、手动刷新、删除单个 Session，或清空全部 Lumi 历史。
+- **主要结果**：用户可在列表查看 Session 标题、Agent 和状态，在 Activity 中查看完整活动历史，在 Inspector 中查看 Token / Context / Elapsed 指标与 Session 信息；也可按标题过滤列表、手动刷新、删除选中的一条或多条 Session，或清空全部 Lumi 历史。
 - **只读边界**：查看和删除 Lumi 中的记录不会审批、终止或修改 Agent 的 Session。
 - **相关旅程**：[在 Mac 上跟进一次 Codex Session](../journeys/observe-session-locally.md)。
 
@@ -29,8 +29,9 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
    - Subagent 簇：带 Subagent 的行在第二行右端叠放各 Subagent 的状态色圆点（按 running → waiting → failed → done 排列，最多画五个，数量与分档进悬停提示，如 `3 subagents · 2 running · 1 done`）加一枚折叠箭头；点这一簇展开或收起，不改变选中。
    - 展开后：一个 Subagent 一行（子 Agent 的子 Agent 也平铺在同一组里），按启动先后从早到晚排列——读下来就是这次运行的执行顺序；每行是 6 pt 状态点 + 名称 + 行尾持续时间（悬停提示 Duration；运行中每秒走动，结束后停在最终用时）；全部逐行列出、不分页。
    - 展开默认档：Running / Waiting / Failed 默认展开，Completed 默认收起；手动切换后记住你的选择（本次运行期间），直到该行的默认档位变化为止。
-   - 键盘：左右方向键展开或收起当前行，上下方向键在 Session 行与已展开的 Subagent 行之间移动选中。
+   - 键盘：左右方向键展开或收起当前行，上下方向键在 Session 行与已展开的 Subagent 行之间移动选中；Shift + 上下把多选范围扩一行或收一行（只走 Session 行）；⌘⌫ 删除当前选中（见[删除 Session](#删除-session)）。
    - 选中：两级且互斥。点第一二行选中整个 Session——满宽中性灰底、贴到列两边；点 Subagent 行选中该 Subagent——圆角灰底，右栏切到它自己的详情，父级行不再高亮。悬停用更浅的同形灰底。
+   - 多选：只在 Session 级。Shift 点选从上一次点的行连选到这次点的行，⌘ 点选逐条加入或移出，⌘⇧ 点选把范围并入已有多选，⌘A 全选；右栏继续显示最后点的那条，工具栏标题改显“N Sessions Selected”标明真实范围。Subagent 行不参与多选——带修饰键点它不改变任何选中。
    - 时间格式：相对时间只用单一单位（0s / 12s / 4m / 1h / 3d，不出现 now 或 yesterday 之类文字）；持续时间最多两段（12s / 3m 43s / 1h 02m / 2d 03h）；两者都每秒刷新。
    - 过滤：工具栏中栏段是“Filter sessions”搜索框，按标题、Agent 名或工作目录过滤，命中 Subagent 时保留其父级；没有命中时显示 No matching Sessions。
    - 孤立 Subagent：没有可用 parent 的旧格式或孤立 Subagent 保留在顶层，避免无法访问。
@@ -116,9 +117,11 @@ Mac 主窗口的状态视觉：
 - 列表、数量或详情变化代表同步结果已显示；数据没有变化时，当前版本没有单独的完成提示。
 - 外部产生的 Session 内容除此之外只会在 App 启动和收到 Agent 事件时更新，见 [MAC-R-009](#mac-r-009-mac-界面只有三种同步入口)。
 
-### 删除单个 Session
+### 删除 Session
 
-选择 Session，点击工具栏右侧的删除图标（Delete Session），确认框写明会从这台 Mac、daemon 和已连接 iPhone 移除，点击“Delete”。该 Session 立即从列表消失。删除不影响 Agent 自身 Session；之后被动到达的旧活动不会让它重新出现，只有你在同一会话里再次发出请求（或会话重启）它才会回来。
+三个入口，同一确认框：工具栏右侧的删除图标（Delete Session）、列表右键菜单（一条时是 Delete Session，多选时是 Delete N Sessions）、焦点在列表时按 ⌘⌫（裸 ⌫ 不触发删除）。右键落在未选中的行会先把选中移到那一行；落在已选中的行上则对整组多选生效。
+
+确认框写明会从这台 Mac、daemon 和已连接 iPhone 移除（多选时写明条数）；Delete 是红色破坏性按钮，回车落在 Cancel 上。确认后 Session 立即从列表消失，选中自动落到相邻的下一条（删的是 Subagent 时回到它的父级）。删除不影响 Agent 自身 Session；之后被动到达的旧活动不会让它重新出现，只有你在同一会话里再次发出请求（或会话重启）它才会回来。
 
 ### 从 Notch 归档 Session
 
@@ -262,10 +265,10 @@ Activity 标题右侧有两枚下拉按钮：
 - 结果：界面不做周期轮询；刷新不会让看过的 Session 重新变绿，也不会让归档的 Session 回到 Notch。
 - 限制或例外：删除和清空会立即同步操作结果；连接恢复会重新建立事件通道。daemon 会自行跟进运行中 Claude Session 的对话记录，因此有些变化（如 Esc 中止后数秒内变红）不需要任何 Hook 事件，见[数据流](../data-flows.md#session-状态与时间线)。
 
-### MAC-R-010 单 Session 删除跨端同步
+### MAC-R-010 Session 删除跨端同步
 
-- 条件：用户选择一个 Session 并确认删除。
-- 行为：删除该 Session 及时间线，并把结果同步到全部已连接客户端。
+- 条件：用户选择一个或多个 Session 并确认删除。
+- 行为：删除这些 Session 及时间线，并把结果同步到全部已连接客户端。
 - 结果：daemon、Mac 和已连接 iPhone 保持一致。
 - 限制或例外：操作需要 daemon 在线；不删除 Agent 自身内容。
 
@@ -443,7 +446,7 @@ Session 状态、活动时间线、模型配置、内部上下文和消耗指标
 
 Notch 消费 Mac 已同步的 Session 与时间线，不创建额外 Session 副本，也不增加新的刷新入口；详细筛选与展示规则见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态)。
 
-删除单个 Session 或清空历史只影响 Lumi。完整生命周期见[数据流](../data-flows.md#session-状态与时间线)。
+删除 Session 或清空历史只影响 Lumi。完整生命周期见[数据流](../data-flows.md#session-状态与时间线)。
 
 ## 相关文档
 

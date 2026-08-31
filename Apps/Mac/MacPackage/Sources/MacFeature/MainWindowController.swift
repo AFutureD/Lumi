@@ -246,6 +246,7 @@ final class RootSplitViewController: NSSplitViewController {
         actions.search = { [weak self] query in self?.sessionList.apply(filter: query) }
         actions.toggleInspector = { [weak self] in self?.sessionDetail.toggleInspector() }
         actions.settingsTitle = { [weak self] in self?.settingsDetail.selectedSection.title ?? "" }
+        actions.deleteSelectedSessions = { [weak self] in self?.sessionList.deleteSelectedSessions() }
         return actions
     }
 

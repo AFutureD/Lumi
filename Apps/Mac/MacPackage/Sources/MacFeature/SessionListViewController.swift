@@ -7,9 +7,10 @@ import AppKit
 /// Each row is a two-line block — status dot + title + relative time over
 /// agent icon + `model · effort` + stacked subagent dots + chevron — and,
 /// when expanded, one line per subagent inside the same block. Selection is
-/// two-level and mutually exclusive: the whole block (full-width, square) or
-/// one subagent line (rounded, outset 4); both are painted by the cell, not
-/// by NSTableView.
+/// two-level and mutually exclusive: session blocks (full-width, square;
+/// shift / ⌘ build a multi-selection at this level only) or one subagent
+/// line (rounded, outset 4); both are painted by the cell, not by
+/// NSTableView.
 @MainActor
 final class SessionListViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private let store: MacSessionStore
@@ -21,9 +22,9 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
     /// An entry is dropped when that session's tier changes.
     private var expandedOverrides: [SessionID: Bool] = [:]
     private var lastTones: [SessionID: SessionStatusTone] = [:]
-    /// Selection painted optimistically on click, before the store finishes
-    /// loading the detail; cleared once the store catches up.
-    private var clickedSelectionID: SessionID?
+    /// The fixed end of a shift range (last plainly- or ⌘-clicked session
+    /// block); nil while a subagent line is selected.
+    private var anchorID: SessionID?
     private var filterText = ""
     private var relativeTimeTimer: Timer?
     /// Row currently carrying the hover wash; -1 when none.
@@ -52,17 +53,23 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
         // square, and the cell paints the subagent-line shape. The table's
         // selection is presentation only — every change to it goes through
         // this controller, never through the table's own mouse handling.
-        table.allowsMultipleSelection = false
+        table.allowsMultipleSelection = true
         table.allowsEmptySelection = true
         table.backgroundColor = .clear
         table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.delegate = self
         table.dataSource = self
-        table.onHit = { [weak self] rowIndex, region in
-            self?.handleHit(rowIndex: rowIndex, region: region)
+        table.onHit = { [weak self] rowIndex, region, modifiers in
+            self?.handleHit(rowIndex: rowIndex, region: region, modifiers: modifiers)
         }
-        table.onKey = { [weak self] key in
-            self?.handleKey(key) ?? false
+        table.onKey = { [weak self] key, modifiers in
+            self?.handleKey(key, modifiers: modifiers) ?? false
+        }
+        table.onSelectAll = { [weak self] in
+            self?.selectAllSessions()
+        }
+        table.onContextMenu = { [weak self] rowIndex, region in
+            self?.contextMenu(rowIndex: rowIndex, region: region)
         }
         table.onHover = { [weak self] point in
             self?.updateHover(at: point)
@@ -161,29 +168,93 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
 
     // MARK: Interaction
 
-    private func handleHit(rowIndex: Int, region: SessionListCellView.Region) {
+    private func handleHit(rowIndex: Int, region: SessionListCellView.Region, modifiers: NSEvent.ModifierFlags) {
         guard rows.indices.contains(rowIndex) else { return }
         let row = rows[rowIndex]
+        let flags = modifiers.intersection([.shift, .command])
         switch region {
         case .disclosure:
             // Toggling never changes the selection.
             setExpanded(!row.isExpanded, at: rowIndex, animated: true)
         case let .subagentLine(id):
+            // Subagent lines sit outside multi-selection; a modifier click
+            // is ignored rather than silently replacing a built-up set.
+            guard flags.isEmpty else { return }
             select(id)
         case .body:
-            select(row.id)
+            if flags.contains(.shift) {
+                // ⇧ extends from the anchor; ⌘⇧ joins the range to the
+                // existing selection instead of replacing it.
+                extendSelection(to: rowIndex, keepExisting: flags.contains(.command))
+            } else if flags.contains(.command) {
+                toggleSelection(of: row.id)
+            } else {
+                select(row.id)
+            }
         }
     }
 
     private func select(_ id: SessionID) {
-        clickedSelectionID = id
-        store.select(id)
+        anchorID = rows.contains { $0.id == id } ? id : nil
+        store.setSelection([id], lead: id)
+        applySelections()
+    }
+
+    /// The current selection restricted to session blocks — a lone subagent
+    /// selection contributes nothing to a range or a toggle.
+    private func sessionSelection() -> [SessionID] {
+        let topLevel = Set(rows.map(\.id))
+        return store.selectedIDs.filter { topLevel.contains($0) }
+    }
+
+    private func extendSelection(to rowIndex: Int, keepExisting: Bool) {
+        guard let anchorID, let anchorRow = rows.firstIndex(where: { $0.id == anchorID }) else {
+            select(rows[rowIndex].id)
+            return
+        }
+        var ids = keepExisting ? sessionSelection() : []
+        for index in min(anchorRow, rowIndex) ... max(anchorRow, rowIndex) {
+            let id = rows[index].id
+            if !ids.contains(id) { ids.append(id) }
+        }
+        store.setSelection(ids, lead: rows[rowIndex].id)
+        applySelections()
+    }
+
+    private func toggleSelection(of id: SessionID) {
+        var ids = sessionSelection()
+        anchorID = id
+        if let index = ids.firstIndex(of: id) {
+            ids.remove(at: index)
+            // The detail pane keeps its session unless that one was removed;
+            // then the most recently selected survivor takes over.
+            let currentLead = store.leadSelectedID
+            let lead = currentLead.flatMap { ids.contains($0) ? $0 : nil } ?? ids.last
+            store.setSelection(ids, lead: lead)
+        } else {
+            ids.append(id)
+            store.setSelection(ids, lead: id)
+        }
+        applySelections()
+    }
+
+    /// ⌘A: every session block; the detail pane stays where it was when its
+    /// session is part of the list.
+    private func selectAllSessions() {
+        guard !rows.isEmpty else { return }
+        let ids = rows.map(\.id)
+        anchorID = ids.first
+        let currentLead = store.leadSelectedID
+        let lead = currentLead.flatMap { ids.contains($0) ? $0 : nil } ?? ids.last
+        store.setSelection(ids, lead: lead)
         applySelections()
     }
 
     /// `←` / `→` collapse / expand the selected row's subagent group;
-    /// `↑` / `↓` walk sessions and visible subagent lines as one list.
-    private func handleKey(_ key: SessionListTableView.Key) -> Bool {
+    /// `↑` / `↓` walk sessions and visible subagent lines as one list
+    /// (`⇧↑` / `⇧↓` grow or shrink a session range instead); `⌘⌫` deletes
+    /// the selection.
+    private func handleKey(_ key: SessionListTableView.Key, modifiers: NSEvent.ModifierFlags) -> Bool {
         switch key {
         case .left, .right:
             guard let rowIndex = selectedRowIndex() else { return false }
@@ -197,10 +268,17 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
             }
             setExpanded(expand, at: rowIndex, animated: true)
             return true
+        case .delete:
+            guard !store.selectedIDs.isEmpty else { return false }
+            deleteSelectedSessions()
+            return true
         case .up, .down:
+            if modifiers.contains(.shift) {
+                return extendSelectionWithArrow(down: key == .down)
+            }
             let items = selectableItems()
             guard !items.isEmpty else { return false }
-            let currentID = clickedSelectionID ?? store.selectedSession?.summary.id
+            let currentID = store.leadSelectedID
             let currentIndex = items.firstIndex { $0.id == currentID }
             let next: Int = if let currentIndex {
                 key == .down ? min(items.count - 1, currentIndex + 1) : max(0, currentIndex - 1)
@@ -211,6 +289,27 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
             table.scrollRowToVisible(items[next].rowIndex)
             return true
         }
+    }
+
+    /// `⇧↑` / `⇧↓`: the moving end of the range steps one session block
+    /// while the anchor stays put, so walking back over the range shrinks
+    /// it. A subagent-line selection first climbs to its session block.
+    private func extendSelectionWithArrow(down: Bool) -> Bool {
+        guard !rows.isEmpty else { return false }
+        guard let leadRow = selectedRowIndex() else {
+            select(rows[0].id)
+            return true
+        }
+        if anchorID == nil || !rows.contains(where: { $0.id == anchorID }) {
+            anchorID = rows[leadRow].id
+        }
+        guard let anchorID, let anchorRow = rows.firstIndex(where: { $0.id == anchorID }) else { return false }
+        let newLeadRow = max(0, min(rows.count - 1, leadRow + (down ? 1 : -1)))
+        let ids = (min(anchorRow, newLeadRow) ... max(anchorRow, newLeadRow)).map { rows[$0].id }
+        store.setSelection(ids, lead: rows[newLeadRow].id)
+        applySelections()
+        table.scrollRowToVisible(newLeadRow)
+        return true
     }
 
     private func selectableItems() -> [(id: SessionID, rowIndex: Int)] {
@@ -225,11 +324,99 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
     }
 
     private func selectedRowIndex() -> Int? {
-        let selectedID = clickedSelectionID ?? store.selectedSession?.summary.id
-        guard let selectedID else { return nil }
+        guard let selectedID = store.leadSelectedID else { return nil }
         return rows.firstIndex { row in
             row.id == selectedID || row.subagents.contains { $0.id == selectedID }
         }
+    }
+
+    // MARK: Deletion
+
+    /// Toolbar trash, the context menu, and `⌘⌫` all land here: one
+    /// count-aware confirmation, then a batch delete with the selection
+    /// moved to the nearest surviving row so the list stays selected.
+    func deleteSelectedSessions() {
+        let ids = store.selectedIDs
+        guard !ids.isEmpty, let window = view.window else { return }
+        let alert = NSAlert()
+        if ids.count == 1 {
+            alert.messageText = "Delete this Session?"
+            let title = sessionTitle(for: ids[0]).map { "“\($0)” and its timeline" } ?? "The Session and its timeline"
+            alert.informativeText = "\(title) will be removed from this Mac, the daemon, and connected iPhones."
+        } else {
+            alert.messageText = "Delete \(ids.count) Sessions?"
+            alert.informativeText = "These Sessions and their timelines will be removed from this Mac, the daemon, and connected iPhones."
+        }
+        alert.alertStyle = .warning
+        let deleteButton = alert.addButton(withTitle: "Delete")
+        deleteButton.hasDestructiveAction = true
+        // A destructive action must not sit on Return; Cancel is the default.
+        deleteButton.keyEquivalent = ""
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let next = self.survivingNeighbor(afterDeleting: ids)
+            self.store.deleteSessions(ids)
+            self.anchorID = next
+            self.store.setSelection(next.map { [$0] } ?? [], lead: next)
+            self.applySelections()
+        }
+    }
+
+    private func sessionTitle(for id: SessionID) -> String? {
+        if let row = rows.first(where: { $0.id == id }) { return row.title }
+        for row in rows {
+            if let line = row.subagents.first(where: { $0.id == id }) { return line.title }
+        }
+        return store.sessions.first { $0.id == id }?.title
+    }
+
+    /// The first session block after the deleted range, else the last one
+    /// before it; a deleted subagent line falls back to its parent block.
+    private func survivingNeighbor(afterDeleting ids: [SessionID]) -> SessionID? {
+        let deleted = Set(ids)
+        if let parent = rows.first(where: { row in row.subagents.contains { deleted.contains($0.id) } }),
+           !deleted.contains(parent.id) {
+            return parent.id
+        }
+        let deletedRows = rows.indices.filter { deleted.contains(rows[$0].id) }
+        guard let first = deletedRows.first, let last = deletedRows.last else { return nil }
+        if let after = rows.indices.first(where: { $0 > last && !deleted.contains(rows[$0].id) }) {
+            return rows[after].id
+        }
+        if let before = rows.indices.last(where: { $0 < first && !deleted.contains(rows[$0].id) }) {
+            return rows[before].id
+        }
+        return nil
+    }
+
+    /// Right-click follows the Finder convention: outside the selection it
+    /// moves the selection to the clicked target first; inside it, the menu
+    /// acts on the whole selection.
+    private func contextMenu(rowIndex: Int, region: SessionListCellView.Region) -> NSMenu? {
+        guard rows.indices.contains(rowIndex) else { return nil }
+        let row = rows[rowIndex]
+        switch region {
+        case let .subagentLine(id):
+            if store.selectedIDs != [id] { select(id) }
+        case .body, .disclosure:
+            if !store.selectedIDs.contains(row.id) { select(row.id) }
+        }
+        let count = store.selectedIDs.count
+        guard count > 0 else { return nil }
+        let menu = NSMenu()
+        let item = NSMenuItem(
+            title: count > 1 ? "Delete \(count) Sessions" : "Delete Session",
+            action: #selector(deleteFromContextMenu),
+            keyEquivalent: ""
+        )
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func deleteFromContextMenu() {
+        deleteSelectedSessions()
     }
 
     private func setExpanded(_ expanded: Bool, at rowIndex: Int, animated: Bool) {
@@ -323,9 +510,6 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
         emptyLabel.stringValue = filterText.isEmpty ? "No Sessions" : "No matching Sessions"
         emptyLabel.isHidden = !updated.isEmpty
 
-        if let selectedID = store.selectedSession?.summary.id, selectedID == clickedSelectionID {
-            clickedSelectionID = nil
-        }
         let updatedSelections = updated.map { selectionState(for: $0) }
 
         if rows.map(Self.structureKey) == updated.map(Self.structureKey) {
@@ -372,23 +556,23 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
     /// The table's own selection mirrors the session-level state (row-view
     /// wash, accessibility); a subagent-line selection leaves it empty.
     private func syncTableSelection() {
-        if let index = rowSelections.firstIndex(of: .session) {
-            if table.selectedRow != index {
-                table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-            }
-        } else if table.selectedRow != -1 {
+        let indexes = IndexSet(rowSelections.indices.filter { rowSelections[$0] == .session })
+        guard table.selectedRowIndexes != indexes else { return }
+        if indexes.isEmpty {
             table.deselectAll(nil)
+        } else {
+            table.selectRowIndexes(indexes, byExtendingSelection: false)
         }
     }
 
     private func selectionState(for row: SessionListRowModel) -> SessionListCellView.SelectionState {
-        let selectedID = clickedSelectionID ?? store.selectedSession?.summary.id
-        guard let selectedID else { return .none }
-        if row.id == selectedID { return .session }
+        let selected = store.selectedIDs
+        guard !selected.isEmpty else { return .none }
+        if selected.contains(row.id) { return .session }
         // A selected subagent line highlights only while visible; the parent
         // block never highlights in its place (two-level, mutually exclusive).
-        if row.isExpanded, row.subagents.contains(where: { $0.id == selectedID }) {
-            return .subagent(selectedID)
+        if row.isExpanded, let line = row.subagents.first(where: { selected.contains($0.id) }) {
+            return .subagent(line.id)
         }
         return .none
     }
@@ -408,11 +592,14 @@ final class SessionListViewController: NSViewController, NSTableViewDataSource, 
 @MainActor
 final class SessionListTableView: NSTableView {
     enum Key {
-        case up, down, left, right
+        case up, down, left, right, delete
     }
 
-    var onHit: ((Int, SessionListCellView.Region) -> Void)?
-    var onKey: ((Key) -> Bool)?
+    var onHit: ((Int, SessionListCellView.Region, NSEvent.ModifierFlags) -> Void)?
+    var onKey: ((Key, NSEvent.ModifierFlags) -> Bool)?
+    var onSelectAll: (() -> Void)?
+    /// Menu for a right-clicked row region; nil shows no menu.
+    var onContextMenu: ((Int, SessionListCellView.Region) -> NSMenu?)?
     /// Pointer position in table coordinates; `nil` when it left the table.
     var onHover: ((NSPoint?) -> Void)?
 
@@ -454,18 +641,47 @@ final class SessionListTableView: NSTableView {
             return
         }
         window?.makeFirstResponder(self)
-        onHit?(rowIndex, cell.region(at: cell.convert(point, from: self)))
+        onHit?(rowIndex, cell.region(at: cell.convert(point, from: self)), event.modifierFlags)
+    }
+
+    /// Right-click routes through the same region classification as clicks;
+    /// the controller decides selection and builds the menu.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let rowIndex = row(at: point)
+        guard rowIndex >= 0,
+              let cell = view(atColumn: 0, row: rowIndex, makeIfNecessary: false) as? SessionListCellView else {
+            return nil
+        }
+        window?.makeFirstResponder(self)
+        return onContextMenu?(rowIndex, cell.region(at: cell.convert(point, from: self)))
+    }
+
+    // ⌘A arrives via the Edit menu's Select All through the responder
+    // chain; the keyDown branch below covers the table when no menu item
+    // claims the key.
+    override func selectAll(_ sender: Any?) {
+        onSelectAll?()
     }
 
     override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "a" {
+            onSelectAll?()
+            return
+        }
+        // No menu item claims ⌘⌫, so it arrives here. Deletion requires the
+        // deliberate ⌘ — a bare ⌫ must never destroy sessions.
         let key: Key? = switch event.specialKey {
         case .upArrow?: .up
         case .downArrow?: .down
         case .leftArrow?: .left
         case .rightArrow?: .right
+        case .delete?, .deleteForward?, .backspace?:
+            event.modifierFlags.contains(.command) ? .delete : nil
         default: nil
         }
-        if let key, onKey?(key) == true { return }
+        if let key, onKey?(key, event.modifierFlags) == true { return }
         super.keyDown(with: event)
     }
 }

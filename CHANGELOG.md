@@ -15,6 +15,7 @@
 
 ### 会话查看
 
+- [Lumi for Mac] - Session 列表支持多选与更多删除入口：Shift 连选、⌘ 点选增减、⌘⇧ 并入范围、⌘A 全选、Shift + 上下方向键扩缩范围（多选只在 Session 级，Subagent 行不参与）；删除可从右键菜单（Delete Session / Delete N Sessions）或 ⌘⌫ 触发，与工具栏按钮共用同一确认框——多选时写明条数，Delete 改为红色破坏性按钮且回车落在 Cancel 上；删除后选中自动落到相邻的下一条，多选时工具栏标题显示“N Sessions Selected”。
 - 由 AaaS 应用（Agentic AI as a Service，如 Paseo、Raft）启动的 Session 标题改用该应用自己的标题：Paseo 显示其 agent 标题（含改名跟进），Raft 显示 agent 名（如 Fable）；不再停留在默认的“Claude Session / Codex Session”。
 - 每个 Session 现在记住承载它的 AaaS 应用（ChatGPT、Codex、Claude Desktop、Claude Code、Paseo、Raft）与所在终端，标题由该应用决定；修复 Paseo/Raft 的 Session 结束后标题被换回 Agent 原生线程名的问题。
 - Session 详情 Inspector（Mac 与 iPhone 的 Info）Overview 新增 Application 项，显示承载该会话的 AaaS 应用；早于归属记录的旧 Session 显示 Not available。
