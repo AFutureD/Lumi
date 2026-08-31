@@ -177,6 +177,23 @@ public final class ApplicationCoordinator: NSObject {
         appItem.submenu = appMenu
         menu.addItem(appItem)
 
+        // Text editing shortcuts (⌘V and friends) only work when an Edit
+        // menu item claims them; without this, no text field in the app can
+        // paste. Actions have no target — the responder chain finds the
+        // focused field, and the menu disables items nothing responds to.
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         let mainWindowItem = windowMenu.addItem(withTitle: "Lumi", action: #selector(showMainWindow), keyEquivalent: "0")

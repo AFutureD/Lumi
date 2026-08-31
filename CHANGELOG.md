@@ -11,6 +11,7 @@
 ### 会话过滤
 
 - [Lumi for Mac] - “Settings > Agents”新增 Filters：一组规则把幽灵 Session（测试、`~/tmp` 一次性调用等）挡在所有界面之外——命中的新 Session 照常入库，但不出现在主窗口列表和 Notch，不同步到 iPhone，也不发推送。规则内条件取与、规则间取或；字段有 Agent、Application、User message（首条用户消息）、Folder（含子目录）；规则可就地编辑、拖拽排序、停用与删除。判定在 Session 首条用户消息到达时做一次并永久冻结，改规则不追溯已有 Session；规则存在 daemon，Clear history 不清规则。斜杠命令、Raft 这类从不开回合的会话同样参与判定（User message 规则按记录原文匹配，`<command-name>` 记录用 contains 才能命中命令名）。
+- [Lumi for Mac] - 修复所有文本输入框（如 Filters 规则的 User message、搜索框）无法粘贴的问题：主菜单补上标准 Edit 菜单（Undo / Redo / Cut / Copy / Paste / Select All），编辑快捷键全应用生效。
 - [Lumi for Mac] - “Settings > Agents”的 Hook 卡片合并为一个 Integrations 列表：一行一个 Agent（图标、名称、配置路径、状态副标题），行尾单个按钮表示动作——Install / Remove（红字）/ Trust（仅 Codex 未信任时，蓝色实心，Remove 移入右键菜单）。
 
 ### 会话查看
