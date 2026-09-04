@@ -1,40 +1,88 @@
 <div align="center">
 
+English · [简体中文](README.zh-CN.md)
+
 <img src="Website/public/assets/lumi-app-icon.svg" width="128" alt="Lumi app icon">
 
 # Lumi
 
 Know when your agents need you.
 
-回合结束、任务失败、中途被打断——需要你的那一刻，Lumi 会找到你。<br>其余时间，它保持安静。
+Lumi brings Sessions from multiple Agents into one view on your Mac.<br>
+See their current state in Lumi for Mac or the Notch, and check a paired iPhone when you are away.
 
-[lumi.huanan.app](https://lumi.huanan.app)
+[Download for Mac](https://lumi.huanan.app/download) · [Join iPhone TestFlight](https://testflight.apple.com/join/uYcSWMzV) · [Website](https://lumi.huanan.app)
 
 <br>
 
-<img src="docs/assets/lumi-screenshot.jpg" alt="Lumi for Mac 与 Lumi for iPhone">
+<img src="docs/assets/lumi-screenshot.jpg" alt="Lumi for Mac and Lumi for iPhone">
 
 </div>
 
-## 功能
+## Current support
 
-- Agent 支持：Codex 与 Claude Code，一台 Mac 上的多个 Agent、多个 Session 集中查看。
-- Mac 主窗口：三栏布局；Session 列表显示标题、状态、最近更新、模型与 Subagent；详情含 Activity 时间轴（可切换密度、按类别与重要性过滤）和 Token / Context / 耗时指标。
-- Notch：屏幕顶部常驻状态条，回合结束或失败时自动展开提示，过程事件全部静默；处理完的 Session 可就地归档。
-- iPhone 查看：只读；一台 iPhone 连多台 Mac，所有 Session 合并成一条列表，可过滤、可搜索；内容缓存在本机，Mac 离线也能翻看。目前通过 TestFlight 提供。
-- 推送通知：回合结束、失败或被中断时 iPhone 收到推送，点开直达 Session 详情。
-- 配对与同步：6 位码 / 二维码配对加双端数字比对，无账号体系；daemon 常驻后台，Mac App 关闭也照样同步。
-- 隐私：Session 内容按配对 iPhone 端到端加密，Relay 只转发、不存储；推送仅含 Session 标题和状态词。
-- 软件更新：内置签名更新通道，检查与安装均由用户确认。
+> [!IMPORTANT]
+> Lumi is under active development. Only the Agents and Applications below are supported today.
+
+| Concept | Currently supported |
+| --- | --- |
+| Agent | Codex, Claude Code |
+| Application | ChatGPT, Codex, Claude Code, Claude Desktop, Raft, Paseo |
+
+## Start here
+
+**Set up Lumi for Mac — 4 steps**
+
+1. [Download Lumi for Mac](https://lumi.huanan.app/download) on an Apple silicon Mac running macOS 26 or later.
+2. Open `Settings > Daemon` and select `Install & Start daemon`.
+3. Open `Settings > Agents` and select `Install` for Codex or Claude Code.
+4. Start one task in that Agent.
+
+**Done:** The Session appears in Lumi and updates while the Agent works.
+
+**Pair an iPhone — optional, 4 steps**
+
+1. Install [Lumi for iPhone from TestFlight](https://testflight.apple.com/join/uYcSWMzV) on iOS 26 or later.
+2. Open `iPhone` in Lumi for Mac and keep this page open.
+3. On the iPhone, open `Macs`, select `+ > Add Device`, then scan or enter the code shown on the Mac.
+4. Compare the numbers. If they match, select `Match` on the Mac.
+
+**Done:** The Mac lists the iPhone as `Active`, and its Sessions appear on the iPhone.
+
+## What Lumi gives you
+
+- **Mac overview.** See every Session's status at a glance. Open one to inspect its complete Activity and key metrics.
+- **Quiet Notch.** It stays compact while Agents work and expands when a turn completes, fails, or is interrupted. Closing the Mac window does not stop the Notch or synchronization.
+- **iPhone view.** Search and filter Sessions from multiple paired Macs. Cached content stays readable while a Mac is offline; notifications open the Session that needs attention.
+- **Controlled updates.** Lumi uses a signed Stable update channel. You decide when to check, download, and install.
+
+## Privacy and product boundaries
+
+- **Read-only.** Lumi observes Agent Sessions; it does not control them. Lumi for iPhone cannot approve actions, stop work, or send input to an Agent.
+- **No account.** Pairing starts with a QR code or short-lived 6-digit code. You confirm the same numbers on both devices before access is granted.
+- **Session privacy.** Content is encrypted separately for each paired iPhone. The Relay forwards encrypted Session data without storing or reading it.
+- **Notification privacy.** Visible notification text contains only the Session title and status—not Session content, Activity, or tool output. This text passes through the Relay in plaintext for delivery and is not stored there.
 
 ## FAQ
 
-- 支持哪些 agent？——当前支持主流 coding agent，后续持续扩展。
-- 会不会很吵？——不会。只有回合结束、失败、中断三种时刻会提醒你，过程性事件全部静默。
-- 关掉窗口 Lumi 还在吗？——在。Notch 和同步照常运行。
-- 需要账号吗？——不需要。配对用 6 位码 + 双端数字比对，不经过任何账号体系。
-- iPhone 能操控 agent 吗？——不能，v1 是刻意设计的只读。
-- 系统要求？——Mac 端 Apple silicon + macOS 26，iPhone 端 iOS 26。
+**A Session does not appear**
+
+1. Confirm `Settings > Daemon` shows `Running`.
+2. Confirm the Agent in `Settings > Agents` shows `Installed`.
+3. If Codex shows a trust warning, select `Trust`.
+4. Start a new task in the Agent.
+
+**iPhone pairing does not finish**
+
+1. Keep the `iPhone` page open on the Mac.
+2. If the code shows `Expired`, select `New code`.
+3. Compare the numbers and select `Match` on the Mac.
+
+**A Mac is `Offline` on the iPhone**
+
+Cached Sessions remain readable. Restore the Mac's daemon and network connection; synchronization resumes automatically.
+
+For detailed behavior and recovery paths, read the [feature guide](docs/FEAT.md).
 
 ## License
 
