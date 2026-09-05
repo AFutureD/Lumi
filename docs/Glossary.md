@@ -60,17 +60,30 @@
 | 概念 | 界面用词 | 中文写法 |
 | ---- | -------- | -------- |
 | 侧边栏里按项目、模型看 token 与花费的那一页 | Usage | 用量 |
+| 页面上半张卡：两个大数字、token 构成条、三个小数字和趋势图 | Summary | 总览 |
+| 页面下半张卡：一张可换分组维度的明细表 | Detail | 明细 |
 | 按公开价目估算出的美元数 | Cost | 花费 |
 | 模型处理过的 token 总数（输入 + 缓存读 + 缓存写 + 输出） | Tokens | token |
+| Cost 与上一周期相比的涨跌（`↑ 12% vs yesterday`；上一周期没有数据时写 `no comparable previous period`） | vs yesterday · vs last week · vs last month · vs previous N days | 较上一周期 |
+| Tokens 下面那条 6pt 的条，按四类拆开、合计恒为 100% | Input · Cache read · Cache write · Output | token 构成 |
+| 范围内模型被调用的次数 | Calls | 调用次数 |
+| Summary 卡头的过滤器，只作用于 Summary | All agents · Claude Code · Codex | Agent 过滤 |
+| Summary 右侧按时间画的堆叠柱状图；单日按小时、90 天内按天、更长按周 | Cost per day · Tokens per hour …（趋势图） | 趋势图 |
+| 趋势图 y 轴量什么 | Cost · Tokens | 趋势指标 |
+| Detail 表的分组维度 | Group by · Project · Agent · Time · Model | 分组 |
+| Time 分组下一行代表多长 | Day · Week · Month | 时间粒度 |
+| Summary 的 Agent 过滤生效时 Detail 卡头的提示 | Not filtered by the Summary agent | 明细不受过滤影响 |
 | 用量表格里的“项目”，即 Agent 运行时的工作目录（与 Filters 的 Folder 同一事物，Usage 页叫 Project） | Project | 项目 |
 | 模型的原始 id（如 `claude-fable-5`、`gpt-5.5`），照 Agent 上报的原样显示 | Model | 模型 |
 | 时间范围的四个档位 | Today · This week · This month · Custom | 今天 · 本周 · 本月 · 自定义 |
-| 价目表里没有的模型，其 token 不计入任何 Cost | Unpriced（表里显示 `—`） | 无价格 |
+| 价目表里没有的模型，其 token 不计入任何 Cost；趋势图里是灰段，图例后缀 `· no price` | Unpriced（表里显示 `—`） | 无价格 |
 | 缓存读取占全部 token 的比例（cache read ÷ total） | Cache ratio | 缓存命中率 |
 | 页头右侧说明价目表来自哪、多久前更新 | Prices · models.dev · updated … ago / Prices · built-in snapshot | 价格更新时间 |
 
 - Usage 与 Session 无关：删除 Session、清空历史都不会改变 Usage 的数字。
 - Cost 是按公开价目算出的估算值，不是账单，也不含订阅套餐的折算。
+- Usage 页里 Claude 的 Agent 一律写 `Claude Code`（会话列表里的 Agent 名仍是 `Claude`）。
+- Sessions 与 Turns 是去重计数，跨 Agent 不能相加：Agent 与 Model 分组不列这两列。
 
 ## 时间概念
 

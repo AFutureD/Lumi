@@ -34,3 +34,49 @@ public extension UsageDay {
         return calendar.dateComponents([.day], from: from, to: to).day
     }
 }
+
+// MARK: - Weeks and months
+
+public extension UsageDay {
+    /// The Monday on or before this day — weeks start on Monday whatever
+    /// the locale says (the Usage page's "This week" agrees).
+    func startOfWeek(in calendar: Calendar = .current) -> UsageDay {
+        guard let start = start(in: calendar) else { return self }
+        let weekday = calendar.component(.weekday, from: start) // 1 = Sunday
+        let sinceMonday = (weekday + 5) % 7
+        return adding(days: -sinceMonday, calendar: calendar) ?? self
+    }
+
+    func endOfWeek(in calendar: Calendar = .current) -> UsageDay {
+        startOfWeek(in: calendar).adding(days: 6, calendar: calendar) ?? self
+    }
+
+    var startOfMonth: UsageDay { UsageDay(year: year, month: month, day: 1) }
+
+    func endOfMonth(in calendar: Calendar = .current) -> UsageDay {
+        guard let start = startOfMonth.start(in: calendar),
+              let days = calendar.range(of: .day, in: .month, for: start)?.count else { return self }
+        return UsageDay(year: year, month: month, day: days)
+    }
+}
+
+public extension UsagePeriod {
+    /// Last day of the slot (the day itself for hours and days).
+    func end(in calendar: Calendar = .current) -> UsageDay {
+        switch unit {
+        case .hour, .day: start
+        case .week: start.endOfWeek(in: calendar)
+        case .month: start.endOfMonth(in: calendar)
+        }
+    }
+
+    /// The slot a moment on `day` (at `hour`) falls in.
+    init(unit: UsagePeriodUnit, containing day: UsageDay, hour: Int, calendar: Calendar = .current) {
+        switch unit {
+        case .hour: self.init(unit: .hour, start: day, hour: hour)
+        case .day: self.init(unit: .day, start: day)
+        case .week: self.init(unit: .week, start: day.startOfWeek(in: calendar))
+        case .month: self.init(unit: .month, start: day.startOfMonth)
+        }
+    }
+}

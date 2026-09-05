@@ -323,6 +323,7 @@ public actor DaemonService {
                 log.debug("usage_report_built", metadata: .fields([
                     "since": since.rawValue, "until": until.rawValue,
                     "buckets": buckets.count, "projects": report.byProject.count, "models": report.byModel.count,
+                    "days": report.byDay.count, "trend": report.trend.count, "trend_unit": report.trendUnit.rawValue,
                 ]))
                 payload = IPCResponse(status: .ok, usage: report)
             case .getSessionFilters:

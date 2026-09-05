@@ -162,18 +162,24 @@ public struct ModelPriceTable: Sendable {
     /// stripped, then through the alias table; then the same candidates on
     /// every other provider (sorted, deterministic). `nil` means unpriced.
     public func price(for model: String, agent: AgentProvider) -> ModelPrice? {
+        listing(for: model, agent: agent)?.price
+    }
+
+    /// The rate and the models.dev provider it was found under (`anthropic`,
+    /// `openai`, …), reported on the per-model rows of `usage_report`.
+    public func listing(for model: String, agent: AgentProvider) -> (provider: String, price: ModelPrice)? {
         let candidates = Self.candidates(for: model)
         guard !candidates.isEmpty else { return nil }
         let preferred = Self.provider(for: agent)
         if let prices = providers[preferred] {
             for candidate in candidates {
-                if let price = prices[candidate] { return price }
+                if let price = prices[candidate] { return (preferred, price) }
             }
         }
         for providerID in providers.keys.sorted() where providerID != preferred {
             let prices = providers[providerID]!
             for candidate in candidates {
-                if let price = prices[candidate] { return price }
+                if let price = prices[candidate] { return (providerID, price) }
             }
         }
         return nil

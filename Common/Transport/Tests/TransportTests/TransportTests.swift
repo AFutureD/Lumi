@@ -301,8 +301,15 @@ import Testing
         byAgent: [UsageSlice(agent: .claude, tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
         byProject: [UsageSlice(workspace: "/Users/me/Developer/lumi", tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
         byModel: [
-            UsageSlice(agent: .claude, model: "claude-fable-5", tokens: tokens, costUSD: 1.234, calls: 2, sessions: 2, turns: 2),
+            UsageSlice(agent: .claude, model: "claude-fable-5", provider: "anthropic", tokens: tokens, costUSD: 1.234, calls: 2, sessions: 2, turns: 2),
             UsageSlice(agent: .claude, model: "<synthetic>", tokens: UsageTokens(output: 14), costUSD: nil, unpricedTokens: 14, calls: 1, sessions: 1, turns: 1),
+        ],
+        byDay: [UsageSlice(period: UsagePeriod(unit: .day, start: UsageDay(year: 2026, month: 9, day: 5)), tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
+        byWeek: [UsageSlice(period: UsagePeriod(unit: .week, start: UsageDay(year: 2026, month: 8, day: 31)), tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
+        byMonth: [UsageSlice(period: UsagePeriod(unit: .month, start: UsageDay(year: 2026, month: 9, day: 1)), tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
+        trendUnit: .day,
+        trend: [
+            UsageSlice(agent: .claude, model: "claude-fable-5", provider: "anthropic", period: UsagePeriod(unit: .day, start: UsageDay(year: 2026, month: 9, day: 5)), tokens: tokens, costUSD: 1.234, calls: 2, sessions: 2, turns: 2),
         ],
         pricing: UsagePricingStatus(source: .cached, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000), modelCount: 1_234),
         scan: UsageScanStatus(scannedFiles: 1_650, pendingFiles: 0, lastScanAt: Date(timeIntervalSince1970: 1_700_000_100), isScanning: false)
@@ -317,6 +324,14 @@ import Testing
     // An unpriced row omits its cost rather than reporting zero.
     #expect(json.contains(#""model":"<synthetic>""#))
     #expect(!json.contains(#""costUSD":0"#))
+    #expect(json.contains(#""trendUnit":"day""#))
+    #expect(json.contains(#""period":{"start":"2026-08-31","unit":"week"}"#) || json.contains(#""period":{"unit":"week","start":"2026-08-31"}"#))
+    // An hour period carries its hour; a day period leaves it out.
+    let hour = UsagePeriod(unit: .hour, start: UsageDay(year: 2026, month: 9, day: 5), hour: 9)
+    let day = UsagePeriod(unit: .day, start: UsageDay(year: 2026, month: 9, day: 5), hour: 9)
+    #expect(hour.hour == 9 && day.hour == nil)
+    #expect(UsagePeriod(unit: .hour, start: UsageDay(year: 2026, month: 9, day: 5), hour: 8) < hour)
+    #expect(day < hour)
 
     let request = IPCRequest(operation: .usageReport, since: report.since, until: report.until)
     let requestJSON = String(decoding: try TransportCoding.makeEncoder().encode(request), as: UTF8.self)

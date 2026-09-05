@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// The glass metric card: a large monospaced-digit value over a small
-/// uppercase label. Shared by the session Inspector (Tokens / Context /
-/// Elapsed) and the Usage page (Cost / Tokens / Sessions / Turns).
+/// uppercase label. The session Inspector's Tokens / Context / Elapsed.
 struct MetricCardView<Value: View>: View {
     let label: String
     @ViewBuilder let value: () -> Value

@@ -89,9 +89,14 @@ final class UsageViewController: NSViewController {
             picker.calendar = calendar
             picker.timeZone = calendar.timeZone
             picker.isBezeled = true
+            // A click drops the system calendar under the field: pick a day, no typing needed.
+            picker.presentsCalendarOverlay = true
             picker.target = self
             picker.action = #selector(customDatesChanged(_:))
+            // Same as the segmented control: keep the natural width, never swallow the row's spare width.
+            picker.setContentHuggingPriority(.required, for: .horizontal)
         }
+        rangeSeparator.setContentHuggingPriority(.required, for: .horizontal)
         rangeSeparator.font = Design.Font.caption
         rangeSeparator.textColor = .secondaryLabelColor
     }

@@ -22,11 +22,11 @@ Turn 归属：Claude 用与 Session 相同的内容规则（human 来源的 prom
 
 ## 存储
 
-三张表随 `sessions.sqlite3` 一起迁移（`lumi-v9-usage` 建表；解析规则变更时用一条新 migration 整体重建三张表，让下次启动重扫——`lumi-v10-usage-rules` 是第一次），与 `sessions` 没有外键：
+三张表随 `sessions.sqlite3` 一起迁移（`lumi-v9-usage` 建表；解析规则或桶主键变更时用一条新 migration 整体重建三张表，让下次启动重扫——`lumi-v10-usage-rules` 因解析规则、`lumi-v11-usage-hour` 因主键加小时），与 `sessions` 没有外键：
 
 | 表 | 内容 | 规则 |
 | --- | --- | --- |
-| `usage_buckets` | 主键 `(agent, session_id, turn_id, model, day, tier)`；`tier` 是长上下文档位（0 = 基础档，n = 价目第 n 档），扫描器入库前按「上下文 = 未缓存输入 + 缓存读 + 缓存写」对照当时价目的阈值判定（超过才进高档；补足记录沿用整次调用的上下文）；`workspace`（桶内首条记录的 cwd）、`first_at` / `last_at`、六类 token（input / cache_read / cache_write_5m / cache_write_1h / output / reasoning）、`calls`（补足记录不计）、`reported_cost_usd` / `reported_calls`（来源自己报告的费用之和与条数） | `day` 是记录时间戳的**本地日**（daemon 的 `Calendar.current`）；同一桶累加 |
+| `usage_buckets` | 主键 `(agent, session_id, turn_id, model, day, hour, tier)`；`hour` 是记录时间戳的本地小时（0–23，Today 趋势图的一根柱）；`tier` 是长上下文档位（0 = 基础档，n = 价目第 n 档），扫描器入库前按「上下文 = 未缓存输入 + 缓存读 + 缓存写」对照当时价目的阈值判定（超过才进高档；补足记录沿用整次调用的上下文）；`workspace`（桶内首条记录的 cwd）、`first_at` / `last_at`、六类 token（input / cache_read / cache_write_5m / cache_write_1h / output / reasoning）、`calls`（补足记录不计）、`reported_cost_usd` / `reported_calls`（来源自己报告的费用之和与条数） | `day` / `hour` 取记录时间戳的**本地日与小时**（daemon 的 `Calendar.current`）；同一桶累加 |
 | `usage_seen` | 全局去重键 | Claude `claude:<message.id>:<requestId>`；Codex `codex:<timestamp>:<fnv1a(增量签名)>`——fork 回放、resume 复制历史、文件被重写后从头重扫，都只算一次 |
 | `usage_cursors` | 主键 `identity` = `<source>:<设备号>:<inode>`；`path`（最近一次看到的路径）、`byte_offset`、`file_size`、`modified_at`、`prefix_length` / `prefix_hash`（文件前 4 KB 的 SHA-256）、解析状态 BLOB（当前 turn、Codex 的 session / cwd / model / 累计基线 / 挂起的调用） | 文件移动（Codex `archive`）inode 不变，游标只换路径、不重读；文件变短、同大小但 mtime 变、或前缀哈希变都视为重写，从 0 重读、状态清零（去重键保证不重复计数） |
 
@@ -35,6 +35,8 @@ Turn 归属：Claude 用与 Session 相同的内容规则（human 来源的 prom
 ## 扫描
 
 `UsageScanService`（daemon 内，`Service`）：启动全量列文件，之后每 30 秒重列一次；按 inode 对上游标后，只有 `(size, mtime)` 与游标不同的文件才打开（mtime 按毫秒比较，SQLite 往返会带纳秒噪声），路径变了的只改游标里的路径；每个文件一个事务（去重键 → 桶 upsert → 游标），文件之间 `Task.yield()`，首扫本机约 1,700 个文件 / 1 GB 用时 20–25 秒，不阻塞 hook 路径。行级门槛（Claude `"usage"` / `"promptId"`，Codex `"token_count"` / `"turn_context"` / `"session_meta"`）先于 JSON 解析，坏行只记位置、跳过不中断。
+
+没有 token 也没有报告费用的记录不是一次模型调用，不入库（Claude 的 `<synthetic>` 占位消息——"No response requested"、中断提示——usage 全是 0；Codex 增量为 0 的事件同理）；报表构建时再过滤一遍空桶，早于这条规则入库的数据无需重扫。
 
 与 Session 采集的 rollout 游标（`rollout_cursors`）互不相干：两套游标、两套解析器，Usage 不经过 `AgentAdapter` 与 reducer。
 
@@ -64,15 +66,23 @@ input × in + cache_read × (cache_read ?? in) + cache_write_5m × (cache_write 
 
 `usage_report {since, until}`（本地日闭区间，跨度 ≤ 366 天）→ `UsageReport`：
 
-- `totals` 与 `byAgent` / `byProject`（按 `workspace`）/ `byModel`（按 provider + model）四组 `UsageSlice`：六类 token、`costUSD`（只含有价格部分；全无价格时为 nil）、`unpricedTokens`、`calls`、`sessions`（去重 session id；Subagent 与父级同一个）、`turns`（去重 (session, turn)）、`lastDay`。
+- `totals` 与 `byAgent` / `byProject`（按 `workspace`）/ `byModel`（按 provider + model，带价目来源 `provider`：自家 provider 或字母序第一个列出该模型的其它家，界面暂不显示）四组 `UsageSlice`：六类 token、`costUSD`（只含有价格部分；全无价格时为 nil）、`unpricedTokens`、`calls`、`sessions`（去重 session id；Subagent 与父级同一个）、`turns`（去重 (session, turn)）、`lastDay`。
+- `byDay` / `byWeek` / `byMonth`：按时段的切片（`period` = 单位 + 起始日；周从周一起，月为自然月），只有有调用的时段成行，升序。Detail 的 Time 分组直接用它们，所以 Sessions / Turns 在周、月上也是准确的去重数。
+- `trendUnit` + `trend`：趋势图的行，粒度由 daemon 按范围定（单日 = hour，≤ 90 天 = day，更长 = week），一行一个 (时段, agent, model)；Mac 自己决定按 Agent 还是按模型堆叠。
 - `pricing`：价目来源（builtin / cached / fresh）、拉取时间、模型数。
 - `scan`：已扫文件数、待扫文件数、上次扫描时间、是否正在扫。
 
-聚合在 daemon 内存里完成（`UsageReportBuilder`，纯函数）：一年的桶通常几万行，一次 IPC 帧即可。
+聚合在 daemon 内存里完成（`UsageReportBuilder`，纯函数）：一年的桶通常几万行，一次 IPC 帧即可。Summary 的「较上一周期」由 Mac 再发一次 `usage_report` 取上一周期（Today → 昨天；This week → 上周同几天；This month → 上月同几天；Custom N 天 → 之前的 N 天），daemon 不知道范围档位。
 
 ## Mac 页面
 
-侧边栏 Monitor 组的 Usage 页，收起中栏。subheader：`Today · This week · This month · Custom` 分段控件（周从周一起，Custom 时出现两个日粒度日期选择器，结束日不晚于今天），右侧 `Prices · models.dev · updated 3h ago` / `Prices · built-in snapshot`。主体：四张指标卡（Cost / Tokens / Sessions / Turns）→ By agent（Claude / Codex 组行可折叠，模型是组内子行，Total 固定在末尾；含 Cache ratio = cache read ÷ total；无价格显示 `—`，表尾注明多少 token 没有价格）→ By project（目录名 + `~` 缩写路径，含 Cache ratio；列可点排序，组行与子行各自排）。页面可见时每 30 秒重拉，切换范围或工具栏 Refresh 立即重拉；上次选择的范围记在 UserDefaults。
+侧边栏 Monitor 组的 Usage 页，收起中栏。subheader：`Today · This week · This month · Custom` 分段控件（周从周一起，Custom 时出现两个日粒度日期选择器，结束日不晚于今天），右侧 `Prices · models.dev · updated 3h ago` / `Prices · built-in snapshot`。主体是两张卡（取值全部来自设计系统 `DesignSystem.Usage` / `DesignSystem.Chart`，见 `DESIGN SYSTEM.html` §1.1「图表序列」）：
+
+- **Summary**：卡头 Agent 分段（All agents · Claude Code · Codex），只作用于这张卡。左栏 Cost（大数字 + `↑ 12% vs yesterday` 涨跌）、Tokens（大数字 + 构成条 Input → Cache read → Cache write → Output + `Cache read 88.6% · output 2.6%`）、Sessions / Turns / Calls；右栏趋势图（Swift Charts）：All agents 时按 Agent 堆两段（序列 1 = Claude Code、序列 3 = Codex），单 Agent 时按它的模型堆（按 Cost 顺序取序列 1–4，无价格模型灰段、图例后缀 `· no price`）；坐标轴按范围铺满（Today 24 根小时柱、This week 周一到周日、This month 1 号到月末，未来时段空柱），四条虚线网格 + 0 轴，`chartXSelection` 悬停时其它柱降到 38% 并在柱顶出浮层（日期 + 总额 + 每序列一行）。指标分段 Cost / Tokens 只换 y 轴；范围内全部模型无价格时 Cost 显示 `—`、图落到 Tokens。
+- **Detail**：卡头 `Group by` 分段（Project · Agent · Time · Model，Time 时再出 Day · Week · Month），Summary 的 Agent 过滤生效时右端提示 `Not filtered by the Summary agent`。一张表（`UsageTable`）：表头可点排序（数字列先降序、首列先升序，再点反向；组行与子行各自排），Agent 分组的 Agent 行可折叠（折叠集记在 `UsageModel`，换范围不重置）、Total 固定末尾；Agent 与 Model 分组不列 Sessions / Turns（去重数跨行不可加）；Time 分组最新的在上，行名 `Sat, Sep 5` / `Aug 31 – Sep 6` / `September 2026`。表尾脚注列出无价格的 token 数与模型数。
+- **状态**：首次加载 `Loading usage…`；扫描中在卡上方压一条 `Scanning transcripts · N files left`（还没有桶时只有这条）；范围内无调用时 Summary 留着、指标为 `$0.00` / `0`、趋势图位置写 `No usage in this range`（从未扫到文件写 `No usage yet`）、Detail 不画；`usage_report` 失败时最顶一条红色告警条，上一次的数字留在下面。
+
+页面可见时每 30 秒重拉（重拉不清空数字、不切加载态），切换范围或工具栏 Refresh 立即重拉；范围、Summary 的 Agent、趋势指标、Detail 的分组与粒度都记在 UserDefaults。
 
 ## 与 ccusage 的对账
 

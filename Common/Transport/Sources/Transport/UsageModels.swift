@@ -197,10 +197,45 @@ public struct UsageScanStatus: Codable, Hashable, Sendable {
     }
 }
 
-/// One row of a usage table. Which of `agent` / `model` / `workspace` are
-/// set says what the row groups by: the totals row sets none, the per-agent
-/// rows set `agent`, per-model rows set `agent` + `model`, per-project rows
-/// set `workspace`.
+/// Granularity of a time slice.
+public enum UsagePeriodUnit: String, Codable, Hashable, Sendable {
+    case hour
+    case day
+    case week
+    case month
+}
+
+/// One slot on the time axis: the hour of a local day, a local day, a
+/// Monday-start week, or a calendar month. `start` is the first day of the
+/// slot; `hour` (0–23) is set only for `.hour`.
+public struct UsagePeriod: Codable, Hashable, Sendable, Comparable {
+    public var unit: UsagePeriodUnit
+    public var start: UsageDay
+    public var hour: Int?
+
+    public init(unit: UsagePeriodUnit, start: UsageDay, hour: Int? = nil) {
+        self.unit = unit
+        self.start = start
+        self.hour = unit == .hour ? hour : nil
+    }
+
+    public static func < (lhs: UsagePeriod, rhs: UsagePeriod) -> Bool {
+        if lhs.start != rhs.start { return lhs.start < rhs.start }
+        return (lhs.hour ?? 0) < (rhs.hour ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case unit
+        case start
+        case hour
+    }
+}
+
+/// One row of a usage table. Which of `agent` / `model` / `workspace` /
+/// `period` are set says what the row groups by: the totals row sets none,
+/// the per-agent rows set `agent`, per-model rows set `agent` + `model`,
+/// per-project rows set `workspace`, time rows set `period` (and the trend
+/// rows `period` + `agent` + `model`).
 ///
 /// `costUSD` sums the priced part of the row; `unpricedTokens` is the part
 /// no published price covers (their cost is missing, not zero). A row with
@@ -208,7 +243,12 @@ public struct UsageScanStatus: Codable, Hashable, Sendable {
 public struct UsageSlice: Codable, Hashable, Sendable {
     public var agent: AgentProvider?
     public var model: String?
+    /// models.dev provider the model's price was found under (`anthropic`,
+    /// `openai`, or the first other provider listing it); `nil` for an
+    /// unpriced model. Set on per-model rows only.
+    public var provider: String?
     public var workspace: String?
+    public var period: UsagePeriod?
     public var tokens: UsageTokens
     public var costUSD: Double?
     public var unpricedTokens: Int64
@@ -223,7 +263,9 @@ public struct UsageSlice: Codable, Hashable, Sendable {
     public init(
         agent: AgentProvider? = nil,
         model: String? = nil,
+        provider: String? = nil,
         workspace: String? = nil,
+        period: UsagePeriod? = nil,
         tokens: UsageTokens = .zero,
         costUSD: Double? = nil,
         unpricedTokens: Int64 = 0,
@@ -234,7 +276,9 @@ public struct UsageSlice: Codable, Hashable, Sendable {
     ) {
         self.agent = agent
         self.model = model
+        self.provider = provider
         self.workspace = workspace
+        self.period = period
         self.tokens = tokens
         self.costUSD = costUSD
         self.unpricedTokens = unpricedTokens
@@ -247,7 +291,9 @@ public struct UsageSlice: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case agent
         case model
+        case provider
         case workspace
+        case period
         case tokens
         case costUSD
         case unpricedTokens
@@ -260,7 +306,8 @@ public struct UsageSlice: Codable, Hashable, Sendable {
 
 /// The answer to `usage_report {since, until}`: one inclusive day range,
 /// already grouped every way the page shows it. Small by construction — a
-/// year of usage is a few hundred rows — so it always fits one IPC frame.
+/// year of usage is a few hundred rows per grouping — so it always fits one
+/// IPC frame.
 public struct UsageReport: Codable, Hashable, Sendable {
     public var since: UsageDay
     public var until: UsageDay
@@ -272,6 +319,18 @@ public struct UsageReport: Codable, Hashable, Sendable {
     public var byProject: [UsageSlice]
     /// One row per (agent, model), cost descending; unpriced rows last.
     public var byModel: [UsageSlice]
+    /// One row per local day with usage, ascending (`period.unit == .day`).
+    public var byDay: [UsageSlice]
+    /// One row per Monday-start week with usage, ascending.
+    public var byWeek: [UsageSlice]
+    /// One row per calendar month with usage, ascending.
+    public var byMonth: [UsageSlice]
+    /// Granularity of `trend`: hour for a single-day range, day up to 90
+    /// days, week beyond.
+    public var trendUnit: UsagePeriodUnit
+    /// One row per (period, agent, model) with usage, period ascending — the
+    /// stacked bars of the trend chart, whichever way the page stacks them.
+    public var trend: [UsageSlice]
     public var pricing: UsagePricingStatus
     public var scan: UsageScanStatus
 
@@ -283,6 +342,11 @@ public struct UsageReport: Codable, Hashable, Sendable {
         byAgent: [UsageSlice],
         byProject: [UsageSlice],
         byModel: [UsageSlice],
+        byDay: [UsageSlice] = [],
+        byWeek: [UsageSlice] = [],
+        byMonth: [UsageSlice] = [],
+        trendUnit: UsagePeriodUnit = .day,
+        trend: [UsageSlice] = [],
         pricing: UsagePricingStatus,
         scan: UsageScanStatus
     ) {
@@ -293,6 +357,11 @@ public struct UsageReport: Codable, Hashable, Sendable {
         self.byAgent = byAgent
         self.byProject = byProject
         self.byModel = byModel
+        self.byDay = byDay
+        self.byWeek = byWeek
+        self.byMonth = byMonth
+        self.trendUnit = trendUnit
+        self.trend = trend
         self.pricing = pricing
         self.scan = scan
     }
@@ -305,6 +374,11 @@ public struct UsageReport: Codable, Hashable, Sendable {
         case byAgent
         case byProject
         case byModel
+        case byDay
+        case byWeek
+        case byMonth
+        case trendUnit
+        case trend
         case pricing
         case scan
     }

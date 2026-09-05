@@ -31,16 +31,17 @@ public actor SQLiteUsageStore: UsageStore {
                 guard db.changesCount == 1 else { continue }
                 applied += 1
                 let day = UsageDay(record.occurredAt, calendar: calendar)
+                let hour = calendar.component(.hour, from: record.occurredAt)
                 let at = record.occurredAt.timeIntervalSince1970
                 try db.execute(
                     sql: """
                         INSERT INTO usage_buckets(
-                            agent, session_id, turn_id, model, day, tier, workspace,
+                            agent, session_id, turn_id, model, day, hour, tier, workspace,
                             first_at, last_at,
                             input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens,
                             output_tokens, reasoning_tokens, calls, reported_cost_usd, reported_calls
-                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(agent, session_id, turn_id, model, day, tier) DO UPDATE SET
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(agent, session_id, turn_id, model, day, hour, tier) DO UPDATE SET
                             first_at = MIN(first_at, excluded.first_at),
                             last_at = MAX(last_at, excluded.last_at),
                             input_tokens = input_tokens + excluded.input_tokens,
@@ -56,7 +57,7 @@ public actor SQLiteUsageStore: UsageStore {
                             reported_calls = reported_calls + excluded.reported_calls
                         """,
                     arguments: [
-                        record.agent.rawValue, record.sessionID, record.turnID, record.model, day.rawValue, record.tier, record.workspace,
+                        record.agent.rawValue, record.sessionID, record.turnID, record.model, day.rawValue, hour, record.tier, record.workspace,
                         at, at,
                         record.tokens.input, record.tokens.cacheRead, record.tokens.cacheWrite5m, record.tokens.cacheWrite1h,
                         record.tokens.output, record.tokens.reasoning,
@@ -111,7 +112,7 @@ public actor SQLiteUsageStore: UsageStore {
                 sql: """
                     SELECT * FROM usage_buckets
                     WHERE day >= ? AND day <= ?
-                    ORDER BY day, agent, session_id, turn_id, model, tier
+                    ORDER BY day, hour, agent, session_id, turn_id, model, tier
                     """,
                 arguments: [since.rawValue, until.rawValue]
             ).map { row in
@@ -129,6 +130,7 @@ public actor SQLiteUsageStore: UsageStore {
                     turnID: row["turn_id"],
                     model: row["model"],
                     day: day,
+                    hour: row["hour"],
                     tier: row["tier"],
                     workspace: row["workspace"],
                     firstAt: Date(timeIntervalSince1970: firstAt),

@@ -160,6 +160,15 @@ private func temporaryFile(_ lines: [String]) throws -> String {
     #expect(throws: UsageParseError.malformedJSON) {
         try UsageTranscriptParser.parse(line: Data("{not json".utf8), source: .claude, state: &fresh)
     }
+    // An all-zero usage block (Claude's `<synthetic>` placeholders) is not a call…
+    let synthetic = claudeAssistant(
+        messageID: "msg_s", requestID: "req_s", uuid: "s-1", model: "<synthetic>",
+        usage: #"{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}"#
+    )
+    #expect(try UsageTranscriptParser.parse(line: Data(synthetic.utf8), source: .claude, state: &state).isEmpty)
+    // …and leaves the content-block state alone, so the next real message counts in full.
+    let real = try UsageTranscriptParser.parse(line: Data(claudeAssistant(messageID: "msg_r", requestID: "req_r").utf8), source: .claude, state: &state)
+    #expect(real.count == 1 && real[0].tokens.output == 496)
 }
 
 // MARK: - Codex

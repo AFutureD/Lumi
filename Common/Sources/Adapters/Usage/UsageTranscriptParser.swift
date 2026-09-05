@@ -62,6 +62,11 @@ public enum UsageTranscriptParser {
             let requestID = root.string("requestId") ?? ""
             let key = "claude:\(messageID):\(requestID)"
             let tokens = try claudeTokens(usage)
+            let reportedCost = try reportedCost(root["costUSD"])
+            // No tokens and no bill is not a model call: Claude's `<synthetic>`
+            // placeholder messages ("No response requested", interruptions)
+            // carry an all-zero usage block. Same rule as Codex below.
+            guard tokens.total > 0 || (reportedCost ?? 0) > 0 else { return [] }
             var base = UsageRecord(
                 agent: isSidechain ? .claudeSubagent : .claude,
                 sessionID: root.string("sessionId") ?? "",
@@ -71,7 +76,7 @@ public enum UsageTranscriptParser {
                 occurredAt: occurredAt,
                 tokens: tokens,
                 dedupeKey: key,
-                reportedCostUSD: try reportedCost(root["costUSD"])
+                reportedCostUSD: reportedCost
             )
             if state.claudeLastKey == key, let counted = state.claudeLastTokens {
                 // Another content block of the message already counted.

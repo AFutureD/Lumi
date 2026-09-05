@@ -81,7 +81,7 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 
 ## 用量
 
-- **用户相关数据**：每次模型调用的 token（输入、缓存读、缓存写、输出）按会话、回合、模型、本地日累加；工作目录；models.dev 价目与其拉取时间。
+- **用户相关数据**：每次模型调用的 token（输入、缓存读、缓存写、输出）按会话、回合、模型、本地日与小时累加；工作目录；models.dev 价目与其拉取时间。
 - **创建来源**：daemon 直接扫描 Claude Code（`~/.claude/projects`，含子 Agent）与 Codex（`~/.codex/sessions`、`archived_sessions`）写在本机的对话记录，安装后首次全量、之后每 30 秒跟进；不依赖 Hook，也不依赖 Session 是否进入 Lumi。
 - **更新来源**：文件新增内容按游标增量读取；同一次调用在文件里重复出现（Claude 每个内容块、Codex 分叉回放）只算一次。价目每 24 小时刷新，刷新后对历史生效。
 - **主要消费者**：Mac 的 Usage 页（[USG-R-001](modules/mac-usage.md#usg-r-001-用量来自-agent-的本机记录与-session-无关)）。不进 iPhone，不进 Relay。

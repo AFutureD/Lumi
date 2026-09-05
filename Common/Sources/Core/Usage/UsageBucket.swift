@@ -2,13 +2,15 @@ import Transport
 import Foundation
 
 /// One persisted usage bucket: every model call of one model within one
-/// turn on one local day, summed. The daemon's `usage_buckets` row.
+/// turn in one local hour, summed. The daemon's `usage_buckets` row.
 public struct UsageBucket: Hashable, Sendable {
     public var agent: AgentKind
     public var sessionID: String
     public var turnID: String
     public var model: String
     public var day: UsageDay
+    /// Local hour of the day (0–23) — the Today trend's bars.
+    public var hour: Int
     /// Long-context band (0 = base) the calls were classified into.
     public var tier: Int
     /// Working directory of the bucket's first record.
@@ -28,6 +30,7 @@ public struct UsageBucket: Hashable, Sendable {
         turnID: String,
         model: String,
         day: UsageDay,
+        hour: Int = 0,
         tier: Int = 0,
         workspace: String,
         firstAt: Date,
@@ -42,6 +45,7 @@ public struct UsageBucket: Hashable, Sendable {
         self.turnID = turnID
         self.model = model
         self.day = day
+        self.hour = hour
         self.tier = tier
         self.workspace = workspace
         self.firstAt = firstAt

@@ -70,7 +70,7 @@ dbLog.error("apply_failed", metadata: .fields(["session": id, "error": error]))
 | `ipc` | 本机 Unix socket：请求、事件流、编解码；连不上时的 Mach service 唤醒 | `ipc_listening`、`ipc_handled`、`ipc_request`、`ipc_stream_connected`、`ipc_operation_failed`、`reconciled`、`ipc_wake daemon_pid= ms=` / `ipc_wake_failed` |
 | `relay` | Relay WebSocket / REST、设备列表、推送、序号 | `relay_connected`、`relay_ws_sent`、`relay_rest`、`devices_refreshed`、`request_received`、`events_pushed`、`sequence_healed`、`push_sent`、`push_send_failed`、`push_summary_lookup_failed`（APNs 通知只记设备与结果，不记文本） |
 | `pairing` | 配对状态机（daemon 与 Mac 页面） | `pairing_started` → `pairing_device_submitted` → `pairing_revealed` → `pairing_approved` / `pairing_rejected` / `pairing_expired`；`pairing_page_*` |
-| `ui` | App 的用户操作 | `logs_revealed`、`usage_range_selected`、`usage_report_failed` |
+| `ui` | App 的用户操作 | `logs_revealed`、`usage_range_selected`、`usage_report_failed`、`usage_comparison_failed`（上一周期的报表拉取失败，只丢涨跌行） |
 
 Relay：`http`（入口每请求一行 `http_request route= status= ms=`、`https_required`、`edge_rate_limited`、`request_*`）、`ws`（`ws_opened` / `ws_closed` / `ws_*_frame_forwarded` / `ws_sequence_rejected`…）、`pairing`（状态机 + `pairing_claim*`）、`directory`（`pairing_code_allocated` / `pairing_code_claimed` / `pairing_claim_rate_limited`）。`LOG_LEVEL` 是 `wrangler.jsonc` 的 var（默认 info，测试绑 `warn`）。
 

@@ -51,34 +51,37 @@ private func cursor(identity: String = "claude:1:100", path: String = "/tmp/a.js
     let applied = try await store.apply(records: [
         record(key: "k1"),
         record(key: "k1"),                                           // repeat inside one read
-        record(at: "2026-09-05T11:00:00.000Z", key: "k2"),           // same bucket, later call
+        record(at: "2026-09-05T10:40:00.000Z", key: "k2"),           // same bucket, later call in the same hour
+        record(at: "2026-09-05T11:00:00.000Z", key: "k2h"),          // next local hour: its own bucket
         record(model: "claude-opus-5", key: "k3"),                   // other model, same turn
         record(turn: "t2", at: "2026-09-06T00:30:00.000Z", key: "k4"), // next local day
         record(agent: .codex, session: "c1", model: "gpt-5.5", workspace: "/c", key: "k5"),
         record(turn: "t3", key: "k6", reportedCostUSD: 0.5),                 // source-reported cost
-        record(turn: "t3", at: "2026-09-05T12:00:00.000Z", key: "k7", reportedCostUSD: 0.25),
+        record(turn: "t3", at: "2026-09-05T10:20:00.000Z", key: "k7", reportedCostUSD: 0.25),
         record(turn: "t4", tokens: UsageTokens(output: 10), key: "k8"),
         record(turn: "t4", tokens: UsageTokens(output: 5), key: "k8:more:15", isCall: false),   // top-up, not a call
         record(turn: "t4", tokens: UsageTokens(input: 300_000), key: "k9", tier: 1),          // long-context band: its own bucket
     ], cursor: cursor())
-    #expect(applied == 10)
+    #expect(applied == 11)
     // Re-applying the same keys changes nothing.
     #expect(try await store.apply(records: [record(key: "k1"), record(key: "k5")], cursor: cursor(offset: 20)) == 0)
 
     let buckets = try await store.buckets(since: UsageDay(year: 2026, month: 9, day: 1), until: UsageDay(year: 2026, month: 9, day: 30))
-    #expect(buckets.count == 7)
+    #expect(buckets.count == 8)
     let toppedUp = try #require(buckets.first { $0.turnID == "t4" && $0.tier == 0 })
     #expect(toppedUp.calls == 1)
     #expect(toppedUp.tokens.output == 15)
     let banded = try #require(buckets.first { $0.turnID == "t4" && $0.tier == 1 })
     #expect(banded.calls == 1)
     #expect(banded.tokens.input == 300_000)
-    let first = try #require(buckets.first { $0.turnID == "t1" && $0.model == "claude-fable-5" })
+    let first = try #require(buckets.first { $0.turnID == "t1" && $0.model == "claude-fable-5" && $0.hour == 10 })
     #expect(first.calls == 2)
     #expect(first.tokens == UsageTokens(input: 20, cacheRead: 200, cacheWrite5m: 10, cacheWrite1h: 14, output: 40, reasoning: 6))
     #expect(first.firstAt == AdapterDates.parse("2026-09-05T10:00:00.000Z"))
-    #expect(first.lastAt == AdapterDates.parse("2026-09-05T11:00:00.000Z"))
+    #expect(first.lastAt == AdapterDates.parse("2026-09-05T10:40:00.000Z"))
     #expect(first.day == UsageDay(year: 2026, month: 9, day: 5))
+    let nextHour = try #require(buckets.first { $0.turnID == "t1" && $0.model == "claude-fable-5" && $0.hour == 11 })
+    #expect(nextHour.calls == 1)
     #expect(first.workspace == "/w")
     #expect(first.reportedCostUSD == nil)
     #expect(first.reportedCalls == 0)

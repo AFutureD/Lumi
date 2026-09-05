@@ -222,6 +222,17 @@ public actor SQLiteSessionRepository: SessionRepository {
                 """)
             try db.execute(sql: Self.usageSchema)
         }
+        // The Usage page's Today trend draws one bar per hour, so the bucket
+        // key gains the local hour. Same reset as v10: the tables start over
+        // and the scanner rebuilds them on the next launch.
+        migrator.registerMigration("lumi-v11-usage-hour") { db in
+            try db.execute(sql: """
+                DROP TABLE IF EXISTS usage_buckets;
+                DROP TABLE IF EXISTS usage_seen;
+                DROP TABLE IF EXISTS usage_cursors;
+                """)
+            try db.execute(sql: Self.usageSchema)
+        }
         try migrator.migrate(database)
     }
 
@@ -233,7 +244,7 @@ public actor SQLiteSessionRepository: SessionRepository {
     }
 
     /// The usage tables (see `docs/design/usage.md`). One definition,
-    /// created by v9 and re-created by v10.
+    /// created by v9 and re-created by v10 and v11.
     static let usageSchema = """
         CREATE TABLE IF NOT EXISTS usage_buckets (
             agent TEXT NOT NULL,
@@ -241,6 +252,7 @@ public actor SQLiteSessionRepository: SessionRepository {
             turn_id TEXT NOT NULL,
             model TEXT NOT NULL,
             day TEXT NOT NULL,
+            hour INTEGER NOT NULL,
             tier INTEGER NOT NULL,
             workspace TEXT NOT NULL,
             first_at REAL NOT NULL,
@@ -254,7 +266,7 @@ public actor SQLiteSessionRepository: SessionRepository {
             calls INTEGER NOT NULL,
             reported_cost_usd REAL,
             reported_calls INTEGER NOT NULL,
-            PRIMARY KEY(agent, session_id, turn_id, model, day, tier)
+            PRIMARY KEY(agent, session_id, turn_id, model, day, hour, tier)
         );
         CREATE INDEX IF NOT EXISTS usage_buckets_day
             ON usage_buckets(day, agent, model);

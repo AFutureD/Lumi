@@ -12,12 +12,12 @@ private let prices = ModelPriceTable(providers: [
 
 private func bucket(
     agent: AgentKind = .claude, session: String = "s1", turn: String = "t1", model: String = "claude-fable-5",
-    day: UsageDay = UsageDay(year: 2026, month: 9, day: 5), workspace: String = "/w",
+    day: UsageDay = UsageDay(year: 2026, month: 9, day: 5), hour: Int = 0, workspace: String = "/w",
     tokens: UsageTokens = UsageTokens(input: 1_000_000, output: 1_000_000), calls: Int = 1,
     reportedCostUSD: Double? = nil, reportedCalls: Int = 0, tier: Int = 0
 ) -> UsageBucket {
     UsageBucket(
-        agent: agent, sessionID: session, turnID: turn, model: model, day: day, tier: tier, workspace: workspace,
+        agent: agent, sessionID: session, turnID: turn, model: model, day: day, hour: hour, tier: tier, workspace: workspace,
         firstAt: Date(timeIntervalSince1970: 0), lastAt: Date(timeIntervalSince1970: 0), tokens: tokens, calls: calls,
         reportedCostUSD: reportedCostUSD, reportedCalls: reportedCalls
     )
@@ -36,6 +36,8 @@ private let scan = UsageScanStatus(scannedFiles: 3, pendingFiles: 0, isScanning:
                    tokens: UsageTokens(input: 1_000_000, cacheRead: 1_000_000, output: 0)),  // $2.2
             bucket(agent: .codex, session: "c2", turn: "", model: "codex-auto-review", workspace: "/c",
                    tokens: UsageTokens(input: 500, output: 500)),                            // unpriced
+            bucket(session: "s9", turn: "t9", model: "<synthetic>", workspace: "/z",
+                   tokens: .zero, calls: 3, reportedCostUSD: 0, reportedCalls: 3),          // empty: invisible
         ],
         prices: prices,
         since: UsageDay(year: 2026, month: 9, day: 1),
@@ -69,10 +71,50 @@ private let scan = UsageScanStatus(scannedFiles: 3, pendingFiles: 0, isScanning:
     #expect(report.byProject[1].turns == 1)
 
     #expect(report.byModel.map(\.model) == ["claude-fable-5", "gpt-5.5", "codex-auto-review"])
+    #expect(report.byModel.map(\.provider) == ["anthropic", "openai", nil])
+    #expect(report.byProject.map(\.workspace) == ["/w", "/c"])   // the empty bucket's project never appears
     #expect(report.byModel[2].costUSD == nil)
     #expect(report.byModel[2].unpricedTokens == 1_000)
     #expect(report.byModel[2].agent == .codex)
     #expect(report.byModel[0].calls == 5)
+
+    // Time slices: two days (Sat 5th, Sun 6th) in one Monday-start week and one month.
+    #expect(report.byDay.map(\.period?.start) == [UsageDay(year: 2026, month: 9, day: 5), UsageDay(year: 2026, month: 9, day: 6)])
+    #expect(report.byDay[0].sessions == 3 && report.byDay[1].sessions == 1)
+    #expect(report.byWeek.map(\.period) == [UsagePeriod(unit: .week, start: UsageDay(year: 2026, month: 8, day: 31))])
+    #expect(report.byWeek[0].costUSD == 182.2)
+    #expect(report.byMonth.map(\.period) == [UsagePeriod(unit: .month, start: UsageDay(year: 2026, month: 9, day: 1))])
+    #expect(report.byMonth[0].turns == 3)
+    // A 7-day range trends by day; one row per (day, agent, model).
+    #expect(report.trendUnit == .day)
+    #expect(report.trend.map { ($0.period!.start.day, $0.agent!, $0.model!) }.map { "\($0.0) \($0.1) \($0.2)" }
+        == ["5 claude claude-fable-5", "5 codex gpt-5.5", "5 codex codex-auto-review", "6 claude claude-fable-5"])
+    #expect(report.trend[0].costUSD == 120)
+}
+
+@Test func trendGranularityFollowsTheRangeLength() {
+    let day = UsageDay(year: 2026, month: 9, day: 5)
+    #expect(UsageReportBuilder.trendUnit(since: day, until: day) == .hour)
+    #expect(UsageReportBuilder.trendUnit(since: day.adding(days: -89)!, until: day) == .day)
+    #expect(UsageReportBuilder.trendUnit(since: day.adding(days: -90)!, until: day) == .week)
+
+    let report = UsageReportBuilder.build(
+        buckets: [
+            bucket(hour: 9, tokens: UsageTokens(input: 1_000_000)),
+            bucket(turn: "t2", hour: 9, tokens: UsageTokens(input: 1_000_000)),
+            bucket(turn: "t3", hour: 17, tokens: UsageTokens(output: 1_000_000)),
+        ],
+        prices: prices, since: day, until: day,
+        generatedAt: Date(timeIntervalSince1970: 1), pricing: status, scan: scan
+    )
+    #expect(report.trendUnit == .hour)
+    #expect(report.trend.map(\.period) == [
+        UsagePeriod(unit: .hour, start: day, hour: 9), UsagePeriod(unit: .hour, start: day, hour: 17),
+    ])
+    #expect(report.trend[0].costUSD == 20 && report.trend[1].costUSD == 50)
+    #expect(report.trend[0].turns == 2)
+    // Day / week / month slices fold the hours back together.
+    #expect(report.byDay.count == 1 && report.byDay[0].calls == 3)
 }
 
 @Test func reportOrdersByCostThenTokensThenNameWithUnpricedLast() {

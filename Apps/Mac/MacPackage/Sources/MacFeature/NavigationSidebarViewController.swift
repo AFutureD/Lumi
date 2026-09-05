@@ -15,7 +15,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
     private let rows: [Row] = [
         .section("Monitor"),
         .destination(.sessions, title: "Sessions", symbol: "rectangle.split.2x1"),
-        .destination(.usage, title: "Usage", symbol: "chart.bar"),
+        .destination(.usage, title: "Usage", symbol: "chart.bar.xaxis"),
         .section("Connections"),
         .destination(.pairing, title: "iPhone", symbol: "iphone"),
         .section("Application"),

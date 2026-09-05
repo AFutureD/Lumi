@@ -19,6 +19,13 @@ extension NSColor {
     }
 }
 
+extension SwiftUI.Color {
+    /// Appearance-aware colour, resolved by AppKit at draw time.
+    init(_ design: AdaptiveDesignColor) {
+        self.init(nsColor: NSColor(design))
+    }
+}
+
 extension NSFont {
     static func design(_ style: DesignTextStyle) -> NSFont {
         let weight: NSFont.Weight = switch style.weight {

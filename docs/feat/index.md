@@ -38,7 +38,7 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 ### 用量
 
-侧边栏的 Usage 页按 Today / This week / This month / Custom 日期范围显示这台 Mac 上 Claude Code 与 Codex 的 token 与花费：四张指标卡（Cost、Tokens、Sessions、Turns），再按 Agent（每个 Agent 下挂它用过的模型）和按项目（工作目录）两张可排序的表，含缓存命中率。数据来自 Agent 自己的本机对话记录，与 Session 列表无关——没进列表的会话也算，删除 Session 不影响数字；花费按 models.dev 公开价目估算，没有价格的模型单独标出。
+侧边栏的 Usage 页按 Today / This week / This month / Custom 日期范围显示这台 Mac 上 Claude Code 与 Codex 的 token 与花费。上半张 Summary 卡给出 Cost（带较上一周期的涨跌）、Tokens（带输入 / 缓存读 / 缓存写 / 输出的构成条）、Sessions / Turns / Calls，以及一张按时间的堆叠趋势图（单日按小时、其余按天、超过 90 天按周；可看全部或某一个 Agent，按 Cost 或 Tokens）；下半张 Detail 卡是一张可排序的明细表，能按 Project、Agent（每个 Agent 下挂它用过的模型）、Time（日 / 周 / 月）、Model 换分组，含缓存命中率。数据来自 Agent 自己的本机对话记录，与 Session 列表无关——没进列表的会话也算，删除 Session 不影响数字；花费按 models.dev 公开价目估算，没有价格的模型单独标出。
 
 [查看模块详情](modules/mac-usage.md)
 

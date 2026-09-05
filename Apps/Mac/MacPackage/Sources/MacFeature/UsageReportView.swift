@@ -1,23 +1,28 @@
 import Core
+import DesignSystem
 import Transport
 import AppKit
 import SwiftUI
 
-/// The Usage page body: four metric cards, then two tables — by agent
-/// (each agent's models as child rows) and by project (working directory).
-/// Everything shown comes from one `UsageReport`; the view holds only sort
-/// and collapse state.
+/// The Usage page body: a Summary card (Cost and Tokens with their
+/// captions, the token composition bar, Sessions / Turns / Calls, the trend
+/// chart) over a Detail card (one table, grouped by Project / Agent / Time /
+/// Model). Everything shown comes from the model's reports; the view holds
+/// only hover, sort and layout state.
 struct UsageReportView: View {
+    typealias DS = DesignSystem
+
     @ObservedObject var model: UsageModel
 
-    static let contentMaximumWidth: CGFloat = 1_040
+    static let contentMaximumWidth: CGFloat = DS.Usage.contentMaximumWidth
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: DS.Usage.cardGap) {
                 content
             }
-            .padding(.top, DetailLayout.topInset)
+            .frame(maxWidth: Self.contentMaximumWidth, alignment: .topLeading)
+            .padding(.top, DS.Spacing.xl + DS.Spacing.xs)
             .padding(.horizontal, DetailLayout.horizontalInset)
             .padding(.bottom, DetailLayout.bottomInset)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -30,7 +35,8 @@ struct UsageReportView: View {
             UsageNotice(text: error, isError: true)
         }
         if let report = model.report {
-            if report.scan.isScanning || report.scan.pendingFiles > 0 {
+            let scanning = report.scan.isScanning || report.scan.pendingFiles > 0
+            if scanning {
                 UsageNotice(
                     text: report.scan.pendingFiles > 0
                         ? "Scanning transcripts · \(UsageFormatting.count(report.scan.pendingFiles)) files left"
@@ -38,460 +44,336 @@ struct UsageReportView: View {
                     isError: false
                 )
             }
-            UsageMetricsRow(totals: report.totals)
-            if report.totals.calls == 0 {
-                UsageEmptyText(text: "No usage in this range")
-            } else {
-                UsageAgentSection(report: report)
-                UsageProjectSection(report: report)
+            let hasUsage = report.totals.calls > 0 || report.totals.tokens.total > 0
+            if hasUsage || !scanning {
+                UsageSummaryCard(
+                    model: model,
+                    report: report,
+                    emptyText: hasUsage ? nil : (report.scan.scannedFiles == 0 ? "No usage yet" : "No usage in this range")
+                )
+            }
+            if hasUsage {
+                UsageDetailCard(model: model, report: report)
             }
         } else if model.isLoading {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Spacing.m) {
                 ProgressView().controlSize(.small)
                 Text("Loading usage…")
-                    .font(Design.Font.UI.body)
-                    .foregroundStyle(.secondary)
+                    .font(Font(DS.Typography.body))
+                    .foregroundStyle(Color(DS.Usage.secondaryText))
             }
-        } else if model.errorMessage == nil {
-            UsageEmptyText(text: "No usage yet")
+        }
+    }
+}
+
+// MARK: - Cards
+
+/// A 14pt-radius white card with a 36pt header: title on the left, controls
+/// on the right, a hairline under it.
+private struct UsageCard<Header: View, Content: View>: View {
+    typealias DS = DesignSystem
+
+    let title: String
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DS.Usage.groupControlGap) {
+                Text(title)
+                    .font(Font(DS.Typography.bodyEmphasized))
+                    .foregroundStyle(Color(DS.Usage.primaryText))
+                header()
+            }
+            .padding(.horizontal, DS.Usage.cardInset)
+            .frame(height: DS.Usage.cardHeaderHeight)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color(DS.Usage.rowSeparator)).frame(height: DS.Stroke.separator)
+            }
+            content()
+        }
+        .background(Color(DS.Usage.cardFill), in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .strokeBorder(Color(DS.Usage.cardRing), lineWidth: DS.Stroke.hairline)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .shadow(color: Color(DS.Usage.cardShadow), radius: DS.Usage.cardShadowBlur / 2, y: DS.Usage.cardShadowOffsetY)
+    }
+}
+
+private struct UsageSummaryCard: View {
+    typealias DS = DesignSystem
+
+    @ObservedObject var model: UsageModel
+    let report: UsageReport
+    /// Replaces the trend chart when the range holds no usage.
+    let emptyText: String?
+
+    private var figures: UsageSummaryFigures {
+        UsageSummaryFigures.build(
+            report: report,
+            previous: model.previousReport,
+            agent: model.summaryAgent,
+            comparisonLabel: model.comparisonLabel
+        )
+    }
+
+    private var trend: UsageTrend {
+        UsageTrend.build(report: report, range: model.range, agent: model.summaryAgent, calendar: model.calendar)
+    }
+
+    /// Cost has nothing to draw when every model is unpriced: the chart
+    /// falls back to Tokens.
+    private func metric(_ figures: UsageSummaryFigures) -> UsageTrendMetric {
+        figures.allUnpriced ? .tokens : model.trendMetric
+    }
+
+    var body: some View {
+        UsageCard(title: "Summary") {
+            Spacer(minLength: 0)
+            Picker("Agent", selection: $model.summaryAgent) {
+                ForEach(UsageSummaryAgent.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .labelsHidden()
+            .fixedSize()
+        } content: {
+            let figures = figures
+            HStack(alignment: .top, spacing: DS.Usage.columnGap) {
+                metrics(figures)
+                    .frame(width: DS.Usage.metricsColumnWidth)
+                if let emptyText {
+                    Text(emptyText)
+                        .font(Font(DS.Typography.body))
+                        .foregroundStyle(Color(DS.Usage.tertiaryText))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    trendColumn(figures)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+            .padding(.top, DS.Usage.bodyTop)
+            .padding(.horizontal, DS.Usage.cardInset)
+            .padding(.bottom, DS.Usage.bodyBottom)
+        }
+    }
+
+    private func metrics(_ figures: UsageSummaryFigures) -> some View {
+        VStack(alignment: .leading, spacing: DS.Usage.metricsBlockGap) {
+            VStack(alignment: .leading, spacing: DS.Usage.labelGap) {
+                UsageSmallLabel(text: "Cost")
+                UsageBigNumber(text: figures.cost, help: figures.allUnpriced ? "No published price for any model in this range" : nil)
+                UsageCaption(text: figures.costDelta)
+            }
+            separator
+            VStack(alignment: .leading, spacing: DS.Usage.labelGap) {
+                UsageSmallLabel(text: "Tokens")
+                UsageBigNumber(text: figures.tokens, help: figures.tokensExact)
+                UsageCompositionBar(segments: figures.segments)
+                    .padding(.top, DS.Usage.compositionBarTopGap - DS.Usage.labelGap)
+                UsageCaption(text: figures.composition)
+            }
+            separator
+            HStack(alignment: .top, spacing: DS.Usage.figureGap) {
+                figure("Sessions", figures.sessions)
+                figure("Turns", figures.turns)
+                figure("Calls", figures.calls)
+            }
+        }
+    }
+
+    private var separator: some View {
+        Rectangle().fill(Color(DS.Usage.tableHeaderSeparator)).frame(height: DS.Stroke.separator)
+    }
+
+    private func figure(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.Usage.labelGap) {
+            UsageSmallLabel(text: label)
+            Text(value)
+                .font(Font(DS.Typography.usageFigure).monospacedDigit())
+                .foregroundStyle(Color(DS.Usage.primaryText))
+        }
+    }
+
+    private func trendColumn(_ figures: UsageSummaryFigures) -> some View {
+        let trend = trend
+        let metric = metric(figures)
+        return VStack(alignment: .leading, spacing: DS.Chart.blockGap) {
+            HStack {
+                Text(trend.title(metric))
+                    .designText(DS.Typography.usageLabel)
+                    .foregroundStyle(Color(DS.Usage.secondaryText))
+                Spacer(minLength: 0)
+                Picker("Metric", selection: $model.trendMetric) {
+                    ForEach(UsageTrendMetric.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(figures.allUnpriced)
+            }
+            .frame(height: DS.Chart.titleHeight)
+            UsageTrendChart(trend: trend, metric: metric)
+        }
+    }
+}
+
+private struct UsageDetailCard: View {
+    typealias DS = DesignSystem
+
+    @ObservedObject var model: UsageModel
+    let report: UsageReport
+
+    private var rows: UsageDetailRows {
+        UsageDetailRows.build(report: report, group: model.detailGroup, timeUnit: model.detailTimeUnit, calendar: model.calendar)
+    }
+
+    /// Sort state lives in the table; a new grouping or range starts it over.
+    private var tableIdentity: String {
+        "\(model.detailGroup.rawValue)/\(model.detailTimeUnit.rawValue)/\(report.since.rawValue)/\(report.until.rawValue)"
+    }
+
+    private var collapsed: Binding<Set<String>> {
+        Binding(
+            get: { Set(model.collapsedAgents.map(\.rawValue)) },
+            set: { model.collapsedAgents = Set($0.compactMap(AgentProvider.init(rawValue:))) }
+        )
+    }
+
+    var body: some View {
+        UsageCard(title: "Detail") {
+            HStack(spacing: DS.Usage.groupLabelGap) {
+                Text("Group by")
+                    .font(Font(DS.Typography.subheadline))
+                    .foregroundStyle(Color(DS.Usage.tertiaryText))
+                Picker("Group by", selection: $model.detailGroup) {
+                    ForEach(UsageDetailGroup.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .labelsHidden()
+                .fixedSize()
+                if model.detailGroup == .time {
+                    Picker("Time unit", selection: $model.detailTimeUnit) {
+                        ForEach(UsageDetailTimeUnit.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+            Spacer(minLength: 0)
+            if model.summaryAgent != .all {
+                Text("Not filtered by the Summary agent")
+                    .font(Font(DS.Typography.subheadline))
+                    .foregroundStyle(Color(DS.Usage.tertiaryText))
+            }
+        } content: {
+            let rows = rows
+            UsageTable(columns: rows.columns, rows: rows.rows, collapsed: collapsed)
+                .id(tableIdentity)
+            if let footnote = rows.footnote {
+                Text(footnote)
+                    .font(Font(DS.Typography.subheadline))
+                    .foregroundStyle(Color(DS.Usage.tertiaryText))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DS.Usage.rowInset)
+                    .padding(.vertical, DS.Usage.footnoteVerticalPadding)
+            }
         }
     }
 }
 
 // MARK: - Pieces
 
-private struct UsageNotice: View {
+private struct UsageSmallLabel: View {
     let text: String
-    let isError: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isError ? "exclamationmark.triangle" : "clock.arrow.circlepath")
-                .foregroundStyle(isError ? Design.Color.UI.destructiveText : Color.secondary)
-            Text(text)
-                .font(Design.Font.UI.body)
-                .foregroundStyle(isError ? Design.Color.UI.destructiveText : Color.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: UsageReportView.contentMaximumWidth, alignment: .leading)
+        Text(text.uppercased())
+            .designText(DesignSystem.Typography.usageLabel)
+            .foregroundStyle(Color(DesignSystem.Usage.tertiaryText))
     }
 }
 
-private struct UsageEmptyText: View {
+private struct UsageBigNumber: View {
+    let text: String
+    var help: String?
+
+    var body: some View {
+        Text(text)
+            .designText(DesignSystem.Typography.usageMetricValue)
+            .monospacedDigit()
+            .foregroundStyle(Color(DesignSystem.Usage.primaryText))
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .help(help ?? text)
+    }
+}
+
+private struct UsageCaption: View {
     let text: String
 
     var body: some View {
         Text(text)
-            .font(Design.Font.UI.body)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: UsageReportView.contentMaximumWidth, alignment: .leading)
+            .font(Font(DesignSystem.Typography.subheadline))
+            .foregroundStyle(Color(DesignSystem.Usage.secondaryText))
+            .lineLimit(1)
     }
 }
 
-private struct UsageMetricsRow: View {
-    let totals: UsageSlice
+/// The token composition bar: Input → Cache read → Cache write → Output,
+/// summing to the full width; segments under half a pixel simply vanish.
+private struct UsageCompositionBar: View {
+    typealias DS = DesignSystem
+
+    let segments: [UsageSummaryFigures.Segment]
 
     var body: some View {
-        HStack(spacing: 8) {
-            MetricCardView(label: "Cost") {
-                Text(UsageFormatting.cost(totals.costUSD))
-            }
-            MetricCardView(label: "Tokens") {
-                Text(UsageFormatting.tokens(totals.tokens.total))
-                    .help(UsageFormatting.exactTokens(totals.tokens.total))
-            }
-            MetricCardView(label: "Sessions") {
-                Text(UsageFormatting.count(totals.sessions))
-            }
-            MetricCardView(label: "Turns") {
-                Text(UsageFormatting.count(totals.turns))
-            }
-        }
-        .frame(maxWidth: UsageReportView.contentMaximumWidth)
-    }
-}
-
-/// One table: an agent per group row, its models as child rows underneath
-/// (collapsible), and a pinned Total row.
-private struct UsageAgentSection: View {
-    let report: UsageReport
-
-    var body: some View {
-        SettingsSection(title: "By agent", maxWidth: UsageReportView.contentMaximumWidth) {
-            SettingsCard {
-                UsageTable(
-                    columns: [
-                        UsageColumn(title: "Agent · Model", width: nil),
-                        UsageColumn(title: "Cost"),
-                        UsageColumn(title: "Input"),
-                        UsageColumn(title: "Cache read"),
-                        UsageColumn(title: "Cache write"),
-                        UsageColumn(title: "Output"),
-                        UsageColumn(title: "Total"),
-                        UsageColumn(title: "Cache ratio", width: 78),
-                        UsageColumn(title: "Sessions", width: 68),
-                    ],
-                    rows: rows,
-                    sortable: true
-                )
-                if report.totals.unpricedTokens > 0 {
-                    Divider()
-                    SettingsFootnote(text: Self.unpricedFootnote(report))
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                ForEach(segments) { segment in
+                    Rectangle()
+                        .fill(Color(segment.color))
+                        .frame(width: geometry.size.width * segment.fraction)
                 }
             }
         }
-    }
-
-    private var rows: [UsageTableRow] {
-        var rows: [UsageTableRow] = []
-        for agent in report.byAgent {
-            guard let provider = agent.agent else { continue }
-            let groupID = provider.rawValue
-            rows.append(UsageTableRow(
-                id: groupID,
-                cells: [UsageCell(text: Self.name(provider), icon: Self.icon(provider))] + Self.figureCells(agent),
-                sortKeys: [.text(Self.name(provider).lowercased())] + Self.figureKeys(agent),
-                isEmphasized: true,
-                isGroup: true
-            ))
-            for slice in report.byModel where slice.agent == provider {
-                let model = slice.model ?? ""
-                rows.append(UsageTableRow(
-                    id: "\(groupID)/\(model)",
-                    cells: [UsageCell(
-                        text: model.isEmpty ? "Unknown model" : model,
-                        help: slice.costUSD == nil ? "No published price for this model" : nil
-                    )] + Self.figureCells(slice),
-                    sortKeys: [.text(model.lowercased())] + Self.figureKeys(slice),
-                    groupID: groupID
-                ))
-            }
-        }
-        rows.append(UsageTableRow(
-            id: "total",
-            cells: [UsageCell(text: "Total")] + Self.figureCells(report.totals),
-            sortKeys: [],
-            isEmphasized: true,
-            isPinned: true
-        ))
-        return rows
-    }
-
-    static func name(_ agent: AgentProvider) -> String {
-        AgentKind.forProvider(agent).providerName
-    }
-
-    static func icon(_ agent: AgentProvider) -> NSImage? {
-        AgentIcons.image(for: AgentKind.forProvider(agent), pointSize: 13)
-    }
-
-    static func figureCells(_ slice: UsageSlice) -> [UsageCell] {
-        let tokens = slice.tokens
-        return [
-            UsageCell(text: UsageFormatting.cost(slice.costUSD), isNumeric: true, isDimmed: slice.costUSD == nil),
-            UsageCell(text: UsageFormatting.tokens(tokens.input), help: UsageFormatting.exactTokens(tokens.input), isNumeric: true),
-            UsageCell(text: UsageFormatting.tokens(tokens.cacheRead), help: UsageFormatting.exactTokens(tokens.cacheRead), isNumeric: true),
-            UsageCell(text: UsageFormatting.tokens(tokens.cacheWrite), help: UsageFormatting.exactTokens(tokens.cacheWrite), isNumeric: true),
-            UsageCell(text: UsageFormatting.tokens(tokens.output), help: UsageFormatting.exactTokens(tokens.output), isNumeric: true),
-            UsageCell(text: UsageFormatting.tokens(tokens.total), help: UsageFormatting.exactTokens(tokens.total), isNumeric: true),
-            UsageCell(text: UsageFormatting.cacheRatio(tokens), help: "Cache read ÷ total tokens", isNumeric: true),
-            UsageCell(text: UsageFormatting.count(slice.sessions), isNumeric: true),
-        ]
-    }
-
-    static func figureKeys(_ slice: UsageSlice) -> [UsageSortKey] {
-        let tokens = slice.tokens
-        return [
-            .number(slice.costUSD ?? -1),
-            .number(Double(tokens.input)),
-            .number(Double(tokens.cacheRead)),
-            .number(Double(tokens.cacheWrite)),
-            .number(Double(tokens.output)),
-            .number(Double(tokens.total)),
-            .number(tokens.total > 0 ? Double(tokens.cacheRead) / Double(tokens.total) : -1),
-            .number(Double(slice.sessions)),
-        ]
-    }
-
-    static func unpricedFootnote(_ report: UsageReport) -> String {
-        let models = report.byModel.filter { $0.unpricedTokens > 0 }.count
-        let tokens = UsageFormatting.tokens(report.totals.unpricedTokens)
-        return "\(tokens) tokens across \(models) model\(models == 1 ? "" : "s") have no published price and are not in any cost."
+        .frame(height: DS.Usage.compositionBarHeight)
+        .background(Color(DS.Usage.compositionTrack))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Usage.compositionBarRadius, style: .continuous))
     }
 }
 
-private struct UsageProjectSection: View {
-    let report: UsageReport
+/// Scanning notice (grey) or IPC error (red) above the cards.
+private struct UsageNotice: View {
+    typealias DS = DesignSystem
 
-    var body: some View {
-        SettingsSection(title: "By project", maxWidth: UsageReportView.contentMaximumWidth) {
-            SettingsCard {
-                UsageTable(
-                    columns: [
-                        UsageColumn(title: "Project", width: nil),
-                        UsageColumn(title: "Sessions", width: 72),
-                        UsageColumn(title: "Turns", width: 64),
-                        UsageColumn(title: "Tokens"),
-                        UsageColumn(title: "Cache ratio", width: 78),
-                        UsageColumn(title: "Cost"),
-                        UsageColumn(title: "Last active", width: 96),
-                    ],
-                    rows: report.byProject.map { slice in
-                        let workspace = slice.workspace ?? ""
-                        return UsageTableRow(
-                            id: workspace,
-                            cells: [
-                                UsageCell(
-                                    text: UsageFormatting.projectName(workspace),
-                                    secondary: UsageFormatting.projectPath(workspace),
-                                    help: workspace.isEmpty ? nil : workspace
-                                ),
-                                UsageCell(text: UsageFormatting.count(slice.sessions), isNumeric: true),
-                                UsageCell(text: UsageFormatting.count(slice.turns), isNumeric: true),
-                                UsageCell(text: UsageFormatting.tokens(slice.tokens.total), help: UsageFormatting.exactTokens(slice.tokens.total), isNumeric: true),
-                                UsageCell(text: UsageFormatting.cacheRatio(slice.tokens), help: "Cache read ÷ total tokens", isNumeric: true),
-                                UsageCell(text: UsageFormatting.cost(slice.costUSD), isNumeric: true, isDimmed: slice.costUSD == nil),
-                                UsageCell(text: slice.lastDay?.rawValue ?? "—", isNumeric: true, isDimmed: true),
-                            ],
-                            sortKeys: [
-                                .text(UsageFormatting.projectName(workspace).lowercased()),
-                                .number(Double(slice.sessions)),
-                                .number(Double(slice.turns)),
-                                .number(Double(slice.tokens.total)),
-                                .number(slice.tokens.total > 0 ? Double(slice.tokens.cacheRead) / Double(slice.tokens.total) : -1),
-                                .number(slice.costUSD ?? -1),
-                                .text(slice.lastDay?.rawValue ?? ""),
-                            ]
-                        )
-                    },
-                    sortable: true
-                )
-            }
-        }
-    }
-}
-
-// MARK: - Table
-
-struct UsageColumn {
-    let title: String
-    /// `nil` = the flexible leading column.
-    var width: CGFloat? = 88
-}
-
-enum UsageSortKey: Comparable {
-    case number(Double)
-    case text(String)
-
-    static func < (lhs: UsageSortKey, rhs: UsageSortKey) -> Bool {
-        switch (lhs, rhs) {
-        case let (.number(l), .number(r)): l < r
-        case let (.text(l), .text(r)): l < r
-        case (.number, .text): true
-        case (.text, .number): false
-        }
-    }
-}
-
-struct UsageCell {
     let text: String
-    var secondary: String? = nil
-    var icon: NSImage? = nil
-    var help: String? = nil
-    var isNumeric = false
-    var isDimmed = false
-}
-
-struct UsageTableRow: Identifiable {
-    let id: String
-    let cells: [UsageCell]
-    /// One key per column; empty when the row does not sort (pinned rows).
-    let sortKeys: [UsageSortKey]
-    var isEmphasized = false
-    /// A group row: its children follow it and fold under it.
-    var isGroup = false
-    /// The group row this row belongs under (indented, collapsible).
-    var groupID: String? = nil
-    /// Kept last whatever the sort (a Total row).
-    var isPinned = false
-}
-
-/// A card-shaped table: header row, hairlines between rows, numeric
-/// columns right-aligned in monospaced digits. Sorting is a header click
-/// (again to flip) and applies to group rows and, within each group, to
-/// its children; a pinned row stays last. Group rows fold their children.
-struct UsageTable: View {
-    let columns: [UsageColumn]
-    let rows: [UsageTableRow]
-    let sortable: Bool
-
-    @State private var sortColumn: Int?
-    @State private var sortAscending = false
-    @State private var collapsed: Set<String> = []
-
-    private static let horizontalInset: CGFloat = 16
-    private static let columnSpacing: CGFloat = 14
+    let isError: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ForEach(Array(visibleRows.enumerated()), id: \.element.id) { index, row in
-                if index > 0 { Divider() }
-                UsageTableRowView(
-                    row: row,
-                    columns: columns,
-                    hasChildren: row.isGroup && rows.contains { $0.groupID == row.id },
-                    isCollapsed: collapsed.contains(row.id),
-                    toggle: { toggle(row.id) }
-                )
-            }
+        HStack(spacing: DS.Usage.noticeGap) {
+            Image(systemName: isError ? "exclamationmark.triangle" : "clock.arrow.circlepath")
+                .font(.system(size: DS.Usage.noticeIcon - 2, weight: .medium))
+                .frame(width: DS.Usage.noticeIcon, height: DS.Usage.noticeIcon)
+            Text(text)
+                .font(Font(DS.Typography.body))
+                .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: Self.columnSpacing) {
-            ForEach(Array(columns.enumerated()), id: \.offset) { index, column in
-                let isSorted = sortColumn == index
-                Button {
-                    guard sortable else { return }
-                    if sortColumn == index {
-                        sortAscending.toggle()
-                    } else {
-                        sortColumn = index
-                        sortAscending = column.width == nil
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        if column.width != nil { Spacer(minLength: 0) }
-                        Text(column.title)
-                            .font(Design.Font.UI.caption)
-                            .foregroundStyle(isSorted ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-                        if isSorted {
-                            Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: column.width == nil ? .leading : .trailing)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!sortable)
-                .frame(width: column.width)
-            }
-        }
-        .padding(.horizontal, Self.horizontalInset)
-        .frame(height: 30)
-    }
-
-    private func toggle(_ groupID: String) {
-        if collapsed.contains(groupID) { collapsed.remove(groupID) } else { collapsed.insert(groupID) }
-    }
-
-    /// Rows in display order: top-level rows sorted, each followed by its
-    /// (sorted) children unless folded, pinned rows last.
-    private var visibleRows: [UsageTableRow] {
-        let pinned = rows.filter(\.isPinned)
-        let topLevel = sorted(rows.filter { !$0.isPinned && $0.groupID == nil })
-        var result: [UsageTableRow] = []
-        for row in topLevel {
-            result.append(row)
-            guard row.isGroup, !collapsed.contains(row.id) else { continue }
-            result.append(contentsOf: sorted(rows.filter { $0.groupID == row.id }))
-        }
-        return result + pinned
-    }
-
-    private func sorted(_ rows: [UsageTableRow]) -> [UsageTableRow] {
-        guard sortable, let sortColumn else { return rows }
-        return rows.sorted { lhs, rhs in
-            guard sortColumn < lhs.sortKeys.count, sortColumn < rhs.sortKeys.count else { return false }
-            let l = lhs.sortKeys[sortColumn]
-            let r = rhs.sortKeys[sortColumn]
-            if l == r { return lhs.id < rhs.id }
-            return sortAscending ? l < r : l > r
-        }
-    }
-}
-
-private struct UsageTableRowView: View {
-    let row: UsageTableRow
-    let columns: [UsageColumn]
-    let hasChildren: Bool
-    let isCollapsed: Bool
-    let toggle: () -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ForEach(Array(columns.enumerated()), id: \.offset) { index, column in
-                let cell = index < row.cells.count ? row.cells[index] : UsageCell(text: "")
-                cellView(cell, column: column)
-                    .frame(width: column.width)
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 36)
-        .padding(.vertical, 6)
-        .background(row.groupID != nil ? Design.Color.UI.zebra.opacity(0.5) : Color.clear)
-    }
-
-    @ViewBuilder
-    private func cellView(_ cell: UsageCell, column: UsageColumn) -> some View {
-        if column.width == nil {
-            HStack(spacing: 8) {
-                if hasChildren {
-                    Button(action: toggle) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Design.Color.UI.chevron)
-                            .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                            .frame(width: 12)
-                    }
-                    .buttonStyle(.plain)
-                    .help(isCollapsed ? "Show models" : "Hide models")
-                } else if row.groupID != nil {
-                    Spacer().frame(width: 12)
-                }
-                if let icon = cell.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 13, height: 13)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(cell.text)
-                        .font(row.isEmphasized ? Design.Font.UI.rowTitle : Design.Font.UI.body)
-                        .foregroundStyle(row.groupID != nil ? Color.primary.opacity(0.85) : Color.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let secondary = cell.secondary {
-                        Text(secondary)
-                            .font(Design.Font.UI.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .help(cell.help ?? cell.text)
-        } else {
-            Text(cell.text)
-                .font(row.isEmphasized ? Design.Font.UI.rowTitle.monospacedDigit() : Design.Font.UI.body.monospacedDigit())
-                .foregroundStyle(cell.isDimmed ? Color.secondary : Color.primary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .help(cell.help ?? cell.text)
-        }
-    }
-}
-
-private extension AgentKind {
-    static func forProvider(_ provider: AgentProvider) -> AgentKind {
-        switch provider {
-        case .claude: .claude
-        case .codex: .codex
+        .foregroundStyle(Color(isError ? DS.Usage.errorText : DS.Usage.noticeText))
+        .padding(.vertical, DS.Usage.noticeVerticalPadding)
+        .padding(.horizontal, DS.Usage.noticeHorizontalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(isError ? DS.Usage.errorFill : DS.Usage.noticeFill), in: RoundedRectangle(cornerRadius: DS.Usage.noticeRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Usage.noticeRadius, style: .continuous)
+                .strokeBorder(Color(isError ? DS.Usage.errorRing : DS.Usage.noticeRing), lineWidth: DS.Stroke.hairline)
         }
     }
 }
