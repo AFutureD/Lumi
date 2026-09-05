@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-05
+
 ### 用量
 
 - [Lumi for Mac] - 侧边栏新增 Usage 页：按 Today / This week / This month / Custom 日期范围查看 token 与花费。Summary 卡给出 Cost（带较上一周期的涨跌）、Tokens（带输入 / 缓存读 / 缓存写 / 输出的构成条）、Sessions / Turns / Calls，以及一张堆叠趋势图——单日按小时、其余按天、超过 90 天按周，可只看某一个 Agent（按它的模型堆叠），y 轴可切 Cost / Tokens，悬停看每根柱的明细；Detail 卡是一张可排序的明细表，Group by 可选 Project、Agent（展开看它用过的模型，Total 固定末尾）、Time（Day / Week / Month）、Model，含 Cache ratio。价目取自 models.dev，页头注明更新时间；没有公开价格的模型在表里标 `—`、在图里是灰段并注明 `· no price`，不计入花费。
@@ -138,7 +140,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/AFutureD/Lumi/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/AFutureD/Lumi/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/AFutureD/Lumi/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/AFutureD/Lumi/compare/v0.1.2...v0.1.3
