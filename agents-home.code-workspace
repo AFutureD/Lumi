@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": ".codex",
+      "path": "/Users/huanan/.codex"
+    },
+    {
+      "name": ".claude",
+      "path": "/Users/huanan/.claude"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "settings.json.backup.*": true,
+      "*.tmp*":true,
+      "config.toml.backup.*": true,
+      "hooks.json.backup.*": true
+    }
+  }
+}
