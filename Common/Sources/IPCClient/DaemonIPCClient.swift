@@ -30,14 +30,17 @@ public struct DaemonIPCSocketError: Error, CustomStringConvertible, Sendable {
 public final class DaemonIPCClient: @unchecked Sendable {
     public init() {}
 
+    /// `wake` lets a request start the daemon when its socket is not there
+    /// (`DaemonWakePolicy`); without it a missing daemon is a plain failure.
     public func request(
         _ request: IPCRequest,
         socketPath: String,
-        timeout: Duration = .seconds(2)
+        timeout: Duration = .seconds(2),
+        wake: DaemonWakePolicy? = nil
     ) throws -> IPCResponse {
         let started = ContinuousClock.now
         do {
-            let (response, bytesOut) = try send(request, socketPath: socketPath, timeout: timeout)
+            let (response, bytesOut) = try send(request, socketPath: socketPath, timeout: timeout, wake: wake)
             let failed = response.status == .error
             log.log(level: failed ? .warning : .debug, "ipc_request", metadata: .fields([
                 "op": request.operation.rawValue,
@@ -62,7 +65,8 @@ public final class DaemonIPCClient: @unchecked Sendable {
     private func send(
         _ request: IPCRequest,
         socketPath: String,
-        timeout: Duration
+        timeout: Duration,
+        wake: DaemonWakePolicy?
     ) throws -> (IPCResponse, Int) {
         // Inside a traced unit (a helper run, a Mac reconcile pass) the
         // request carries that unit's id, so the daemon's lines join ours.
@@ -72,10 +76,11 @@ public final class DaemonIPCClient: @unchecked Sendable {
         )
         let body = try TransportCoding.makeEncoder().encode(envelope)
 
-        // One deadline covers connect, write and the response read.
-        let deadline = ContinuousClock.now + timeout
-        let connection = try FrameConnection.connect(socketPath: socketPath, deadline: deadline)
+        // The connect has its own budget (a wake may sit inside it); one
+        // deadline then covers the write and the response read.
+        let connection = try FrameConnection.connect(socketPath: socketPath, timeout: timeout, wake: wake)
         defer { connection.close() }
+        let deadline = ContinuousClock.now + timeout
         try connection.writeFrame(body, deadline: deadline)
         let responseBody = try connection.readFrame(deadline: deadline)
 
@@ -110,8 +115,12 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
         return connection != nil || connecting
     }
 
+    /// `wake` starts a daemon whose socket is missing before subscribing;
+    /// the Mac app's stream is the one client that keeps the daemon alive
+    /// through its own reconnects.
     public func start(
         socketPath: String,
+        wake: DaemonWakePolicy? = nil,
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void,
         onSummary: @escaping @Sendable (SessionSummary) -> Void,
         onHealth: @escaping @Sendable (DaemonHealth) -> Void,
@@ -126,8 +135,8 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
         lock.unlock()
 
         do {
+            let newConnection = try FrameConnection.connect(socketPath: socketPath, timeout: .seconds(10), wake: wake)
             let deadline = ContinuousClock.now + .seconds(10)
-            let newConnection = try FrameConnection.connect(socketPath: socketPath, deadline: deadline)
             do {
                 let body = try TransportCoding.makeEncoder().encode(
                     TransportEnvelope(payload: IPCRequest(operation: .subscribe))
@@ -266,6 +275,26 @@ public enum DaemonEndpoint {
         )
         .appendingPathComponent(LumiPaths.socketFileName)
         .path
+    }
+
+    /// The daemon's launchd Mach service — the registered agent's label. A
+    /// message to it is what makes launchd spawn a daemon that is not
+    /// running (`DaemonWaker`); the Unix socket stays the only data channel.
+    public static let machServiceName = "app.huanan.lumi.daemon"
+
+    /// The service a client wakes, or `nil` when the environment points this
+    /// process at an isolated daemon (`LUMI_SOCKET`, `LUMI_SUPPORT_DIRECTORY`)
+    /// — waking the installed daemon would start the wrong one.
+    /// `LUMI_WAKE_SERVICE` names another service (an isolated launchd job) or
+    /// disables the wake with `0`.
+    public static func defaultWakeService(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        if let override = environment["LUMI_WAKE_SERVICE"], !override.isEmpty {
+            return ["0", "false", "no"].contains(override.lowercased()) ? nil : override
+        }
+        let isolated = ["LUMI_SOCKET", "LUMI_SUPPORT_DIRECTORY"].contains { !(environment[$0] ?? "").isEmpty }
+        return isolated ? nil : machServiceName
     }
 }
 

@@ -8,6 +8,11 @@
 	<string>Contents/Resources/Lumen</string>
 	<key>RunAtLoad</key>
 	<true/>
+	<key>MachServices</key>
+	<dict>
+		<key>app.huanan.lumi.daemon</key>
+		<true/>
+	</dict>
 	<key>KeepAlive</key>
 	<dict>
 		<key>SuccessfulExit</key>

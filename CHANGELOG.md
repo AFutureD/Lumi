@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Daemon
+
+- 修复 daemon 已安装却一直 Not connected（`connect: No such file or directory`）的问题：系统暂缓登录项自动启动时，注册成功的 daemon 从未被拉起。现在 Mac App 与 Agent hook 在连不上 daemon 时会按需把它唤醒；daemon 正常退出后，下一次连接也会重新把它拉起来。
+- [Lumi for Mac] - “Reinstall daemon”与启动时的自动重装都等系统完成注销后再注册，不再因两步撞车而失败；“Settings > Daemon”的 Status 行先给出注册状态（未安装 / 等待允许），已注册却连不上时才显示连接错误。
+
 ## [0.1.5] - 2026-08-31
 
 ### 数据存储

@@ -62,7 +62,7 @@ final class DaemonAutoUpdater {
 
     private let store: MacSessionStore
     private let manager: DaemonServiceManager
-    private let restart: () throws -> Void
+    private let restart: () async throws -> Void
 
     private var bundledHash: String?
     private var attempted = false
@@ -77,11 +77,11 @@ final class DaemonAutoUpdater {
     init(
         store: MacSessionStore,
         manager: DaemonServiceManager = DaemonServiceManager(),
-        restart: (() throws -> Void)? = nil
+        restart: (() async throws -> Void)? = nil
     ) {
         self.store = store
         self.manager = manager
-        self.restart = restart ?? { try manager.reinstall() }
+        self.restart = restart ?? { try await manager.reinstall() }
     }
 
     func start() {
@@ -135,13 +135,16 @@ final class DaemonAutoUpdater {
                 return
             }
             log.info("daemon_auto_update_restarting", metadata: .fields(["reason": reason]))
-            do {
-                awaitingDisconnect = true
-                try restart()
-                store.refresh()
-            } catch {
-                finished = true
-                log.error("daemon_auto_update_restart_failed", metadata: .fields(["reason": reason, "error": error]))
+            awaitingDisconnect = true
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.restart()
+                    self.store.refresh()
+                } catch {
+                    self.finished = true
+                    log.error("daemon_auto_update_restart_failed", metadata: .fields(["reason": reason, "error": error]))
+                }
             }
         case .stillStale:
             finished = true

@@ -20,12 +20,26 @@ final class DaemonServiceManager {
 
     /// launchd keeps a running daemon on the pre-update binary even after the
     /// app bundle is replaced; unregister + register is what actually swaps in
-    /// the new build.
-    func reinstall() throws {
+    /// the new build. The removal is awaited: the synchronous `unregister()`
+    /// returns once smd accepted it while launchd removes the job on its own
+    /// time, and a register racing that removal is refused ("Operation
+    /// already in progress") and leaves smd watching a job that no longer
+    /// exists. Whether launchd then spawns the daemon is not assumed — the
+    /// app's stream reconnect wakes it.
+    func reinstall() async throws {
         if service.status == .enabled {
-            try service.unregister()
+            try await service.unregister()
+            try await waitUntilUnregistered()
         }
         try service.register()
+    }
+
+    /// Insurance on top of the awaited unregister: polls for up to two
+    /// seconds so the register never lands on a job launchd still holds.
+    private func waitUntilUnregistered() async throws {
+        for _ in 0..<40 where service.status == .enabled {
+            try await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     func describeStatus() -> String {

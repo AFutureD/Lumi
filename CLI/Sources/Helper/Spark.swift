@@ -147,10 +147,14 @@ enum SparkMain {
         ]))
 
         do {
+            // A missing socket wakes the daemon through launchd first: the
+            // wake budget covers a cold start, the 2s budget the exchange.
+            let socketPath = DaemonEndpoint.defaultSocketPath()
             let response = try DaemonIPCClient().request(
                 request,
-                socketPath: DaemonEndpoint.defaultSocketPath(),
-                timeout: .seconds(2)
+                socketPath: socketPath,
+                timeout: .seconds(2),
+                wake: .default(socketPath: socketPath, timeout: .seconds(4))
             )
             if let failure = response.failure {
                 log.error("hook_forward_rejected", metadata: .fields([

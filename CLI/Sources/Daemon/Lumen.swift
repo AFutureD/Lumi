@@ -139,26 +139,35 @@ enum LumenMain {
             log.error("daemon_start_failed", metadata: .fields(["socket": configuration.socketPath, "error": error]))
             throw error
         }
+        // Demand launch: the Mach service answers wakes only once the socket
+        // listens, so a reply always means "connect now". Not load-bearing —
+        // without it the daemon serves as before; it just cannot be started
+        // by a client while launchd holds back non-demand spawns.
+        let wakeListener = await activateWakeListener(configuration: configuration)
         // Announced before the Relay connects: the socket is already
         // listening, and the first Relay round-trip can take a while.
         log.info("daemon_started", metadata: .fields([
             "version": DaemonService.version,
             "fingerprint": executableHash.isEmpty ? nil : String(executableHash.prefix(12)),
             "socket": configuration.socketPath,
+            "wake": wakeListener == nil ? "off" : configuration.wakeService,
             "database": configuration.databasePath,
             "relay": relay == nil ? "off" : configuration.relayURL.absoluteString,
             "log_level": logConfiguration.minimumLevel.label.lowercased(),
             "log_directory": logConfiguration.directory,
         ]))
 
-        // Shutdown runs in reverse: the Relay detaches first, the watchers
-        // stop producing, the server drains its connections, and the backfill
-        // queue — last — flushes whatever the others enqueued on the way out.
-        // SIGTERM (launchd unregister) therefore exits 0 and stays down
-        // (KeepAlive.SuccessfulExit=false); a service failure exits non-zero
-        // and launchd relaunches.
+        // Shutdown runs in reverse: the wake listener stops answering first
+        // (a daemon on its way out must not promise a socket), the Relay
+        // detaches, the watchers stop producing, the server drains its
+        // connections, and the backfill queue — last — flushes whatever the
+        // others enqueued on the way out. SIGTERM (launchd unregister)
+        // therefore exits 0 and stays down (KeepAlive.SuccessfulExit=false)
+        // until a client wakes it; a service failure exits non-zero and
+        // launchd relaunches.
         var services: [any Service] = [backfill, server, watcher, claudeWatcher]
         if let relay { services.append(relay) }
+        if let wakeListener { services.append(wakeListener) }
         let group = ServiceGroup(configuration: .init(
             services: services.map { ServiceGroupConfiguration.ServiceConfiguration(service: $0) },
             gracefulShutdownSignals: [.sigterm, .sigint],
@@ -166,5 +175,27 @@ enum LumenMain {
         ))
         try await group.run()
         log.info("daemon_stopped")
+    }
+
+    private static func activateWakeListener(configuration: DaemonConfiguration) async -> DaemonWakeListener? {
+        guard let service = configuration.wakeService else {
+            log.info("wake_listener_skipped", metadata: .fields([
+                "launchd_label": ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"],
+                "socket": configuration.socketPath,
+            ]))
+            return nil
+        }
+        let listener = DaemonWakeListener(
+            service: service,
+            socketPath: configuration.socketPath,
+            version: DaemonService.version
+        )
+        do {
+            try await listener.activate()
+            return listener
+        } catch {
+            log.error("wake_listener_failed", metadata: .fields(["service": service, "error": error]))
+            return nil
+        }
     }
 }

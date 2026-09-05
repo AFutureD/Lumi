@@ -46,6 +46,11 @@ public final class MacSessionStore {
     private let client: any MacDaemonClient
     private let eventSubscriber = DaemonEventSubscriber()
     private let socketPath: String
+    /// The stream is the one app-side client that wakes a stopped daemon:
+    /// its reconnect loop keeps trying, so short requests never need to.
+    /// Derived from the socket path unless given: only the installed
+    /// daemon's socket wakes the installed daemon.
+    private let wake: DaemonWakePolicy?
     private let cache: SQLiteSessionRepository?
     private let cachePath: String
     private var started = false
@@ -63,10 +68,12 @@ public final class MacSessionStore {
 
     public init(
         socketPath: String = DaemonEndpoint.defaultSocketPath(),
+        wake: DaemonWakePolicy? = nil,
         cachePath: String? = nil,
         client: any MacDaemonClient = DaemonIPCClient()
     ) {
         self.socketPath = socketPath
+        self.wake = wake ?? .default(socketPath: socketPath, timeout: .seconds(8))
         self.client = client
         let resolvedCachePath: String
         if let cachePath {
@@ -717,11 +724,13 @@ public final class MacSessionStore {
         guard started, !eventSubscriber.isRunning else { return }
         let subscriber = eventSubscriber
         let socketPath = socketPath
+        let wake = wake
         let storeReference = WeakMacSessionStoreReference(self)
         Task.detached {
             do {
                 try subscriber.start(
                     socketPath: socketPath,
+                    wake: wake,
                     onEvent: { event in
                         Task { @MainActor in storeReference.value?.enqueueAgentEvent(event) }
                     },

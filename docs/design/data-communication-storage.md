@@ -79,6 +79,7 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 - 介质：Unix domain socket。
 - 默认路径：`~/Library/Application Support/Lumi/daemon.sock`。
 - socket 权限：`0600`；父目录权限：`0700`。
+- 启动与唤醒：daemon 由 Mac App 以 `SMAppService` 注册为登录项 `app.huanan.lumi.daemon`（RunAtLoad + KeepAlive，正常退出不重启）。launchd 处于 on-demand-only 模式时不执行 RunAtLoad（注册成功但从不拉起），所以同名 **Mach service** 承担按需拉起：客户端 `connect(2)` 得到 `ENOENT` / `ECONNREFUSED` 时先发一条 wake 消息，launchd 为投递它而拉起 daemon；daemon 在 socket 开始监听后才回复，收到回复即重连。Mach service 不承载任何会话数据，socket 仍是唯一数据通道。helper 每次 hook 的唤醒预算 4s，Mac App 事件流 8s，短请求不唤醒；并发唤醒由 launchd 合并成一次拉起。环境指向隔离 daemon（`LUMI_SOCKET` / `LUMI_SUPPORT_DIRECTORY`）时不唤醒；`LUMI_WAKE_SERVICE` 指定另一个服务名（隔离的 launchd 任务）或用 `0` 关闭，daemon 侧只在 launchd 以该 label 启动它（`XPC_SERVICE_NAME`）且无隔离覆盖时才认领服务名。
 - 编码：`TransportEnvelope<IPCRequest|IPCResponse>` JSON。
 - framing：4-byte big-endian payload 长度 + JSON bytes。
 - 最大帧：8 MiB。

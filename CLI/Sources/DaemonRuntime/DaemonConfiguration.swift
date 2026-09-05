@@ -22,6 +22,12 @@ public struct DaemonConfiguration: Hashable, Sendable {
     /// `LUMI_RELAY_KEYCHAIN_SERVICE` so an isolated daemon (smoke
     /// runs against a local Relay) never touches the installed one's identity.
     public let relayCredentialService: String
+    /// The Mach service this daemon answers wakes on (`DaemonWakeListener`),
+    /// `nil` when it is not the registered daemon — `swift run`, smoke runs
+    /// and tests. launchd sets `XPC_SERVICE_NAME` to the job's label, and
+    /// only that job owns the name. `LUMI_WAKE_SERVICE` overrides it (an
+    /// isolated launchd job) or disables it with `0`.
+    public let wakeService: String?
 
     public static let defaultRelayURL = URL(string: "https://relay.lumi.huanan.app")!
 
@@ -34,7 +40,8 @@ public struct DaemonConfiguration: Hashable, Sendable {
         relayURL: URL = DaemonConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
         relayStatePath: String? = nil,
-        relayCredentialService: String = KeychainRelayHostCredentialStore.defaultService
+        relayCredentialService: String = KeychainRelayHostCredentialStore.defaultService,
+        wakeService: String? = nil
     ) {
         self.supportDirectory = supportDirectory
         let daemonDirectory = supportDirectory.appendingPathComponent(
@@ -50,6 +57,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
         self.relayEnabled = relayEnabled
         self.relayStatePath = relayStatePath ?? daemonDirectory.appendingPathComponent("relay-host-state.json").path
         self.relayCredentialService = relayCredentialService
+        self.wakeService = wakeService
     }
 
     public static func `default`(
@@ -83,8 +91,19 @@ public struct DaemonConfiguration: Hashable, Sendable {
             ),
             relayStatePath: environment["LUMI_RELAY_STATE"],
             relayCredentialService: environment["LUMI_RELAY_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 }
-                ?? KeychainRelayHostCredentialStore.defaultService
+                ?? KeychainRelayHostCredentialStore.defaultService,
+            wakeService: wakeService(environment: environment)
         )
+    }
+
+    /// The registered daemon answers on the shared name; an isolated one
+    /// (socket or support overrides) never claims it, whoever launched it.
+    static func wakeService(environment: [String: String]) -> String? {
+        if let override = environment["LUMI_WAKE_SERVICE"], !override.isEmpty {
+            return ["0", "false", "no"].contains(override.lowercased()) ? nil : override
+        }
+        guard environment["XPC_SERVICE_NAME"] == DaemonEndpoint.machServiceName else { return nil }
+        return DaemonEndpoint.defaultWakeService(environment: environment)
     }
 
     public func prepareFileSystem() throws {

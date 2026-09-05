@@ -17,12 +17,12 @@ Lumi aggregates multiple Codex Agents and Sessions on one Mac, displays them in 
 | Part | Name | Identifier | On disk |
 |---|---|---|---|
 | Mac app / iOS app | Lumi | `app.huanan.lumi` | `Lumi.app` |
-| Daemon | Lumen | `app.huanan.lumi.daemon` (LaunchAgent label, codesign identifier) | `Lumi.app/Contents/Resources/Lumen` |
+| Daemon | Lumen | `app.huanan.lumi.daemon` (LaunchAgent label, Mach service for demand launch, codesign identifier) | `Lumi.app/Contents/Resources/Lumen` |
 | Hook helper | Spark | `app.huanan.lumi.helper` (codesign identifier) | installed to `~/Library/Application Support/Lumi/bin/Spark` |
 | Relay | Ray | Worker `lumi-relay` | `https://relay.lumi.huanan.app` |
 | Notch surface | Halo | — | part of the Mac app |
 
-Data lives under `~/Library/Application Support/Lumi`: the daemon socket (`daemon.sock`) and helper copy (`bin/Spark`) at the root as shared contracts, the daemon's database and relay state under `Lumen/`, and the Mac app's sync cache under `Storage/`. Logs go to `~/Library/Logs/Lumi`, os_log subsystems `app.huanan.lumi.<daemon|helper|app|ios>`, environment overrides `LUMI_*`, pairing links `lumi://pair?...`. Wording for user-facing text is in [Glossary.md](../Glossary.md).
+Data lives under `~/Library/Application Support/Lumi`: the daemon socket (`daemon.sock`) and helper copy (`bin/Spark`) at the root as shared contracts, the daemon's database and relay state under `Lumen/`, and the Mac app's sync cache under `Storage/`. A client that finds no socket wakes the daemon through the Mach service of the same label (launchd spawns it on demand, even when it holds back login-time starts); see the transport section of [data-communication-storage.md](../design/data-communication-storage.md). Logs go to `~/Library/Logs/Lumi`, os_log subsystems `app.huanan.lumi.<daemon|helper|app|ios>`, environment overrides `LUMI_*`, pairing links `lumi://pair?...`. Wording for user-facing text is in [Glossary.md](../Glossary.md).
 
 ## Product topology
 

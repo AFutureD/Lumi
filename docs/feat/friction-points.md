@@ -6,7 +6,7 @@
 
 **用户会看到**：“Settings > Daemon”的药丸显示 Not connected，Status 行附带原因；Notch 没有数据时空态显示 Daemon unavailable。Sessions 页面本身不显示连接状态，表现为刷新和删除不生效。
 
-**可能原因**：daemon 尚未安装、等待系统允许、已停止或启动失败。App 启动时会自动重装版本过期或起不来的已安装 daemon（[MAC-R-022](modules/mac-session-view.md#mac-r-022-启动时自动更新已安装的-daemon)），所以持续的 Not connected 通常出现在从未安装、系统拦截或自动重装也失败时。
+**可能原因**：daemon 尚未安装、等待系统允许，或本身起不来。已安装的 daemon 停了不需要人工处理：Mac App 的事件流和 Agent 的每一次 hook 在连不上时都会通过系统按需把它拉起来，即使系统暂缓了登录时的自动启动。App 启动时还会自动重装版本过期或起不来的已安装 daemon（[MAC-R-022](modules/mac-session-view.md#mac-r-022-启动时自动更新已安装的-daemon)）。所以持续的 Not connected 只剩三种：从未安装、系统拦截、daemon 自己启动失败。Status 行先给出注册状态（未安装 / 等待允许），已注册却连不上时才显示连接或唤醒错误。
 
 **恢复步骤**：
 

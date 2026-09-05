@@ -99,7 +99,12 @@ final class SettingsModel: ObservableObject {
             }.count
         } else {
             isDaemonConnected = false
-            daemonServiceDescription = "Not connected · \(store.connectionError ?? daemonService.describeStatus())"
+            // A registration problem is the actionable cause; the socket or
+            // wake error only explains an enabled service that is not answering.
+            let cause = daemonService.status == .enabled
+                ? (store.connectionError ?? daemonService.describeStatus())
+                : daemonService.describeStatus()
+            daemonServiceDescription = "Not connected · \(cause)"
             daemonUptimeText = nil
             daemonSocketPath = nil
             activeSessionCount = 0
@@ -143,13 +148,15 @@ final class SettingsModel: ObservableObject {
     }
 
     func reinstallDaemon() {
-        do {
-            try daemonService.reinstall()
-            store.refresh()
-        } catch {
-            presentError(error)
+        Task {
+            do {
+                try await daemonService.reinstall()
+                store.refresh()
+            } catch {
+                presentError(error)
+            }
+            reload()
         }
-        reload()
     }
 
     func uninstallDaemon() {
