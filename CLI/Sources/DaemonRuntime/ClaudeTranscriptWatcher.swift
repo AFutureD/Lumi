@@ -48,16 +48,7 @@ public actor ClaudeTranscriptWatcher: Service {
 
     public func run() async throws {
         lifecycleLog.info("claude_watcher_started", metadata: .fields(["poll_seconds": pollIntervalSeconds]))
-        await cancelWhenGracefulShutdown {
-            while !Task.isCancelled {
-                await self.scanOnce()
-                do {
-                    try await Task.sleep(for: .milliseconds(Int64(max(250, self.pollIntervalSeconds * 1_000))))
-                } catch {
-                    break
-                }
-            }
-        }
+        await pollUntilShutdown(everySeconds: pollIntervalSeconds) { await self.scanOnce() }
         lifecycleLog.info("claude_watcher_stopped")
     }
 

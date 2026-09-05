@@ -113,13 +113,9 @@ public struct DaemonConfiguration: Hashable, Sendable {
             codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true),
             codexArchivedSessionsDirectory: codexHome.appendingPathComponent("archived_sessions", isDirectory: true),
             claudeProjectsDirectory: claudeHome.appendingPathComponent("projects", isDirectory: true),
-            modelPricesFetchEnabled: !["0", "false", "no"].contains(
-                (environment["LUMI_MODEL_PRICES"] ?? "").lowercased()
-            ),
+            modelPricesFetchEnabled: !isDisabled(environment["LUMI_MODEL_PRICES"]),
             relayURL: environment["LUMI_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
-            relayEnabled: !["0", "false", "no"].contains(
-                (environment["LUMI_RELAY"] ?? "").lowercased()
-            ),
+            relayEnabled: !isDisabled(environment["LUMI_RELAY"]),
             relayStatePath: environment["LUMI_RELAY_STATE"],
             relayCredentialService: environment["LUMI_RELAY_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 }
                 ?? KeychainRelayHostCredentialStore.defaultService,
@@ -127,11 +123,16 @@ public struct DaemonConfiguration: Hashable, Sendable {
         )
     }
 
+    /// `LUMI_*=0|false|no` switches a feature off; anything else (including unset) leaves it on.
+    static func isDisabled(_ flag: String?) -> Bool {
+        ["0", "false", "no"].contains((flag ?? "").lowercased())
+    }
+
     /// The registered daemon answers on the shared name; an isolated one
     /// (socket or support overrides) never claims it, whoever launched it.
     static func wakeService(environment: [String: String]) -> String? {
         if let override = environment["LUMI_WAKE_SERVICE"], !override.isEmpty {
-            return ["0", "false", "no"].contains(override.lowercased()) ? nil : override
+            return isDisabled(override) ? nil : override
         }
         guard environment["XPC_SERVICE_NAME"] == DaemonEndpoint.machServiceName else { return nil }
         return DaemonEndpoint.defaultWakeService(environment: environment)

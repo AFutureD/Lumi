@@ -54,16 +54,7 @@ public actor CodexRolloutWatcher: Service {
             "root": rootDirectory,
             "poll_seconds": pollIntervalSeconds,
         ]))
-        await cancelWhenGracefulShutdown {
-            while !Task.isCancelled {
-                await self.scanOnce()
-                do {
-                    try await Task.sleep(for: .milliseconds(Int64(max(250, self.pollIntervalSeconds * 1_000))))
-                } catch {
-                    break
-                }
-            }
-        }
+        await pollUntilShutdown(everySeconds: pollIntervalSeconds) { await self.scanOnce() }
         lifecycleLog.info("rollout_watcher_stopped")
     }
 
@@ -126,22 +117,11 @@ public actor CodexRolloutWatcher: Service {
         try await repository.markRolloutBaselineInitialized()
     }
 
-    /// Enumerates by relative path and rejoins onto the configured root:
-    /// cursor rows key by path string, and the URL-based enumerator resolves
-    /// symlinks (`/var` → `/private/var`), which would give the watcher
-    /// different keys than the hook path derives from the same root.
+    /// Rejoined onto the configured root: cursor rows key by path string.
     private func rolloutFiles() -> [(URL, UInt64)] {
-        guard let enumerator = FileManager.default.enumerator(atPath: rootDirectory.path) else { return [] }
-        var files: [(URL, UInt64)] = []
-        while let relative = enumerator.nextObject() as? String {
-            guard relative.hasSuffix(".jsonl"),
-                  !relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }),
-                  let attributes = enumerator.fileAttributes,
-                  attributes[.type] as? FileAttributeType == .typeRegular else { continue }
-            let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-            files.append((rootDirectory.appendingPathComponent(relative), size))
+        jsonlFiles(under: rootDirectory).map { file in
+            (rootDirectory.appendingPathComponent(file.relativePath), (file.attributes[.size] as? NSNumber)?.uint64Value ?? 0)
         }
-        return files
     }
 
     /// The first scan after every daemon launch checks every rollout so events

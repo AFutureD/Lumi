@@ -309,21 +309,36 @@ public actor DaemonService {
                     )
                     break
                 }
+                // The optional comparison period is validated like the main one.
+                var comparison: (since: UsageDay, until: UsageDay, buckets: [UsageBucket])?
+                if let compareSince = envelope.payload.compareSince, let compareUntil = envelope.payload.compareUntil {
+                    guard compareSince <= compareUntil, let span = compareSince.days(until: compareUntil), span < Self.maximumUsageRangeDays else {
+                        payload = failure(code: "invalid_usage_range", message: "The comparison range must run forward and span at most \(Self.maximumUsageRangeDays) days.")
+                        break
+                    }
+                    comparison = (compareSince, compareUntil, try await usageStore.buckets(since: compareSince, until: compareUntil))
+                }
                 let buckets = try await usageStore.buckets(since: since, until: until)
                 let prices = await modelPrices.current()
-                let report = UsageReportBuilder.build(
-                    buckets: buckets,
-                    prices: prices.table,
-                    since: since,
-                    until: until,
-                    generatedAt: now,
-                    pricing: prices.status,
-                    scan: await usageScanner.status()
-                )
+                let scan = await usageScanner.status()
+                // Folding a month of buckets is CPU work; keep it off this actor so hook frames are not queued behind it.
+                let report = await Task.detached(priority: .userInitiated) { [comparison] in
+                    UsageReportBuilder.build(
+                        buckets: buckets,
+                        prices: prices.table,
+                        since: since,
+                        until: until,
+                        comparison: comparison,
+                        generatedAt: now,
+                        pricing: prices.status,
+                        scan: scan
+                    )
+                }.value
                 log.debug("usage_report_built", metadata: .fields([
                     "since": since.rawValue, "until": until.rawValue,
                     "buckets": buckets.count, "projects": report.byProject.count, "models": report.byModel.count,
                     "days": report.byDay.count, "trend": report.trend.count, "trend_unit": report.trendUnit.rawValue,
+                    "comparison": comparison?.buckets.count ?? 0,
                 ]))
                 payload = IPCResponse(status: .ok, usage: report)
             case .getSessionFilters:

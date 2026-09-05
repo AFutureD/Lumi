@@ -14,7 +14,7 @@ final class UsageViewController: NSViewController {
     private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
 
     private let model: UsageModel
-    private let calendar: Calendar
+    private var calendar: Calendar { model.calendar }
     private let segmented = NSSegmentedControl(
         labels: UsageRangeKind.allCases.map(\.title),
         trackingMode: .selectOne,
@@ -27,9 +27,8 @@ final class UsageViewController: NSViewController {
     private let hosting: NSHostingController<UsageReportView>
     private var modelObservation: AnyCancellable?
 
-    init(model: UsageModel, calendar: Calendar = .current) {
+    init(model: UsageModel) {
         self.model = model
-        self.calendar = calendar
         hosting = NSHostingController(rootView: UsageReportView(model: model))
         super.init(nibName: nil, bundle: nil)
         // `objectWillChange` fires before the value lands; read it on the next turn.

@@ -4,13 +4,6 @@ import Foundation
 import Testing
 @testable import MacFeature
 
-private let utc: Calendar = {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "UTC")!
-    calendar.firstWeekday = 1 // Sunday by locale — the presets must still start weeks on Monday.
-    return calendar
-}()
-
 /// Saturday 2026-09-05 14:00 UTC.
 private let now = Date(timeIntervalSince1970: 1_788_616_800)
 
@@ -104,10 +97,15 @@ private final class ScriptedUsageDaemon: MacDaemonClient, @unchecked Sendable {
         guard request.operation == .usageReport, let since = request.since, let until = request.until else {
             return IPCResponse(status: .error, failure: IPCFailure(code: "unexpected", message: "not a usage request", retryable: false))
         }
+        var comparison: UsageComparison?
+        if let compareSince = request.compareSince, let compareUntil = request.compareUntil {
+            comparison = UsageComparison(since: compareSince, until: compareUntil, totals: UsageSlice(costUSD: 0.5), byAgent: [])
+        }
         let report = UsageReport(
             since: since, until: until, generatedAt: now,
             totals: UsageSlice(tokens: UsageTokens(input: 1), costUSD: 1, calls: 1, sessions: 1, turns: 1),
             byAgent: [], byProject: [], byModel: [],
+            comparison: comparison,
             pricing: UsagePricingStatus(source: .fresh, fetchedAt: now, modelCount: 1),
             scan: UsageScanStatus(scannedFiles: 1, pendingFiles: 0, lastScanAt: now, isScanning: false)
         )
@@ -135,21 +133,21 @@ private func makeModel(daemon: ScriptedUsageDaemon) -> UsageModel {
     #expect(model.report?.since == UsageDay(year: 2026, month: 9, day: 5))
     #expect(model.report?.until == UsageDay(year: 2026, month: 9, day: 5))
     #expect(model.errorMessage == nil)
-    #expect(model.lastLoadedAt == now)
-    // The main range first, then yesterday for the delta.
-    #expect(daemon.requests.map { $0.since?.rawValue } == ["2026-09-05", "2026-09-04"])
-    #expect(model.previousReport?.since == UsageDay(year: 2026, month: 9, day: 4))
+    // One request carries both the range and yesterday, the delta's comparison period.
+    #expect(daemon.requests.count == 1)
+    #expect(daemon.requests.last?.compareSince == UsageDay(year: 2026, month: 9, day: 4))
+    #expect(daemon.requests.last?.compareUntil == UsageDay(year: 2026, month: 9, day: 4))
+    #expect(model.report?.comparison?.since == UsageDay(year: 2026, month: 9, day: 4))
     #expect(model.comparisonLabel == "yesterday")
 
     model.setCustom(since: UsageDay(year: 2026, month: 8, day: 20), until: UsageDay(year: 2026, month: 12, day: 1))
     #expect(model.range == UsageRange(kind: .custom, since: UsageDay(year: 2026, month: 8, day: 20), until: UsageDay(year: 2026, month: 9, day: 5)))
     // A range change loads on its own; wait for that load rather than racing it.
     await model.pendingLoad?.value
-    let mainRequest = daemon.requests[daemon.requests.count - 2]
-    #expect(mainRequest.since == UsageDay(year: 2026, month: 8, day: 20))
-    #expect(mainRequest.until == UsageDay(year: 2026, month: 9, day: 5))
-    #expect(daemon.requests.last?.since == UsageDay(year: 2026, month: 8, day: 3))
-    #expect(daemon.requests.last?.until == UsageDay(year: 2026, month: 8, day: 19))
+    #expect(daemon.requests.last?.since == UsageDay(year: 2026, month: 8, day: 20))
+    #expect(daemon.requests.last?.until == UsageDay(year: 2026, month: 9, day: 5))
+    #expect(daemon.requests.last?.compareSince == UsageDay(year: 2026, month: 8, day: 3))
+    #expect(daemon.requests.last?.compareUntil == UsageDay(year: 2026, month: 8, day: 19))
     #expect(model.comparisonLabel == "previous 17 days")
 
     daemon.failure = IPCFailure(code: "usage_unavailable", message: "The daemon runs without a usage scanner.", retryable: false)

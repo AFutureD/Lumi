@@ -65,7 +65,7 @@ public struct UsageBucket: Hashable, Sendable {
 public struct UsageCursor: Hashable, Sendable {
     public var identity: String
     public var path: String
-    public var source: UsageSource
+    public var source: AgentProvider
     public var byteOffset: UInt64
     public var fileSize: UInt64
     public var modifiedAt: Date
@@ -77,7 +77,7 @@ public struct UsageCursor: Hashable, Sendable {
     public init(
         identity: String,
         path: String,
-        source: UsageSource,
+        source: AgentProvider,
         byteOffset: UInt64,
         fileSize: UInt64,
         modifiedAt: Date,

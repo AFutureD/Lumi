@@ -140,11 +140,11 @@ enum LumenMain {
         // a call's long-context band.
         await modelPrices.loadCache()
         let usageScanner = UsageScanService(
-            roots: UsageScanService.roots(
-                claudeProjectsDirectory: configuration.claudeProjectsDirectory,
-                codexSessionsDirectory: configuration.codexSessionsDirectory,
-                codexArchivedSessionsDirectory: configuration.codexArchivedSessionsDirectory
-            ),
+            roots: [
+                UsageScanService.Root(directory: configuration.claudeProjectsDirectory, source: .claude),
+                UsageScanService.Root(directory: configuration.codexSessionsDirectory, source: .codex),
+                UsageScanService.Root(directory: configuration.codexArchivedSessionsDirectory, source: .codex),
+            ],
             store: usageStore,
             priceTable: { await modelPrices.current().table },
             pollIntervalSeconds: configuration.usagePollIntervalSeconds

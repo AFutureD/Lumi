@@ -17,6 +17,15 @@ public protocol MacDaemonClient: Sendable {
     func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse
 }
 
+extension MacDaemonClient {
+    /// The blocking socket round trip off the main actor.
+    func send(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64 = 15) async throws -> IPCResponse {
+        try await Task.detached {
+            try self.request(request, socketPath: socketPath, timeoutSeconds: timeoutSeconds)
+        }.value
+    }
+}
+
 extension DaemonIPCClient: MacDaemonClient {
     public func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse {
         try self.request(request, socketPath: socketPath, timeout: .seconds(timeoutSeconds))
@@ -776,15 +785,7 @@ public final class MacSessionStore {
     }
 
     private func request(_ request: IPCRequest, timeoutSeconds: Int64 = 2) async throws -> IPCResponse {
-        let client = client
-        let socketPath = socketPath
-        return try await Task.detached {
-            try client.request(
-                request,
-                socketPath: socketPath,
-                timeoutSeconds: timeoutSeconds
-            )
-        }.value
+        try await client.send(request, socketPath: socketPath, timeoutSeconds: timeoutSeconds)
     }
 
     private static func loadSessionDetail(

@@ -106,7 +106,7 @@ private func cursor(identity: String = "claude:1:100", path: String = "/tmp/a.js
         turnID: "prompt-A", lastTimestamp: Date(timeIntervalSince1970: 1_700_000_000.266),
         codexSessionID: "c", codexIsSubagent: true, codexWorkspace: "/c", codexModel: "gpt-5.5",
         codexCumulative: UsageTokens(input: 1, cacheRead: 2, output: 3), codexLastSignature: "1:2:3:4:5",
-        codexResets: 1, codexPending: pending
+        codexPending: pending
     )
     try await store.apply(records: [], cursor: cursor(identity: "codex:1:2", path: "/tmp/b.jsonl", offset: 42, state: state))
     try await store.apply(records: [], cursor: cursor(identity: "claude:1:1", path: "/tmp/a.jsonl", offset: 7))
@@ -120,7 +120,6 @@ private func cursor(identity: String = "claude:1:100", path: String = "/tmp/a.js
     #expect(loaded.state.codexIsSubagent)
     #expect(loaded.state.codexCumulative == UsageTokens(input: 1, cacheRead: 2, output: 3))
     #expect(loaded.state.codexLastSignature == "1:2:3:4:5")
-    #expect(loaded.state.codexResets == 1)
     #expect(loaded.state.codexPending == pending)
     #expect(abs(loaded.state.lastTimestamp!.timeIntervalSince(state.lastTimestamp!)) < 0.001)
     #expect(try await store.cursors().map(\.path) == ["/tmp/a.jsonl", "/tmp/b.jsonl"])

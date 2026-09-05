@@ -23,7 +23,7 @@ public struct UsageFileRead: Sendable {
 public enum UsageFileReader {
     public static func read(
         path: String,
-        source: UsageSource,
+        source: AgentProvider,
         fromOffset requestedOffset: UInt64,
         state initialState: UsageScanState
     ) throws -> UsageFileRead {

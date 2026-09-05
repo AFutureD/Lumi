@@ -1,5 +1,6 @@
 import Adapters
 import Core
+import Persistence
 import Transport
 import Foundation
 import Testing
@@ -23,7 +24,7 @@ private func codexLines(sessionID: String, cwd: String, timestamp: String) -> [S
 
 private struct Harness {
     let home: URL
-    let store = InMemoryUsageStore(calendar: Harness.utc)
+    let store: SQLiteUsageStore
     let scanner: UsageScanService
 
     static let utc: Calendar = {
@@ -36,12 +37,14 @@ private struct Harness {
         home = FileManager.default.temporaryDirectory
             .appendingPathComponent("usage-scan-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        // The real store on a scratch database: the scanner's buckets are the SQLite buckets.
+        store = try SQLiteSessionRepository(path: home.appendingPathComponent("sessions.sqlite3").path).makeUsageStore(calendar: Harness.utc)
         scanner = UsageScanService(
-            roots: UsageScanService.roots(
-                claudeProjectsDirectory: home.appendingPathComponent(".claude/projects"),
-                codexSessionsDirectory: home.appendingPathComponent(".codex/sessions"),
-                codexArchivedSessionsDirectory: home.appendingPathComponent(".codex/archived_sessions")
-            ),
+            roots: [
+                UsageScanService.Root(directory: home.appendingPathComponent(".claude/projects"), source: .claude),
+                UsageScanService.Root(directory: home.appendingPathComponent(".codex/sessions"), source: .codex),
+                UsageScanService.Root(directory: home.appendingPathComponent(".codex/archived_sessions"), source: .codex),
+            ],
             store: store,
             pollIntervalSeconds: 3_600
         )
@@ -69,7 +72,7 @@ private struct Harness {
         try await store.buckets(since: UsageDay(year: 2000, month: 1, day: 1), until: UsageDay(year: 2100, month: 1, day: 1))
     }
 
-    func identity(_ relative: String, source: UsageSource) throws -> String {
+    func identity(_ relative: String, source: AgentProvider) throws -> String {
         let path = home.appendingPathComponent(relative).path
         return UsageFileIdentity.identity(source: source, attributes: try FileManager.default.attributesOfItem(atPath: path), path: path)
     }

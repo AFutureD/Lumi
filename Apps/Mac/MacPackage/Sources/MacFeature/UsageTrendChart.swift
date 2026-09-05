@@ -50,10 +50,20 @@ struct UsageTrendChart: View {
         let seriesIDs = trend.series.map(\.id)
         let seriesColors = trend.series.map { Color($0.color) }
         let barIDs = trend.bars.map(\.id)
+        let hovered = hoveredBar?.id
         return Plot {
             ForEach(trend.bars) { bar in
+                let dimmed = hovered != nil && hovered != bar.id
+                let top = topSeries(of: bar)
                 ForEach(trend.series) { series in
-                    segment(bar: bar, series: series)
+                    BarMark(
+                        x: .value("Period", bar.id),
+                        y: .value(metric.title, bar.value(metric, series: series.id)),
+                        width: .fixed(barWidth)
+                    )
+                    .foregroundStyle(by: .value("Series", series.id))
+                    .opacity(dimmed ? Chart.dimmedBar : 1)
+                    .cornerRadius(top == series.id ? Chart.barRadius : 0)
                 }
             }
         }
@@ -101,19 +111,6 @@ struct UsageTrendChart: View {
         let x = min(max(anchorX, plotFrame.minX + halfWidth), plotFrame.maxX - halfWidth)
         let top = max(anchorY - Chart.Annotation.offset - cardSize.height, plotFrame.minY)
         return (bar, CGPoint(x: x, y: top + cardSize.height / 2))
-    }
-
-    private func segment(bar: UsageTrendBar, series: UsageTrendSeries) -> some ChartContent {
-        let isTop = topSeries(of: bar) == series.id
-        let value = bar.value(metric, series: series.id)
-        return BarMark(
-            x: .value("Period", bar.id),
-            y: .value(metric.title, value),
-            width: .fixed(barWidth)
-        )
-        .foregroundStyle(by: .value("Series", series.id))
-        .opacity(hoveredBar == nil || hoveredBar?.id == bar.id ? 1 : Chart.dimmedBar)
-        .cornerRadius(isTop ? Chart.barRadius : 0)
     }
 
     private func xAxis(_ barIDs: [String]) -> some AxisContent {

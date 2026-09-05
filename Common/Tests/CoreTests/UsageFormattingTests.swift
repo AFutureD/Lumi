@@ -56,8 +56,6 @@ import Testing
     #expect(UsageFormatting.periodLabel(UsagePeriod(unit: .hour, start: saturday, hour: 9), calendar: calendar) == "9/5 09:00")
     #expect(UsageFormatting.periodLabel(UsagePeriod(unit: .week, start: UsageDay(year: 2026, month: 8, day: 31)), calendar: calendar) == "Aug 31 – Sep 6")
     #expect(UsageFormatting.periodLabel(UsagePeriod(unit: .month, start: saturday), calendar: calendar) == "September 2026")
-    #expect(UsagePeriod(unit: .week, start: UsageDay(year: 2026, month: 8, day: 31)).end(in: calendar) == UsageDay(year: 2026, month: 9, day: 6))
-    #expect(UsagePeriod(unit: .month, start: saturday, hour: nil).end(in: calendar) == UsageDay(year: 2026, month: 9, day: 30))
 }
 
 @Test func usageProjectNamesComeFromTheLastPathComponent() {
@@ -65,8 +63,6 @@ import Testing
     #expect(UsageFormatting.projectName("/Users/me/Developer/lumi/") == "lumi")
     #expect(UsageFormatting.projectName("") == "Unknown project")
     #expect(UsageFormatting.projectName("/") == "/")
-    #expect(UsageFormatting.projectPath("/Users/me/Developer/lumi", home: "/Users/me") == "~/Developer/lumi")
-    #expect(UsageFormatting.projectPath("", home: "/Users/me") == nil)
 }
 
 @Test func usagePercentKeepsOneDecimalAndMarksSliversAndNothing() {

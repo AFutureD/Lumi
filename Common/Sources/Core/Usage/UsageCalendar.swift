@@ -61,15 +61,6 @@ public extension UsageDay {
 }
 
 public extension UsagePeriod {
-    /// Last day of the slot (the day itself for hours and days).
-    func end(in calendar: Calendar = .current) -> UsageDay {
-        switch unit {
-        case .hour, .day: start
-        case .week: start.endOfWeek(in: calendar)
-        case .month: start.endOfMonth(in: calendar)
-        }
-    }
-
     /// The slot a moment on `day` (at `hour`) falls in.
     init(unit: UsagePeriodUnit, containing day: UsageDay, hour: Int, calendar: Calendar = .current) {
         switch unit {

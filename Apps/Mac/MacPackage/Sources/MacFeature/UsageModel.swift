@@ -6,8 +6,8 @@ import Foundation
 
 private let log = Logger(label: "ui")
 
-/// State behind the Usage page: the selected range, the last report (and
-/// the previous period's, for the Summary delta), the four view choices
+/// State behind the Usage page: the selected range, the last report (with
+/// the comparison period the daemon folded into it), the four view choices
 /// (Summary agent, trend metric, Detail grouping and time unit), and the
 /// polling that keeps the numbers moving while the page is on screen.
 /// Presets are re-derived from the clock on every load, so "Today" rolls
@@ -16,13 +16,9 @@ private let log = Logger(label: "ui")
 final class UsageModel: ObservableObject {
     @Published private(set) var range: UsageRange
     @Published private(set) var report: UsageReport?
-    /// The comparison period's report (`UsageRange.comparison`); `nil`
-    /// until loaded, or when that request failed.
-    @Published private(set) var previousReport: UsageReport?
     @Published private(set) var isLoading = false
     /// The last failure, cleared by the next successful load.
     @Published private(set) var errorMessage: String?
-    @Published private(set) var lastLoadedAt: Date?
 
     /// Which agent the Summary card describes. Detail never follows it.
     @Published var summaryAgent: UsageSummaryAgent {
@@ -37,8 +33,8 @@ final class UsageModel: ObservableObject {
     @Published var detailTimeUnit: UsageDetailTimeUnit {
         didSet { preferences.detailTimeUnit = detailTimeUnit }
     }
-    /// Agent group rows folded in the Detail table; kept across range changes.
-    @Published var collapsedAgents: Set<AgentProvider> = []
+    /// Group rows folded in the Detail table (by row id); kept across range changes.
+    @Published var collapsedGroups: Set<String> = []
 
     private let client: UsageClient
     let calendar: Calendar
@@ -64,12 +60,7 @@ final class UsageModel: ObservableObject {
         self.now = now
         self.pollInterval = pollInterval
         self.preferences = preferences
-        let kind = preferences.kind
-        if kind == .custom, let custom = preferences.customRange {
-            range = UsageRange.custom(since: custom.since, until: custom.until, now: now(), calendar: calendar)
-        } else {
-            range = UsageRange.preset(kind == .custom ? .today : kind, now: now(), calendar: calendar)
-        }
+        range = Self.range(for: preferences.kind, preferences: preferences, now: now(), calendar: calendar)
         summaryAgent = preferences.summaryAgent
         trendMetric = preferences.trendMetric
         detailGroup = preferences.detailGroup
@@ -83,12 +74,7 @@ final class UsageModel: ObservableObject {
 
     func select(_ kind: UsageRangeKind) {
         preferences.kind = kind
-        if kind == .custom {
-            let custom = preferences.customRange ?? (range.since, range.until)
-            range = UsageRange.custom(since: custom.since, until: custom.until, now: now(), calendar: calendar)
-        } else {
-            range = UsageRange.preset(kind, now: now(), calendar: calendar)
-        }
+        range = Self.range(for: kind, preferences: preferences, now: now(), calendar: calendar)
         log.info("usage_range_selected", metadata: .fields(["kind": kind.rawValue, "since": range.since.rawValue, "until": range.until.rawValue]))
         pendingLoad = Task { await load() }
     }
@@ -132,43 +118,28 @@ final class UsageModel: ObservableObject {
         let generation = loadGeneration
         let requested = range
         isLoading = true
+        defer { if generation == loadGeneration { isLoading = false } }
         do {
-            let report = try await client.report(since: requested.since, until: requested.until)
+            let report = try await client.report(range: requested, comparison: requested.comparison(calendar: calendar))
             // A newer request already answered (or the range moved on): drop this one.
             guard generation == loadGeneration else { return }
             self.report = report
             errorMessage = nil
-            lastLoadedAt = now()
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = (error as? IPCFailure)?.message ?? error.localizedDescription
             log.warning("usage_report_failed", metadata: .fields([
                 "since": requested.since.rawValue, "until": requested.until.rawValue, "error": error,
             ]))
-            isLoading = false
-            return
         }
-        // The delta's comparison period: a second, smaller request. Its
-        // failure only costs the delta line, never the page.
-        if let comparison = requested.comparison(calendar: calendar) {
-            // A comparison loaded for another range must not stand in meanwhile.
-            if let previous = previousReport, (previous.since, previous.until) != (comparison.since, comparison.until) {
-                previousReport = nil
-            }
-            do {
-                let previous = try await client.report(since: comparison.since, until: comparison.until)
-                guard generation == loadGeneration else { return }
-                previousReport = previous
-            } catch {
-                guard generation == loadGeneration else { return }
-                previousReport = nil
-                log.warning("usage_comparison_failed", metadata: .fields([
-                    "since": comparison.since.rawValue, "until": comparison.until.rawValue, "error": error,
-                ]))
-            }
-        } else {
-            previousReport = nil
-        }
-        isLoading = false
+    }
+
+    /// The saved kind as a range: the remembered dates for Custom (today when
+    /// none were saved), the calendar preset otherwise.
+    private static func range(for kind: UsageRangeKind, preferences: UsagePreferences, now: Date, calendar: Calendar) -> UsageRange {
+        guard kind == .custom else { return UsageRange.preset(kind, now: now, calendar: calendar) }
+        let today = UsageDay(now, calendar: calendar)
+        let custom = preferences.customRange ?? (today, today)
+        return UsageRange.custom(since: custom.since, until: custom.until, now: now, calendar: calendar)
     }
 }

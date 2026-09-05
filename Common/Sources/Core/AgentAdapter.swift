@@ -155,6 +155,11 @@ public extension Dictionary where Key == String, Value == Any {
         return nil
     }
 
+    /// The value as a JSON number — never a JSON boolean, which Foundation
+    /// also bridges to `NSNumber`. `nil` for a missing key, null, or a
+    /// non-number.
+    func number(_ key: String) -> NSNumber? { JSONNumber.nonBoolean(self[key]) }
+
     func int64(_ key: String) -> Int64? {
         if let value = self[key] as? Int64 { return value }
         if let value = self[key] as? Int { return Int64(value) }
@@ -195,6 +200,15 @@ public extension Dictionary where Key == String, Value == Any {
             return Int64(seconds.doubleValue * 1_000)
         }
         return nil
+    }
+}
+
+public enum JSONNumber {
+    /// `value` as an `NSNumber` unless it is a JSON boolean (`true`/`false`
+    /// bridge to `NSNumber` too) or not a number at all.
+    public static func nonBoolean(_ value: Any?) -> NSNumber? {
+        guard let number = value as? NSNumber, CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() else { return nil }
+        return number
     }
 }
 

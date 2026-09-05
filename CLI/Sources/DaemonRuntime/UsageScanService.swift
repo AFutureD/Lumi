@@ -24,9 +24,9 @@ private let lifecycleLog = Logger(label: "lifecycle")
 public actor UsageScanService: Service {
     public struct Root: Hashable, Sendable {
         public let directory: URL
-        public let source: UsageSource
+        public let source: AgentProvider
 
-        public init(directory: URL, source: UsageSource) {
+        public init(directory: URL, source: AgentProvider) {
             self.directory = directory
             self.source = source
         }
@@ -35,7 +35,7 @@ public actor UsageScanService: Service {
     private struct Candidate {
         let identity: String
         let path: String
-        let source: UsageSource
+        let source: AgentProvider
         let size: UInt64
         let modifiedAt: Date
     }
@@ -52,12 +52,11 @@ public actor UsageScanService: Service {
     /// band: the band is part of the bucket key and is decided once, here.
     private let priceTable: @Sendable () async -> ModelPriceTable
     private let pollIntervalSeconds: Double
-    /// `(size, mtime)` of every file the store already holds, by identity;
-    /// refreshed from the store at the start of each poll and updated as
-    /// files are read.
+    /// `(size, mtime)` of every file the store already holds, by identity:
+    /// loaded from the store once, then kept in step as files are read.
     private var known: [String: Known] = [:]
+    private var knownLoaded = false
     private var pendingFiles = 0
-    private var scannedFiles = 0
     private var lastScanAt: Date?
     private var isScanning = false
 
@@ -73,40 +72,19 @@ public actor UsageScanService: Service {
         self.pollIntervalSeconds = pollIntervalSeconds
     }
 
-    public static func roots(
-        claudeProjectsDirectory: URL,
-        codexSessionsDirectory: URL,
-        codexArchivedSessionsDirectory: URL
-    ) -> [Root] {
-        [
-            Root(directory: claudeProjectsDirectory, source: .claude),
-            Root(directory: codexSessionsDirectory, source: .codex),
-            Root(directory: codexArchivedSessionsDirectory, source: .codex),
-        ]
-    }
-
     public func run() async throws {
         lifecycleLog.info("usage_scanner_started", metadata: .fields([
             "roots": roots.map(\.directory.path).joined(separator: ","),
             "poll_seconds": pollIntervalSeconds,
         ]))
-        await cancelWhenGracefulShutdown {
-            while !Task.isCancelled {
-                await self.scanOnce()
-                do {
-                    try await Task.sleep(for: .milliseconds(Int64(max(250, self.pollIntervalSeconds * 1_000))))
-                } catch {
-                    break
-                }
-            }
-        }
+        await pollUntilShutdown(everySeconds: pollIntervalSeconds) { await self.scanOnce() }
         lifecycleLog.info("usage_scanner_stopped")
     }
 
     /// What the report tells the page about scan progress.
     public func status() -> UsageScanStatus {
         UsageScanStatus(
-            scannedFiles: scannedFiles,
+            scannedFiles: known.count,
             pendingFiles: pendingFiles,
             lastScanAt: lastScanAt,
             isScanning: isScanning
@@ -119,15 +97,17 @@ public actor UsageScanService: Service {
         isScanning = true
         defer { isScanning = false }
         let started = ContinuousClock.now
-        do {
-            let cursors = try await store.cursors()
-            known = Dictionary(uniqueKeysWithValues: cursors.map {
-                ($0.identity, Known(path: $0.path, size: $0.fileSize, modifiedAtMilliseconds: Self.milliseconds($0.modifiedAt)))
-            })
-            scannedFiles = cursors.count
-        } catch {
-            log.error("usage_cursors_unavailable", metadata: .fields(["error": error]))
-            return
+        if !knownLoaded {
+            do {
+                let cursors = try await store.cursors()
+                known = Dictionary(uniqueKeysWithValues: cursors.map {
+                    ($0.identity, Known(path: $0.path, size: $0.fileSize, modifiedAtMilliseconds: Self.milliseconds($0.modifiedAt)))
+                })
+                knownLoaded = true
+            } catch {
+                log.error("usage_cursors_unavailable", metadata: .fields(["error": error]))
+                return
+            }
         }
         let listed = roots.flatMap { files(in: $0) }
         // A file that only moved (Codex `archive`) is not re-read; its
@@ -214,12 +194,11 @@ public actor UsageScanService: Service {
                 state = cursor.state
             }
         }
-        let read = try UsageFileReader.read(
-            path: candidate.path,
-            source: candidate.source,
-            fromOffset: offset,
-            state: state
-        )
+        // Off the actor: a large transcript would otherwise hold a
+        // cooperative thread for the whole read and parse.
+        let read = try await Task.detached(priority: .utility) { [offset, state] in
+            try UsageFileReader.read(path: candidate.path, source: candidate.source, fromOffset: offset, state: state)
+        }.value
         let prefixLength = Int(min(UInt64(UsageFileIdentity.prefixLimit), read.fileSize))
         let prefixHash = try UsageFileIdentity.prefixHash(path: candidate.path, length: prefixLength) ?? ""
         let prices = await priceTable()
@@ -239,7 +218,6 @@ public actor UsageScanService: Service {
             prefixHash: prefixHash,
             state: read.state
         ))
-        if cursor == nil { scannedFiles += 1 }
         known[candidate.identity] = Known(path: candidate.path, size: candidate.size, modifiedAtMilliseconds: Self.milliseconds(candidate.modifiedAt))
         if read.lines > 0 {
             log.debug("usage_file_scanned", metadata: .fields([
@@ -255,28 +233,19 @@ public actor UsageScanService: Service {
         return (read.records.count, applied)
     }
 
-    /// Every regular `.jsonl` under the root (recursively; hidden entries
-    /// skipped), with the identity, size and mtime the change detection
-    /// keys on. A missing root is an agent that was never used here, not
-    /// an error.
+    /// The root's `.jsonl` files with the identity, size and mtime the
+    /// change detection keys on.
     private func files(in root: Root) -> [Candidate] {
-        guard let enumerator = FileManager.default.enumerator(atPath: root.directory.path) else { return [] }
-        var files: [Candidate] = []
-        while let relative = enumerator.nextObject() as? String {
-            guard relative.hasSuffix(".jsonl"),
-                  !relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }),
-                  let attributes = enumerator.fileAttributes,
-                  attributes[.type] as? FileAttributeType == .typeRegular else { continue }
-            let path = root.directory.appendingPathComponent(relative).path
-            files.append(Candidate(
-                identity: UsageFileIdentity.identity(source: root.source, attributes: attributes, path: path),
+        jsonlFiles(under: root.directory).map { file in
+            let path = root.directory.appendingPathComponent(file.relativePath).path
+            return Candidate(
+                identity: UsageFileIdentity.identity(source: root.source, attributes: file.attributes, path: path),
                 path: path,
                 source: root.source,
-                size: (attributes[.size] as? NSNumber)?.uint64Value ?? 0,
-                modifiedAt: attributes[.modificationDate] as? Date ?? Date(timeIntervalSince1970: 0)
-            ))
+                size: (file.attributes[.size] as? NSNumber)?.uint64Value ?? 0,
+                modifiedAt: file.attributes[.modificationDate] as? Date ?? Date(timeIntervalSince1970: 0)
+            )
         }
-        return files
     }
 
     /// File mtimes round-trip through SQLite with sub-microsecond noise;

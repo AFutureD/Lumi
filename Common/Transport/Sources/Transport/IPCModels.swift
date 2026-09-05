@@ -241,6 +241,10 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     /// `usage_report`: inclusive local-day range, both required.
     public let since: UsageDay?
     public let until: UsageDay?
+    /// Optional second range for `usage_report`: the period the Summary's
+    /// change is measured against, answered in `UsageReport.comparison`.
+    public let compareSince: UsageDay?
+    public let compareUntil: UsageDay?
 
     public init(
         operation: IPCOperation,
@@ -255,7 +259,9 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         approved: Bool? = nil,
         filters: [SessionFilterRule]? = nil,
         since: UsageDay? = nil,
-        until: UsageDay? = nil
+        until: UsageDay? = nil,
+        compareSince: UsageDay? = nil,
+        compareUntil: UsageDay? = nil
     ) {
         self.operation = operation
         self.sessionID = sessionID
@@ -270,6 +276,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.filters = filters
         self.since = since
         self.until = until
+        self.compareSince = compareSince
+        self.compareUntil = compareUntil
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -286,6 +294,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case filters
         case since
         case until
+        case compareSince
+        case compareUntil
     }
 
     public init(from decoder: Decoder) throws {
@@ -303,6 +313,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
         since = try c.decodeIfPresent(UsageDay.self, forKey: .since)
         until = try c.decodeIfPresent(UsageDay.self, forKey: .until)
+        compareSince = try c.decodeIfPresent(UsageDay.self, forKey: .compareSince)
+        compareUntil = try c.decodeIfPresent(UsageDay.self, forKey: .compareUntil)
     }
 }
 

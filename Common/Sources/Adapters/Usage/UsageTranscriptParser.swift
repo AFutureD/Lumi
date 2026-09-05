@@ -9,7 +9,7 @@ import Foundation
 public enum UsageTranscriptParser {
     /// Cheap byte gate applied before JSON parsing: transcripts are mostly
     /// tool output, and only a minority of lines can change the result.
-    public static func mightMatter(_ line: Data, source: UsageSource) -> Bool {
+    public static func mightMatter(_ line: Data, source: AgentProvider) -> Bool {
         switch source {
         case .claude:
             return line.range(of: Self.claudeUsageNeedle) != nil
@@ -23,16 +23,20 @@ public enum UsageTranscriptParser {
 
     public static func parse(
         line: Data,
-        source: UsageSource,
+        source: AgentProvider,
         state: inout UsageScanState
     ) throws -> [UsageRecord] {
         guard let root = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
             throw UsageParseError.malformedJSON
         }
-        switch source {
-        case .claude: return try claude(root, state: &state)
-        case .codex: return try codex(root, state: &state)
+        let records = switch source {
+        case .claude: try claude(root, state: &state)
+        case .codex: try codex(root, state: &state)
         }
+        // No tokens and no bill is not a model call: Claude's `<synthetic>`
+        // placeholders carry an all-zero usage block, Codex re-emits
+        // zero deltas, an advisor iteration can be empty.
+        return records.filter { !$0.isEmpty }
     }
 
     // MARK: - Claude
@@ -63,10 +67,6 @@ public enum UsageTranscriptParser {
             let key = "claude:\(messageID):\(requestID)"
             let tokens = try claudeTokens(usage)
             let reportedCost = try reportedCost(root["costUSD"])
-            // No tokens and no bill is not a model call: Claude's `<synthetic>`
-            // placeholder messages ("No response requested", interruptions)
-            // carry an all-zero usage block. Same rule as Codex below.
-            guard tokens.total > 0 || (reportedCost ?? 0) > 0 else { return [] }
             var base = UsageRecord(
                 agent: isSidechain ? .claudeSubagent : .claude,
                 sessionID: root.string("sessionId") ?? "",
@@ -195,7 +195,6 @@ public enum UsageTranscriptParser {
                 guard cumulative != state.codexCumulative else { return [] }
                 let previous = state.codexCumulative
                 let reset = previous.map { cumulative.context < $0.context || cumulative.output < $0.output } ?? false
-                if reset { state.codexResets += 1 }
                 state.codexCumulative = cumulative
                 if let last {
                     usage = last
@@ -213,7 +212,6 @@ public enum UsageTranscriptParser {
                 state.codexLastSignature = signature
                 usage = last
             }
-            guard usage.total > 0 else { return [] }
             let stamp = root.string("timestamp") ?? String(occurredAt.timeIntervalSince1970)
             let record = UsageRecord(
                 agent: state.codexIsSubagent ? .codexSubagent : .codex,
@@ -284,10 +282,7 @@ public enum UsageTranscriptParser {
     /// fraction, or something out of range.
     private static func count(_ raw: [String: Any], _ key: String) throws -> Int64? {
         guard let value = raw[key], !(value is NSNull) else { return nil }
-        guard let number = value as? NSNumber,
-              CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() else {
-            throw UsageParseError.invalidCounter(key)
-        }
+        guard let number = JSONNumber.nonBoolean(value) else { throw UsageParseError.invalidCounter(key) }
         let double = number.doubleValue
         guard double.isFinite, double >= 0, double <= 1e15, double.rounded(.towardZero) == double else {
             throw UsageParseError.invalidCounter(key)
@@ -297,9 +292,7 @@ public enum UsageTranscriptParser {
 
     private static func reportedCost(_ value: Any?) throws -> Double? {
         guard let value, !(value is NSNull) else { return nil }
-        guard let number = value as? NSNumber,
-              CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID(),
-              number.doubleValue.isFinite, number.doubleValue >= 0 else {
+        guard let number = JSONNumber.nonBoolean(value), number.doubleValue.isFinite, number.doubleValue >= 0 else {
             throw UsageParseError.invalidCost
         }
         return number.doubleValue

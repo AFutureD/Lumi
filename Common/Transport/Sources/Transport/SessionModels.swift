@@ -34,19 +34,37 @@ public enum AgentKind: Hashable, Sendable {
 public enum AgentProvider: String, Codable, Hashable, Sendable {
     case codex
     case claude
+
+    /// The provider's parent (non-subagent) kind — the inverse of `AgentKind.provider`.
+    public var kind: AgentKind {
+        switch self {
+        case .codex: .codex
+        case .claude: .claude
+        }
+    }
+}
+
+public extension AgentKind {
+    /// The inverse of `rawValue`.
+    init?(rawValue: String) {
+        switch rawValue {
+        case "codex": self = .codex
+        case "codex_subagent": self = .codexSubagent
+        case "claude": self = .claude
+        case "claude_subagent": self = .claudeSubagent
+        default: return nil
+        }
+    }
 }
 
 extension AgentKind: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let value = try container.decode(String.self)
-        self = switch value {
-        case "codex": .codex
-        case "codex_subagent": .codexSubagent
-        case "claude": .claude
-        case "claude_subagent": .claudeSubagent
-        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown agent kind: \(value)")
+        guard let kind = AgentKind(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown agent kind: \(value)")
         }
+        self = kind
     }
 
     public func encode(to encoder: Encoder) throws {

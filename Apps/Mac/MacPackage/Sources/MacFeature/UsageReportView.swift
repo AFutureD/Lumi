@@ -14,14 +14,12 @@ struct UsageReportView: View {
 
     @ObservedObject var model: UsageModel
 
-    static let contentMaximumWidth: CGFloat = DS.Usage.contentMaximumWidth
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Usage.cardGap) {
                 content
             }
-            .frame(maxWidth: Self.contentMaximumWidth, alignment: .topLeading)
+            .frame(maxWidth: DS.Usage.contentMaximumWidth, alignment: .topLeading)
             .padding(.top, DS.Spacing.xl + DS.Spacing.xs)
             .padding(.horizontal, DetailLayout.horizontalInset)
             .padding(.bottom, DetailLayout.bottomInset)
@@ -111,12 +109,7 @@ private struct UsageSummaryCard: View {
     let emptyText: String?
 
     private var figures: UsageSummaryFigures {
-        UsageSummaryFigures.build(
-            report: report,
-            previous: model.previousReport,
-            agent: model.summaryAgent,
-            comparisonLabel: model.comparisonLabel
-        )
+        UsageSummaryFigures.build(report: report, agent: model.summaryAgent, comparisonLabel: model.comparisonLabel)
     }
 
     private var trend: UsageTrend {
@@ -132,13 +125,7 @@ private struct UsageSummaryCard: View {
     var body: some View {
         UsageCard(title: "Summary") {
             Spacer(minLength: 0)
-            Picker("Agent", selection: $model.summaryAgent) {
-                ForEach(UsageSummaryAgent.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .labelsHidden()
-            .fixedSize()
+            UsageSegmentedPicker("Agent", selection: $model.summaryAgent)
         } content: {
             let figures = figures
             HStack(alignment: .top, spacing: DS.Usage.columnGap) {
@@ -206,14 +193,8 @@ private struct UsageSummaryCard: View {
                     .designText(DS.Typography.usageLabel)
                     .foregroundStyle(Color(DS.Usage.secondaryText))
                 Spacer(minLength: 0)
-                Picker("Metric", selection: $model.trendMetric) {
-                    ForEach(UsageTrendMetric.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .labelsHidden()
-                .fixedSize()
-                .disabled(figures.allUnpriced)
+                UsageSegmentedPicker("Metric", selection: $model.trendMetric)
+                    .disabled(figures.allUnpriced)
             }
             .frame(height: DS.Chart.titleHeight)
             UsageTrendChart(trend: trend, metric: metric)
@@ -236,50 +217,25 @@ private struct UsageDetailCard: View {
         "\(model.detailGroup.rawValue)/\(model.detailTimeUnit.rawValue)/\(report.since.rawValue)/\(report.until.rawValue)"
     }
 
-    private var collapsed: Binding<Set<String>> {
-        Binding(
-            get: { Set(model.collapsedAgents.map(\.rawValue)) },
-            set: { model.collapsedAgents = Set($0.compactMap(AgentProvider.init(rawValue:))) }
-        )
-    }
-
     var body: some View {
         UsageCard(title: "Detail") {
             HStack(spacing: DS.Usage.groupLabelGap) {
-                Text("Group by")
-                    .font(Font(DS.Typography.subheadline))
-                    .foregroundStyle(Color(DS.Usage.tertiaryText))
-                Picker("Group by", selection: $model.detailGroup) {
-                    ForEach(UsageDetailGroup.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .labelsHidden()
-                .fixedSize()
+                UsageHint(text: "Group by")
+                UsageSegmentedPicker("Group by", selection: $model.detailGroup)
                 if model.detailGroup == .time {
-                    Picker("Time unit", selection: $model.detailTimeUnit) {
-                        ForEach(UsageDetailTimeUnit.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .fixedSize()
+                    UsageSegmentedPicker("Time unit", selection: $model.detailTimeUnit)
                 }
             }
             Spacer(minLength: 0)
             if model.summaryAgent != .all {
-                Text("Not filtered by the Summary agent")
-                    .font(Font(DS.Typography.subheadline))
-                    .foregroundStyle(Color(DS.Usage.tertiaryText))
+                UsageHint(text: "Not filtered by the Summary agent")
             }
         } content: {
             let rows = rows
-            UsageTable(columns: rows.columns, rows: rows.rows, collapsed: collapsed)
+            UsageTable(columns: rows.columns, rows: rows.rows, collapsed: $model.collapsedGroups)
                 .id(tableIdentity)
             if let footnote = rows.footnote {
-                Text(footnote)
-                    .font(Font(DS.Typography.subheadline))
-                    .foregroundStyle(Color(DS.Usage.tertiaryText))
+                UsageHint(text: footnote)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DS.Usage.rowInset)
@@ -290,6 +246,38 @@ private struct UsageDetailCard: View {
 }
 
 // MARK: - Pieces
+
+/// The system segmented control at the page's small size, one segment per case.
+private struct UsageSegmentedPicker<Value: CaseIterable & Hashable & UsageTitled>: View where Value.AllCases: RandomAccessCollection {
+    let title: String
+    @Binding var selection: Value
+
+    init(_ title: String, selection: Binding<Value>) {
+        self.title = title
+        _selection = selection
+    }
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            ForEach(Array(Value.allCases), id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .controlSize(.small)
+        .labelsHidden()
+        .fixedSize()
+    }
+}
+
+/// Small tertiary text: control labels, the Detail note, the footnote.
+private struct UsageHint: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(Font(DesignSystem.Typography.subheadline))
+            .foregroundStyle(Color(DesignSystem.Usage.tertiaryText))
+    }
+}
 
 private struct UsageSmallLabel: View {
     let text: String

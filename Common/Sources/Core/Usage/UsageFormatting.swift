@@ -4,6 +4,10 @@ import Foundation
 /// Number and name rendering shared by every Usage surface: compact token
 /// counts that line up in a column, dollar costs, project names.
 public enum UsageFormatting {
+    /// What a table shows where there is no value: an unpriced cost, an
+    /// undefined ratio, a missing date.
+    public static let dash = "—"
+
     private static let grouped: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -29,7 +33,7 @@ public enum UsageFormatting {
     /// `$1,234.56`; under a cent but not zero reads `<$0.01`; `nil` (no
     /// published price) reads `—`.
     public static func cost(_ value: Double?) -> String {
-        guard let value else { return "—" }
+        guard let value else { return dash }
         if value > 0, value < 0.005 { return "<$0.01" }
         return "$" + (dollars.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value))
     }
@@ -59,7 +63,7 @@ public enum UsageFormatting {
     /// `83.4%` — the share of `part` in `whole` to one decimal; `<0.1%` for
     /// a sliver, `—` when there is nothing to take a share of.
     public static func percent(_ part: Int64, of whole: Int64) -> String {
-        guard whole > 0 else { return "—" }
+        guard whole > 0 else { return dash }
         let ratio = Double(part) / Double(whole)
         if ratio > 0, ratio < 0.0005 { return "<0.1%" }
         return String(format: "%.1f%%", ratio * 100)
@@ -140,11 +144,5 @@ public enum UsageFormatting {
             return workspace.isEmpty ? "Unknown project" : workspace
         }
         return String(last)
-    }
-
-    /// `~/Developer/lumi` — the full path with the home folder abbreviated,
-    /// or `nil` when there is no path to show.
-    public static func projectPath(_ workspace: String, home: String? = nil) -> String? {
-        SessionPagePresentationBuilder.abbreviatedWorkspace(workspace, home: home)
     }
 }

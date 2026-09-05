@@ -43,16 +43,7 @@ public actor ModelPriceRefresher: Service {
 
     public func run() async throws {
         await loadCache()
-        await cancelWhenGracefulShutdown {
-            while !Task.isCancelled {
-                await self.refreshIfStale()
-                do {
-                    try await Task.sleep(for: .milliseconds(Int64(max(250, self.checkIntervalSeconds * 1_000))))
-                } catch {
-                    break
-                }
-            }
-        }
+        await pollUntilShutdown(everySeconds: checkIntervalSeconds) { await self.refreshIfStale() }
     }
 
     /// The on-disk copy, whatever its age: usable immediately, refreshed later.

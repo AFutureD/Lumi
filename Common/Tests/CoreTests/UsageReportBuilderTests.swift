@@ -90,6 +90,34 @@ private let scan = UsageScanStatus(scannedFiles: 3, pendingFiles: 0, isScanning:
     #expect(report.trend.map { ($0.period!.start.day, $0.agent!, $0.model!) }.map { "\($0.0) \($0.1) \($0.2)" }
         == ["5 claude claude-fable-5", "5 codex gpt-5.5", "5 codex codex-auto-review", "6 claude claude-fable-5"])
     #expect(report.trend[0].costUSD == 120)
+    #expect(report.comparison == nil)
+}
+
+@Test func comparisonPeriodFoldsItsOwnBucketsIntoTotalsAndAgents() {
+    let report = UsageReportBuilder.build(
+        buckets: [bucket()],
+        prices: prices,
+        since: UsageDay(year: 2026, month: 9, day: 5),
+        until: UsageDay(year: 2026, month: 9, day: 5),
+        comparison: (
+            since: UsageDay(year: 2026, month: 9, day: 4),
+            until: UsageDay(year: 2026, month: 9, day: 4),
+            buckets: [
+                bucket(day: UsageDay(year: 2026, month: 9, day: 4), tokens: UsageTokens(input: 500_000)),               // $5
+                bucket(agent: .codex, session: "c1", turn: "u1", model: "gpt-5.5", day: UsageDay(year: 2026, month: 9, day: 4),
+                       tokens: UsageTokens(input: 1_000_000)),                                                            // $2
+            ]
+        ),
+        generatedAt: Date(timeIntervalSince1970: 1), pricing: status, scan: scan
+    )
+    let comparison = try! #require(report.comparison)
+    #expect(comparison.since == UsageDay(year: 2026, month: 9, day: 4))
+    #expect(comparison.totals.costUSD == 7)
+    #expect(comparison.totals.sessions == 2)
+    #expect(comparison.byAgent.map(\.agent) == [.claude, .codex])
+    #expect(comparison.byAgent[1].costUSD == 2)
+    // The main range is untouched by the comparison buckets.
+    #expect(report.totals.costUSD == 60)
 }
 
 @Test func trendGranularityFollowsTheRangeLength() {

@@ -33,13 +33,15 @@ struct UsageCell {
     var help: String? = nil
     /// Drawn in the tertiary colour: dashes, paths, unpriced costs.
     var isDimmed = false
+    /// What a header click on this column sorts by; `nil` on rows that do not sort.
+    var sortKey: UsageSortKey? = nil
 }
 
 struct UsageTableRow: Identifiable {
     let id: String
-    let cells: [UsageCell]
-    /// One key per column; empty when the row does not sort (pinned rows).
-    let sortKeys: [UsageSortKey]
+    var cells: [UsageCell]
+    /// The slice the row's figure cells are read from (`UsageDetailRows`).
+    var slice = UsageSlice()
     /// Group rows and the Total row read in Semibold.
     var isEmphasized = false
     /// A group row: its children follow it and fold under it.
@@ -64,8 +66,6 @@ struct UsageTable: View {
     let columns: [UsageColumn]
     let rows: [UsageTableRow]
     @Binding var collapsed: Set<String>
-    /// Shown under the header when there are no rows.
-    var emptyText = "No usage in this range"
 
     @State private var sortColumn: Int?
     @State private var sortAscending = false
@@ -74,7 +74,7 @@ struct UsageTable: View {
         VStack(spacing: 0) {
             header
             if rows.isEmpty {
-                Text(emptyText)
+                Text("No usage in this range")
                     .font(Font(DS.Typography.body))
                     .foregroundStyle(Color(DS.Usage.tertiaryText))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -155,9 +155,7 @@ struct UsageTable: View {
     private func sorted(_ rows: [UsageTableRow]) -> [UsageTableRow] {
         guard let sortColumn else { return rows }
         return rows.sorted { lhs, rhs in
-            guard sortColumn < lhs.sortKeys.count, sortColumn < rhs.sortKeys.count else { return false }
-            let l = lhs.sortKeys[sortColumn]
-            let r = rhs.sortKeys[sortColumn]
+            guard let l = lhs.cells[sortColumn].sortKey, let r = rhs.cells[sortColumn].sortKey else { return false }
             if l == r { return lhs.id < rhs.id }
             return sortAscending ? l < r : l > r
         }

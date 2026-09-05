@@ -23,18 +23,9 @@ public actor SQLiteUsageStore: UsageStore {
         let state = try encoder.encode(cursor.state)
         return try await database.write { db in
             var applied = 0
-            for record in records {
-                try db.execute(
-                    sql: "INSERT OR IGNORE INTO usage_seen(key) VALUES(?)",
-                    arguments: [record.dedupeKey]
-                )
-                guard db.changesCount == 1 else { continue }
-                applied += 1
-                let day = UsageDay(record.occurredAt, calendar: calendar)
-                let hour = calendar.component(.hour, from: record.occurredAt)
-                let at = record.occurredAt.timeIntervalSince1970
-                try db.execute(
-                    sql: """
+            // Prepared once per batch: a first scan applies tens of thousands of records.
+            let markSeen = try db.cachedStatement(sql: "INSERT OR IGNORE INTO usage_seen(key) VALUES(?)")
+            let upsert = try db.cachedStatement(sql: """
                         INSERT INTO usage_buckets(
                             agent, session_id, turn_id, model, day, hour, tier, workspace,
                             first_at, last_at,
@@ -55,15 +46,21 @@ public actor SQLiteUsageStore: UsageStore {
                                 WHEN excluded.reported_cost_usd IS NULL THEN reported_cost_usd
                                 ELSE COALESCE(reported_cost_usd, 0) + excluded.reported_cost_usd END,
                             reported_calls = reported_calls + excluded.reported_calls
-                        """,
-                    arguments: [
-                        record.agent.rawValue, record.sessionID, record.turnID, record.model, day.rawValue, hour, record.tier, record.workspace,
-                        at, at,
-                        record.tokens.input, record.tokens.cacheRead, record.tokens.cacheWrite5m, record.tokens.cacheWrite1h,
-                        record.tokens.output, record.tokens.reasoning,
-                        record.isCall ? 1 : 0, record.reportedCostUSD, record.reportedCostUSD == nil ? 0 : 1,
-                    ]
-                )
+                        """)
+            for record in records {
+                try markSeen.execute(arguments: [record.dedupeKey])
+                guard db.changesCount == 1 else { continue }
+                applied += 1
+                let day = UsageDay(record.occurredAt, calendar: calendar)
+                let hour = calendar.component(.hour, from: record.occurredAt)
+                let at = record.occurredAt.timeIntervalSince1970
+                try upsert.execute(arguments: [
+                    record.agent.rawValue, record.sessionID, record.turnID, record.model, day.rawValue, hour, record.tier, record.workspace,
+                    at, at,
+                    record.tokens.input, record.tokens.cacheRead, record.tokens.cacheWrite5m, record.tokens.cacheWrite1h,
+                    record.tokens.output, record.tokens.reasoning,
+                    record.isCall ? 1 : 0, record.reportedCostUSD, record.reportedCostUSD == nil ? 0 : 1,
+                ])
             }
             try db.execute(
                 sql: """
@@ -109,17 +106,12 @@ public actor SQLiteUsageStore: UsageStore {
         try await database.read { db in
             try Row.fetchAll(
                 db,
-                sql: """
-                    SELECT * FROM usage_buckets
-                    WHERE day >= ? AND day <= ?
-                    ORDER BY day, hour, agent, session_id, turn_id, model, tier
-                    """,
+                sql: "SELECT * FROM usage_buckets WHERE day >= ? AND day <= ?",
                 arguments: [since.rawValue, until.rawValue]
             ).map { row in
                 let rawAgent: String = row["agent"]
                 let rawDay: String = row["day"]
-                guard let agent = try? JSONDecoder().decode(AgentKind.self, from: Data("\"\(rawAgent)\"".utf8)),
-                      let day = UsageDay(rawValue: rawDay) else {
+                guard let agent = AgentKind(rawValue: rawAgent), let day = UsageDay(rawValue: rawDay) else {
                     throw DatabaseError(message: "usage bucket row is unreadable: agent=\(rawAgent) day=\(rawDay)")
                 }
                 let firstAt: Double = row["first_at"]
@@ -153,7 +145,7 @@ public actor SQLiteUsageStore: UsageStore {
 
     private static func cursor(from row: Row, decoder: JSONDecoder) throws -> UsageCursor {
         let rawSource: String = row["source"]
-        guard let source = UsageSource(rawValue: rawSource) else {
+        guard let source = AgentProvider(rawValue: rawSource) else {
             throw DatabaseError(message: "usage cursor row has an unknown source: \(rawSource)")
         }
         let byteOffset: Int64 = row["byte_offset"]

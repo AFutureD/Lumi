@@ -311,6 +311,11 @@ import Testing
         trend: [
             UsageSlice(agent: .claude, model: "claude-fable-5", provider: "anthropic", period: UsagePeriod(unit: .day, start: UsageDay(year: 2026, month: 9, day: 5)), tokens: tokens, costUSD: 1.234, calls: 2, sessions: 2, turns: 2),
         ],
+        comparison: UsageComparison(
+            since: UsageDay(year: 2026, month: 8, day: 27), until: UsageDay(year: 2026, month: 8, day: 31),
+            totals: UsageSlice(tokens: tokens, costUSD: 2.5, calls: 1, sessions: 1, turns: 1),
+            byAgent: [UsageSlice(agent: .claude, tokens: tokens, costUSD: 2.5, calls: 1, sessions: 1, turns: 1)]
+        ),
         pricing: UsagePricingStatus(source: .cached, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000), modelCount: 1_234),
         scan: UsageScanStatus(scannedFiles: 1_650, pendingFiles: 0, lastScanAt: Date(timeIntervalSince1970: 1_700_000_100), isScanning: false)
     )
@@ -333,10 +338,18 @@ import Testing
     #expect(UsagePeriod(unit: .hour, start: UsageDay(year: 2026, month: 9, day: 5), hour: 8) < hour)
     #expect(day < hour)
 
-    let request = IPCRequest(operation: .usageReport, since: report.since, until: report.until)
+    let request = IPCRequest(
+        operation: .usageReport, since: report.since, until: report.until,
+        compareSince: UsageDay(year: 2026, month: 8, day: 27), compareUntil: UsageDay(year: 2026, month: 8, day: 31)
+    )
     let requestJSON = String(decoding: try TransportCoding.makeEncoder().encode(request), as: UTF8.self)
     #expect(requestJSON.contains(#""operation":"usage_report""#))
     let decodedRequest = try TransportCoding.makeDecoder().decode(IPCRequest.self, from: Data(requestJSON.utf8))
     #expect(decodedRequest.since == report.since)
     #expect(decodedRequest.until == report.until)
+    #expect(decodedRequest.compareSince == UsageDay(year: 2026, month: 8, day: 27))
+    #expect(decodedRequest.compareUntil == UsageDay(year: 2026, month: 8, day: 31))
+    // A request without a comparison leaves the keys out.
+    let plain = String(decoding: try TransportCoding.makeEncoder().encode(IPCRequest(operation: .usageReport, since: report.since, until: report.until)), as: UTF8.self)
+    #expect(!plain.contains("compareSince"))
 }

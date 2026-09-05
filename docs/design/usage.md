@@ -36,7 +36,7 @@ Turn 归属：Claude 用与 Session 相同的内容规则（human 来源的 prom
 
 `UsageScanService`（daemon 内，`Service`）：启动全量列文件，之后每 30 秒重列一次；按 inode 对上游标后，只有 `(size, mtime)` 与游标不同的文件才打开（mtime 按毫秒比较，SQLite 往返会带纳秒噪声），路径变了的只改游标里的路径；每个文件一个事务（去重键 → 桶 upsert → 游标），文件之间 `Task.yield()`，首扫本机约 1,700 个文件 / 1 GB 用时 20–25 秒，不阻塞 hook 路径。行级门槛（Claude `"usage"` / `"promptId"`，Codex `"token_count"` / `"turn_context"` / `"session_meta"`）先于 JSON 解析，坏行只记位置、跳过不中断。
 
-没有 token 也没有报告费用的记录不是一次模型调用，不入库（Claude 的 `<synthetic>` 占位消息——"No response requested"、中断提示——usage 全是 0；Codex 增量为 0 的事件同理）；报表构建时再过滤一遍空桶，早于这条规则入库的数据无需重扫。
+没有 token 也没有报告费用的记录不是一次模型调用：解析器出口统一过滤（Claude 的 `<synthetic>` 占位消息——"No response requested"、中断提示——usage 全是 0；Codex 增量为 0 的事件；空的 advisor 迭代）；报表构建时再过滤一遍空桶，早于这条规则入库的数据无需重扫。
 
 与 Session 采集的 rollout 游标（`rollout_cursors`）互不相干：两套游标、两套解析器，Usage 不经过 `AgentAdapter` 与 reducer。
 
@@ -72,7 +72,9 @@ input × in + cache_read × (cache_read ?? in) + cache_write_5m × (cache_write 
 - `pricing`：价目来源（builtin / cached / fresh）、拉取时间、模型数。
 - `scan`：已扫文件数、待扫文件数、上次扫描时间、是否正在扫。
 
-聚合在 daemon 内存里完成（`UsageReportBuilder`，纯函数）：一年的桶通常几万行，一次 IPC 帧即可。Summary 的「较上一周期」由 Mac 再发一次 `usage_report` 取上一周期（Today → 昨天；This week → 上周同几天；This month → 上月同几天；Custom N 天 → 之前的 N 天），daemon 不知道范围档位。
+- `comparison`：请求带 `compareSince` / `compareUntil` 时，同一次读桶顺带算出上一周期的 `totals` 与 `byAgent`，供 Summary 的「较上一周期」用。上一周期由 Mac 定（Today → 昨天；This week → 上周同几天；This month → 上月同几天；Custom N 天 → 之前的 N 天），daemon 不知道范围档位，但两段数据来自同一次快照、同一条请求。
+
+聚合在 daemon 内存里完成（`UsageReportBuilder`，纯函数，报表构建放在 `DaemonService` actor 之外的 detached task 里，不挡 hook 帧）：一年的桶通常几万行，一次 IPC 帧即可。
 
 ## Mac 页面
 

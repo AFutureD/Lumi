@@ -7,8 +7,7 @@ import Foundation
 /// mean the running process is the current build.
 public enum ExecutableFingerprint {
     public static func sha256Hex(fileAt url: URL) throws -> String {
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        try Data(contentsOf: url, options: .mappedIfSafe).sha256Hex
     }
 
     public static func currentExecutable() throws -> String {
@@ -16,5 +15,12 @@ public enum ExecutableFingerprint {
             throw CocoaError(.fileNoSuchFile)
         }
         return try sha256Hex(fileAt: executable.resolvingSymlinksInPath())
+    }
+}
+
+public extension Data {
+    /// Lowercase hex SHA-256 of the bytes.
+    var sha256Hex: String {
+        SHA256.hash(data: self).map { String(format: "%02x", $0) }.joined()
     }
 }

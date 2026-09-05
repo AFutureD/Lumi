@@ -5,8 +5,8 @@ import Foundation
 
 /// What the Summary card shows for one agent choice: the two big numbers
 /// with their captions, the composition bar's segments and the three small
-/// figures. Pure — derived from the report (and the previous period's) so
-/// the view holds no arithmetic.
+/// figures. Pure — derived from the report (and the comparison period the
+/// daemon folded into it) so the view holds no arithmetic.
 struct UsageSummaryFigures: Equatable {
     struct Segment: Equatable, Identifiable {
         let id: String
@@ -14,7 +14,6 @@ struct UsageSummaryFigures: Equatable {
         let fraction: Double
     }
 
-    let slice: UsageSlice
     let cost: String
     let costDelta: String
     let tokens: String
@@ -25,17 +24,11 @@ struct UsageSummaryFigures: Equatable {
     let turns: String
     let calls: String
     /// Every model in the slice is unpriced: Cost reads `—`, the trend falls back to Tokens.
-    var allUnpriced: Bool { slice.costUSD == nil }
-    var hasUsage: Bool { slice.calls > 0 || slice.tokens.total > 0 }
+    let allUnpriced: Bool
 
-    static func build(
-        report: UsageReport,
-        previous: UsageReport?,
-        agent: UsageSummaryAgent,
-        comparisonLabel: String
-    ) -> UsageSummaryFigures {
-        let slice = Self.slice(of: report, for: agent)
-        let previousSlice = previous.map { Self.slice(of: $0, for: agent) }
+    static func build(report: UsageReport, agent: UsageSummaryAgent, comparisonLabel: String) -> UsageSummaryFigures {
+        let slice = Self.slice(totals: report.totals, byAgent: report.byAgent, for: agent)
+        let previousSlice = report.comparison.map { Self.slice(totals: $0.totals, byAgent: $0.byAgent, for: agent) }
         let total = slice.tokens.total
         let composition = total > 0
             ? "Cache read \(UsageFormatting.percent(slice.tokens.cacheRead, of: total)) · output \(UsageFormatting.percent(slice.tokens.output, of: total))"
@@ -47,7 +40,6 @@ struct UsageSummaryFigures: Equatable {
             Segment(id: "output", color: DesignSystem.Chart.compositionOutput, fraction: Double(slice.tokens.output) / Double(total)),
         ].filter { $0.fraction > 0 } : []
         return UsageSummaryFigures(
-            slice: slice,
             cost: UsageFormatting.cost(slice.costUSD),
             costDelta: UsageFormatting.delta(current: slice.costUSD, previous: previousSlice?.costUSD, against: comparisonLabel),
             tokens: UsageFormatting.tokens(total),
@@ -56,15 +48,16 @@ struct UsageSummaryFigures: Equatable {
             segments: segments,
             sessions: UsageFormatting.count(slice.sessions),
             turns: UsageFormatting.count(slice.turns),
-            calls: UsageFormatting.count(slice.calls)
+            calls: UsageFormatting.count(slice.calls),
+            allUnpriced: slice.costUSD == nil
         )
     }
 
     /// The totals row, or the agent's row (a zero row when the agent has no
     /// usage in the range — its cost is a real $0, not unpriced).
-    static func slice(of report: UsageReport, for agent: UsageSummaryAgent) -> UsageSlice {
-        guard let provider = agent.provider else { return report.totals }
-        return report.byAgent.first { $0.agent == provider } ?? UsageSlice(agent: provider, costUSD: 0)
+    static func slice(totals: UsageSlice, byAgent: [UsageSlice], for agent: UsageSummaryAgent) -> UsageSlice {
+        guard let provider = agent.provider else { return totals }
+        return byAgent.first { $0.agent == provider } ?? UsageSlice(agent: provider, costUSD: 0)
     }
 }
 
@@ -75,8 +68,7 @@ struct UsageTrendSeries: Identifiable, Equatable {
     /// Index into `DesignSystem.Chart.series`; `nil` draws the unpriced grey.
     let colorIndex: Int?
 
-    var isUnpriced: Bool { colorIndex == nil }
-    var legend: String { isUnpriced ? "\(name) · no price" : name }
+    var legend: String { colorIndex == nil ? "\(name) · no price" : name }
     var color: AdaptiveDesignColor {
         colorIndex.map { DesignSystem.Chart.series[$0 % DesignSystem.Chart.series.count] } ?? DesignSystem.Chart.unpriced
     }
@@ -285,13 +277,4 @@ struct UsageTrend: Equatable {
     }
 
     static func modelSeriesID(_ model: String) -> String { "model:\(model)" }
-}
-
-extension AgentKind {
-    static func forProvider(_ provider: AgentProvider) -> AgentKind {
-        switch provider {
-        case .claude: .claude
-        case .codex: .codex
-        }
-    }
 }

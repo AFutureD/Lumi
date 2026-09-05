@@ -1,4 +1,4 @@
-import CryptoKit
+import Transport
 import Foundation
 
 /// How the usage scanner recognises a file across polls. The path is not
@@ -13,7 +13,7 @@ public enum UsageFileIdentity {
 
     /// `<source>:<device>:<inode>`, falling back to the path on a file
     /// system that reports neither.
-    public static func identity(source: UsageSource, attributes: [FileAttributeKey: Any], path: String) -> String {
+    public static func identity(source: AgentProvider, attributes: [FileAttributeKey: Any], path: String) -> String {
         let device = (attributes[.systemNumber] as? NSNumber)?.int64Value
         let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
         guard let device, let inode else { return "\(source.rawValue):path:\(path)" }
@@ -27,6 +27,6 @@ public enum UsageFileIdentity {
         let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
         defer { try? handle.close() }
         guard let data = try handle.read(upToCount: length), data.count == length else { return nil }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return data.sha256Hex
     }
 }

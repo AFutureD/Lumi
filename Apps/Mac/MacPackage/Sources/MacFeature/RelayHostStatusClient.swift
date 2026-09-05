@@ -188,11 +188,7 @@ final class RelayHostStatusClient {
     }
 
     private func request(_ request: IPCRequest) async throws -> IPCResponse {
-        let client = client
-        let socketPath = socketPath
-        return try await Task.detached {
-            try client.request(request, socketPath: socketPath, timeoutSeconds: 15)
-        }.value
+        try await client.send(request, socketPath: socketPath)
     }
 
     private func notifyObservers() {

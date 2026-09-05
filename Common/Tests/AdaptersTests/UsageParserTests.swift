@@ -60,7 +60,7 @@ private func codexTokenCount(
     return #"{"timestamp":"\#(timestamp)","type":"event_msg","payload":{"type":"token_count","info":{\#(info.joined(separator: ","))},"rate_limits":null}}"#
 }
 
-private func parseAll(_ lines: [String], source: UsageSource) throws -> ([UsageRecord], UsageScanState) {
+private func parseAll(_ lines: [String], source: AgentProvider) throws -> ([UsageRecord], UsageScanState) {
     var state = UsageScanState()
     var records: [UsageRecord] = []
     for line in lines {
@@ -160,13 +160,13 @@ private func temporaryFile(_ lines: [String]) throws -> String {
     #expect(throws: UsageParseError.malformedJSON) {
         try UsageTranscriptParser.parse(line: Data("{not json".utf8), source: .claude, state: &fresh)
     }
-    // An all-zero usage block (Claude's `<synthetic>` placeholders) is not a call…
+    // An all-zero usage block (Claude's `<synthetic>` placeholders) is not a call,
+    // and the next real message still counts in full.
     let synthetic = claudeAssistant(
         messageID: "msg_s", requestID: "req_s", uuid: "s-1", model: "<synthetic>",
         usage: #"{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}"#
     )
     #expect(try UsageTranscriptParser.parse(line: Data(synthetic.utf8), source: .claude, state: &state).isEmpty)
-    // …and leaves the content-block state alone, so the next real message counts in full.
     let real = try UsageTranscriptParser.parse(line: Data(claudeAssistant(messageID: "msg_r", requestID: "req_r").utf8), source: .claude, state: &state)
     #expect(real.count == 1 && real[0].tokens.output == 496)
 }
@@ -254,7 +254,6 @@ private func temporaryFile(_ lines: [String]) throws -> String {
     #expect(records.map(\.tokens.input) == [40_775, 42_060])
     #expect(records.allSatisfy { $0.turnID == "child-turn" && $0.agent == .codexSubagent && $0.sessionID == "child" })
     #expect(!state.codexReplaying)
-    #expect(state.codexResets == 0)
 
     // The explicit boundary: the child's own meta repeated ends the copy at once.
     let (explicit, _) = try parseAll([
@@ -299,7 +298,6 @@ private func temporaryFile(_ lines: [String]) throws -> String {
     #expect(records[0].dedupeKey != records[1].dedupeKey)
     #expect(records[2].tokens == UsageTokens(input: 20, cacheRead: 10, output: 5, reasoning: 2))
     #expect(records[3].tokens == UsageTokens(input: 5, output: 1))
-    #expect(state.codexResets == 2)
     #expect(state.codexCumulative == UsageTokens(input: 3))
 }
 

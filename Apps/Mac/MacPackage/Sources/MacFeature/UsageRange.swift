@@ -2,10 +2,15 @@ import Core
 import Transport
 import Foundation
 
+/// A segmented control's cases, each with its segment label.
+protocol UsageTitled {
+    var title: String { get }
+}
+
 /// The Usage page's day range: three presets that follow the calendar, or
 /// two dates the person picked. Inclusive on both ends, never finer than a
 /// day, never past today.
-enum UsageRangeKind: String, CaseIterable {
+enum UsageRangeKind: String, CaseIterable, UsageTitled {
     case today
     case thisWeek
     case thisMonth
@@ -26,20 +31,14 @@ struct UsageRange: Equatable {
     let since: UsageDay
     let until: UsageDay
 
-    /// Weeks start on Monday regardless of locale.
-    static func preset(_ kind: UsageRangeKind, now: Date, calendar base: Calendar) -> UsageRange {
-        var calendar = base
-        calendar.firstWeekday = 2
+    /// Weeks start on Monday regardless of locale — the same week the
+    /// daemon buckets by (`UsageDay.startOfWeek`).
+    static func preset(_ kind: UsageRangeKind, now: Date, calendar: Calendar) -> UsageRange {
         let today = UsageDay(now, calendar: calendar)
         switch kind {
-        case .today, .custom:
-            return UsageRange(kind: kind, since: today, until: today)
-        case .thisWeek:
-            let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
-            return UsageRange(kind: kind, since: UsageDay(start, calendar: calendar), until: today)
-        case .thisMonth:
-            let start = calendar.dateInterval(of: .month, for: now)?.start ?? now
-            return UsageRange(kind: kind, since: UsageDay(start, calendar: calendar), until: today)
+        case .today, .custom: return UsageRange(kind: kind, since: today, until: today)
+        case .thisWeek: return UsageRange(kind: kind, since: today.startOfWeek(in: calendar), until: today)
+        case .thisMonth: return UsageRange(kind: kind, since: today.startOfMonth, until: today)
         }
     }
 
@@ -93,7 +92,7 @@ struct UsageRange: Equatable {
 
 /// Summary's agent filter: which agent the metrics, composition bar and
 /// trend describe. Only the Summary card follows it.
-enum UsageSummaryAgent: String, CaseIterable {
+enum UsageSummaryAgent: String, CaseIterable, UsageTitled {
     case all
     case claude
     case codex
@@ -123,7 +122,7 @@ enum UsageSummaryAgent: String, CaseIterable {
 }
 
 /// What the trend chart's y axis measures.
-enum UsageTrendMetric: String, CaseIterable {
+enum UsageTrendMetric: String, CaseIterable, UsageTitled {
     case cost
     case tokens
 
@@ -136,7 +135,7 @@ enum UsageTrendMetric: String, CaseIterable {
 }
 
 /// The Detail table's grouping dimension.
-enum UsageDetailGroup: String, CaseIterable {
+enum UsageDetailGroup: String, CaseIterable, UsageTitled {
     case project
     case agent
     case time
@@ -153,7 +152,7 @@ enum UsageDetailGroup: String, CaseIterable {
 }
 
 /// Row granularity of the Detail table under `Time`.
-enum UsageDetailTimeUnit: String, CaseIterable {
+enum UsageDetailTimeUnit: String, CaseIterable, UsageTitled {
     case day
     case week
     case month
@@ -169,14 +168,6 @@ enum UsageDetailTimeUnit: String, CaseIterable {
 
 /// The last choices, so the page reopens where it was left.
 struct UsagePreferences {
-    private static let kindKey = "Lumi.Usage.RangeKind"
-    private static let sinceKey = "Lumi.Usage.CustomSince"
-    private static let untilKey = "Lumi.Usage.CustomUntil"
-    private static let summaryAgentKey = "Lumi.Usage.SummaryAgent"
-    private static let trendMetricKey = "Lumi.Usage.TrendMetric"
-    private static let detailGroupKey = "Lumi.Usage.DetailGroup"
-    private static let detailTimeUnitKey = "Lumi.Usage.DetailTimeUnit"
-
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -184,39 +175,45 @@ struct UsagePreferences {
     }
 
     var kind: UsageRangeKind {
-        get { defaults.string(forKey: Self.kindKey).flatMap(UsageRangeKind.init(rawValue:)) ?? .today }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.kindKey) }
+        get { self["Lumi.Usage.RangeKind", default: .today] }
+        nonmutating set { self["Lumi.Usage.RangeKind", default: .today] = newValue }
     }
 
     var customRange: (since: UsageDay, until: UsageDay)? {
         get {
-            guard let since = defaults.string(forKey: Self.sinceKey).flatMap(UsageDay.init(rawValue:)),
-                  let until = defaults.string(forKey: Self.untilKey).flatMap(UsageDay.init(rawValue:)) else { return nil }
+            guard let since = defaults.string(forKey: "Lumi.Usage.CustomSince").flatMap(UsageDay.init(rawValue:)),
+                  let until = defaults.string(forKey: "Lumi.Usage.CustomUntil").flatMap(UsageDay.init(rawValue:)) else { return nil }
             return (since, until)
         }
         nonmutating set {
-            defaults.set(newValue?.since.rawValue, forKey: Self.sinceKey)
-            defaults.set(newValue?.until.rawValue, forKey: Self.untilKey)
+            defaults.set(newValue?.since.rawValue, forKey: "Lumi.Usage.CustomSince")
+            defaults.set(newValue?.until.rawValue, forKey: "Lumi.Usage.CustomUntil")
         }
     }
 
     var summaryAgent: UsageSummaryAgent {
-        get { defaults.string(forKey: Self.summaryAgentKey).flatMap(UsageSummaryAgent.init(rawValue:)) ?? .all }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.summaryAgentKey) }
+        get { self["Lumi.Usage.SummaryAgent", default: .all] }
+        nonmutating set { self["Lumi.Usage.SummaryAgent", default: .all] = newValue }
     }
 
     var trendMetric: UsageTrendMetric {
-        get { defaults.string(forKey: Self.trendMetricKey).flatMap(UsageTrendMetric.init(rawValue:)) ?? .cost }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.trendMetricKey) }
+        get { self["Lumi.Usage.TrendMetric", default: .cost] }
+        nonmutating set { self["Lumi.Usage.TrendMetric", default: .cost] = newValue }
     }
 
     var detailGroup: UsageDetailGroup {
-        get { defaults.string(forKey: Self.detailGroupKey).flatMap(UsageDetailGroup.init(rawValue:)) ?? .project }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.detailGroupKey) }
+        get { self["Lumi.Usage.DetailGroup", default: .project] }
+        nonmutating set { self["Lumi.Usage.DetailGroup", default: .project] = newValue }
     }
 
     var detailTimeUnit: UsageDetailTimeUnit {
-        get { defaults.string(forKey: Self.detailTimeUnitKey).flatMap(UsageDetailTimeUnit.init(rawValue:)) ?? .day }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.detailTimeUnitKey) }
+        get { self["Lumi.Usage.DetailTimeUnit", default: .day] }
+        nonmutating set { self["Lumi.Usage.DetailTimeUnit", default: .day] = newValue }
+    }
+
+    /// A raw-string enum under one key; an unknown or missing value reads as the default.
+    private subscript<Value: RawRepresentable>(key: String, default fallback: Value) -> Value where Value.RawValue == String {
+        get { defaults.string(forKey: key).flatMap(Value.init(rawValue:)) ?? fallback }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: key) }
     }
 }

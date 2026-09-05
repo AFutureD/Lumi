@@ -1,20 +1,6 @@
 import Transport
 import Foundation
 
-/// Which agent's transcript format a file is in — and therefore which
-/// parser reads it and which models.dev provider prices it.
-public enum UsageSource: String, Codable, Hashable, Sendable, CaseIterable {
-    case claude
-    case codex
-
-    public var provider: AgentProvider {
-        switch self {
-        case .claude: .claude
-        case .codex: .codex
-        }
-    }
-}
-
 /// One model call's tokens, parsed out of a transcript / rollout line.
 /// Independent of Session storage: identity here is whatever the file
 /// records (Claude keeps the parent `sessionId` on subagent transcripts).
@@ -46,6 +32,10 @@ public struct UsageRecord: Codable, Hashable, Sendable {
     /// Long-context band the call is stored under (0 = base); set by the
     /// scanner from the price table in force when the call was read.
     public var tier: Int
+
+    /// No tokens and no bill: not a model call (Claude's `<synthetic>`
+    /// placeholders, Codex events whose delta is zero).
+    public var isEmpty: Bool { tokens.total == 0 && (reportedCostUSD ?? 0) == 0 }
 
     public init(
         agent: AgentKind,
@@ -126,8 +116,6 @@ public struct UsageScanState: Codable, Hashable, Sendable {
     /// Signature of the last counted `last_token_usage` for rollouts that
     /// report no cumulative at all.
     public var codexLastSignature: String?
-    /// Cumulative resets seen (the counters went backwards).
-    public var codexResets: Int
     /// A Codex call read before any `turn_context` named its turn / model /
     /// cwd. Held until the next context line (which completes it), the next
     /// call, or the end of the read (which emit it as it is) — so it never
@@ -150,7 +138,6 @@ public struct UsageScanState: Codable, Hashable, Sendable {
         codexModel: String? = nil,
         codexCumulative: UsageTokens? = nil,
         codexLastSignature: String? = nil,
-        codexResets: Int = 0,
         codexPending: UsageRecord? = nil,
         claudeLastKey: String? = nil,
         claudeLastTokens: UsageTokens? = nil,
@@ -167,7 +154,6 @@ public struct UsageScanState: Codable, Hashable, Sendable {
         self.codexModel = codexModel
         self.codexCumulative = codexCumulative
         self.codexLastSignature = codexLastSignature
-        self.codexResets = codexResets
         self.codexPending = codexPending
         self.codexReplaying = codexReplaying
         self.codexReplayAnchor = codexReplayAnchor
@@ -184,7 +170,6 @@ public struct UsageScanState: Codable, Hashable, Sendable {
         case codexModel
         case codexCumulative
         case codexLastSignature
-        case codexResets
         case codexPending
         case codexReplaying
         case codexReplayAnchor

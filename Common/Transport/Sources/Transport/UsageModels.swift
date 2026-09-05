@@ -13,7 +13,7 @@ import Foundation
 
 /// A calendar day in the daemon's local time zone, `YYYY-MM-DD` on the wire.
 /// Usage ranges are inclusive on both ends and never finer than a day.
-public struct UsageDay: Hashable, Sendable, Comparable, CustomStringConvertible {
+public struct UsageDay: Hashable, Sendable, Comparable, RawRepresentable, Codable, CustomStringConvertible {
     public let year: Int
     public let month: Int
     public let day: Int
@@ -42,22 +42,6 @@ public struct UsageDay: Hashable, Sendable, Comparable, CustomStringConvertible 
 
     public static func < (lhs: UsageDay, rhs: UsageDay) -> Bool {
         (lhs.year, lhs.month, lhs.day) < (rhs.year, rhs.month, rhs.day)
-    }
-}
-
-extension UsageDay: Codable {
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-        guard let day = UsageDay(rawValue: value) else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Usage day is not YYYY-MM-DD: \(value)")
-        }
-        self = day
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
     }
 }
 
@@ -117,7 +101,7 @@ public struct UsageTokens: Codable, Hashable, Sendable {
 }
 
 /// Where the price table in force came from.
-public enum UsagePricingSource: Hashable, Sendable {
+public enum UsagePricingSource: String, Codable, Hashable, Sendable {
     /// The snapshot compiled into the daemon (never fetched, or nothing cached).
     case builtin
     /// The on-disk copy of a previous fetch, older than the refresh interval
@@ -125,32 +109,6 @@ public enum UsagePricingSource: Hashable, Sendable {
     case cached
     /// Fetched within the refresh interval.
     case fresh
-
-    public var rawValue: String {
-        switch self {
-        case .builtin: "builtin"
-        case .cached: "cached"
-        case .fresh: "fresh"
-        }
-    }
-}
-
-extension UsagePricingSource: Codable {
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-        self = switch value {
-        case "builtin": .builtin
-        case "cached": .cached
-        case "fresh": .fresh
-        default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown usage pricing source: \(value)")
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
 }
 
 public struct UsagePricingStatus: Codable, Hashable, Sendable {
@@ -304,6 +262,31 @@ public struct UsageSlice: Codable, Hashable, Sendable {
     }
 }
 
+/// The previous period the Summary compares against (`usage_report`'s
+/// `compareSince` / `compareUntil`): its totals and per-agent rows, read
+/// from the same bucket snapshot as the main range.
+public struct UsageComparison: Codable, Hashable, Sendable {
+    public var since: UsageDay
+    public var until: UsageDay
+    public var totals: UsageSlice
+    /// One row per agent provider present in the period.
+    public var byAgent: [UsageSlice]
+
+    public init(since: UsageDay, until: UsageDay, totals: UsageSlice, byAgent: [UsageSlice]) {
+        self.since = since
+        self.until = until
+        self.totals = totals
+        self.byAgent = byAgent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case since
+        case until
+        case totals
+        case byAgent
+    }
+}
+
 /// The answer to `usage_report {since, until}`: one inclusive day range,
 /// already grouped every way the page shows it. Small by construction — a
 /// year of usage is a few hundred rows per grouping — so it always fits one
@@ -331,6 +314,8 @@ public struct UsageReport: Codable, Hashable, Sendable {
     /// One row per (period, agent, model) with usage, period ascending — the
     /// stacked bars of the trend chart, whichever way the page stacks them.
     public var trend: [UsageSlice]
+    /// The comparison period the request asked for, when it did.
+    public var comparison: UsageComparison?
     public var pricing: UsagePricingStatus
     public var scan: UsageScanStatus
 
@@ -347,6 +332,7 @@ public struct UsageReport: Codable, Hashable, Sendable {
         byMonth: [UsageSlice] = [],
         trendUnit: UsagePeriodUnit = .day,
         trend: [UsageSlice] = [],
+        comparison: UsageComparison? = nil,
         pricing: UsagePricingStatus,
         scan: UsageScanStatus
     ) {
@@ -362,6 +348,7 @@ public struct UsageReport: Codable, Hashable, Sendable {
         self.byMonth = byMonth
         self.trendUnit = trendUnit
         self.trend = trend
+        self.comparison = comparison
         self.pricing = pricing
         self.scan = scan
     }
@@ -379,6 +366,7 @@ public struct UsageReport: Codable, Hashable, Sendable {
         case byMonth
         case trendUnit
         case trend
+        case comparison
         case pricing
         case scan
     }

@@ -5,12 +5,6 @@ import Foundation
 import Testing
 @testable import MacFeature
 
-private let utc: Calendar = {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "UTC")!
-    return calendar
-}()
-
 private let saturday = UsageDay(year: 2026, month: 9, day: 5)
 private let status = UsagePricingStatus(source: .builtin, modelCount: 1)
 private let scan = UsageScanStatus(scannedFiles: 1, pendingFiles: 0, isScanning: false)
@@ -22,11 +16,14 @@ private func slice(
     UsageSlice(agent: agent, model: model, period: period, tokens: tokens, costUSD: cost, unpricedTokens: cost == nil ? tokens.total : 0, calls: calls, sessions: sessions, turns: turns)
 }
 
-private func report(since: UsageDay, until: UsageDay, trendUnit: UsagePeriodUnit, trend: [UsageSlice], totals: UsageSlice, byAgent: [UsageSlice], byModel: [UsageSlice]) -> UsageReport {
+private func report(
+    since: UsageDay, until: UsageDay, trendUnit: UsagePeriodUnit, trend: [UsageSlice],
+    totals: UsageSlice, byAgent: [UsageSlice], byModel: [UsageSlice], comparison: UsageComparison? = nil
+) -> UsageReport {
     UsageReport(
         since: since, until: until, generatedAt: Date(timeIntervalSince1970: 0),
         totals: totals, byAgent: byAgent, byProject: [], byModel: byModel,
-        trendUnit: trendUnit, trend: trend, pricing: status, scan: scan
+        trendUnit: trendUnit, trend: trend, comparison: comparison, pricing: status, scan: scan
     )
 }
 
@@ -34,11 +31,15 @@ private func report(since: UsageDay, until: UsageDay, trendUnit: UsagePeriodUnit
     let claude = slice(agent: .claude, tokens: UsageTokens(input: 100, cacheRead: 800, cacheWrite5m: 50, output: 50), cost: 12, calls: 4, sessions: 2, turns: 3)
     let codex = slice(agent: .codex, tokens: UsageTokens(input: 500, output: 500), cost: nil, calls: 2, sessions: 1, turns: 1)
     let totals = slice(tokens: UsageTokens(input: 600, cacheRead: 800, cacheWrite5m: 50, output: 550), cost: 12, calls: 6, sessions: 3, turns: 4)
-    let current = report(since: saturday, until: saturday, trendUnit: .hour, trend: [], totals: totals, byAgent: [claude, codex], byModel: [])
-    let previousTotals = slice(tokens: UsageTokens(input: 10), cost: 10, calls: 1)
-    let previous = report(since: saturday, until: saturday, trendUnit: .hour, trend: [], totals: previousTotals, byAgent: [slice(agent: .claude, tokens: UsageTokens(input: 10), cost: 10)], byModel: [])
+    let yesterday = UsageDay(year: 2026, month: 9, day: 4)
+    let previous = UsageComparison(
+        since: yesterday, until: yesterday,
+        totals: slice(tokens: UsageTokens(input: 10), cost: 10, calls: 1),
+        byAgent: [slice(agent: .claude, tokens: UsageTokens(input: 10), cost: 10)]
+    )
+    let current = report(since: saturday, until: saturday, trendUnit: .hour, trend: [], totals: totals, byAgent: [claude, codex], byModel: [], comparison: previous)
 
-    let all = UsageSummaryFigures.build(report: current, previous: previous, agent: .all, comparisonLabel: "yesterday")
+    let all = UsageSummaryFigures.build(report: current, agent: .all, comparisonLabel: "yesterday")
     #expect(all.cost == "$12.00")
     #expect(all.costDelta == "↑ 20% vs yesterday")
     #expect(all.tokens == "2.0K")
@@ -47,9 +48,9 @@ private func report(since: UsageDay, until: UsageDay, trendUnit: UsagePeriodUnit
     #expect(all.segments.map(\.id) == ["input", "cacheRead", "cacheWrite", "output"])
     #expect(abs(all.segments.reduce(0) { $0 + $1.fraction } - 1) < 1e-9)
     #expect(all.sessions == "3" && all.turns == "4" && all.calls == "6")
-    #expect(!all.allUnpriced && all.hasUsage)
+    #expect(!all.allUnpriced)
 
-    let codexOnly = UsageSummaryFigures.build(report: current, previous: previous, agent: .codex, comparisonLabel: "yesterday")
+    let codexOnly = UsageSummaryFigures.build(report: current, agent: .codex, comparisonLabel: "yesterday")
     #expect(codexOnly.cost == "—")
     #expect(codexOnly.allUnpriced)
     #expect(codexOnly.costDelta == "no comparable previous period")
@@ -58,11 +59,12 @@ private func report(since: UsageDay, until: UsageDay, trendUnit: UsagePeriodUnit
 
     // An agent absent from the range is a real zero, not unpriced.
     let none = report(since: saturday, until: saturday, trendUnit: .hour, trend: [], totals: claude, byAgent: [claude], byModel: [])
-    let codexAbsent = UsageSummaryFigures.build(report: none, previous: nil, agent: .codex, comparisonLabel: "yesterday")
+    let codexAbsent = UsageSummaryFigures.build(report: none, agent: .codex, comparisonLabel: "yesterday")
     #expect(codexAbsent.cost == "$0.00")
+    #expect(codexAbsent.costDelta == "no comparable previous period")
     #expect(codexAbsent.composition == "no tokens in this range")
     #expect(codexAbsent.segments.isEmpty)
-    #expect(!codexAbsent.hasUsage && !codexAbsent.allUnpriced)
+    #expect(!codexAbsent.allUnpriced)
 }
 
 @Test func trendAxisCoversTheWholePresetAndLabelsByCount() {

@@ -199,7 +199,7 @@ public struct ModelPriceTable: Sendable {
             return raw.compactMap { band -> ModelPriceTier? in
                 guard let bound = band["tier"] as? [String: Any],
                       (bound["type"] as? String ?? "context") == "context",
-                      let size = bound["size"] as? NSNumber, CFGetTypeID(size as CFTypeRef) != CFBooleanGetTypeID(),
+                      let size = bound.number("size"),
                       let input = finite(band["input"]), let output = finite(band["output"]) else { return nil }
                 return ModelPriceTier(size: size.int64Value, rates: ModelRates(
                     input: input, output: output, cacheRead: finite(band["cache_read"]), cacheWrite: finite(band["cache_write"])
@@ -260,10 +260,8 @@ public struct ModelPriceTable: Sendable {
     /// A JSON number (never a JSON boolean — `NSNumber(0)`/`(1)` bridge to
     /// `Bool`, so the CF type is the only reliable tell) that is finite.
     private static func finite(_ value: Any?) -> Double? {
-        guard let number = value as? NSNumber,
-              CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() else { return nil }
-        let double = number.doubleValue
-        return double.isFinite ? double : nil
+        guard let double = JSONNumber.nonBoolean(value)?.doubleValue, double.isFinite else { return nil }
+        return double
     }
 }
 
