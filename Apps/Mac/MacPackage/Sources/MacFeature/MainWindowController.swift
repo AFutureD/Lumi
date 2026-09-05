@@ -4,12 +4,14 @@ import AppKit
 final class MainWindowController: NSWindowController {
     enum Tab: Int {
         case sessions
+        case usage
         case pairing
         case settings
     }
 
     private let rootController: RootSplitViewController
     private let toolbarController: MainWindowToolbarController
+    private let usage = UsageModel()
 
     init(
         store: MacSessionStore,
@@ -21,7 +23,8 @@ final class MainWindowController: NSWindowController {
             store: store,
             relayHost: relayHost,
             nook: nook,
-            softwareUpdates: softwareUpdates
+            softwareUpdates: softwareUpdates,
+            usage: usage
         )
         toolbarController = MainWindowToolbarController(
             store: store,
@@ -112,7 +115,7 @@ enum MainWindowLayoutPreferences {
 }
 
 /// Mail-style hierarchy: one navigation sidebar, one context list, and one detail.
-/// Sessions and Settings both use all three columns; Pairing collapses the context list.
+/// Sessions and Settings both use all three columns; Usage and Pairing collapse the context list.
 ///
 /// Width rules: the sidebar is fixed (224), the context list keeps its width across
 /// window resizes (only divider drags change it), and the detail absorbs everything.
@@ -126,6 +129,7 @@ final class RootSplitViewController: NSSplitViewController {
     private let detailItem: NSSplitViewItem
     private let sessionList: SessionListViewController
     private let sessionDetail: SessionDetailViewController
+    private let usageDetail: UsageViewController
     private let pairing: PairingViewController
     private let settingsNavigation: SettingsNavigationViewController
     private let settingsDetail: SettingsDetailViewController
@@ -141,11 +145,13 @@ final class RootSplitViewController: NSSplitViewController {
         store: MacSessionStore,
         relayHost: RelayHostStatusClient,
         nook: HaloController,
-        softwareUpdates: SoftwareUpdateController
+        softwareUpdates: SoftwareUpdateController,
+        usage: UsageModel
     ) {
         navigation = NavigationSidebarViewController(store: store, relayHost: relayHost)
         sessionList = SessionListViewController(store: store)
         sessionDetail = SessionDetailViewController(store: store)
+        usageDetail = UsageViewController(model: usage)
         pairing = PairingViewController(relayHost: relayHost)
         settingsNavigation = SettingsNavigationViewController()
         settingsDetail = SettingsDetailViewController(
@@ -164,7 +170,7 @@ final class RootSplitViewController: NSSplitViewController {
         navigationItem = NSSplitViewItem(sidebarWithViewController: navigation)
         contentListItem = NSSplitViewItem(contentListWithViewController: contentListTabs)
         // Order follows `MainWindowController.Tab.rawValue`.
-        detailPages = SwitchingContainerViewController(pages: [sessionDetail, pairing, settingsDetail])
+        detailPages = SwitchingContainerViewController(pages: [sessionDetail, usageDetail, pairing, settingsDetail])
         detailItem = NSSplitViewItem(viewController: detailPages)
         super.init(nibName: nil, bundle: nil)
 
@@ -247,6 +253,7 @@ final class RootSplitViewController: NSSplitViewController {
         actions.toggleInspector = { [weak self] in self?.sessionDetail.toggleInspector() }
         actions.settingsTitle = { [weak self] in self?.settingsDetail.selectedSection.title ?? "" }
         actions.deleteSelectedSessions = { [weak self] in self?.sessionList.deleteSelectedSessions() }
+        actions.refreshUsage = { [weak self] in self?.usageDetail.refresh() }
         return actions
     }
 
@@ -258,6 +265,7 @@ final class RootSplitViewController: NSSplitViewController {
         // the pairing page draws its own header instead.
         let accessory: NSSplitViewItemAccessoryViewController? = switch tab {
         case .sessions: sessionDetail.subheaderAccessory
+        case .usage: usageDetail.subheaderAccessory
         case .pairing: nil
         case .settings: settingsDetail.subheaderAccessory
         }
@@ -268,13 +276,13 @@ final class RootSplitViewController: NSSplitViewController {
         case .sessions:
             contentListTabs.selectedTabViewItemIndex = 0
             contentListItem.isCollapsed = false
-        case .pairing:
+        case .usage, .pairing:
             contentListItem.isCollapsed = true
         case .settings:
             contentListTabs.selectedTabViewItemIndex = 1
             contentListItem.isCollapsed = false
         }
-        if didApplyInitialLayout, previous != tab, tab != .pairing {
+        if didApplyInitialLayout, previous != tab, tab != .pairing, tab != .usage {
             applyListWidth(for: tab)
         }
         navigation.select(tab)
@@ -296,6 +304,8 @@ final class RootSplitViewController: NSSplitViewController {
             guard let self else { return }
             if value == "pairing" {
                 self.select(.pairing)
+            } else if value == "usage" {
+                self.select(.usage)
             } else if value.hasPrefix("settings") {
                 let name = value.split(separator: ":").last.map(String.init) ?? "general"
                 let section = SettingsSectionID.allCases.first { $0.title.lowercased() == name } ?? .general
@@ -312,7 +322,7 @@ final class RootSplitViewController: NSSplitViewController {
         switch tab {
         case .sessions: width = MainWindowLayoutPreferences.sessionsListWidth
         case .settings: width = MainWindowLayoutPreferences.settingsListWidth
-        case .pairing: return
+        case .usage, .pairing: return
         }
         view.layoutSubtreeIfNeeded()
         // NSSplitViewController wraps item views; the arranged subview is the wrapper.
@@ -332,7 +342,7 @@ final class RootSplitViewController: NSSplitViewController {
               !isApplyingLayout,
               !splitView.inLiveResize,
               !contentListItem.isCollapsed,
-              selectedTab != .pairing else { return }
+              selectedTab != .pairing, selectedTab != .usage else { return }
         guard splitView.arrangedSubviews.count > 1 else { return }
         let width = splitView.arrangedSubviews[1].frame.width
         guard width >= Design.Layout.contentListMinimumWidth else { return }
@@ -345,7 +355,7 @@ final class RootSplitViewController: NSSplitViewController {
             if abs(MainWindowLayoutPreferences.settingsListWidth - width) >= 1 {
                 MainWindowLayoutPreferences.settingsListWidth = width
             }
-        case .pairing:
+        case .usage, .pairing:
             break
         }
     }

@@ -128,6 +128,28 @@ enum LumenMain {
         )
         await service.attachHookIngest(hookIngest)
         await service.attachSessionFilters(filterEngine)
+        // Usage: independent of Session ingest. The scanner walks the
+        // agents' transcript roots into the usage tables of the same
+        // database; the price refresher keeps the models.dev table current.
+        let usageStore = repository.makeUsageStore()
+        let modelPrices = ModelPriceRefresher(
+            cachePath: configuration.modelPricesPath,
+            fetchEnabled: configuration.modelPricesFetchEnabled
+        )
+        // The cached table must be in force before the first scan classifies
+        // a call's long-context band.
+        await modelPrices.loadCache()
+        let usageScanner = UsageScanService(
+            roots: UsageScanService.roots(
+                claudeProjectsDirectory: configuration.claudeProjectsDirectory,
+                codexSessionsDirectory: configuration.codexSessionsDirectory,
+                codexArchivedSessionsDirectory: configuration.codexArchivedSessionsDirectory
+            ),
+            store: usageStore,
+            priceTable: { await modelPrices.current().table },
+            pollIntervalSeconds: configuration.usagePollIntervalSeconds
+        )
+        await service.attachUsage(store: usageStore, scanner: usageScanner, prices: modelPrices)
 
         // Ordered, before anything serves: the baseline must exist before a
         // hook frame or the poll loop can touch rollout cursors, and the
@@ -165,7 +187,7 @@ enum LumenMain {
         // therefore exits 0 and stays down (KeepAlive.SuccessfulExit=false)
         // until a client wakes it; a service failure exits non-zero and
         // launchd relaunches.
-        var services: [any Service] = [backfill, server, watcher, claudeWatcher]
+        var services: [any Service] = [backfill, server, watcher, claudeWatcher, usageScanner, modelPrices]
         if let relay { services.append(relay) }
         if let wakeListener { services.append(wakeListener) }
         let group = ServiceGroup(configuration: .init(

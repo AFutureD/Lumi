@@ -22,7 +22,12 @@ public actor DaemonService {
     private var relay: RelayHostService?
     private var hookIngest: HookIngestService?
     private var filterEngine: SessionFilterEngine?
+    private var usageStore: (any UsageStore)?
+    private var usageScanner: UsageScanService?
+    private var modelPrices: ModelPriceRefresher?
     public nonisolated let subscriptions: DaemonSubscriptionHub
+    /// Longest `usage_report` range: a year and a day, so "this year" always fits.
+    static let maximumUsageRangeDays = 366
 
     public init(
         repository: any SessionRepository,
@@ -62,7 +67,14 @@ public actor DaemonService {
         filterEngine = engine
     }
 
-    /// The same health the `health` IPC answers with.
+    /// Usage: the bucket store `usage_report` reads, the scanner whose
+    /// progress it reports, and the price table it prices with.
+    public func attachUsage(store: any UsageStore, scanner: UsageScanService, prices: ModelPriceRefresher) {
+        usageStore = store
+        usageScanner = scanner
+        modelPrices = prices
+    }
+
     /// Streams a summary-only change (reviewed, archived) to local subscribers.
     private func publishSummary(_ id: SessionID) async {
         guard let summary = try? await repository.sessionSummary(id: id) else { return }
@@ -281,6 +293,38 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "missing_device_id", message: "The remove request has no device id.")
                 }
+            case .usageReport:
+                guard let usageStore, let usageScanner, let modelPrices else {
+                    payload = failure(code: "usage_unavailable", message: "The daemon runs without a usage scanner.")
+                    break
+                }
+                guard let since = envelope.payload.since, let until = envelope.payload.until else {
+                    payload = failure(code: "missing_usage_range", message: "The usage request needs since and until (YYYY-MM-DD).")
+                    break
+                }
+                guard since <= until, let days = since.days(until: until), days < Self.maximumUsageRangeDays else {
+                    payload = failure(
+                        code: "invalid_usage_range",
+                        message: "The usage range must run forward and span at most \(Self.maximumUsageRangeDays) days."
+                    )
+                    break
+                }
+                let buckets = try await usageStore.buckets(since: since, until: until)
+                let prices = await modelPrices.current()
+                let report = UsageReportBuilder.build(
+                    buckets: buckets,
+                    prices: prices.table,
+                    since: since,
+                    until: until,
+                    generatedAt: now,
+                    pricing: prices.status,
+                    scan: await usageScanner.status()
+                )
+                log.debug("usage_report_built", metadata: .fields([
+                    "since": since.rawValue, "until": until.rawValue,
+                    "buckets": buckets.count, "projects": report.byProject.count, "models": report.byModel.count,
+                ]))
+                payload = IPCResponse(status: .ok, usage: report)
             case .getSessionFilters:
                 payload = IPCResponse(status: .ok, filters: try await repository.sessionFilterRules())
             case .setSessionFilters:

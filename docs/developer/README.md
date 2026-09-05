@@ -32,6 +32,7 @@ Data lives under `~/Library/Application Support/Lumi`: the daemon socket (`daemo
 - One iPhone can connect to multiple Macs; one Mac can authorize multiple iPhones.
 - daemon, Mac, and iOS use persistent local stores with the same SQLite schema; the daemon is the source of truth, the Mac app and iPhones are caches. Session history does not expire automatically.
 - The daemon is the Relay host: paired iPhones keep syncing while the Mac app is closed; the Mac app only drives pairing through daemon IPC.
+- Usage is a separate line from Sessions: the daemon scans the agents' own transcript roots (`~/.claude/projects`, `~/.codex/sessions`, `~/.codex/archived_sessions`) into `usage_*` tables of the same database, prices them against models.dev at query time, and answers `usage_report` for the Mac's Usage page. Deleting Sessions never touches usage. See [usage.md](../design/usage.md).
 - Relay does not persist Session business payloads.
 
 ## Prerequisites
@@ -54,6 +55,15 @@ swift test --package-path CLI
 swift test --package-path Apps/Mac/MacPackage
 scripts/smoke-local-chain.sh
 scripts/check-transport-boundaries.sh
+```
+
+## Refresh the built-in price snapshot
+
+The daemon prices usage against `https://models.dev/api.json`, cached beside its database and refetched daily. `Common/Sources/Core/Pricing/ModelPricingSnapshot.generated.swift` is the compiled-in fallback for a Mac that has never fetched it; regenerate it when the catalog moves:
+
+```sh
+scripts/models-dev-snapshot.sh            # downloads api.json, then generates
+scripts/models-dev-snapshot.sh api.json   # from a local copy
 ```
 
 ## Build Apps

@@ -15,6 +15,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
     private let rows: [Row] = [
         .section("Monitor"),
         .destination(.sessions, title: "Sessions", symbol: "rectangle.split.2x1"),
+        .destination(.usage, title: "Usage", symbol: "chart.bar"),
         .section("Connections"),
         .destination(.pairing, title: "iPhone", symbol: "iphone"),
         .section("Application"),
@@ -157,7 +158,7 @@ final class NavigationSidebarViewController: NSViewController, NSTableViewDataSo
             cell.showCount(store.sessions.count)
         case .pairing:
             cell.showDot(relayHost.isConnected)
-        case .settings:
+        case .usage, .settings:
             cell.showNothing()
         }
     }

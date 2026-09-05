@@ -199,8 +199,82 @@ public actor SQLiteSessionRepository: SessionRepository {
                 WHERE json_extract(CAST(summary AS TEXT), '$.filterEvaluated') IS NULL;
                 """)
         }
+        // Usage: token buckets scanned from the agents' own transcripts, with
+        // the dedupe keys and per-file cursors that feed them. No foreign key
+        // to `sessions` by design — usage is not Session history: deleting a
+        // Session or clearing history leaves these tables alone, and a
+        // bucket may name a session Lumi never ingested (filtered, pre-install).
+        // Cursors are keyed by file identity (device + inode), not path: a
+        // rollout Codex archives keeps its cursor.
+        migrator.registerMigration("lumi-v9-usage") { db in
+            try db.execute(sql: Self.usageSchema)
+        }
+        // The parsing rules changed after v9 first ran (Claude's larger later
+        // copies top the output up; Codex fork replays are skipped): buckets
+        // counted under the old rules are wrong and the dedupe keys would
+        // keep a rescan from correcting them. Start the usage tables over;
+        // the scanner rebuilds them from the transcripts on the next launch.
+        migrator.registerMigration("lumi-v10-usage-rules") { db in
+            try db.execute(sql: """
+                DROP TABLE IF EXISTS usage_buckets;
+                DROP TABLE IF EXISTS usage_seen;
+                DROP TABLE IF EXISTS usage_cursors;
+                """)
+            try db.execute(sql: Self.usageSchema)
+        }
         try migrator.migrate(database)
     }
+
+    /// The usage store over this repository's database. Usage shares the
+    /// file (one migrator, one write queue) but nothing else: it has its own
+    /// tables, its own contract, and no dependency on Session rows.
+    public nonisolated func makeUsageStore(calendar: Calendar = .current) -> SQLiteUsageStore {
+        SQLiteUsageStore(database: database, calendar: calendar)
+    }
+
+    /// The usage tables (see `docs/design/usage.md`). One definition,
+    /// created by v9 and re-created by v10.
+    static let usageSchema = """
+        CREATE TABLE IF NOT EXISTS usage_buckets (
+            agent TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            day TEXT NOT NULL,
+            tier INTEGER NOT NULL,
+            workspace TEXT NOT NULL,
+            first_at REAL NOT NULL,
+            last_at REAL NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_write_5m_tokens INTEGER NOT NULL,
+            cache_write_1h_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            reasoning_tokens INTEGER NOT NULL,
+            calls INTEGER NOT NULL,
+            reported_cost_usd REAL,
+            reported_calls INTEGER NOT NULL,
+            PRIMARY KEY(agent, session_id, turn_id, model, day, tier)
+        );
+        CREATE INDEX IF NOT EXISTS usage_buckets_day
+            ON usage_buckets(day, agent, model);
+        CREATE INDEX IF NOT EXISTS usage_buckets_workspace
+            ON usage_buckets(workspace);
+        CREATE TABLE IF NOT EXISTS usage_seen (
+            key TEXT PRIMARY KEY NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS usage_cursors (
+            identity TEXT PRIMARY KEY NOT NULL,
+            path TEXT NOT NULL,
+            source TEXT NOT NULL,
+            byte_offset INTEGER NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified_at REAL NOT NULL,
+            prefix_length INTEGER NOT NULL,
+            prefix_hash TEXT NOT NULL,
+            state BLOB NOT NULL
+        );
+        """
 
     /// Turn aggregates derived on read (the `turns` table is gone): decode
     /// only the turn-relevant rows — SQL filters out the reasoning/context

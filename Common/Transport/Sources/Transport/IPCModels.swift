@@ -145,6 +145,10 @@ public enum IPCOperation: Hashable, Sendable {
     case relayPairingCancel
     case getSessionFilters
     case setSessionFilters
+    /// Token / cost report over an inclusive local-day range (`since` /
+    /// `until`), grouped by agent, project and model. Read-only; the daemon's
+    /// transcript scan feeds it independently of Session ingest.
+    case usageReport
 
     public var rawValue: String {
         switch self {
@@ -168,6 +172,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .relayPairingCancel: "relay_pairing_cancel"
         case .getSessionFilters: "get_session_filters"
         case .setSessionFilters: "set_session_filters"
+        case .usageReport: "usage_report"
         }
     }
 }
@@ -197,6 +202,7 @@ extension IPCOperation: Codable {
         case "relay_pairing_cancel": .relayPairingCancel
         case "get_session_filters": .getSessionFilters
         case "set_session_filters": .setSessionFilters
+        case "usage_report": .usageReport
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown IPC operation: \(value)")
         }
     }
@@ -232,6 +238,9 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     public let approved: Bool?
     /// `set_session_filters`: the whole rule list, in user order.
     public let filters: [SessionFilterRule]?
+    /// `usage_report`: inclusive local-day range, both required.
+    public let since: UsageDay?
+    public let until: UsageDay?
 
     public init(
         operation: IPCOperation,
@@ -244,7 +253,9 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         data: Data? = nil,
         deviceID: DeviceID? = nil,
         approved: Bool? = nil,
-        filters: [SessionFilterRule]? = nil
+        filters: [SessionFilterRule]? = nil,
+        since: UsageDay? = nil,
+        until: UsageDay? = nil
     ) {
         self.operation = operation
         self.sessionID = sessionID
@@ -257,6 +268,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.deviceID = deviceID
         self.approved = approved
         self.filters = filters
+        self.since = since
+        self.until = until
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -271,6 +284,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case deviceID
         case approved
         case filters
+        case since
+        case until
     }
 
     public init(from decoder: Decoder) throws {
@@ -286,6 +301,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         deviceID = try c.decodeIfPresent(DeviceID.self, forKey: .deviceID)
         approved = try c.decodeIfPresent(Bool.self, forKey: .approved)
         filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
+        since = try c.decodeIfPresent(UsageDay.self, forKey: .since)
+        until = try c.decodeIfPresent(UsageDay.self, forKey: .until)
     }
 }
 
@@ -375,6 +392,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let pairing: RelayPairingSession?
     /// `get_session_filters` / `set_session_filters`: the stored rule list.
     public let filters: [SessionFilterRule]?
+    /// `usage_report`: the grouped token / cost report for the requested range.
+    public let usage: UsageReport?
 
     public init(
         status: IPCResponseStatus,
@@ -387,7 +406,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         failure: IPCFailure? = nil,
         relay: RelayHostStatus? = nil,
         pairing: RelayPairingSession? = nil,
-        filters: [SessionFilterRule]? = nil
+        filters: [SessionFilterRule]? = nil,
+        usage: UsageReport? = nil
     ) {
         self.status = status
         self.sessions = sessions
@@ -400,6 +420,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.relay = relay
         self.pairing = pairing
         self.filters = filters
+        self.usage = usage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -414,6 +435,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case relay
         case pairing
         case filters
+        case usage
     }
 
     public init(from decoder: Decoder) throws {
@@ -429,5 +451,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         relay = try c.decodeIfPresent(RelayHostStatus.self, forKey: .relay)
         pairing = try c.decodeIfPresent(RelayPairingSession.self, forKey: .pairing)
         filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
+        usage = try c.decodeIfPresent(UsageReport.self, forKey: .usage)
     }
 }

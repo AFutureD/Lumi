@@ -55,6 +55,23 @@
 | 码到点作废后卡片停住的状态             | Expired          | 已失效   |
 | 再出一个码（唯一的换码方式）           | New code         | 换新码   |
 
+## Usage
+
+| 概念 | 界面用词 | 中文写法 |
+| ---- | -------- | -------- |
+| 侧边栏里按项目、模型看 token 与花费的那一页 | Usage | 用量 |
+| 按公开价目估算出的美元数 | Cost | 花费 |
+| 模型处理过的 token 总数（输入 + 缓存读 + 缓存写 + 输出） | Tokens | token |
+| 用量表格里的“项目”，即 Agent 运行时的工作目录（与 Filters 的 Folder 同一事物，Usage 页叫 Project） | Project | 项目 |
+| 模型的原始 id（如 `claude-fable-5`、`gpt-5.5`），照 Agent 上报的原样显示 | Model | 模型 |
+| 时间范围的四个档位 | Today · This week · This month · Custom | 今天 · 本周 · 本月 · 自定义 |
+| 价目表里没有的模型，其 token 不计入任何 Cost | Unpriced（表里显示 `—`） | 无价格 |
+| 缓存读取占全部 token 的比例（cache read ÷ total） | Cache ratio | 缓存命中率 |
+| 页头右侧说明价目表来自哪、多久前更新 | Prices · models.dev · updated … ago / Prices · built-in snapshot | 价格更新时间 |
+
+- Usage 与 Session 无关：删除 Session、清空历史都不会改变 Usage 的数字。
+- Cost 是按公开价目算出的估算值，不是账单，也不含订阅套餐的折算。
+
 ## 时间概念
 
 | 概念                                             | 界面用词    | 中文写法 |

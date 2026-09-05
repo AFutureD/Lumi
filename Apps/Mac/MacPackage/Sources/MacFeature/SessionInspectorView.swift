@@ -43,22 +43,8 @@ struct SessionInspectorView: View {
         }
     }
 
-    private func metricCard(label: String, @ViewBuilder value: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            value()
-                .font(Design.Font.UI.metricValue)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(label.uppercased())
-                .font(Design.Font.UI.metricLabel)
-                .kerning(0.4)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.05), radius: 5, y: 4)
+    private func metricCard(label: String, @ViewBuilder value: @escaping () -> some View) -> some View {
+        MetricCardView(label: label, value: value)
     }
 
     private func group(_ section: SessionSummarySectionPresentation) -> some View {

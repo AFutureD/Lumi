@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 用量
+
+- [Lumi for Mac] - 侧边栏新增 Usage 页：按 Today / This week / This month / Custom 日期范围查看 token 与花费——顶部四张指标卡（Cost、Tokens、Sessions、Turns），下方 By agent（每个 Agent 一行，展开看它用过的模型，含 Cache ratio）与 By project（工作目录）两张表，列可点击排序；价目取自 models.dev，页头注明更新时间，没有公开价格的模型单独标出、不计入花费。
+- daemon 直接扫描本机 Claude Code 与 Codex 的对话记录（含子 Agent 与 Codex 已归档会话）统计用量，与 Session 记录彼此独立：没进 Lumi 列表的会话、被 Filters 隐藏的会话也计入，删除 Session 或清空历史不影响 Usage；每 24 小时刷新一次 models.dev 价目，离线时用随 App 内置的快照；来源自己报告过费用的调用以报告为准；上下文超过模型长上下文阈值的调用按高档价计。
+
 ### Daemon
 
 - 修复 daemon 已安装却一直 Not connected（`connect: No such file or directory`）的问题：系统暂缓登录项自动启动时，注册成功的 daemon 从未被拉起。现在 Mac App 与 Agent hook 在连不上 daemon 时会按需把它唤醒；daemon 正常退出后，下一次连接也会重新把它拉起来。

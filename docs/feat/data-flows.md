@@ -79,6 +79,15 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 - **Mac 或通道离线**：iPhone 在 Macs 页将该 Mac 标为 Offline，继续显示缓存；其他 Mac 通道不受影响。退出 Mac App 不算离线（Relay 连接在 daemon）。
 - **恢复在线**：iPhone 向 Mac 索取 Session 索引对账——多余的删、缺失的整取、变过的只补差异（[IOS-R-007](modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-增量同步)），之后继续实时接收。
 
+## 用量
+
+- **用户相关数据**：每次模型调用的 token（输入、缓存读、缓存写、输出）按会话、回合、模型、本地日累加；工作目录；models.dev 价目与其拉取时间。
+- **创建来源**：daemon 直接扫描 Claude Code（`~/.claude/projects`，含子 Agent）与 Codex（`~/.codex/sessions`、`archived_sessions`）写在本机的对话记录，安装后首次全量、之后每 30 秒跟进；不依赖 Hook，也不依赖 Session 是否进入 Lumi。
+- **更新来源**：文件新增内容按游标增量读取；同一次调用在文件里重复出现（Claude 每个内容块、Codex 分叉回放）只算一次。价目每 24 小时刷新，刷新后对历史生效。
+- **主要消费者**：Mac 的 Usage 页（[USG-R-001](modules/mac-usage.md#usg-r-001-用量来自-agent-的本机记录与-session-无关)）。不进 iPhone，不进 Relay。
+- **保留方式**：与 Session 无关——删除 Session、清空历史都不动用量；Agent 自己删除记录后，已累加的桶仍保留。
+- **展示边界**：Cost 是按公开价目基础档的估算，不含订阅折算；价目表没有的模型显示无价格。
+
 ## 软件更新
 
 - **用户相关数据**：这台 Mac 是否允许自动检查、当前 App 版本和正式更新通道提供的可用版本。

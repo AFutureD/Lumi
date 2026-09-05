@@ -10,7 +10,19 @@ public struct DaemonConfiguration: Hashable, Sendable {
     public let socketPath: String
     public let databasePath: String
     public let codexSessionsDirectory: URL
+    /// Codex moves finished rollouts here (`codex archive`); their usage
+    /// still counts.
+    public let codexArchivedSessionsDirectory: URL
+    /// `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`): every
+    /// project's transcripts and subagent sidechains.
+    public let claudeProjectsDirectory: URL
     public let rolloutPollIntervalSeconds: Double
+    /// How often the usage scanner re-lists the transcript roots.
+    public let usagePollIntervalSeconds: Double
+    /// Cached models.dev `api.json` (`Lumen/models-dev.json`). `LUMI_MODEL_PRICES=0`
+    /// keeps the daemon from fetching it (tests, smoke runs, offline).
+    public let modelPricesPath: String
+    public let modelPricesFetchEnabled: Bool
     /// The Relay the daemon registers with as the host; paired iPhones sync
     /// through it. Override with `LUMI_RELAY_URL`; `LUMI_RELAY=0`
     /// keeps the daemon off the network (tests, smoke runs).
@@ -36,7 +48,12 @@ public struct DaemonConfiguration: Hashable, Sendable {
         socketPath: String,
         databasePath: String,
         codexSessionsDirectory: URL,
+        codexArchivedSessionsDirectory: URL? = nil,
+        claudeProjectsDirectory: URL? = nil,
         rolloutPollIntervalSeconds: Double = 2,
+        usagePollIntervalSeconds: Double = 30,
+        modelPricesPath: String? = nil,
+        modelPricesFetchEnabled: Bool = true,
         relayURL: URL = DaemonConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
         relayStatePath: String? = nil,
@@ -52,7 +69,14 @@ public struct DaemonConfiguration: Hashable, Sendable {
         self.socketPath = socketPath
         self.databasePath = databasePath
         self.codexSessionsDirectory = codexSessionsDirectory
+        self.codexArchivedSessionsDirectory = codexArchivedSessionsDirectory
+            ?? codexSessionsDirectory.deletingLastPathComponent().appendingPathComponent("archived_sessions", isDirectory: true)
+        self.claudeProjectsDirectory = claudeProjectsDirectory
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
         self.rolloutPollIntervalSeconds = rolloutPollIntervalSeconds
+        self.usagePollIntervalSeconds = usagePollIntervalSeconds
+        self.modelPricesPath = modelPricesPath ?? daemonDirectory.appendingPathComponent("models-dev.json").path
+        self.modelPricesFetchEnabled = modelPricesFetchEnabled
         self.relayURL = relayURL
         self.relayEnabled = relayEnabled
         self.relayStatePath = relayStatePath ?? daemonDirectory.appendingPathComponent("relay-host-state.json").path
@@ -76,6 +100,8 @@ public struct DaemonConfiguration: Hashable, Sendable {
                 .path
         let codexHome = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent(".codex", isDirectory: true)
+        let claudeHome = environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? homeDirectory.appendingPathComponent(".claude", isDirectory: true)
 
         return DaemonConfiguration(
             supportDirectory: supportDirectory,
@@ -85,6 +111,11 @@ public struct DaemonConfiguration: Hashable, Sendable {
             ),
             databasePath: databasePath,
             codexSessionsDirectory: codexHome.appendingPathComponent("sessions", isDirectory: true),
+            codexArchivedSessionsDirectory: codexHome.appendingPathComponent("archived_sessions", isDirectory: true),
+            claudeProjectsDirectory: claudeHome.appendingPathComponent("projects", isDirectory: true),
+            modelPricesFetchEnabled: !["0", "false", "no"].contains(
+                (environment["LUMI_MODEL_PRICES"] ?? "").lowercased()
+            ),
             relayURL: environment["LUMI_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
             relayEnabled: !["0", "false", "no"].contains(
                 (environment["LUMI_RELAY"] ?? "").lowercased()

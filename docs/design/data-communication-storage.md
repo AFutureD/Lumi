@@ -54,6 +54,7 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 | `ignored_sessions` | 删除/基线/helper discard tombstone | 阻止后到事件重新创建 Session；仅新的 prompt / SessionStart（未处理过的事件）能复活，重放的事件先被 `processed_events` 拒绝；客户端 `replaceSession` / `mergeSession` 会清该 Session 的本地墓碑（以 daemon 为准） |
 | `metadata` | repository 状态 | 当前保存首次 rollout baseline 标记 |
 | `session_filters` | 过滤规则（用户设置，不是会话历史） | 一行一条规则：`id` 主键 + `position` 排序 + `rule` JSON BLOB；整表替换写入。只有 daemon 读写（镜像里这张表恒空）。`clear_history` / 单条删除都不碰它（migration `lumi-v7-session-filters`） |
+| `usage_buckets` / `usage_seen` / `usage_cursors` | Usage：按 `(agent, session_id, turn_id, model, day, tier)` 累加的 token 桶（含来源报告的费用）、全局去重键、每个 transcript / rollout 文件的扫描游标（按 inode 识别文件，含前缀哈希与解析状态 BLOB） | 与 `sessions` 无外键：删 Session、`clear_history`、`reingest` 都不碰；只有 daemon 写（镜像恒空）。详见 [Usage 设计](usage.md)（migration `lumi-v9-usage` 建表，`lumi-v10-usage-rules` 因解析规则变更整体重建） |
 
 `turns` 表已在 migration `lumi-v8` 删除：Turn 聚合（`TurnSummary`：prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage）改为读取时由 `TurnProjection` 从 timeline 的 turn-scoped 行现算——时间线是唯一事实源，`SessionDetail.turns` 的 API 与 wire 形状不变，写入方传来的 `turns` 被忽略。
 
@@ -108,6 +109,7 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 | `relay_revoke_device` / `relay_refresh_devices` | 撤销一台 iPhone / 重新拉设备列表，都返回最新状态 | 短连接请求 |
 | `relay_remove_device` | 删除一台已撤销 iPhone 的记录（Relay 记录 + daemon 钉住的钥匙一起删），返回最新状态 | 短连接请求 |
 | `get_session_filters` | 读取 daemon 存储的过滤规则（有序全量） | 短连接请求（Settings · Agents 面板出现时） |
+| `usage_report` | `{since, until}`（本地日 `YYYY-MM-DD`，闭区间，跨度 ≤ 366 天）→ `UsageReport`：totals + byAgent / byProject / byModel 切片、价目状态、扫描进度。daemon 读桶、查询时按 models.dev 价目计价（见 [Usage 设计](usage.md)） | 短连接请求（Usage 页可见时每 30 秒；切换范围 / Refresh 立即） |
 | `set_session_filters` | 整表替换过滤规则：校验（≤100 条、条件非空、运算符合法）后写入 `session_filters` 表并同步进内存判定引擎。规则改动不追溯已有 Session——判定在 Session 首条用户消息到达时做一次并冻结在 `hiddenByFilter` 上（`filterEvaluated` 闩保证只判一次），因此不 publish、不通知 Relay | 短连接请求 |
 
 daemon 的 socket 服务端跑在结构化并发上（原生 socket，无第三方网络栈）：accept 与每连接的收发都是服务 `run()` 下的子任务，就绪等待经 DispatchSource 桥接、不占线程，每连接内请求并发处理、由单写者任务串行发帧；Session 在协议内多路复用，不为 Session 创建连接。每连接的出站队列有字节上限，只有停止读取的客户端才会积满——超限即断开，Mac 端按既有路径重连并 reconcile 补数。响应在发送前检查 8 MiB frame 上限：超限时改发 `response_too_large` 失败帧（不重试、提示缩小分页），而不是发出一个客户端注定拒收的帧。

@@ -271,3 +271,57 @@ import Testing
     ])
     #expect(hidden == [SessionID("root"), SessionID("child")])
 }
+
+@Test func usageDayIsStrictISOAndOrdersByCalendar() throws {
+    let day = try #require(UsageDay(rawValue: "2026-09-05"))
+    #expect(day == UsageDay(year: 2026, month: 9, day: 5))
+    #expect(day.rawValue == "2026-09-05")
+    #expect(UsageDay(year: 2026, month: 8, day: 31) < day)
+    #expect(UsageDay(year: 2025, month: 12, day: 31) < UsageDay(year: 2026, month: 1, day: 1))
+    for bad in ["2026-9-5", "20260905", "2026-13-01", "2026-09-32", "2026-09-05T00:00:00Z", ""] {
+        #expect(UsageDay(rawValue: bad) == nil, Comment(rawValue: bad))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(UsageDay.self, from: Data("\"2026/09/05\"".utf8))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(UsagePricingSource.self, from: Data("\"litellm\"".utf8))
+    }
+}
+
+@Test func usageReportRoundTripsThroughIPC() throws {
+    let tokens = UsageTokens(input: 2, cacheRead: 37_690, cacheWrite5m: 0, cacheWrite1h: 21_292, output: 496, reasoning: 146)
+    #expect(tokens.total == 2 + 37_690 + 21_292 + 496)
+    #expect(tokens.cacheWrite == 21_292)
+    let report = UsageReport(
+        since: UsageDay(year: 2026, month: 9, day: 1),
+        until: UsageDay(year: 2026, month: 9, day: 5),
+        generatedAt: Date(timeIntervalSince1970: 1_700_000_000.266),
+        totals: UsageSlice(tokens: tokens, costUSD: 1.234, unpricedTokens: 14, calls: 3, sessions: 2, turns: 2, lastDay: UsageDay(year: 2026, month: 9, day: 5)),
+        byAgent: [UsageSlice(agent: .claude, tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
+        byProject: [UsageSlice(workspace: "/Users/me/Developer/lumi", tokens: tokens, costUSD: 1.234, calls: 3, sessions: 2, turns: 2)],
+        byModel: [
+            UsageSlice(agent: .claude, model: "claude-fable-5", tokens: tokens, costUSD: 1.234, calls: 2, sessions: 2, turns: 2),
+            UsageSlice(agent: .claude, model: "<synthetic>", tokens: UsageTokens(output: 14), costUSD: nil, unpricedTokens: 14, calls: 1, sessions: 1, turns: 1),
+        ],
+        pricing: UsagePricingStatus(source: .cached, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000), modelCount: 1_234),
+        scan: UsageScanStatus(scannedFiles: 1_650, pendingFiles: 0, lastScanAt: Date(timeIntervalSince1970: 1_700_000_100), isScanning: false)
+    )
+    let response = IPCResponse(status: .ok, usage: report)
+    let encoded = try TransportCoding.makeEncoder().encode(response)
+    let decoded = try TransportCoding.makeDecoder().decode(IPCResponse.self, from: encoded)
+    #expect(decoded.usage == report)
+    let json = String(decoding: encoded, as: UTF8.self)
+    #expect(json.contains(#""since":"2026-09-01""#))
+    #expect(json.contains(#""source":"cached""#))
+    // An unpriced row omits its cost rather than reporting zero.
+    #expect(json.contains(#""model":"<synthetic>""#))
+    #expect(!json.contains(#""costUSD":0"#))
+
+    let request = IPCRequest(operation: .usageReport, since: report.since, until: report.until)
+    let requestJSON = String(decoding: try TransportCoding.makeEncoder().encode(request), as: UTF8.self)
+    #expect(requestJSON.contains(#""operation":"usage_report""#))
+    let decodedRequest = try TransportCoding.makeDecoder().decode(IPCRequest.self, from: Data(requestJSON.utf8))
+    #expect(decodedRequest.since == report.since)
+    #expect(decodedRequest.until == report.until)
+}

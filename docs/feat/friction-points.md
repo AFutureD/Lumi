@@ -230,6 +230,13 @@ Mac 上的码在中途换掉或过期，也按第一种处理——回到输码�
 
 **完成信号**：之后产生的同类 Session 不再出现在主窗口、Notch 和 iPhone。
 
+## Usage 页没有数字或数字不全
+
+- **可见症状**：Usage 页顶部显示 `Scanning transcripts · N files left`，或表里只有一个 Agent、缺另一个。
+- **原因**：daemon 首次扫描还没跑完（本机上千个记录文件要 20 秒到几分钟，Claude 与 Codex 的文件按最新优先混着扫）；或 daemon 不可达（页首红字）。
+- **恢复**：页面开着就每 30 秒自动重拉，等提示消失即可；红字时到“Settings > Daemon”确认 Running，再点工具栏 Refresh。
+- **价格显示 `—`**：该模型在 models.dev 没有公开价格（如 `codex-auto-review`，见 [已知问题](../issues/codex-auto-review-model.md)）；token 仍计入。页头 `Prices · built-in snapshot` 表示 daemon 还没成功联网拉过价目，联网后 24 小时内自动刷新。
+
 ## 仍无法恢复：先看日志
 
 三个本机进程各写一份日志，错误另外汇总成一份：

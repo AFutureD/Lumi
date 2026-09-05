@@ -6,7 +6,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 
 ## 模块概览
 
-- **入口**：启动 Lumi；侧边栏包含“Sessions”“iPhone”“Settings”。
+- **入口**：启动 Lumi；侧边栏包含“Sessions”“Usage”“iPhone”“Settings”（Usage 页见[Mac 用量查看](mac-usage.md)）。
 - **前置条件**：Apple silicon Mac，macOS 26 或更高版本；daemon 已安装并运行。
 - **主要结果**：用户可在列表查看 Session 标题、Agent 和状态，在 Activity 中查看完整活动历史，在 Inspector 中查看 Token / Context / Elapsed 指标与 Session 信息；也可按标题过滤列表、手动刷新、删除选中的一条或多条 Session，或清空全部 Lumi 历史。
 - **只读边界**：查看和删除 Lumi 中的记录不会审批、终止或修改 Agent 的 Session。
@@ -17,7 +17,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 ### Sessions：标准三栏
 
 1. 左栏——固定 224 pt 的全高侧边栏。
-   - 分 Monitor / Connections / Application 三组。
+   - 分 Monitor（Sessions、Usage）/ Connections / Application 三组。
    - Sessions 行右侧显示 Lumi 当前保存的 Session 总数（Main Session 与 Subagent 都计入，因此通常大于中栏行数）；iPhone 行右侧在 Relay 连接时显示绿点。
    - 工具栏侧边栏段右侧的折叠按钮可隐藏或显示整栏；折叠状态在重启后保留。
 2. 中栏——Session 列表。

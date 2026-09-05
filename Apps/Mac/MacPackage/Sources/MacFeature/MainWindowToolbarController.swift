@@ -10,6 +10,8 @@ struct MainWindowToolbarActions {
     /// Confirmation and batch delete live with the Sessions list, which
     /// also owns the post-delete selection move.
     var deleteSelectedSessions: () -> Void = {}
+    /// Reloads the Usage page's current range.
+    var refreshUsage: () -> Void = {}
 }
 
 /// Unified toolbar with three tracked sections:
@@ -20,6 +22,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     private static let searchSessions = NSToolbarItem.Identifier("Lumi.SearchSessions")
     private static let settingsLabel = NSToolbarItem.Identifier("Lumi.SettingsLabel")
     private static let refreshSessions = NSToolbarItem.Identifier("Lumi.RefreshSessions")
+    private static let refreshUsage = NSToolbarItem.Identifier("Lumi.RefreshUsage")
     private static let detailSeparator = NSToolbarItem.Identifier("Lumi.DetailSeparator")
     private static let deleteSession = NSToolbarItem.Identifier("Lumi.DeleteSession")
     private static let toggleInspector = NSToolbarItem.Identifier("Lumi.ToggleInspector")
@@ -77,6 +80,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
             Self.detailSeparator,
             Self.contentTitle,
             Self.refreshSessions,
+            Self.refreshUsage,
             Self.deleteSession,
             Self.toggleInspector,
         ]
@@ -101,6 +105,14 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
                 symbol: "arrow.clockwise",
                 action: #selector(refresh),
                 toolTip: "Rebuild the selected session from its transcript and resync all sessions"
+            )
+        case Self.refreshUsage:
+            makeActionItem(
+                identifier: itemIdentifier,
+                label: "Refresh",
+                symbol: "arrow.clockwise",
+                action: #selector(refreshUsage),
+                toolTip: "Reload usage for the selected range"
             )
         case Self.detailSeparator:
             NSTrackingSeparatorToolbarItem(
@@ -137,6 +149,14 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
                 Self.refreshSessions,
                 Self.deleteSession,
                 Self.toggleInspector,
+            ]
+        case .usage:
+            // The context list is collapsed: no tracking separator, the
+            // title sits right after the sidebar.
+            return sidebar + [
+                Self.contentTitle,
+                .flexibleSpace,
+                Self.refreshUsage,
             ]
         case .pairing:
             // The page draws its own header (title, Relay pill, subtitle).
@@ -256,6 +276,10 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         actions.toggleInspector()
     }
 
+    @objc private func refreshUsage() {
+        actions.refreshUsage()
+    }
+
     @objc private func searchChanged(_ sender: NSSearchField) {
         actions.search(sender.stringValue)
     }
@@ -284,6 +308,8 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
             } else {
                 text = "Select a Session"
             }
+        case .usage:
+            text = "Usage"
         case .pairing:
             text = "Pair an iPhone"
         case .settings:

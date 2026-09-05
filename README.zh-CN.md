@@ -52,6 +52,7 @@ Lumi 将多个 Agent 的 Session 集中到 Mac 的同一处。<br>
 ## Lumi 能为你做什么
 
 - **Mac 总览。** 一眼查看所有 Session 的状态；打开其中一个，即可检查完整 Activity 和关键指标。
+- **Usage 用量。** 这台 Mac 上 Claude Code 与 Codex 全部对话记录的 token 与花费，按日期范围、Agent、模型、项目查看。直接读 Agent 自己的日志，没进 Lumi 列表的会话也算；花费是按公开单价的估算。
 - **安静的 Notch。** Agent 工作时保持紧凑，回合结束、失败或被中断时才展开。关闭 Mac 窗口不会停止 Notch 或同步。
 - **iPhone 查看。** 搜索、过滤多台已配对 Mac 的 Session。Mac 离线时仍可阅读缓存内容；收到通知后可以直接打开需要处理的 Session。
 - **更新由你控制。** Lumi 使用签名的 Stable 更新通道；何时检查、下载和安装都由你决定。

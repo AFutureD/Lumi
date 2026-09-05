@@ -36,6 +36,12 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 [查看模块详情](modules/iphone-live-view.md)
 
+### 用量
+
+侧边栏的 Usage 页按 Today / This week / This month / Custom 日期范围显示这台 Mac 上 Claude Code 与 Codex 的 token 与花费：四张指标卡（Cost、Tokens、Sessions、Turns），再按 Agent（每个 Agent 下挂它用过的模型）和按项目（工作目录）两张可排序的表，含缓存命中率。数据来自 Agent 自己的本机对话记录，与 Session 列表无关——没进列表的会话也算，删除 Session 不影响数字；花费按 models.dev 公开价目估算，没有价格的模型单独标出。
+
+[查看模块详情](modules/mac-usage.md)
+
 ### 软件更新
 
 用户可以从 Lumi App 菜单或“Settings > About”主动检查 Stable 更新；第二次启动时，Lumi 会先询问是否允许自动检查，也可在“Settings > General”随时开关。检查不会静默下载或安装，发现新版本后仍由用户确认；签名更新通道已上线并包含跨版本升级路径（端到端安装体验待验收，见文末边界）。
@@ -54,6 +60,7 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 - [设备与通道](data-flows.md#设备与通道)：每台 Mac 对每台已授权 iPhone 建立一条通道，一条通道承载该 Mac 的所有 Session。
 - [配对授权](data-flows.md#配对授权)：每台 iPhone 独立授权，可在 Mac 上单独撤销。
 - [软件更新](data-flows.md#软件更新)：Mac 读取签名的 Stable 更新信息，用户确认后才替换 App。
+- [用量](data-flows.md#用量)：daemon 扫描 Agent 的本机对话记录累加 token，Mac 按范围查询、按公开价目估算花费。
 
 ## 数据如何连接功能
 

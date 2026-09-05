@@ -52,6 +52,7 @@ See their current state in Lumi for Mac or the Notch, and check a paired iPhone 
 ## What Lumi gives you
 
 - **Mac overview.** See every Session's status at a glance. Open one to inspect its complete Activity and key metrics.
+- **Usage.** Tokens and cost for every Claude Code and Codex transcript on this Mac, by day range, agent, model, and project. Read straight from the agents' own logs, so it covers Sessions Lumi never listed; cost is an estimate from public per-token prices.
 - **Quiet Notch.** It stays compact while Agents work and expands when a turn completes, fails, or is interrupted. Closing the Mac window does not stop the Notch or synchronization.
 - **iPhone view.** Search and filter Sessions from multiple paired Macs. Cached content stays readable while a Mac is offline; notifications open the Session that needs attention.
 - **Controlled updates.** Lumi uses a signed Stable update channel. You decide when to check, download, and install.

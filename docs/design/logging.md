@@ -63,14 +63,14 @@ dbLog.error("apply_failed", metadata: .fields(["session": id, "error": error]))
 
 | category | 含义 | 典型事件 |
 | --- | --- | --- |
-| `lifecycle` | 进程启动 / 停止、配置、服务注册、自动更新、hook 安装、按需唤醒 | `daemon_started`（含 `wake=` 服务名或 `off`）、`app_started`、`daemon_auto_update_restarting`、`claude_watcher_started`、`wake_listener_started` / `wake_listener_skipped` / `wake_listener_failed`、`wake_received client_pid=` |
-| `agent` | Agent 接入：hook 入口、transcript / rollout 扫描、事件入库与分发、Mac 端 apply | `hook_ingested`（带 AaaS 归属 `aaas=` / `aaas_agent=` / `aaas_term=`）、`hook_environment`（仅 env **键名**列表；`LUMI_LOG_ENV=1` 抬到 info，否则 `--verbose` 下 debug）、`transcript_scanned`、`rollout_scanned`、`stream_publish`、`events_applied` |
-| `convert` | 纯数据转换：adapter 归一化、坏记录、Session 重建、给 iPhone 切片 | `rich_source_line_rejected`、`session_reingested`、`index_prepared`、`session_prepared` |
+| `lifecycle` | 进程启动 / 停止、配置、服务注册、自动更新、hook 安装、按需唤醒、价目表刷新 | `daemon_started`（含 `wake=` 服务名或 `off`）、`app_started`、`daemon_auto_update_restarting`、`claude_watcher_started`、`wake_listener_started` / `wake_listener_skipped` / `wake_listener_failed`、`wake_received client_pid=`、`usage_scanner_started`、`model_prices_loaded` / `model_prices_refreshed` / `model_prices_fetch_failed` |
+| `agent` | Agent 接入：hook 入口、transcript / rollout 扫描、事件入库与分发、Mac 端 apply；Usage 扫描 | `hook_ingested`（带 AaaS 归属 `aaas=` / `aaas_agent=` / `aaas_term=`）、`hook_environment`（仅 env **键名**列表；`LUMI_LOG_ENV=1` 抬到 info，否则 `--verbose` 下 debug）、`transcript_scanned`、`rollout_scanned`、`stream_publish`、`events_applied`、`usage_scan_started` / `usage_scan_finished`（files / records / applied / ms）、`usage_file_scanned`（debug）、`usage_file_scan_failed` |
+| `convert` | 纯数据转换：adapter 归一化、坏记录、Session 重建、给 iPhone 切片、Usage 行解析 | `rich_source_line_rejected`、`session_reingested`、`index_prepared`、`session_prepared`、`usage_line_rejected`（只记位置）、`usage_file_rewritten` |
 | `db` | SQLite 仓库 / 缓存读写 | `session_deleted`、`history_cleared`、`cache_open_failed`、`event_apply_failed` |
 | `ipc` | 本机 Unix socket：请求、事件流、编解码；连不上时的 Mach service 唤醒 | `ipc_listening`、`ipc_handled`、`ipc_request`、`ipc_stream_connected`、`ipc_operation_failed`、`reconciled`、`ipc_wake daemon_pid= ms=` / `ipc_wake_failed` |
 | `relay` | Relay WebSocket / REST、设备列表、推送、序号 | `relay_connected`、`relay_ws_sent`、`relay_rest`、`devices_refreshed`、`request_received`、`events_pushed`、`sequence_healed`、`push_sent`、`push_send_failed`、`push_summary_lookup_failed`（APNs 通知只记设备与结果，不记文本） |
 | `pairing` | 配对状态机（daemon 与 Mac 页面） | `pairing_started` → `pairing_device_submitted` → `pairing_revealed` → `pairing_approved` / `pairing_rejected` / `pairing_expired`；`pairing_page_*` |
-| `ui` | App 的用户操作 | `logs_revealed` |
+| `ui` | App 的用户操作 | `logs_revealed`、`usage_range_selected`、`usage_report_failed` |
 
 Relay：`http`（入口每请求一行 `http_request route= status= ms=`、`https_required`、`edge_rate_limited`、`request_*`）、`ws`（`ws_opened` / `ws_closed` / `ws_*_frame_forwarded` / `ws_sequence_rejected`…）、`pairing`（状态机 + `pairing_claim*`）、`directory`（`pairing_code_allocated` / `pairing_code_claimed` / `pairing_claim_rate_limited`）。`LOG_LEVEL` 是 `wrangler.jsonc` 的 var（默认 info，测试绑 `warn`）。
 
