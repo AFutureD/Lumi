@@ -353,3 +353,46 @@ import Testing
     let plain = String(decoding: try TransportCoding.makeEncoder().encode(IPCRequest(operation: .usageReport, since: report.since, until: report.until)), as: UTF8.self)
     #expect(!plain.contains("compareSince"))
 }
+
+@Test func planUsageRoundTripsThroughIPC() throws {
+    let state = PlanUsageState(
+        accounts: [
+            PlanUsageAccount(
+                id: .claude, provider: .claude, email: "me@example.com", plan: "Max 20x", enabled: true, status: .ok,
+                limits: [
+                    PlanUsageLimit(window: .session, usedPercent: 42, resetsAt: Date(timeIntervalSince1970: 1_700_000_000.266)),
+                    PlanUsageLimit(window: .weekly, usedPercent: 18),
+                    PlanUsageLimit(window: .weekly, model: "Fable", usedPercent: 7),
+                ],
+                fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            PlanUsageAccount(id: .codex, provider: .codex, enabled: false, status: .credentialsMissing),
+        ],
+        generatedAt: Date(timeIntervalSince1970: 1_700_000_001)
+    )
+    let response = IPCResponse(status: .ok, planUsage: state)
+    let encoded = try TransportCoding.makeEncoder().encode(response)
+    let decoded = try TransportCoding.makeDecoder().decode(IPCResponse.self, from: encoded)
+    #expect(decoded.planUsage == state)
+    let json = String(decoding: encoded, as: UTF8.self)
+    #expect(json.contains(#""window":"weekly""#))
+    #expect(json.contains(#""model":"Fable""#))
+    #expect(json.contains(#""status":"credentialsMissing""#))
+    #expect(state.account(.claude)?.limit(.weekly, model: "Fable")?.usedPercent == 7)
+    #expect(state.account(.claude)?.limit(.weekly)?.usedPercent == 18)
+
+    let request = IPCRequest(operation: .setPlanUsage, planAccount: .codex, enabled: true)
+    let requestJSON = String(decoding: try TransportCoding.makeEncoder().encode(request), as: UTF8.self)
+    #expect(requestJSON.contains(#""operation":"set_plan_usage""#))
+    #expect(requestJSON.contains(#""planAccount":"codex""#))
+    let decodedRequest = try TransportCoding.makeDecoder().decode(IPCRequest.self, from: Data(requestJSON.utf8))
+    #expect(decodedRequest.planAccount == .codex)
+    #expect(decodedRequest.enabled == true)
+
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(PlanUsageWindow.self, from: Data("\"monthly\"".utf8))
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(PlanUsageAccountStatus.self, from: Data("\"unknown\"".utf8))
+    }
+}

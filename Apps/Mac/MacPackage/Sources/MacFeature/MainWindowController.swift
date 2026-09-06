@@ -17,14 +17,16 @@ final class MainWindowController: NSWindowController {
         store: MacSessionStore,
         relayHost: RelayHostStatusClient,
         nook: HaloController,
-        softwareUpdates: SoftwareUpdateController
+        softwareUpdates: SoftwareUpdateController,
+        planUsage: PlanUsageModel
     ) {
         rootController = RootSplitViewController(
             store: store,
             relayHost: relayHost,
             nook: nook,
             softwareUpdates: softwareUpdates,
-            usage: usage
+            usage: usage,
+            planUsage: planUsage
         )
         toolbarController = MainWindowToolbarController(
             store: store,
@@ -146,7 +148,8 @@ final class RootSplitViewController: NSSplitViewController {
         relayHost: RelayHostStatusClient,
         nook: HaloController,
         softwareUpdates: SoftwareUpdateController,
-        usage: UsageModel
+        usage: UsageModel,
+        planUsage: PlanUsageModel
     ) {
         navigation = NavigationSidebarViewController(store: store, relayHost: relayHost)
         sessionList = SessionListViewController(store: store)
@@ -157,7 +160,8 @@ final class RootSplitViewController: NSSplitViewController {
         settingsDetail = SettingsDetailViewController(
             store: store,
             nook: nook,
-            softwareUpdates: softwareUpdates
+            softwareUpdates: softwareUpdates,
+            planUsage: planUsage
         )
 
         let contentListTabs = NSTabViewController()

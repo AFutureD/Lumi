@@ -14,6 +14,7 @@
 6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Relay 部署和 CI。
 7. [日志设计](logging.md)：三端共用的分级 / 分类 / 结构化字段，文件位置、错误汇总、Relay 的 JSON 行，以及什么永远不进日志。
 8. [Usage 设计](usage.md)：与 Session 无关的用量链路——daemon 扫描 Agent 对话记录、桶模型与去重、models.dev 计价、`usage_report` 与 Mac 的 Usage 页。
+9. [套餐用量设计](plan-usage.md)：daemon 只读 Agent 登录文件、询问服务商额度接口、`plan_usage` / `set_plan_usage`，Settings 的 Plan 页与 Notch 顶栏的用量簇。
 
 ## 设计状态
 
@@ -26,6 +27,7 @@
 | Relay | 已部署开发版本 | TypeScript Worker + 每台 Mac 一个 Durable Object |
 | 推送 | 已实现 | 回合结束 / 失败 / 中断经 Relay 转发 APNs；通知文本明文、不落存储 |
 | Usage | 已实现 | daemon 扫描 transcript / rollout 全量目录，桶存同一 SQLite；只有 Mac 页面，不进 iPhone |
+| 套餐用量 | 已实现 | daemon 读 Agent 登录文件问服务商接口，内存快照；Settings 开关 + Notch 顶栏；不换发 token，不进 iPhone |
 | 发布 | 部分验证 | Developer ID、公证和干净机器安装仍待验收 |
 
 ## 核心约束

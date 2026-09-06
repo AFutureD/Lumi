@@ -6,6 +6,8 @@ import SwiftUI
 @MainActor
 struct HaloSettingsView: View {
     @ObservedObject var appState: AppState
+    @ObservedObject var planUsage: PlanUsageModel
+    @ObservedObject var planUsagePreferences: HaloPlanUsagePreferences
     let showNook: @MainActor () -> Void
     let toggleKeepOpen: @MainActor () -> Void
 
@@ -78,6 +80,66 @@ struct HaloSettingsView: View {
                         defaultValue: HaloAdjustmentDefaults.expandAnimationDuration,
                         valueText: { String(format: "%.2f s", $0) }
                     )
+                }
+            }
+
+            SettingsSection(title: "Usage") {
+                SettingsCard {
+                    SettingsRow(title: "Show plan usage", subtitle: "Replaces the Lumi mark in the expanded panel's top bar.") {
+                        Toggle("Show plan usage", isOn: $planUsagePreferences.enabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    Divider()
+                    SettingsRow(title: "Agents", minHeight: 52) {
+                        Picker("Agents", selection: $planUsagePreferences.agentsMode) {
+                            Text("Switch on click").tag(PlanUsageAgentsMode.switchOnClick)
+                            Text("Show both").tag(PlanUsageAgentsMode.showBoth)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .controlSize(.small)
+                        .fixedSize()
+                    }
+                    Divider()
+                    SettingsRow(title: "Percent", minHeight: 52) {
+                        Picker("Percent", selection: $planUsagePreferences.percentStyle) {
+                            Text("Used").tag(PlanUsagePercentStyle.used)
+                            Text("Remaining").tag(PlanUsagePercentStyle.remaining)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .controlSize(.small)
+                        .fixedSize()
+                    }
+                    ForEach(PlanUsageItem.allCases, id: \.self) { item in
+                        Divider()
+                        SettingsRow(title: item.title, minHeight: 44) {
+                            Toggle(item.title, isOn: Binding(
+                                get: { planUsagePreferences.items.contains(item) },
+                                set: { planUsagePreferences.setItem(item, on: $0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        }
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preview")
+                            .font(Design.Font.UI.body)
+                        HaloPlanUsagePreviewStrip(model: planUsage, preferences: planUsagePreferences)
+                        if !planUsagePreferences.enabled {
+                            Text("Turn on “Show plan usage” to see the cluster.")
+                                .font(Design.Font.UI.caption)
+                                .foregroundStyle(.secondary)
+                        } else if planUsage.state?.accounts.contains(where: \.enabled) != true {
+                            Text("No account is switched on under Settings › Plan; the strip shows sample numbers.")
+                                .font(Design.Font.UI.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
             }
 

@@ -149,6 +149,12 @@ public enum IPCOperation: Hashable, Sendable {
     /// `until`), grouped by agent, project and model. Read-only; the daemon's
     /// transcript scan feeds it independently of Session ingest.
     case usageReport
+    /// The daemon's plan-usage snapshot: every tracked sign-in with its
+    /// rate-limit windows. Read-only.
+    case planUsage
+    /// Switch one account's fetching on or off (`planAccount` + `enabled`);
+    /// answers with the updated snapshot.
+    case setPlanUsage
 
     public var rawValue: String {
         switch self {
@@ -173,6 +179,8 @@ public enum IPCOperation: Hashable, Sendable {
         case .getSessionFilters: "get_session_filters"
         case .setSessionFilters: "set_session_filters"
         case .usageReport: "usage_report"
+        case .planUsage: "plan_usage"
+        case .setPlanUsage: "set_plan_usage"
         }
     }
 }
@@ -203,6 +211,8 @@ extension IPCOperation: Codable {
         case "get_session_filters": .getSessionFilters
         case "set_session_filters": .setSessionFilters
         case "usage_report": .usageReport
+        case "plan_usage": .planUsage
+        case "set_plan_usage": .setPlanUsage
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown IPC operation: \(value)")
         }
     }
@@ -245,6 +255,9 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     /// change is measured against, answered in `UsageReport.comparison`.
     public let compareSince: UsageDay?
     public let compareUntil: UsageDay?
+    /// `set_plan_usage`: which sign-in to switch, and to what.
+    public let planAccount: PlanUsageAccountID?
+    public let enabled: Bool?
 
     public init(
         operation: IPCOperation,
@@ -261,7 +274,9 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         since: UsageDay? = nil,
         until: UsageDay? = nil,
         compareSince: UsageDay? = nil,
-        compareUntil: UsageDay? = nil
+        compareUntil: UsageDay? = nil,
+        planAccount: PlanUsageAccountID? = nil,
+        enabled: Bool? = nil
     ) {
         self.operation = operation
         self.sessionID = sessionID
@@ -278,6 +293,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.until = until
         self.compareSince = compareSince
         self.compareUntil = compareUntil
+        self.planAccount = planAccount
+        self.enabled = enabled
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -296,6 +313,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case until
         case compareSince
         case compareUntil
+        case planAccount
+        case enabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -315,6 +334,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         until = try c.decodeIfPresent(UsageDay.self, forKey: .until)
         compareSince = try c.decodeIfPresent(UsageDay.self, forKey: .compareSince)
         compareUntil = try c.decodeIfPresent(UsageDay.self, forKey: .compareUntil)
+        planAccount = try c.decodeIfPresent(PlanUsageAccountID.self, forKey: .planAccount)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
     }
 }
 
@@ -406,6 +427,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let filters: [SessionFilterRule]?
     /// `usage_report`: the grouped token / cost report for the requested range.
     public let usage: UsageReport?
+    /// `plan_usage` / `set_plan_usage`: the daemon's plan-usage snapshot.
+    public let planUsage: PlanUsageState?
 
     public init(
         status: IPCResponseStatus,
@@ -419,7 +442,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         relay: RelayHostStatus? = nil,
         pairing: RelayPairingSession? = nil,
         filters: [SessionFilterRule]? = nil,
-        usage: UsageReport? = nil
+        usage: UsageReport? = nil,
+        planUsage: PlanUsageState? = nil
     ) {
         self.status = status
         self.sessions = sessions
@@ -433,6 +457,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.pairing = pairing
         self.filters = filters
         self.usage = usage
+        self.planUsage = planUsage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -448,6 +473,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case pairing
         case filters
         case usage
+        case planUsage
     }
 
     public init(from decoder: Decoder) throws {
@@ -464,5 +490,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         pairing = try c.decodeIfPresent(RelayPairingSession.self, forKey: .pairing)
         filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
         usage = try c.decodeIfPresent(UsageReport.self, forKey: .usage)
+        planUsage = try c.decodeIfPresent(PlanUsageState.self, forKey: .planUsage)
     }
 }

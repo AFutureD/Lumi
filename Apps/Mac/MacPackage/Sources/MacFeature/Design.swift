@@ -182,48 +182,54 @@ enum Design {
 
 @MainActor
 enum AgentIcons {
-    /// Codex tile (bundled `codex.svg`, already drawn as a rounded icon).
-    static let codex: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "codex", withExtension: "svg"),
+    /// The bundled marks, both transparent: `codex.svg` (the gradient mark)
+    /// and `claude.svg` (the orange mark). Drawn bare on the dark Notch
+    /// band, on a white tile on the light surfaces.
+    static let codex = mark(named: "codex")
+    static let claude = mark(named: "claude")
+
+    private static func mark(named name: String) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "svg"),
               let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = false
         return image
-    }()
+    }
 
-    /// Claude glyph (bundled `claude.svg`, the orange mark) drawn on a white
-    /// rounded tile with a hairline stroke, matching the Codex tile.
-    static let claude: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "claude", withExtension: "svg"),
-              let image = NSImage(contentsOf: url) else { return nil }
-        image.isTemplate = false
-        return image
-    }()
-
+    /// Light surfaces (Settings rows, the Usage table, the Session list):
+    /// the mark on a white rounded tile with a hairline stroke. The Claude
+    /// mark sits deeper in its tile than the Codex one, as the two brands
+    /// draw them.
     static func image(for agent: AgentKind, pointSize: CGFloat) -> NSImage? {
-        switch agent {
-        case .codex, .codexSubagent:
-            guard let codex else { return placeholder(pointSize: pointSize) }
-            let size = NSSize(width: pointSize, height: pointSize)
-            return NSImage(size: size, flipped: false) { rect in
-                codex.draw(in: rect)
-                return true
-            }
-        case .claude, .claudeSubagent:
-            guard let claude else { return placeholder(pointSize: pointSize) }
-            let size = NSSize(width: pointSize, height: pointSize)
-            return NSImage(size: size, flipped: false) { rect in
-                let radius = pointSize * 0.28
-                let tile = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-                NSColor.white.setFill()
-                tile.fill()
-                let inset = pointSize * 0.18
-                claude.draw(in: rect.insetBy(dx: inset, dy: inset))
-                let stroke = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
-                stroke.lineWidth = 1
-                Design.Color.cardStroke.setStroke()
-                stroke.stroke()
-                return true
-            }
+        guard let source = mark(for: agent.provider) else { return placeholder(pointSize: pointSize) }
+        let inset = pointSize * (agent.provider == .claude ? 0.18 : 0.1)
+        return NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { rect in
+            let radius = pointSize * 0.28
+            let tile = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+            NSColor.white.setFill()
+            tile.fill()
+            source.draw(in: rect.insetBy(dx: inset, dy: inset))
+            let stroke = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+            stroke.lineWidth = 1
+            Design.Color.cardStroke.setStroke()
+            stroke.stroke()
+            return true
+        }
+    }
+
+    /// The dark Notch band: the bare mark, no tile.
+    static func mark(for provider: AgentProvider, pointSize: CGFloat) -> NSImage? {
+        guard let source = mark(for: provider) else { return placeholder(pointSize: pointSize) }
+        let inset = pointSize * 0.06
+        return NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { rect in
+            source.draw(in: rect.insetBy(dx: inset, dy: inset))
+            return true
+        }
+    }
+
+    private static func mark(for provider: AgentProvider) -> NSImage? {
+        switch provider {
+        case .codex: codex
+        case .claude: claude
         }
     }
 

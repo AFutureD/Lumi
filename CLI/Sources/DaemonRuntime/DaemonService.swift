@@ -25,6 +25,7 @@ public actor DaemonService {
     private var usageStore: (any UsageStore)?
     private var usageScanner: UsageScanService?
     private var modelPrices: ModelPriceRefresher?
+    private var planUsage: PlanUsageService?
     public nonisolated let subscriptions: DaemonSubscriptionHub
     /// Longest `usage_report` range: a year and a day, so "this year" always fits.
     static let maximumUsageRangeDays = 366
@@ -73,6 +74,11 @@ public actor DaemonService {
         usageStore = store
         usageScanner = scanner
         modelPrices = prices
+    }
+
+    /// Plan usage: the poller `plan_usage` reads and `set_plan_usage` switches.
+    public func attachPlanUsage(_ service: PlanUsageService) {
+        planUsage = service
     }
 
     /// Streams a summary-only change (reviewed, archived) to local subscribers.
@@ -341,6 +347,29 @@ public actor DaemonService {
                     "comparison": comparison?.buckets.count ?? 0,
                 ]))
                 payload = IPCResponse(status: .ok, usage: report)
+            case .planUsage:
+                if let planUsage {
+                    // The sign-in files are re-read on every ask (no network),
+                    // so a login made a moment ago is already in the answer.
+                    await planUsage.refreshAll(now: now, localOnly: true)
+                    payload = IPCResponse(status: .ok, planUsage: await planUsage.state(now: now))
+                } else {
+                    payload = failure(code: "plan_usage_unavailable", message: "The daemon runs without plan usage.")
+                }
+            case .setPlanUsage:
+                guard let planUsage else {
+                    payload = failure(code: "plan_usage_unavailable", message: "The daemon runs without plan usage.")
+                    break
+                }
+                guard let account = envelope.payload.planAccount, let enabled = envelope.payload.enabled else {
+                    payload = failure(code: "missing_plan_account", message: "The set_plan_usage request needs planAccount and enabled.")
+                    break
+                }
+                do {
+                    payload = IPCResponse(status: .ok, planUsage: try await planUsage.setEnabled(enabled, for: account, now: now))
+                } catch PlanUsageServiceError.unknownAccount {
+                    payload = failure(code: "unknown_plan_account", message: "No plan-usage account is called \(account.rawValue).")
+                }
             case .getSessionFilters:
                 payload = IPCResponse(status: .ok, filters: try await repository.sessionFilterRules())
             case .setSessionFilters:

@@ -1,0 +1,64 @@
+# 套餐用量设计
+
+> 基线：2026-09-06 当前仓库实现。套餐用量（Plan usage）是与 Usage（token 花费）平行的第三条链路：daemon 用 Agent 自己的登录去问服务商「各个时间窗口的额度用了多少」，Mac 把百分比放进 Settings 与 Notch 顶栏。参考实现 [OpenUsage](https://github.com/robinebers/openusage)（MIT，归属见根目录 `NOTICE.md`），只移植了解析与请求，不移植 token 换发。
+
+## 目标与边界
+
+- 回答「这台 Mac 上的 Claude Code / Codex 订阅，Session（5 小时）、Weekly（7 天）、Fable（7 天、单模型）窗口用了百分之几，什么时候重置」。
+- 只读 Agent 自己保存的登录；不换发 token、不写回。Claude 先读 `~/.claude/.credentials.json`，没有文件再读 Claude Code 的 Keychain 项（`Claude Code-credentials`）；Claude Desktop 的 `Claude Safe Storage` 不读。登录过期就停在「已过期」，由用户在 Agent 里重新登录。
+- 数据模型按多账号设计（`PlanUsageAccountID`），现在每家一个：`claude`、`codex`。
+- 只有 Mac：Settings 两处 + Notch 顶栏；不进 Relay，不进 iPhone。
+
+## 数据来源
+
+| Agent | 登录文件 | 身份 | 接口 |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude/.credentials.json`（`CLAUDE_CONFIG_DIR` 覆盖根目录），没有文件则用 `/usr/bin/security find-generic-password -w` 读 Keychain 通用密码 `Claude Code-credentials`（设了 `CLAUDE_CONFIG_DIR` 时先试带其 SHA-256 前 8 位后缀的服务名；账户 = 用户名，再试无账户的旧项；值是同一份 JSON，`security` 不肯打印时给的是 hex）。走 `security` 子进程而不是 `SecItemCopyMatching`：Claude Code 就是用这个工具写入的，所以它在该项的 ACL 里，读取永不弹提示、不依赖 Lumen 被授权：`claudeAiOauth.{accessToken, expiresAt(毫秒), subscriptionType, rateLimitTier, scopes}`。macOS 上的 Claude Code 只写 Keychain，所以本机走的是这条 | `~/.claude.json`（或 `$CLAUDE_CONFIG_DIR/.claude.json`）的 `oauthAccount.emailAddress`；套餐 = `subscriptionType` 首字母大写 + `rateLimitTier` 里的 `Nx`（`Max 20x`） | `GET https://api.anthropic.com/api/oauth/usage`，头 `Authorization: Bearer`、`anthropic-beta: oauth-2025-04-20`、`User-Agent: claude-code/2.1.69`（伪装 Claude Code，版本会漂移）；需要 `user:profile` scope |
+| Codex | `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`）：`tokens.{access_token, account_id, id_token}`；只有 `OPENAI_API_KEY` 的文件没有套餐用量 | `id_token` 的 JWT claims：`email`、`https://api.openai.com/auth.chatgpt_account_id`（`account_id` 缺时用）；过期看 access token 的 `exp`；套餐 = 响应 `plan_type`（`prolite` → `Pro 5x`、`pro` → `Pro 20x`） | `GET https://chatgpt.com/backend-api/wham/usage`，头 `Authorization: Bearer`、`User-Agent: OpenUsage`、`ChatGPT-Account-Id` |
+
+响应到窗口的映射（`Core/PlanUsage`，纯函数）：
+
+- Claude：`five_hour.utilization` → session；`seven_day.utilization` → weekly；`limits[]` 里 `kind == "weekly_scoped"` 的行按 `scope.model.display_name` 成为单模型周窗（`Fable`），取 `percent`；旧字段 `seven_day_sonnet` 非 null 时也成一行（`Sonnet`）。`resets_at` 是 RFC 3339 或数字（<1e10 秒，否则毫秒）。
+- Codex：`rate_limit.primary_window` / `secondary_window` 按 `limit_window_seconds` 归类（18000 → session、604800 → weekly），没写时长才按槽位兜底；`used_percent` 缺时读响应头 `x-codex-primary-used-percent` / `x-codex-secondary-used-percent`；`reset_at`（秒）或 `reset_after_seconds`。
+- 百分比一律是服务商的「已用」，夹到 0…100；「剩余」由 Mac 算。
+- 不解析：extra usage、credits、reset credits、Spark 限额、Claude Desktop 的加密凭据。
+
+## daemon
+
+`PlanUsageService`（`Service`，`Lumen` 里排在 `ModelPriceRefresher` 之后）：
+
+1. 启动读 `Lumen/plan-usage-settings.json`（`{"enabled":{"claude":true}}`），之后每 5 分钟 `refreshAll`。
+2. 每个账号每次都重读登录（文件，Claude 再退到 Keychain），先取身份（邮箱、套餐）；都没有或没有 token → `credentialsMissing`，清空 limits；`security` 出错 → `failed` 带它的 stderr，5 分钟内不重试。`plan_usage` 每次被问都做这一步（不联网），所以刚登录立刻可见；刚出现登录的账号顺带拉一次。
+3. 未打开开关 → 到此为止（状态回 `ok`）。
+4. token 过期（提前 5 分钟）→ `signInExpired`，不发请求。
+5. 429 冷却期内 → 跳过。
+6. 发请求（10 秒超时）：2xx → `ok` + limits + `fetchedAt`；401 / 403 → `signInRejected`；429 → `rateLimited`，`retryAt = now + retry-after`（缺省 5 分钟）；其他 → `failed` + `statusDetail`。失败一律保留上一次的 limits。
+
+`set_plan_usage` 写设置文件（原子替换），打开时立刻拉该账号一次再回答，关闭时清空 limits。`LUMI_PLAN_USAGE=0` 关掉联网（测试、smoke）。日志 `lifecycle`：`plan_usage_refreshed account= limits= windows=`、`plan_usage_fetch_failed account= http=`、`plan_usage_account_switched`；token、邮箱、响应体永不进日志。
+
+## IPC
+
+- `plan_usage` → `PlanUsageState { accounts: [PlanUsageAccount], generatedAt }`。
+- `set_plan_usage { planAccount, enabled }` → 同上（已含刚拉到的 limits）。
+- `PlanUsageAccount { id, provider, email?, plan?, enabled, status, statusDetail?, retryAt?, limits: [PlanUsageLimit], fetchedAt? }`；`PlanUsageLimit { window: session | weekly, model?, usedPercent, resetsAt? }`；`status ∈ ok · credentialsMissing · signInExpired · signInRejected · rateLimited · failed`。
+
+## Mac
+
+- `PlanUsageModel`（`ApplicationCoordinator` 持有一份）：App 运行期间每 60 秒发 `plan_usage`（快照相同不重发布），daemon 从不可达变可达时立即重拉；`setEnabled` 发 `set_plan_usage` 并用返回值覆盖。它同时持有 Notch 显示偏好 `HaloPlanUsagePreferences`（UserDefaults `Lumi.Notch.PlanUsage.*`：`Enabled`、`AgentsMode`、`PercentStyle`、`Items`、`SelectedProvider`），三处界面共用。
+- **Settings › Plan**：`Usage` 段一张卡，复用 Integrations 的行（图标、名字、文件路径、副标题、行尾开关）。副标题 = `邮箱 · 套餐`，状态非 `ok` 时接状态文案（见术语表）；`credentialsMissing` 的行开关禁用。
+- **Settings › Notch › Usage**：`Show plan usage`、`Agents`（Switch on click · Show both）、`Percent`（Used · Remaining）、五个数字开关（默认关 Codex session）、`Preview`（黑底 32pt 条，渲染与顶栏同一个视图；没有可显示账号时用样例并标 `sample`）。
+- **Notch 顶栏**：`HaloPlanUsagePresentation.cluster(state:choices:now:)` 纯函数决定画什么——只列打开了开关且勾了数字的账号；`switchOnClick` 只出选中的那家（不可用时换另一家），整簇是按钮；未勾的数字不占位，没报的窗口 `–`；没有 limits 的账号图标 45% 透明；已用 ≥ 90% 用 `InkDark.warning`（Orange D400）；tooltip 列每个窗口的「已用/剩余 + 重置倒计时」。返回 `nil` 时顶栏保持品牌簇。
+- 图标：`AgentIcons.mark`——两家 SVG 标记（`codex.svg`、`claude.svg`，都是透明背景）直接画在黑底上，15pt；浅色界面（Settings 行、Usage 表、Session 列表）用 `AgentIcons.image`，同一标记加白色圆角底块。
+
+## 当前限制
+
+- Claude 的 Keychain 读取依赖 `/usr/bin/security` 在该项 ACL 里（Claude Code 用它写入，现状如此）；若 Claude Code 改用别的方式写钥匙串，这条会变成 `failed`。
+- 每家一个账号；第二个登录需要再定 id 规则（`claude@xxxx`）。
+- 不显示 extra usage / credits；不推送、不告警，只有颜色。
+- `User-Agent: claude-code/2.1.69` 是常量，接口开始拒绝时要跟着 Claude Code 版本改。
+
+## 相关文档
+
+- [Usage 设计](usage.md)（token 花费，另一条链路）
+- [日志设计](logging.md)
+- [Mac 套餐用量（产品文档）](../feat/modules/mac-plan-usage.md)

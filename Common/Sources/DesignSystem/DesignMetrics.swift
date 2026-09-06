@@ -175,6 +175,9 @@ public extension DesignSystem {
         public static let topBarGlyph: Double = 12
         public static let topBarIconBox: Double = 15
         public static let compactSlot: Double = 28
+        /// Plan-usage cluster in the top bar: glyph and percentages 4 apart;
+        /// the two agents sit `topBarLeadingGap` apart.
+        public static let planUsageGap: Double = 4
 
         // List rows: grid `8px | 1fr | auto`, column gap 9, row gap 2,
         // padding `3 14 4` → a single-line row is ~28pt.
@@ -399,6 +402,8 @@ public extension DesignSystem {
         public static let breathingHalo: Double = 0.35
         /// Reset button while the slider already sits at its default.
         public static let disabledReset: Double = 0.3
+        /// Plan-usage agent glyph while the account has no current limits.
+        public static let planUsageUnavailable: Double = 0.45
     }
 
     /// Hairline / ring widths.

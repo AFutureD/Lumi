@@ -85,6 +85,33 @@
 - Usage 页里 Claude 的 Agent 一律写 `Claude Code`（会话列表里的 Agent 名仍是 `Claude`）。
 - Sessions 与 Turns 是去重计数，跨 Agent 不能相加：Agent 与 Model 分组不列这两列。
 
+## 套餐用量
+
+| 概念 | 界面用词 | 中文写法 |
+| ---- | -------- | -------- |
+| 订阅（Max、Pro…），与按 token 计价的 Usage 相对 | Plan | 套餐 |
+| 订阅额度用掉了多少：各个时间窗口的百分比 | Plan usage | 套餐用量 |
+| Settings 侧栏里管理两家登录与开关的那一页 | Plan | 套餐 |
+| Plan 页里列出账号的那一段 | Usage | 用量 |
+| Settings › Notch 里决定 Notch 显示哪些百分比的那一段 | Usage | 用量 |
+| 5 小时滚动窗口的额度 | Session limit | Session 限额 |
+| 7 天滚动窗口的额度 | Weekly limit | 周限额 |
+| Claude 单独给 Fable 的 7 天额度 | Fable limit | Fable 限额 |
+| 百分比按「已用」还是「剩余」显示 | Used · Remaining | 已用 · 剩余 |
+| Notch 里两家怎么排：点一下换另一家，或一起显示 | Switch on click · Show both | 点击切换 · 同时显示 |
+| Notch 里的那一串「图标 + 百分比」 | Plan usage（Notch 顶栏） | 用量簇 |
+| Notch 设置里那条黑底的效果预览 | Preview | 预览 |
+| 这台 Mac 上没有该 Agent 的登录文件 | Not signed in · … | 未登录 |
+| 登录文件里的 token 已过期，要在 Agent 里重新登录 | Saved sign-in expired | 登录已过期 |
+| 服务拒绝了这份登录 | Sign-in rejected by the service | 登录被拒 |
+| 服务限流，稍后再问 | Rate limited · retry in … | 限流 |
+| 其他失败 | Unavailable · … | 不可用 |
+
+- Settings 侧栏项叫 `Plan`；它里面的分段和 Notch 设置里的分段都叫 `Usage`。两个 `Usage` 与侧栏 Monitor 组的 Usage 页同词不同义：侧栏那页是 token 花费，这两段是套餐额度。
+- 套餐用量里 Claude 一律写 `Claude Code`，与 Usage 页一致。
+- 百分比来自服务商自己的接口，Lumi 只读 Agent 保存的登录（文件或 Claude Code 的钥匙串项），不换发、不写回。
+- 不要写「配额」「额度百分比」「订阅用量」；统一用「套餐用量」。
+
 ## 时间概念
 
 | 概念                                             | 界面用词    | 中文写法 |

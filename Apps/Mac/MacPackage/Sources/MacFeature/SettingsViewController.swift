@@ -8,6 +8,7 @@ enum SettingsSectionID: Int, CaseIterable {
     case notch
     case daemon
     case agents
+    case plan
     case about
 
     var title: String {
@@ -16,6 +17,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .notch: "Notch"
         case .daemon: "Daemon"
         case .agents: "Agents"
+        case .plan: "Plan"
         case .about: "About"
         }
     }
@@ -26,6 +28,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .notch: "Appearance and interaction"
         case .daemon: "Local service and history"
         case .agents: "Integrations and filters"
+        case .plan: "Subscription usage"
         case .about: "Version and updates"
         }
     }
@@ -36,6 +39,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .notch: "Configure the Notch surface, screen, size, and interaction."
         case .daemon: "The local service collects Codex events and writes them to SQLite."
         case .agents: "Integrations that report Session events, and filters that drop ghost Sessions."
+        case .plan: "Plan limits of the Claude Code and Codex sign-ins on this Mac."
         case .about: "Version, framework and update information."
         }
     }
@@ -143,6 +147,7 @@ final class SettingsDetailViewController: NSViewController {
     private let store: MacSessionStore
     private let nook: HaloController
     private let softwareUpdates: SoftwareUpdateController
+    private let planUsage: PlanUsageModel
     private let model: SettingsModel
     let subheaderAccessory = DetailSubheaderAccessoryController(horizontalInset: DetailLayout.horizontalInset)
     private var subheader: DetailSubheaderView { subheaderAccessory.subheader }
@@ -152,10 +157,11 @@ final class SettingsDetailViewController: NSViewController {
 
     private(set) var selectedSection: SettingsSectionID = .general
 
-    init(store: MacSessionStore, nook: HaloController, softwareUpdates: SoftwareUpdateController) {
+    init(store: MacSessionStore, nook: HaloController, softwareUpdates: SoftwareUpdateController, planUsage: PlanUsageModel) {
         self.store = store
         self.nook = nook
         self.softwareUpdates = softwareUpdates
+        self.planUsage = planUsage
         model = SettingsModel(store: store)
         super.init(nibName: nil, bundle: nil)
         model.presentError = { [weak self] error in self?.showError(error) }
@@ -212,6 +218,8 @@ final class SettingsDetailViewController: NSViewController {
         case .notch:
             HaloSettingsView(
                 appState: nook.appState,
+                planUsage: planUsage,
+                planUsagePreferences: planUsage.preferences,
                 showNook: { [weak nook] in nook?.showNook() },
                 toggleKeepOpen: { [weak nook] in nook?.toggleKeepOpen() }
             )
@@ -219,6 +227,8 @@ final class SettingsDetailViewController: NSViewController {
             DaemonSettingsPanel(model: model)
         case .agents:
             AgentsSettingsPanel(model: model)
+        case .plan:
+            PlanSettingsPanel(model: planUsage)
         case .about:
             AboutSettingsPanel(model: model, softwareUpdates: softwareUpdates)
         }

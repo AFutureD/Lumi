@@ -90,6 +90,8 @@ public extension DesignSystem {
         public static let accentText = Palette.blueDark.d400
         /// 破坏性 — failed dot and FAILED tag (Red D500).
         public static let destructive = Palette.redDark.d500
+        /// 警示 — a plan-usage window at 90 % or more (Orange D400).
+        public static let warning = Palette.orangeDark.d400
         /// Ink on the white primary button.
         public static let onAccentFill = DesignColor(hex: 0x111111)
 

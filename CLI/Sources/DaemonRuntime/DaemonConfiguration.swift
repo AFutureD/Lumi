@@ -23,6 +23,18 @@ public struct DaemonConfiguration: Hashable, Sendable {
     /// keeps the daemon from fetching it (tests, smoke runs, offline).
     public let modelPricesPath: String
     public let modelPricesFetchEnabled: Bool
+    /// Plan usage: the agents' own sign-in files (read-only) and the
+    /// daemon's switch file (`Lumen/plan-usage-settings.json`).
+    /// `LUMI_PLAN_USAGE=0` keeps the daemon from calling the usage endpoints.
+    public let claudeCredentialsPath: String
+    public let claudeStatePath: String
+    /// `CLAUDE_CONFIG_DIR` as given, because Claude Code hashes it into the
+    /// Keychain service name of its sign-in.
+    public let claudeConfigDirectoryOverride: String?
+    public let codexAuthPath: String
+    public let planUsageSettingsPath: String
+    public let planUsageFetchEnabled: Bool
+    public let planUsagePollIntervalSeconds: Double
     /// The Relay the daemon registers with as the host; paired iPhones sync
     /// through it. Override with `LUMI_RELAY_URL`; `LUMI_RELAY=0`
     /// keeps the daemon off the network (tests, smoke runs).
@@ -54,6 +66,13 @@ public struct DaemonConfiguration: Hashable, Sendable {
         usagePollIntervalSeconds: Double = 30,
         modelPricesPath: String? = nil,
         modelPricesFetchEnabled: Bool = true,
+        claudeCredentialsPath: String? = nil,
+        claudeStatePath: String? = nil,
+        claudeConfigDirectoryOverride: String? = nil,
+        codexAuthPath: String? = nil,
+        planUsageSettingsPath: String? = nil,
+        planUsageFetchEnabled: Bool = true,
+        planUsagePollIntervalSeconds: Double = 5 * 60,
         relayURL: URL = DaemonConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
         relayStatePath: String? = nil,
@@ -77,6 +96,16 @@ public struct DaemonConfiguration: Hashable, Sendable {
         self.usagePollIntervalSeconds = usagePollIntervalSeconds
         self.modelPricesPath = modelPricesPath ?? daemonDirectory.appendingPathComponent("models-dev.json").path
         self.modelPricesFetchEnabled = modelPricesFetchEnabled
+        // The agent homes are the parents of their session roots.
+        let claudeHome = self.claudeProjectsDirectory.deletingLastPathComponent()
+        let codexHome = codexSessionsDirectory.deletingLastPathComponent()
+        self.claudeCredentialsPath = claudeCredentialsPath ?? claudeHome.appendingPathComponent(".credentials.json").path
+        self.claudeStatePath = claudeStatePath ?? claudeHome.appendingPathComponent(".claude.json").path
+        self.claudeConfigDirectoryOverride = claudeConfigDirectoryOverride
+        self.codexAuthPath = codexAuthPath ?? codexHome.appendingPathComponent("auth.json").path
+        self.planUsageSettingsPath = planUsageSettingsPath ?? daemonDirectory.appendingPathComponent("plan-usage-settings.json").path
+        self.planUsageFetchEnabled = planUsageFetchEnabled
+        self.planUsagePollIntervalSeconds = planUsagePollIntervalSeconds
         self.relayURL = relayURL
         self.relayEnabled = relayEnabled
         self.relayStatePath = relayStatePath ?? daemonDirectory.appendingPathComponent("relay-host-state.json").path
@@ -114,6 +143,13 @@ public struct DaemonConfiguration: Hashable, Sendable {
             codexArchivedSessionsDirectory: codexHome.appendingPathComponent("archived_sessions", isDirectory: true),
             claudeProjectsDirectory: claudeHome.appendingPathComponent("projects", isDirectory: true),
             modelPricesFetchEnabled: !isDisabled(environment["LUMI_MODEL_PRICES"]),
+            // Claude Code keeps `.claude.json` beside `~/.claude`, or inside
+            // `CLAUDE_CONFIG_DIR` when that is set.
+            claudeStatePath: environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+                .map { URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent(".claude.json").path }
+                ?? homeDirectory.appendingPathComponent(".claude.json").path,
+            claudeConfigDirectoryOverride: environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : $0 },
+            planUsageFetchEnabled: !isDisabled(environment["LUMI_PLAN_USAGE"]),
             relayURL: environment["LUMI_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
             relayEnabled: !isDisabled(environment["LUMI_RELAY"]),
             relayStatePath: environment["LUMI_RELAY_STATE"],

@@ -45,7 +45,7 @@ final class HaloController {
     /// Non-nil only when launched with `-LumiNotchStateLog <path>`.
     private var stateLogger: DebugNotchStateLogger?
 
-    init(store: MacSessionStore, actions: HaloActions) {
+    init(store: MacSessionStore, actions: HaloActions, planUsage: PlanUsageModel) {
         let model = HaloModel(store: store)
         let activityQueue = NookActivityQueue()
         let appState = AppState()
@@ -60,7 +60,7 @@ final class HaloController {
         var configuration = NookConfiguration()
         configuration.setHome {
             NookActivityHost(queue: activityQueue) {
-                HaloHomeView(model: model, actions: actions, coordinatorBox: coordinatorBox)
+                HaloHomeView(model: model, planUsage: planUsage, actions: actions, coordinatorBox: coordinatorBox)
             }
         }
         configuration.setCompactLeading {
@@ -313,6 +313,7 @@ private extension Color {
     static let nookPillName = Color(DS.InkDark.pillName)
     static let nookPillTime = Color(DS.InkDark.pillTime)
     static let nookArchiveGlyph = Color(DS.InkDark.archiveGlyph)
+    static let nookWarning = Color(DS.InkDark.warning)
 }
 
 /// Dark ladder of the lifecycle tiers (design system 4.1 · Dark).
@@ -333,20 +334,29 @@ final class HaloCoordinatorBox {
 /// keep-open lock (15px line icons, `.62`) on the right, gaps 10 / 15. The
 /// middle stays empty for the camera.
 private struct HaloTopBar: View {
+    @ObservedObject var planUsage: PlanUsageModel
+    @ObservedObject var planUsagePreferences: HaloPlanUsagePreferences
     let actions: HaloActions
     let coordinatorBox: HaloCoordinatorBox
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
         HStack(spacing: 0) {
-            HStack(spacing: NotchMetric.topBarLeadingGap) {
-                Image(systemName: "terminal")
-                    .font(.system(size: NotchMetric.topBarGlyph, weight: .regular))
-                    .foregroundStyle(Color(DS.InkDark.brandIcon))
-                    .frame(width: NotchMetric.topBarIconBox, height: NotchMetric.topBarIconBox)
-                Text("Lumi")
-                    .designText(NotchType.caption)
-                    .foregroundStyle(Color.nookSecondary)
+            // Plan usage takes the leading slot when it is on and has an
+            // account to show; otherwise the brand cluster.
+            let cluster = HaloPlanUsageClusterView(model: planUsage, preferences: planUsagePreferences)
+            if cluster.hasContent {
+                cluster
+            } else {
+                HStack(spacing: NotchMetric.topBarLeadingGap) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: NotchMetric.topBarGlyph, weight: .regular))
+                        .foregroundStyle(Color(DS.InkDark.brandIcon))
+                        .frame(width: NotchMetric.topBarIconBox, height: NotchMetric.topBarIconBox)
+                    Text("Lumi")
+                        .designText(NotchType.caption)
+                        .foregroundStyle(Color.nookSecondary)
+                }
             }
             Spacer(minLength: 0)
             HStack(spacing: NotchMetric.topBarTrailingGap) {
@@ -384,6 +394,7 @@ private struct HaloTopBar: View {
 
 private struct HaloHomeView: View {
     @ObservedObject var model: HaloModel
+    @ObservedObject var planUsage: PlanUsageModel
     let actions: HaloActions
     let coordinatorBox: HaloCoordinatorBox
     @Environment(\.nookResolvedTheme) private var theme
@@ -393,7 +404,7 @@ private struct HaloHomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HaloTopBar(actions: actions, coordinatorBox: coordinatorBox)
+            HaloTopBar(planUsage: planUsage, planUsagePreferences: planUsage.preferences, actions: actions, coordinatorBox: coordinatorBox)
             routeBody
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)

@@ -87,4 +87,4 @@ For detailed behavior and recovery paths, read the [feature guide](docs/FEAT.md)
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[Apache License 2.0](LICENSE). Third-party attributions, including the OpenUsage code the plan-usage feature derives from, are in [NOTICE.md](NOTICE.md).

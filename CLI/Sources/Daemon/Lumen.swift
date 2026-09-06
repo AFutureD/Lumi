@@ -150,6 +150,22 @@ enum LumenMain {
             pollIntervalSeconds: configuration.usagePollIntervalSeconds
         )
         await service.attachUsage(store: usageStore, scanner: usageScanner, prices: modelPrices)
+        // Plan usage: the agents' own sign-in files, read every poll, and
+        // the providers' usage endpoints for the accounts switched on.
+        let planUsage = PlanUsageService(
+            paths: PlanUsageService.Paths(
+                claudeCredentials: configuration.claudeCredentialsPath,
+                claudeState: configuration.claudeStatePath,
+                claudeKeychainServices: ClaudeKeychainCredentials.serviceCandidates(
+                    configDirectory: configuration.claudeConfigDirectoryOverride
+                ),
+                codexAuth: configuration.codexAuthPath,
+                settings: configuration.planUsageSettingsPath
+            ),
+            fetchEnabled: configuration.planUsageFetchEnabled,
+            pollIntervalSeconds: configuration.planUsagePollIntervalSeconds
+        )
+        await service.attachPlanUsage(planUsage)
 
         // Ordered, before anything serves: the baseline must exist before a
         // hook frame or the poll loop can touch rollout cursors, and the
@@ -175,6 +191,7 @@ enum LumenMain {
             "wake": wakeListener == nil ? "off" : configuration.wakeService,
             "database": configuration.databasePath,
             "relay": relay == nil ? "off" : configuration.relayURL.absoluteString,
+            "plan_usage": configuration.planUsageFetchEnabled ? "on" : "off",
             "log_level": logConfiguration.minimumLevel.label.lowercased(),
             "log_directory": logConfiguration.directory,
         ]))
@@ -187,7 +204,7 @@ enum LumenMain {
         // therefore exits 0 and stays down (KeepAlive.SuccessfulExit=false)
         // until a client wakes it; a service failure exits non-zero and
         // launchd relaunches.
-        var services: [any Service] = [backfill, server, watcher, claudeWatcher, usageScanner, modelPrices]
+        var services: [any Service] = [backfill, server, watcher, claudeWatcher, usageScanner, modelPrices, planUsage]
         if let relay { services.append(relay) }
         if let wakeListener { services.append(wakeListener) }
         let group = ServiceGroup(configuration: .init(

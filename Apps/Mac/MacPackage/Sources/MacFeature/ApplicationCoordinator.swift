@@ -10,18 +10,22 @@ private let log = Logger(label: "lifecycle")
 public final class ApplicationCoordinator: NSObject {
     private let store = MacSessionStore()
     private lazy var relayHost = RelayHostStatusClient(store: store)
+    /// One copy of the daemon's plan-usage snapshot for the Notch and both
+    /// Settings pages; polled while the app runs.
+    private lazy var planUsage = PlanUsageModel(store: store)
     private lazy var notch: HaloController = {
         var actions = HaloActions()
         actions.openMainSettings = { [weak self] in self?.showNotchSettings() }
         actions.showSession = { [weak self] sessionID in self?.showSession(sessionID) }
-        return HaloController(store: store, actions: actions)
+        return HaloController(store: store, actions: actions, planUsage: planUsage)
     }()
     private let softwareUpdates = SoftwareUpdateController()
     private lazy var mainWindow = MainWindowController(
         store: store,
         relayHost: relayHost,
         nook: notch,
-        softwareUpdates: softwareUpdates
+        softwareUpdates: softwareUpdates,
+        planUsage: planUsage
     )
     private lazy var daemonAutoUpdater = DaemonAutoUpdater(store: store)
     private var mainWindowCloseObserver: NSObjectProtocol?
@@ -59,6 +63,7 @@ public final class ApplicationCoordinator: NSObject {
         refreshInstalledHooks()
         _ = relayHost
         store.start()
+        planUsage.start()
         daemonAutoUpdater.start()
         mainWindow.showWindow(nil)
         observeMainWindowClose()
@@ -95,6 +100,7 @@ public final class ApplicationCoordinator: NSObject {
 
     public func stop() async {
         store.stop()
+        planUsage.stop()
         relayHost.stop()
         await notch.stop()
         log.info("app_stopped")
