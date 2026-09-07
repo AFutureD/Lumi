@@ -10,8 +10,19 @@ public enum SessionDetailReduction {
     /// kept in `(occurredAt, id)` order, and turns projected back from the
     /// merged timeline — the same pure fold every store uses.
     public static func applying(_ event: AgentIngressEvent, to detail: SessionDetail) -> SessionDetail {
-        let summary = SessionReduction.summary(applying: event, to: detail.summary)
-        let timeline = event.timelineItem.map { merge([$0], into: detail.timeline) } ?? detail.timeline
+        applying([event], to: detail)
+    }
+
+    /// One batch of events in arrival order, folded as `apply` would fold
+    /// them one by one but with a single merge and a single turn projection:
+    /// the summary reduces through every event, the items upsert together.
+    /// A `.discard` event is the caller's job — it removes the session, it
+    /// does not reduce it — so a batch must be split at a discard before it
+    /// reaches this fold.
+    public static func applying(_ events: [AgentIngressEvent], to detail: SessionDetail) -> SessionDetail {
+        guard !events.isEmpty else { return detail }
+        let summary = events.reduce(detail.summary) { SessionReduction.summary(applying: $1, to: $0) }
+        let timeline = merge(events.compactMap(\.timelineItem), into: detail.timeline)
         return SessionDetail(
             summary: summary,
             turns: TurnProjection.turns(from: timeline, sessionID: summary.id),

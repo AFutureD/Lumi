@@ -76,3 +76,38 @@ private func item(_ id: String, at offset: TimeInterval, text: String = "x", tur
         #expect(message.text == "replaced")
     }
 }
+
+@Test func detailReductionFoldsABatchLikeTheSameEventsOneByOne() {
+    let detail = SessionDetail(
+        summary: SessionSummary(
+            id: SessionID("s"), agent: .codex, title: "s", lifecycle: .running, phase: .thinking,
+            startedAt: base, updatedAt: base, lastActivityAt: base
+        ),
+        turns: [],
+        timeline: [item("a", at: 1)]
+    )
+    let events = [
+        AgentIngressEvent(
+            eventID: EventID("e1"), sessionID: SessionID("s"), turnID: TurnID("t1"), agent: .codex,
+            occurredAt: base.addingTimeInterval(5), phase: .executing,
+            timelineItem: item("b", at: 5)
+        ),
+        AgentIngressEvent(
+            eventID: EventID("e2"), sessionID: SessionID("s"), turnID: TurnID("t1"), agent: .codex,
+            occurredAt: base.addingTimeInterval(6), phase: .responding,
+            timelineItem: item("a", at: 6, text: "updated")
+        ),
+        AgentIngressEvent(
+            eventID: EventID("e3"), sessionID: SessionID("s"), turnID: TurnID("t1"), agent: .codex,
+            occurredAt: base.addingTimeInterval(7), phase: .responding
+        ),
+    ]
+    let oneByOne = events.reduce(detail) { SessionDetailReduction.applying($1, to: $0) }
+    let batched = SessionDetailReduction.applying(events, to: detail)
+    #expect(batched == oneByOne)
+    #expect(batched.summary.phase == .responding)
+    #expect(batched.summary.updatedAt == base.addingTimeInterval(7))
+    #expect(batched.timeline.map(\.id) == [TimelineItemID("b"), TimelineItemID("a")])
+    #expect(batched.turns.first?.lastAssistantMessage == "updated")
+    #expect(SessionDetailReduction.applying([], to: detail) == detail)
+}

@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 会话查看
+
+- [Lumi for Mac] - 修复 App 内存常驻 150 MB 左右、启动瞬间接近 180 MB 的问题：Notch 每次刷新都把 7 天内每个 Session 的完整时间线读进内存再丢掉。现在完整的 Session 详情只保留最近用到的几份（选中的那条固定保留），Notch 每次刷新只取正在工作、等待或刚结束的少数 Session，其余只用摘要显示；已读进内存的 Session 直接吸收 daemon 推来的更新，不再反复读库。
+- [Lumi for Mac] - Notch 里被中途打断的 Session（Failed / Interrupted，或结束信号先于 Turn End 到达的 Completed）现在按 Session 状态判定为已结束：标题变为正文色，悬停出现 Archive 按钮。
+
 ### 套餐用量
 
 - [Lumi for Mac] - “Settings > Usage”新增 Plan 段：一账号一张卡，卡头是登录（邮箱与套餐、读取来源、刷新时间）与开关，打开后 daemon 每 5 分钟向服务商询问套餐额度，卡身按窗口列出 `42% used`、用量条与重置倒计时（≥ 90% 变橙）。“Settings > Notch”新增 Usage 段：Preview 黑条、Agents（Switch on click / Show both）、Percent（Used / Remaining）、Show 多选药丸（Claude Code：5-hour / Weekly / Fable；Codex：5-hour / Weekly，只列服务商报了的窗口，一颗都不选即关闭）。选了之后 Notch 展开态顶栏左侧的 Lumi 标记换成额度簇：Claude 标记 `5h 42% · 7d 18% · Fable 7%`，Codex 标记 `7d 12%`；≥ 90% 的数字变橙，悬停看重置时间。

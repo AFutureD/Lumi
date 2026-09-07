@@ -552,93 +552,62 @@ private let nookNow = Date(timeIntervalSince1970: 100)
 }
 
 @Test @MainActor
-func selectedSessionDetailMergesLiveEventsWithoutAFullReload() {
-    let sessionID = SessionID("selected")
-    let initialDate = Date(timeIntervalSince1970: 10)
-    let initialSummary = SessionSummary(
-        id: sessionID,
-        agent: .codex,
-        title: "Selected",
-        lifecycle: .running,
-        phase: .thinking,
-        startedAt: initialDate,
-        updatedAt: initialDate,
-        lastActivityAt: initialDate
-    )
-    let original = TimelineItem(
-        id: TimelineItemID("original"),
-        sessionID: sessionID,
-        occurredAt: initialDate,
-        payload: .message(MessageTimelinePayload(role: .assistant, text: "Old"))
-    )
-    let detail = SessionDetail(summary: initialSummary, timeline: [original])
-    let appended = TimelineItem(
-        id: TimelineItemID("appended"),
-        sessionID: sessionID,
-        occurredAt: initialDate.addingTimeInterval(1),
-        payload: .message(MessageTimelinePayload(role: .user, text: "New"))
-    )
-    let replacement = TimelineItem(
-        id: original.id,
-        sessionID: sessionID,
-        occurredAt: initialDate.addingTimeInterval(2),
-        payload: .message(MessageTimelinePayload(role: .assistant, text: "Updated"))
-    )
-    let updatedDate = initialDate.addingTimeInterval(2)
-    let updatedSummary = SessionSummary(
-        id: sessionID,
-        agent: .codex,
-        title: "Selected",
-        lifecycle: .running,
-        phase: .responding,
-        startedAt: initialDate,
-        updatedAt: updatedDate,
-        lastActivityAt: updatedDate
-    )
-    let merged = MacSessionStore.merging(
-        detail,
-        summary: updatedSummary,
-        events: [
-            AgentIngressEvent(
-                eventID: EventID("append"),
-                sessionID: sessionID,
-                agent: .codex,
-                occurredAt: appended.occurredAt,
-                timelineItem: appended
-            ),
-            AgentIngressEvent(
-                eventID: EventID("replace"),
-                sessionID: sessionID,
-                agent: .codex,
-                occurredAt: replacement.occurredAt,
-                timelineItem: replacement
-            ),
-        ]
-    )
+func selectedSessionDetailFoldsLiveEventsWithoutAnotherDatabaseRead() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
 
-    #expect(merged.summary == updatedSummary)
-    #expect(merged.timeline.map(\.id) == [appended.id, original.id])
-    #expect(merged.timeline.last?.payload == replacement.payload)
+    store.enqueueAgentEvent(macStartEvent("live", event: "live-start", at: 100))
+    store.enqueueAgentEvent(macPromptEvent("live", event: "live-p1", at: 101))
+    await store.flushPendingEventsForTesting()
+    #expect(store.sessions.map(\.id) == [SessionID("live")])
+    // The first visible session is the lead: one database read made it resident.
+    let selected = try #require(store.selectedSession)
+    #expect(selected.summary.id == SessionID("live"))
+    let misses = store.detailCacheStatistics.misses
+    #expect(misses == 1)
+
+    // Streamed items fold into the resident copy — turns re-projected from
+    // the merged timeline — and the database is not paged again.
+    let sessionID = SessionID("live")
+    let prompt = TimelineItem(
+        id: TimelineItemID("live-msg"), sessionID: sessionID, turnID: TurnID("turn-live-p1"),
+        occurredAt: Date(timeIntervalSince1970: 102),
+        payload: .message(MessageTimelinePayload(role: .user, text: "hi"))
+    )
+    store.enqueueAgentEvent(AgentIngressEvent(
+        eventID: EventID("live-msg"), sessionID: sessionID, turnID: TurnID("turn-live-p1"), agent: .claude,
+        occurredAt: prompt.occurredAt, phase: .thinking, timelineItem: prompt
+    ))
+    store.enqueueAgentEvent(macConfigEvent("live", event: "live-cfg", at: 103, model: "gpt-5"))
+    await store.flushPendingEventsForTesting()
+    #expect(store.detailCacheStatistics.misses == misses)
+    let folded = try #require(store.selectedSession)
+    #expect(folded.timeline.map(\.id).suffix(2) == [TimelineItemID("live-msg"), TimelineItemID("live-cfg")])
+    // One source of truth: the resident summary is the list's row.
+    #expect(folded.summary == store.sessions.first)
+    #expect(folded.turns.map(\.id) == [TurnID("turn-live-p1")])
+    #expect(folded.turns.first?.prompt == "hi")
 }
 
 private func nookRow(
     _ id: String,
     _ tag: TimelineTag,
     _ text: String = "x",
-    toolUseID: String? = nil
+    toolUseID: String? = nil,
+    at: TimeInterval = 0
 ) -> HaloActivityRow {
     HaloActivityRow(row: TimelineRow(
         id: id,
         sessionID: SessionID("session"),
         turnID: nil,
-        occurredAt: Date(timeIntervalSince1970: 0),
+        occurredAt: Date(timeIntervalSince1970: at),
         tag: tag,
         status: .info,
         text: text,
         items: [TimelineItem(
             id: TimelineItemID(id),
             sessionID: SessionID("session"),
-            occurredAt: Date(timeIntervalSince1970: 0),
+            occurredAt: Date(timeIntervalSince1970: at),
             payload: .message(MessageTimelinePayload(role: .user, text: text))
         )],
         toolUseID: toolUseID
@@ -649,7 +618,9 @@ private func nookSession(
     _ rows: [HaloActivityRow],
     lifecycle: SessionLifecycle = .running,
     id: String = "session",
-    parentID: SessionID? = nil
+    parentID: SessionID? = nil,
+    lastActivityAt: Date = Date(timeIntervalSince1970: 0),
+    detailLoaded: Bool? = nil
 ) -> HaloSession {
     HaloSession(
         id: SessionID(id),
@@ -660,7 +631,7 @@ private func nookSession(
         phase: .thinking,
         needsReview: false,
         currentUserMessage: "Build it",
-        lastActivityAt: Date(timeIntervalSince1970: 0),
+        lastActivityAt: lastActivityAt,
         startedAt: Date(timeIntervalSince1970: 0),
         groupID: parentID,
         depth: parentID == nil ? 0 : 1,
@@ -668,7 +639,8 @@ private func nookSession(
         model: nil,
         totalTokens: nil,
         contextFraction: nil,
-        recentRows: rows
+        recentRows: rows,
+        detailLoaded: detailLoaded ?? !rows.isEmpty
     )
 }
 
@@ -1425,11 +1397,16 @@ func macStoreReconcileFetchesPagesPrunesAndConvergesOnDelete() async throws {
     #expect(stub.operations.filter { $0 == .getSession }.count == before)
 
     // The daemon dropped beta and advanced alpha: fetch one, prune one.
+    // Alpha is the resident lead: the daemon's page replaces the resident
+    // copy outright, so reading it back costs no database read.
     let freshAlpha = reconcileDetail("alpha", items: 8, updatedAt: 200)
     stub.replace(details: [freshAlpha])
+    let misses = store.detailCacheStatistics.misses
     await store.reconcileForTesting()
     #expect(store.sessions.map(\.id) == [alpha.summary.id])
     #expect(try await store.cachedSessionDetails(ids: [alpha.summary.id]).first?.timeline.count == 8)
+    #expect(store.selectedSession?.timeline.count == 8)
+    #expect(store.detailCacheStatistics.misses == misses)
 
     // Deleting converges: gone locally at once, still gone after reconcile.
     store.deleteSession(alpha.summary.id)
@@ -1479,7 +1456,7 @@ func macStoreHidesProvisionalSessionsUntilTheirFirstTurn() async throws {
     // The start marker was kept in the cache while the session was hidden.
     let detail = try await store.cachedSessionDetails(ids: [SessionID("fresh")]).first
     #expect(detail?.timeline.contains { $0.id == TimelineItemIDs.sessionMarker(SessionID("fresh"), .sessionStarted) } == true)
-    #expect(try await store.snapshotDetails().map(\.summary.id) == [SessionID("fresh")])
+    #expect(try await store.cachedSessionDetails(ids: store.sessions.map(\.id)).map(\.summary.id) == [SessionID("fresh")])
 }
 
 private func macConfigEvent(
@@ -1654,4 +1631,144 @@ func activityScrollLinkOnlyLetsTheDriverSteer() {
     #expect(stripRequests.last == 17)
     link.listDidScroll(.init(offset: 0, content: 200, viewport: 200))
     #expect(stripRequests.last == 17)
+}
+
+// MARK: - Notch working set
+
+@Test func nookDetailIDsClaimRoutedThenWorkingThenRecentTopLevelSessions() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    let summaries = [
+        nookSummary(id: "old-done", lifecycle: .completed, phase: .idle, updatedAt: 10_000 - 3_600),
+        nookSummary(id: "waiting", lifecycle: .waitingForInput, phase: .waitingForApproval, updatedAt: 10_000 - 900),
+        nookSummary(id: "running", lifecycle: .running, phase: .thinking, updatedAt: 10_000 - 1_200),
+        nookSummary(id: "just-done", lifecycle: .completed, phase: .idle, updatedAt: 10_000 - 60),
+        hierarchySummary(id: "running-child", parentID: "running", updatedAt: 10_000 - 1),
+        nookSummary(id: "routed-done", lifecycle: .completed, phase: .idle, updatedAt: 10_000 - 7_200),
+    ]
+
+    // Route first, then the session that stopped within the window (its
+    // turn end is still to be noticed), then blue/orange newest first; a
+    // subagent of a listed parent never claims a detail.
+    #expect(HaloSnapshot.detailIDs(summaries: summaries, route: .turnEnded(SessionID("routed-done")), now: now)
+        .map(\.rawValue) == ["routed-done", "just-done", "waiting", "running"])
+    #expect(HaloSnapshot.detailIDs(summaries: summaries, route: .list, now: now)
+        .map(\.rawValue) == ["just-done", "waiting", "running"])
+    // A route to a session that is not listed claims nothing.
+    #expect(HaloSnapshot.detailIDs(summaries: summaries, route: .detail(SessionID("gone")), now: now)
+        .map(\.rawValue) == ["just-done", "waiting", "running"])
+    // Once its stopped state was shown with rows, the session is settled
+    // and needs no detail.
+    #expect(HaloSnapshot.detailIDs(summaries: summaries, route: .list, now: now, settled: [SessionID("just-done")])
+        .map(\.rawValue) == ["waiting", "running"])
+
+    // The cap keeps the newest working sessions; the route always fits.
+    let crowd = (0..<10).map { index in
+        nookSummary(id: "run-\(index)", lifecycle: .running, phase: .thinking, updatedAt: 10_000 - Double(index))
+    } + [nookSummary(id: "routed", lifecycle: .completed, phase: .idle, updatedAt: 0)]
+    let capped = HaloSnapshot.detailIDs(summaries: crowd, route: .detail(SessionID("routed")), now: now)
+    #expect(capped.count == HaloSnapshot.detailLimit)
+    #expect(capped.first == SessionID("routed"))
+    #expect(capped.dropFirst().map(\.rawValue) == ["run-0", "run-1", "run-2", "run-3", "run-4"])
+
+    // A session that just stopped is never cut by the cap, however many
+    // sessions are still working: its turn end must be noticed first.
+    let busy = crowd + [
+        nookSummary(id: "ended", lifecycle: .completed, phase: .idle, updatedAt: 10_000 - 30),
+        nookSummary(id: "crashed", lifecycle: .failed, phase: .idle, updatedAt: 10_000 - 20),
+    ]
+    let noticed = HaloSnapshot.detailIDs(summaries: busy, route: .list, now: now)
+    #expect(noticed.prefix(2).map(\.rawValue) == ["crashed", "ended"])
+    #expect(noticed.count == HaloSnapshot.detailLimit)
+    // Seen with rows in the previous snapshot: settled, and the slots go
+    // back to the working sessions.
+    let previous = [
+        nookSession([nookRow("e1", .turnEnd)], lifecycle: .completed, id: "ended"),
+        nookSession([nookRow("f1", .turnFailed)], lifecycle: .failed, id: "crashed"),
+        nookSession([], lifecycle: .running, id: "run-0"),
+    ]
+    #expect(HaloSnapshot.settledIDs(in: previous) == [SessionID("ended"), SessionID("crashed")])
+    #expect(HaloSnapshot.detailIDs(summaries: busy, route: .list, now: now, settled: HaloSnapshot.settledIDs(in: previous))
+        .map(\.rawValue) == ["run-0", "run-1", "run-2", "run-3", "run-4", "run-5"])
+}
+
+@Test @MainActor
+func nookOpeningAnIdleSessionDetailLoadsItsRows() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    // Reviewed, idle, an hour old: outside the working set, summary-only.
+    let sessionID = SessionID("idle")
+    let hourAgo = Date().addingTimeInterval(-3_600)
+    store.enqueueAgentEvent(macStartEvent("idle", event: "idle-start", at: hourAgo.timeIntervalSince1970))
+    store.enqueueAgentEvent(macPromptEvent("idle", event: "idle-p1", at: hourAgo.timeIntervalSince1970 + 1))
+    store.enqueueAgentEvent(AgentIngressEvent(
+        eventID: EventID("idle-end"), sessionID: sessionID, turnID: TurnID("turn-idle-p1"), agent: .claude,
+        occurredAt: hourAgo.addingTimeInterval(2), lifecycle: .completed, phase: .idle,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("idle-end"), sessionID: sessionID, turnID: TurnID("turn-idle-p1"),
+            occurredAt: hourAgo.addingTimeInterval(2),
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed))
+        )
+    ))
+    await store.flushPendingEventsForTesting()
+    store.markSessionReviewed(sessionID)
+
+    let model = HaloModel(store: store)
+    model.start()
+    await waitUntilNotch { model.session(sessionID) != nil }
+    let listed = try #require(model.session(sessionID))
+    #expect(listed.detailLoaded == false)
+    #expect(listed.recentRows.isEmpty)
+
+    // Opening the detail claims the session on a pass started right away,
+    // not on the next data change.
+    model.showDetail(sessionID)
+    await waitUntilNotch { model.session(sessionID)?.detailLoaded == true }
+    let opened = try #require(model.session(sessionID))
+    #expect(opened.recentRows.map(\.id).isEmpty == false)
+    #expect(opened.currentTurn?.id == TurnID("turn-idle-p1"))
+    model.stop()
+}
+
+@MainActor
+private func waitUntilNotch(_ condition: @MainActor () -> Bool) async {
+    for _ in 0..<200 where !condition() {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+}
+
+@Test func nookSummaryOnlySessionsRenderWithoutRowsAndTakeTheirModelFromStamps() {
+    let summary = nookSummary(id: "quiet", lifecycle: .completed, phase: .idle, updatedAt: 100)
+    let stamp = SessionModelStamp(model: "gpt-5", reasoningEffort: nil)
+    let sessions = HaloSnapshot.make(
+        summaries: [summary],
+        details: [:],
+        modelStamps: [summary.id: stamp]
+    )
+    #expect(sessions.count == 1)
+    #expect(sessions.first?.detailLoaded == false)
+    #expect(sessions.first?.recentRows.isEmpty == true)
+    #expect(sessions.first?.currentTurn == nil)
+    #expect(sessions.first?.model == "gpt-5")
+    // Without a turn the lifecycle decides: a completed session has ended.
+    #expect(sessions.first?.turnEnded == true)
+}
+
+@Test func nookTurnEventsFireForActivityNewerThanASummaryOnlySnapshot() {
+    // Idle for a while (summary-only, last activity at t=100), then a prompt
+    // lands and the turn ends within one refresh: the session enters the
+    // working set with both rows at once. The older rows are backfill; the
+    // two newer than the summary's clock are real turn boundaries.
+    let summaryOnly = nookSession([], lastActivityAt: Date(timeIntervalSince1970: 100), detailLoaded: false)
+    let loaded = nookSession([
+        nookRow("u0", .user, at: 50),
+        nookRow("e0", .turnEnd, at: 90),
+        nookRow("u1", .user, at: 150),
+        nookRow("e1", .turnEnd, at: 160),
+    ])
+    #expect(HaloActivityDiff.turnEvents(previous: [summaryOnly], current: [loaded])
+        .map { ($0.kind, $0.row.id) }.map { "\($0.0)-\($0.1)" } == ["started-u1", "ended-e1"])
+
+    // A loaded window that was empty is not a backfill: everything new fires.
+    let loadedEmpty = nookSession([], detailLoaded: true)
+    #expect(HaloActivityDiff.turnEvents(previous: [loadedEmpty], current: [loaded]).count == 4)
 }

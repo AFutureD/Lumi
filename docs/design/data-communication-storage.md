@@ -241,11 +241,15 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 
 ## 缓存与读取策略
 
-- Mac UI 不直接查询 daemon；它观察 `MacSessionStore`，详情从本地 SQLite 延迟读取。
-- Notch 只读取 Mac 已同步缓存，最多加载四个可展示 Session 的详情。
+- Mac UI 不直接查询 daemon；它观察 `MacSessionStore`，列表来自本地 SQLite，详情按需从本地 SQLite 读取。
+- Session 详情在内存里只有一份：store 持有一个按最近使用排序的有界集合（默认 8 个），每个条目都是完整的 Session（Summary、Turns、整条 Timeline），没有尾巴、裁剪版或半加载的条目。一个 Session 要么整条在内存里，要么不在；不在的从 SQLite 分页读出后进入集合，最久未用的被挤出。当前选中的 Session 固定不被挤出。
+- 已在内存里的 Session 不重读数据库：daemon 事件先写 SQLite，再按批折叠进内存副本（Summary 走共享 reducer，Timeline 按 id 合并，Turns 重新投影）；对账整段替换时用 daemon 页面直接换掉内存副本；每次 reload 都用 SQLite 当下的 Summary 行覆盖内存副本的 Summary（过滤判定以 SQLite 为准）。`discard` 事件直接移除内存副本；被删除、被剪除、被过滤隐藏而离开可见列表的 Session 也随之移除。
+- 详情分 500 项多次读，不在一个事务里。每次写 SQLite 都推进一个 epoch；一次读跨越了写入就重读一次，再次跨越则保留并记 warning，不让内存副本悄悄少一行。
+- Notch 只读 Mac 已同步缓存。每次刷新必取两组 Session 的详情，不受上限约束：当前路由（详情页、turn 卡片）的 Session；最近 5 分钟内停止工作（完成、失败、中断、等待中转为空闲）且停止状态还没带着活动行出现过的顶层 Session，它们的 Turn End / 失败只能从活动行里发现。停止状态一旦带着活动行出现过，该 Session 即视为已结算，不再取详情。剩余名额（总上限 6）给 Running / Waiting 的顶层 Session，最近活动在前，用于行下的活动行。其余 Session 只用 Summary 渲染（无最近活动行、无当前 Turn，模型取列表的 model stamp）。已列出父 Session 的子代理不取详情。打开一个只有 Summary 的 Session 详情页会立即触发一次刷新，不等下一次数据变化。
+- 一个 Session 进入 Notch 详情集合时，它的最近活动行会一次性全部出现；比它的 Summary 上次活动时间更早的行视为回填不通知，之后落地的 User / Turn End 行照常通知。已知取舍：Summary 已经是完成态且超出 5 分钟窗口的 Session，如果 daemon 事后补一条比 Summary 时钟更早的 Turn End，不再通知。
 - Relay 发布在 daemon 内直接读 daemon SQLite（应答 index / fetch）并转发事件流；Mac 缓存与之无关。
 - `dataRevision` 在任意 Session 或 Timeline 数据成功持久化后增加，驱动 Mac UI / Notch 刷新；仅健康状态通知不增加。
-- iOS 列表始终显示缓存（启动即显示、Mac 离线也不清空）；新鲜度只在 Macs 页以在线点和“上次同步”表达；已打开的详情页保留最后一次收到的内容。
+- iOS 列表始终显示缓存（启动即显示、Mac 离线也不清空）；新鲜度只在 Macs 页以在线点和"上次同步"表达；已打开的详情页保留最后一次收到的内容。
 
 ## 故障与恢复
 

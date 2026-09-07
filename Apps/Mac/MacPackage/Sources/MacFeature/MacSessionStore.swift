@@ -43,7 +43,11 @@ public final class MacSessionStore {
     /// Bumped by every stamp invalidation; a cache read that straddled an
     /// invalidation is discarded instead of resurrecting the stale value.
     private var modelStampEpoch: UInt64 = 0
-    public private(set) var selectedSession: SessionDetail?
+    /// The selected lead's whole detail, when resident. Loads land in
+    /// `detailCache`; there is no second copy.
+    public var selectedSession: SessionDetail? {
+        pendingSelectionID.flatMap { detailCache.peek($0) }
+    }
     /// The whole selection, in selection-recency order: session blocks from
     /// a multi-select, or a single subagent line. The last element is the
     /// natural lead fallback when the lead itself is deselected.
@@ -73,7 +77,14 @@ public final class MacSessionStore {
     private var pendingEvents: [AgentIngressEvent] = []
     private var pendingEventIDs: Set<EventID> = []
     private var reconnectTask: Task<Void, Never>?
-    private var cachedSnapshotDetails: [SessionID: SessionDetail]?
+    /// Whole sessions resident in memory: the selected lead (pinned) and
+    /// whatever the Notch's working set last claimed. Everything else is
+    /// re-read from the cache database on demand.
+    private var detailCache = SessionDetailCache()
+    /// Bumped by every write to the cache database. A detail load pages the
+    /// database in several reads; one that straddled a write is re-read so
+    /// the resident copy never misses a row the fold did not see.
+    private var detailEpoch: UInt64 = 0
 
     public init(
         socketPath: String = DaemonEndpoint.defaultSocketPath(),
@@ -116,7 +127,7 @@ public final class MacSessionStore {
         started = true
         Task { [weak self] in
             guard let self else { return }
-            await self.reloadFromCache(reloadSelected: true)
+            await self.reloadFromCache()
             self.scheduleReconcile()
             self.connectEventStream()
         }
@@ -143,7 +154,12 @@ public final class MacSessionStore {
     /// The session driving the detail pane, synchronously — set before the
     /// async detail load lands, so views can paint selection immediately.
     public var leadSelectedID: SessionID? {
-        pendingSelectionID ?? selectedSession?.summary.id
+        pendingSelectionID
+    }
+
+    /// Hit / miss / eviction counters of the resident detail set.
+    var detailCacheStatistics: SessionDetailCache.Statistics {
+        detailCache.statistics
     }
 
     public func select(_ sessionID: SessionID?) {
@@ -159,9 +175,9 @@ public final class MacSessionStore {
         let selectionChanged = unique != selectedIDs
         selectedIDs = unique
         guard let lead else {
-            if pendingSelectionID != nil || selectedSession != nil {
+            if pendingSelectionID != nil {
                 pendingSelectionID = nil
-                selectedSession = nil
+                detailCache.pin(nil)
                 notifyObservers()
             } else if selectionChanged {
                 notifyObservers()
@@ -172,15 +188,22 @@ public final class MacSessionStore {
         // clears a review flag a fresh turn end may have raised.
         markSessionReviewed(lead)
         if selectionChanged { notifyObservers() }
-        guard pendingSelectionID != lead || selectedSession?.summary.id != lead else { return }
+        guard pendingSelectionID != lead || detailCache.peek(lead) == nil else { return }
         let sessionID = lead
         pendingSelectionID = sessionID
-        guard let cache else { return }
+        detailCache.pin(sessionID)
+        if detailCache.touch(sessionID) != nil {
+            // The Notch loaded it moments ago; the pane paints from the
+            // resident copy without another page through the database.
+            notifyObservers()
+            return
+        }
+        guard cache != nil else { return }
         Task {
             do {
-                let detail = try await Self.loadSessionDetail(repository: cache, sessionID: sessionID)
+                let detail = try await loadDetail(sessionID)
                 guard pendingSelectionID == sessionID else { return }
-                selectedSession = detail
+                if let detail { detailCache.insert(detail) } else { detailCache.evict(sessionID) }
                 notifyObservers()
             } catch {
                 connectionError = "Unable to read the macOS sync database: \(error)"
@@ -234,14 +257,15 @@ public final class MacSessionStore {
                 if response.session != nil, let cache,
                    let detail = try await fetchFullDetail(id: sessionID) {
                     try await cache.replaceSession(detail)
-                    cachedSnapshotDetails = nil
+                    noteCacheWrite()
+                    detailCache.replaceIfPresent(detail)
                     invalidateModelStamp(sessionID)
                     convertLog.info("session_refreshed", metadata: .fields([
                         "session": sessionID.rawValue,
                         "timeline": detail.timeline.count,
                         "turns": detail.turns.count,
                     ]))
-                    await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
+                    await reloadFromCache(persistedDataChanged: true)
                 }
             } catch {
                 handleConnectionFailure(error, action: "refresh_session")
@@ -257,19 +281,14 @@ public final class MacSessionStore {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
               sessions[index].needsReview else { return }
         sessions[index] = sessions[index].reviewed
-        if let selected = selectedSession, selected.summary.id == sessionID {
-            selectedSession = SessionDetail(
-                summary: selected.summary.reviewed,
-                turns: selected.turns,
-                timeline: selected.timeline,
-                nextCursor: selected.nextCursor
-            )
-        }
-        cachedSnapshotDetails = nil
+        detailCache.patchSummary(sessionID) { $0.reviewed }
         notifyObservers(dataChanged: true)
         Task {
             do {
-                if let cache { try await cache.markSessionReviewed(sessionID) }
+                if let cache {
+                    try await cache.markSessionReviewed(sessionID)
+                    noteCacheWrite()
+                }
                 let response = try await request(IPCRequest(operation: .markSessionReviewed, sessionID: sessionID))
                 if let failure = response.failure { throw failure }
             } catch {
@@ -286,19 +305,14 @@ public final class MacSessionStore {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
               !sessions[index].hiddenInNotch else { return }
         sessions[index] = sessions[index].withHiddenInNotch(true)
-        if let selected = selectedSession, selected.summary.id == sessionID {
-            selectedSession = SessionDetail(
-                summary: selected.summary.withHiddenInNotch(true),
-                turns: selected.turns,
-                timeline: selected.timeline,
-                nextCursor: selected.nextCursor
-            )
-        }
-        cachedSnapshotDetails = nil
+        detailCache.patchSummary(sessionID) { $0.withHiddenInNotch(true) }
         notifyObservers(dataChanged: true)
         Task {
             do {
-                if let cache { try await cache.markSessionHiddenInNotch(sessionID) }
+                if let cache {
+                    try await cache.markSessionHiddenInNotch(sessionID)
+                    noteCacheWrite()
+                }
                 let response = try await request(IPCRequest(operation: .markSessionHiddenInNotch, sessionID: sessionID))
                 if let failure = response.failure { throw failure }
             } catch {
@@ -326,9 +340,10 @@ public final class MacSessionStore {
                 if let cache {
                     for sessionID in sessionIDs {
                         _ = try await cache.deleteSession(id: sessionID)
+                        detailCache.evict(sessionID)
                     }
-                    cachedSnapshotDetails = nil
-                    await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
+                    noteCacheWrite()
+                    await reloadFromCache(persistedDataChanged: true)
                 }
                 for sessionID in sessionIDs {
                     let response = try await request(IPCRequest(operation: .deleteSession, sessionID: sessionID))
@@ -347,8 +362,9 @@ public final class MacSessionStore {
             do {
                 if let cache {
                     _ = try await cache.deleteAllSessions()
-                    cachedSnapshotDetails = nil
-                    await reloadFromCache(reloadSelected: true, persistedDataChanged: true)
+                    for id in detailCache.residentIDs { detailCache.evict(id) }
+                    noteCacheWrite()
+                    await reloadFromCache(persistedDataChanged: true)
                 }
                 let response = try await request(IPCRequest(operation: .clearHistory))
                 if let failure = response.failure { throw failure }
@@ -360,55 +376,32 @@ public final class MacSessionStore {
         }
     }
 
-    /// Reads the already-synchronized macOS GRDB cache for Relay publishing.
-    /// This never performs an additional daemon refresh.
-    public func snapshotDetails() async throws -> [SessionDetail] {
-        guard let cache else { throw MacSessionStoreError.cacheUnavailable }
-        let visible = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
-        let hiddenByFilter = SessionSummary.filterHiddenIDs(visible)
-        let summaries = visible.filter { !hiddenByFilter.contains($0.id) }
-        if let cachedSnapshotDetails,
-           cachedSnapshotDetails.count == summaries.count,
-           summaries.allSatisfy({ cachedSnapshotDetails[$0.id] != nil }) {
-            return summaries.compactMap { cachedSnapshotDetails[$0.id] }
-        }
-        let details = try await cachedSessionDetails(ids: summaries.map(\.id))
-        cachedSnapshotDetails = Dictionary(
-            uniqueKeysWithValues: details.map { ($0.summary.id, $0) }
-        )
-        return details
-    }
-
-    /// Reads selected Session details from the already-synchronized Mac cache.
-    /// OpenNook uses this to render a bounded glance without polling the daemon.
+    /// Whole session details for the Notch's working set, from the resident
+    /// copies where they exist and the already-synchronized cache database
+    /// where they do not. A loaded session becomes resident (most recent
+    /// first), so the next reload folds streamed events into it instead of
+    /// paging the database again. Never touches the daemon. A session the
+    /// database no longer holds is left out; a database failure is thrown
+    /// after being logged.
     public func cachedSessionDetails(ids: [SessionID]) async throws -> [SessionDetail] {
-        guard let cache else { throw MacSessionStoreError.cacheUnavailable }
+        guard cache != nil else { throw MacSessionStoreError.cacheUnavailable }
         var details: [SessionDetail] = []
         details.reserveCapacity(ids.count)
         for id in ids {
-            if let detail = try await Self.loadSessionDetail(repository: cache, sessionID: id) {
+            if let resident = detailCache.touch(id) {
+                details.append(resident)
+                continue
+            }
+            do {
+                guard let detail = try await loadDetail(id) else { continue }
+                detailCache.insert(detail)
                 details.append(detail)
+            } catch {
+                dbLog.error("cache_read_failed", metadata: .fields(["session": id.rawValue, "error": error]))
+                throw error
             }
         }
         return details
-    }
-
-    /// Resolves the compact Notch subtitle without decoding complete timelines.
-    public func cachedCurrentTurnUserMessages(
-        ids: [SessionID]
-    ) async throws -> [SessionID: String] {
-        if let cachedSnapshotDetails,
-           ids.allSatisfy({ cachedSnapshotDetails[$0] != nil }) {
-            return Dictionary(uniqueKeysWithValues: ids.compactMap { id in
-                guard let detail = cachedSnapshotDetails[id],
-                      let message = HaloSnapshot.currentTurnUserMessage(in: detail) else {
-                    return nil
-                }
-                return (id, message)
-            })
-        }
-        guard let cache else { throw MacSessionStoreError.cacheUnavailable }
-        return try await cache.currentTurnUserMessages(sessionIDs: ids)
     }
 
     /// Reconciles the local cache with the daemon at session granularity: a
@@ -466,6 +459,11 @@ public final class MacSessionStore {
                 continue
             }
             try await cache.replaceSession(detail)
+            noteCacheWrite()
+            // The resident copy, if any, takes the daemon's whole page; an
+            // absent session stays absent rather than pulling every
+            // reconciled session into memory.
+            detailCache.replaceIfPresent(detail)
             // The replace may have rewritten model-configuration items; the
             // stamp is re-read from the cache on the reload below.
             invalidateModelStamp(id)
@@ -473,7 +471,7 @@ public final class MacSessionStore {
         }
         let changed = fetched > 0
         let pruned = try await cache.pruneSessions(keeping: Set(index.map(\.id)))
-        if changed || pruned > 0 { cachedSnapshotDetails = nil }
+        if pruned > 0 { noteCacheWrite() }
         health = healthResponse.health
         connectionError = nil
         dbLog.info("reconciled", metadata: .fields([
@@ -485,10 +483,7 @@ public final class MacSessionStore {
             "pruned": pruned,
             "ms": LogClock.milliseconds(since: started),
         ]))
-        await reloadFromCache(
-            reloadSelected: true,
-            persistedDataChanged: changed || pruned > 0
-        )
+        await reloadFromCache(persistedDataChanged: changed || pruned > 0)
     }
 
     /// Pages one session out of the daemon. A page that overflows the IPC
@@ -542,12 +537,11 @@ public final class MacSessionStore {
         Task {
             do {
                 try await cache.updateSummary(summary)
-                cachedSnapshotDetails = nil
+                noteCacheWrite()
                 agentLog.debug("summary_applied", metadata: .fields(["session": summary.id.rawValue]))
-                await reloadFromCache(
-                    reloadSelected: selectedSession?.summary.id == summary.id,
-                    persistedDataChanged: true
-                )
+                // The reload's fold hands every resident copy the summary
+                // row the database now holds.
+                await reloadFromCache(persistedDataChanged: true)
             } catch {
                 connectionError = "Unable to apply the daemon summary: \(error)"
                 dbLog.error("summary_apply_failed", metadata: .fields(["session": summary.id.rawValue, "error": error]))
@@ -591,6 +585,7 @@ public final class MacSessionStore {
                 for event in batch {
                     do {
                         if try await cache.apply(event) {
+                            noteCacheWrite()
                             appliedAny = true
                             appliedEvents.append(event)
                         }
@@ -615,7 +610,6 @@ public final class MacSessionStore {
             if appliedAny {
                 self.connectionError = nil
                 await self.reloadFromCache(
-                    reloadSelected: false,
                     persistedDataChanged: true,
                     appliedEvents: appliedEvents
                 )
@@ -627,8 +621,12 @@ public final class MacSessionStore {
         }
     }
 
+    /// The one path that re-derives the visible list and the resident
+    /// details from the cache database after any of its writes. The
+    /// resident copies are not re-read: `appliedEvents` fold into them and
+    /// every copy takes the summary row the database now holds; only a
+    /// missing lead pages the database.
     private func reloadFromCache(
-        reloadSelected: Bool,
         persistedDataChanged: Bool = false,
         appliedEvents: [AgentIngressEvent] = []
     ) async {
@@ -647,23 +645,19 @@ public final class MacSessionStore {
             let updated = visible.filter { !hiddenByFilter.contains($0.id) }
             try await refreshModelStamps(for: updated, events: appliedEvents)
             let previousSessions = sessions
-            let previousDetail = selectedSession
-            let previousID = pendingSelectionID ?? selectedSession?.summary.id
-            let selectedID = previousID.flatMap { id in
+            let selectedID = pendingSelectionID.flatMap { id in
                 updated.contains(where: { $0.id == id }) ? id : nil
             } ?? updated.first?.id
-            updateSnapshotCache(summaries: updated, events: appliedEvents)
-            let detail: SessionDetail? = if let selectedID {
-                if reloadSelected || selectedID != previousDetail?.summary.id || previousDetail == nil {
-                    try await Self.loadSessionDetail(repository: cache, sessionID: selectedID)
-                } else if let previousDetail,
-                          let summary = updated.first(where: { $0.id == selectedID }) {
-                    Self.merging(previousDetail, summary: summary, events: appliedEvents)
-                } else {
-                    previousDetail
+            let summariesByID = Dictionary(updated.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var detailChanged = !detailCache.fold(events: appliedEvents, summaries: summariesByID).isEmpty
+            detailCache.pin(selectedID)
+            // The lead is in use on every reload: a hit keeps it most recent,
+            // a miss pages it in.
+            if let selectedID, detailCache.touch(selectedID) == nil {
+                if let detail = try await loadDetail(selectedID) {
+                    detailCache.insert(detail)
+                    detailChanged = true
                 }
-            } else {
-                nil
             }
 
             sessions = updated
@@ -676,11 +670,10 @@ public final class MacSessionStore {
             } else {
                 selectedID.map { [$0] } ?? []
             }
-            selectedSession = detail
             notifyObservers(
                 dataChanged: persistedDataChanged
                     || previousSessions != updated
-                    || previousDetail != detail
+                    || detailChanged
             )
         } catch {
             connectionError = "Unable to read the macOS sync database: \(error)"
@@ -810,72 +803,42 @@ public final class MacSessionStore {
         return summary.map { SessionDetail(summary: $0, turns: turns, timeline: timeline) }
     }
 
-    static func merging(
-        _ detail: SessionDetail,
-        summary: SessionSummary,
-        events: [AgentIngressEvent]
-    ) -> SessionDetail {
-        var timeline = detail.timeline
-        var indices = Dictionary(
-            uniqueKeysWithValues: timeline.enumerated().map { ($0.element.id, $0.offset) }
-        )
-        var changedTimeline = false
-
-        for event in events where event.sessionID == summary.id {
-            guard let item = event.timelineItem else { continue }
-            if let index = indices[item.id] {
-                guard item.occurredAt >= timeline[index].occurredAt else { continue }
-                timeline[index] = item
-            } else {
-                indices[item.id] = timeline.count
-                timeline.append(item)
+    /// Pages one whole session out of the cache database. The pages are
+    /// separate reads, so a write landing between them (an applied event, a
+    /// reconcile replace) could leave the copy one row short — and a resident
+    /// copy is never re-read. A load that straddled a write is repeated once;
+    /// a second straddle is kept and logged so the gap stays visible.
+    private func loadDetail(_ id: SessionID) async throws -> SessionDetail? {
+        guard let cache else { throw MacSessionStoreError.cacheUnavailable }
+        var attempts = 0
+        while true {
+            let epoch = detailEpoch
+            let started = ContinuousClock.now
+            let detail = try await Self.loadSessionDetail(repository: cache, sessionID: id)
+            attempts += 1
+            if epoch == detailEpoch {
+                dbLog.debug("detail_cache_miss", metadata: .fields([
+                    "session": id.rawValue,
+                    "timeline": detail?.timeline.count ?? 0,
+                    "resident": detailCache.count,
+                    "ms": LogClock.milliseconds(since: started),
+                ]))
+                return detail
             }
-            changedTimeline = true
-        }
-
-        if changedTimeline {
-            timeline.sort {
-                if $0.occurredAt == $1.occurredAt { return $0.id.rawValue < $1.id.rawValue }
-                return $0.occurredAt < $1.occurredAt
+            guard attempts < 2 else {
+                dbLog.warning("detail_load_straddled_write", metadata: .fields([
+                    "session": id.rawValue,
+                    "timeline": detail?.timeline.count ?? 0,
+                ]))
+                return detail
             }
         }
-        return SessionDetail(
-            summary: summary,
-            turns: detail.turns,
-            timeline: timeline,
-            nextCursor: detail.nextCursor
-        )
     }
 
-    private func updateSnapshotCache(
-        summaries: [SessionSummary],
-        events: [AgentIngressEvent]
-    ) {
-        guard var cachedSnapshotDetails else { return }
-        let summariesByID = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
-        cachedSnapshotDetails = cachedSnapshotDetails.filter { summariesByID[$0.key] != nil }
-        let eventsBySession = Dictionary(grouping: events, by: \.sessionID)
-
-        for summary in summaries {
-            let sessionEvents = eventsBySession[summary.id] ?? []
-            if let detail = cachedSnapshotDetails[summary.id] {
-                cachedSnapshotDetails[summary.id] = Self.merging(
-                    detail,
-                    summary: summary,
-                    events: sessionEvents
-                )
-            } else if !sessionEvents.isEmpty {
-                cachedSnapshotDetails[summary.id] = Self.merging(
-                    SessionDetail(summary: summary, timeline: []),
-                    summary: summary,
-                    events: sessionEvents
-                )
-            } else {
-                self.cachedSnapshotDetails = nil
-                return
-            }
-        }
-        self.cachedSnapshotDetails = cachedSnapshotDetails
+    /// Every write to the cache database passes here, so an in-flight detail
+    /// load can tell it straddled one.
+    private func noteCacheWrite() {
+        detailEpoch &+= 1
     }
 
     private func handleConnectionFailure(_ error: Error, action: String) {

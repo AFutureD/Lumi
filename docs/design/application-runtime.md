@@ -57,8 +57,7 @@ Mac 外部 Session 内容只有三个入口：
 ### 缓存和性能
 
 - Session 列表先读本地 SQLite，启动不等待 daemon。
-- 详情在选择、Summary 或当前选中 Session 的 Timeline 数据变化时重新加载；其他 Session 的诊断变化只推进数据 revision。
-- Timeline 每次从 SQLite 以 500 项分页拼接。
+- 完整的 Session 详情只在内存里保留最近用到的几份（选中的 Session 与 Notch 正在展示的活跃 Session），其余按需从 SQLite 以 500 项分页拼接；已在内存里的副本靠折叠 daemon 事件保持最新，不重读数据库。规则见 [数据、通信与保存设计](./data-communication-storage.md) 的「缓存与读取策略」。
 - Agent event 用 Event ID 字典合并，同一短时间批次只触发一次 reload。
 - 对账等待正在写入的事件批次完成，避免整 Session 替换与增量写交错。
 - `dataRevision` 只在业务数据实际变化时增长。
@@ -70,7 +69,7 @@ OpenNook 配置：
 
 - 紧凑 leading：最近可展示 Session 的统一状态色。
 - 紧凑 trailing：符合条件的 Session 总数。
-- 展开内容：最近更新的最多四个 Starting、Running、Waiting、Failed 或 Interrupted Session。
+- 展开内容：最近 7 天内可展示的 Session 列表；只有正在工作、等待或刚结束的少数 Session 带最近活动行，其余只显示 Summary。
 - 每行：标题、lifecycle + phase、当前 Turn 最近 User message。
 - 完成、失败、审批和内容变化可以进入短暂 ActivityNook 卡片。
 - 设置按钮打开主 App 的 `Settings > Notch`。
@@ -78,7 +77,7 @@ OpenNook 配置：
 - 屏幕可选内建屏幕、主屏幕或以稳定 UUID 记录的一台已连接屏幕；断开时按内建屏幕、主屏幕、首个可用屏幕的顺序回退。
 - 紧凑 Notch gap、展开内容宽度和展开动画时长通过 OpenNook 偏好保存并实时投射到 surface；三项设置均可恢复默认值，滑块使用无刻度外观；物理刘海宽度仍是紧凑 gap 的下限。
 
-Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复查询详情。
+Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复查询详情；每次刷新最多取 6 个 Session 的完整详情（刚停止、Turn End 尚未被注意到的 Session 不计入上限），取过的留在 store 的内存集合里，下一次刷新折叠事件而不再读库。
 
 ### daemon 与 Hook 管理
 

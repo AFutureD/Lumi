@@ -1,7 +1,10 @@
 import Core
 import Transport
 import Combine
+import Logging
 import Foundation
+
+private let log = Logger(label: "ui")
 
 /// One line of the Notch's "Recent activity" block: a projected `TimelineRow`
 /// reduced to what the 22pt row needs.
@@ -53,6 +56,12 @@ struct HaloSession: Identifiable, Equatable, Sendable {
     let contextFraction: Double?
     /// Newest last; capped by `HaloSnapshot.recentRowLimit`.
     let recentRows: [HaloActivityRow]
+    /// Whether this snapshot was built from the session's whole detail
+    /// (`HaloSnapshot.detailIDs`) or from its summary alone. A summary-only
+    /// session has no rows and no current turn; when it later enters the
+    /// working set its rows arrive all at once, and the diff must not read
+    /// that backfill as fresh activity.
+    let detailLoaded: Bool
 
     var statusText: String {
         "\(SessionStatusTone.displayLifecycle(lifecycle: lifecycle, phase: phase).displayName) · \(phase.displayName)"
@@ -182,6 +191,14 @@ enum HaloRoute: Equatable, Sendable {
     case detail(SessionID)
     case turnStarted(SessionID)
     case turnEnded(SessionID)
+
+    /// The session the route is about, if any.
+    var sessionID: SessionID? {
+        switch self {
+        case .list: nil
+        case let .detail(id), let .turnStarted(id), let .turnEnded(id): id
+        }
+    }
 }
 
 /// Turn boundary transitions detected between two snapshots.
@@ -201,6 +218,59 @@ struct HaloTurnEvent: Equatable, Sendable {
 enum HaloSnapshot {
     static let recentRowLimit = 8
     static let maximumSessionAge: TimeInterval = 7 * 86_400
+    /// How many whole session details one Notch pass may hold at once.
+    static let detailLimit = 6
+    /// A finished session stays in the working set this long after its last
+    /// activity, so the turn end that finished it still produces its card.
+    static let recentDetailWindow: TimeInterval = 5 * 60
+
+    /// The sessions whose whole detail this pass reads. Two groups are
+    /// required whatever their number: the routed session (a turn card
+    /// reads its `currentTurn` for the whole dwell) and every top-level
+    /// session that stopped working within `recentDetailWindow` and whose
+    /// stopped state has not yet been seen with its rows — the turn end or
+    /// failure that stopped it is still to be noticed, and the diff can
+    /// only notice it from rows. Once such a session is `settled` (its
+    /// stopped state was in the previous snapshot with rows) it needs no
+    /// detail. Working (blue) and waiting (orange) top-level sessions then
+    /// fill the remaining slots up to `detailLimit`, newest first, for the
+    /// activity line under their row. Every other listed session renders
+    /// from its summary alone. Subagents of a listed parent never need a
+    /// detail: their pill reads the summary and they never notify.
+    static func detailIDs(
+        summaries: [SessionSummary],
+        route: HaloRoute,
+        now: Date,
+        settled: Set<SessionID> = []
+    ) -> [SessionID] {
+        let byID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let topLevel = summaries
+            .filter { SessionHierarchy.rootID(of: $0, in: byID) == $0.id }
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
+        let cutoff = now.addingTimeInterval(-recentDetailWindow)
+        var required: [SessionID] = []
+        var seen: Set<SessionID> = []
+        func claim(_ id: SessionID, into list: inout [SessionID]) {
+            if seen.insert(id).inserted { list.append(id) }
+        }
+        if let routed = route.sessionID, byID[routed] != nil { claim(routed, into: &required) }
+        for summary in topLevel
+        where !summary.isWorkingInNotch && summary.lastActivityAt > cutoff && !settled.contains(summary.id) {
+            claim(summary.id, into: &required)
+        }
+        var working: [SessionID] = []
+        for summary in topLevel where summary.isWorkingInNotch {
+            claim(summary.id, into: &working)
+        }
+        return required + working.prefix(max(0, detailLimit - required.count))
+    }
+
+    /// Sessions whose stopped state the previous snapshot already showed
+    /// with rows: their turn end or failure has been noticed, so they no
+    /// longer need a detail once they leave the working set.
+    static func settledIDs(in previous: [HaloSession]) -> Set<SessionID> {
+        Set(previous.filter { $0.detailLoaded && !$0.isWorkingInNotch }.map(\.id))
+    }
 
     /// Sessions active within the last seven days. A session crossing the
     /// age boundary drops out on the next data change, not the moment it
@@ -249,9 +319,13 @@ enum HaloSnapshot {
         return items
     }
 
+    /// One `HaloSession` per summary. A summary with a detail carries its
+    /// recent rows, current turn and metrics; one without renders from the
+    /// summary alone, its model coming from the store's stamps.
     static func make(
         summaries: [SessionSummary],
-        details: [SessionID: SessionDetail]
+        details: [SessionID: SessionDetail],
+        modelStamps: [SessionID: SessionModelStamp] = [:]
     ) -> [HaloSession] {
         let byID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return summaries.map { summary in
@@ -291,10 +365,11 @@ enum HaloSnapshot {
                 groupID: rootID == summary.id ? nil : rootID,
                 depth: summary.lineage?.subagentDepth ?? (summary.lineage?.parentSessionID == nil ? 0 : 1),
                 currentTurn: currentTurn,
-                model: configuredWindow?.model,
+                model: configuredWindow?.model ?? modelStamps[summary.id]?.model,
                 totalTokens: (usage?.total ?? usage?.last)?.totalTokens,
                 contextFraction: fraction,
-                recentRows: rows.suffix(recentRowLimit).map(HaloActivityRow.init(row:))
+                recentRows: rows.suffix(recentRowLimit).map(HaloActivityRow.init(row:)),
+                detailLoaded: detail != nil
             )
         }
     }
@@ -318,6 +393,20 @@ enum HaloSnapshot {
     }
 }
 
+extension SessionSummary {
+    /// Working (blue) or waiting for a human (orange): the row carries an
+    /// activity line, so the session belongs in the Notch's working set.
+    var isWorkingInNotch: Bool {
+        statusTone == .blue || statusTone == .orange
+    }
+}
+
+extension HaloSession {
+    var isWorkingInNotch: Bool {
+        statusTone == .blue || statusTone == .orange
+    }
+}
+
 /// Only L3 rows (USER / TURN END / FAILED / ABORTED) may reach the Notch.
 enum HaloActivityDiff {
     static func turnEvents(
@@ -332,12 +421,14 @@ enum HaloActivityDiff {
             // boundaries are the parent's internal progress, not notifications.
             // An orphan promoted to top level still notifies.
             if let groupID = session.groupID, listedIDs.contains(groupID) { continue }
-            // A session whose rows appear in bulk — its detail cache just
-            // loaded — is a backfill: diffing against the empty window would
-            // replay old turn ends as fresh notifications.
-            guard let old = previousByID[session.id], !old.recentRows.isEmpty else { continue }
+            guard let old = previousByID[session.id] else { continue }
             let seen = Set(old.recentRows.map(\.id))
             for row in session.recentRows where !seen.contains(row.id) && row.level == .l3 {
+                // A session entering the working set arrives with its whole
+                // recent window at once. Rows no newer than the last activity
+                // its summary already reported are that backfill, not news;
+                // a prompt and turn end that landed since still notify.
+                if !old.detailLoaded, row.occurredAt <= old.lastActivityAt { continue }
                 switch row.tag {
                 case .user:
                     events.append(.init(sessionID: session.id, kind: .started, row: row))
@@ -436,6 +527,13 @@ final class HaloModel: ObservableObject {
         cardDismissTask?.cancel()
         route = .detail(id)
         store?.markSessionReviewed(id)
+        // An idle, already reviewed session renders from its summary alone:
+        // no rows, no token or context figures. The route claims its detail
+        // on the next pass, and nothing else would start one (clearing a
+        // review flag that is already clear changes no data), so start it.
+        if let store, session(id)?.detailLoaded != true {
+            reload(from: store, immediate: true)
+        }
     }
 
     /// Turn cards replace the list briefly and fall back to it.
@@ -489,12 +587,26 @@ final class HaloModel: ObservableObject {
                     return
                 }
             }
+            let wanted = HaloSnapshot.detailIDs(
+                summaries: summaries,
+                route: self.route,
+                now: Date(),
+                settled: HaloSnapshot.settledIDs(in: self.sessions)
+            )
             var details: [SessionID: SessionDetail] = [:]
-            if let loaded = try? await store.cachedSessionDetails(ids: summaries.map(\.id)) {
-                details = Dictionary(uniqueKeysWithValues: loaded.map { ($0.summary.id, $0) })
+            do {
+                let loaded = try await store.cachedSessionDetails(ids: wanted)
+                details = Dictionary(loaded.map { ($0.summary.id, $0) }, uniquingKeysWith: { first, _ in first })
+            } catch {
+                // The list still renders from summaries; the rows and cards
+                // of these sessions wait for the next pass.
+                log.error("notch_details_unavailable", metadata: .fields([
+                    "wanted": wanted.count,
+                    "error": error,
+                ]))
             }
             guard !Task.isCancelled, generation == self.refreshGeneration else { return }
-            let next = HaloSnapshot.make(summaries: summaries, details: details)
+            let next = HaloSnapshot.make(summaries: summaries, details: details, modelStamps: store.modelStamps)
             let previous = self.sessions
             let initial = !self.hasLoaded
             if self.sessions != next { self.sessions = next }
