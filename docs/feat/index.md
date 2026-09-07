@@ -44,7 +44,7 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 ### 套餐用量
 
-“Settings > Plan”列出这台 Mac 上 Claude Code 与 Codex 的登录（邮箱、套餐），打开开关后 daemon 每 5 分钟向服务商询问订阅额度用了多少。“Settings > Notch”的 Usage 段决定 Notch 怎么显示：打开后展开态顶栏左侧换成套餐用量簇——Claude 图标与 Session / Weekly / Fable 限额百分比、Codex 图标与 Weekly 限额百分比，两家可同时显示或点击切换，百分比按已用或剩余，每个数字各自可开关，设置页有黑底预览。Lumi 只读 Agent 自己的登录文件，不换发、不写回；登录缺失或过期时行里写明原因。
+“Settings > Usage”给 Claude Code 与 Codex 各一张卡：登录（邮箱、套餐）、开关，打开后 daemon 每 5 分钟向服务商询问订阅额度用了多少，卡里按窗口列出百分比、用量条与重置倒计时。“Settings > Notch”的 Usage 段决定 Notch 怎么显示：黑底预览、两家同时显示或点击切换、百分比按已用或剩余、每家用药丸多选要显示的窗口；选了之后展开态顶栏左侧换成额度簇——Claude 标记 `5h 42% · 7d 18% · Fable 7%`、Codex 标记 `7d 12%`。Lumi 只读 Agent 自己的登录文件，不换发、不写回；登录缺失或过期时行里写明原因。
 
 [查看模块详情](modules/mac-plan-usage.md)
 

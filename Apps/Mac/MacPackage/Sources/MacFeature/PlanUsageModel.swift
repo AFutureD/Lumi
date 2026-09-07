@@ -94,18 +94,19 @@ final class PlanUsageModel: ObservableObject {
 
 // MARK: - Notch display choices
 
-/// One number the Notch can show, in the order the design lists them.
+/// One window the Notch can show, in the design's order (5 h → 7 d → model
+/// window, Claude Code before Codex).
 enum PlanUsageItem: String, CaseIterable, Codable, Hashable, Sendable {
     case claudeSession
     case claudeWeekly
     case claudeFable
-    case codexWeekly
     case codexSession
+    case codexWeekly
 
     var provider: AgentProvider {
         switch self {
         case .claudeSession, .claudeWeekly, .claudeFable: .claude
-        case .codexWeekly, .codexSession: .codex
+        case .codexSession, .codexWeekly: .codex
         }
     }
 
@@ -120,14 +121,21 @@ enum PlanUsageItem: String, CaseIterable, Codable, Hashable, Sendable {
         self == .claudeFable ? "Fable" : nil
     }
 
-    /// Settings row title.
-    var title: String {
+    /// Top-bar label: units lowercase, model names as they are.
+    var notchLabel: String {
         switch self {
-        case .claudeSession: "Claude Code · Session limit"
-        case .claudeWeekly: "Claude Code · Weekly limit"
-        case .claudeFable: "Claude Code · Fable limit"
-        case .codexWeekly: "Codex · Weekly limit"
-        case .codexSession: "Codex · Session limit"
+        case .claudeSession, .codexSession: "5h"
+        case .claudeWeekly, .codexWeekly: "7d"
+        case .claudeFable: "Fable"
+        }
+    }
+
+    /// Show pill under Settings › Notch › Usage.
+    var pillTitle: String {
+        switch self {
+        case .claudeSession, .codexSession: "5-hour"
+        case .claudeWeekly, .codexWeekly: "Weekly"
+        case .claudeFable: "Fable"
         }
     }
 
@@ -140,7 +148,7 @@ enum PlanUsageItem: String, CaseIterable, Codable, Hashable, Sendable {
         }
     }
 
-    /// The design's default set: the three Claude numbers and Codex weekly.
+    /// The design's default set: the three Claude windows and Codex weekly.
     static let defaults: Set<PlanUsageItem> = [.claudeSession, .claudeWeekly, .claudeFable, .codexWeekly]
 }
 
@@ -159,12 +167,12 @@ enum PlanUsagePercentStyle: String, CaseIterable, Codable, Sendable {
 
 /// The Notch's plan-usage display choices, in `UserDefaults` under
 /// `Lumi.Notch.PlanUsage.*`. Observable so the top bar, the Settings
-/// section and its preview all move together.
+/// section and its preview all move together. There is no master switch:
+/// an empty item set is "off".
 @MainActor
 final class HaloPlanUsagePreferences: ObservableObject {
     private let defaults: UserDefaults
 
-    @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Key.enabled) } }
     @Published var agentsMode: PlanUsageAgentsMode { didSet { defaults.set(agentsMode.rawValue, forKey: Key.agentsMode) } }
     @Published var percentStyle: PlanUsagePercentStyle { didSet { defaults.set(percentStyle.rawValue, forKey: Key.percentStyle) } }
     @Published var items: Set<PlanUsageItem> { didSet { defaults.set(items.map(\.rawValue).sorted(), forKey: Key.items) } }
@@ -172,7 +180,6 @@ final class HaloPlanUsagePreferences: ObservableObject {
     @Published var selectedProvider: AgentProvider { didSet { defaults.set(selectedProvider.rawValue, forKey: Key.selectedProvider) } }
 
     private enum Key {
-        static let enabled = "Lumi.Notch.PlanUsage.Enabled"
         static let agentsMode = "Lumi.Notch.PlanUsage.AgentsMode"
         static let percentStyle = "Lumi.Notch.PlanUsage.PercentStyle"
         static let items = "Lumi.Notch.PlanUsage.Items"
@@ -181,7 +188,6 @@ final class HaloPlanUsagePreferences: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        enabled = defaults.bool(forKey: Key.enabled)
         agentsMode = defaults.string(forKey: Key.agentsMode).flatMap(PlanUsageAgentsMode.init(rawValue:)) ?? .showBoth
         percentStyle = defaults.string(forKey: Key.percentStyle).flatMap(PlanUsagePercentStyle.init(rawValue:)) ?? .used
         items = defaults.object(forKey: Key.items) == nil
@@ -194,14 +200,17 @@ final class HaloPlanUsagePreferences: ObservableObject {
         if on { items.insert(item) } else { items.remove(item) }
     }
 
+    func toggle(_ item: PlanUsageItem) {
+        setItem(item, on: !items.contains(item))
+    }
+
     /// The choices as one value, for the pure presentation function.
     var snapshot: HaloPlanUsageChoices {
-        HaloPlanUsageChoices(enabled: enabled, agentsMode: agentsMode, percentStyle: percentStyle, items: items, selectedProvider: selectedProvider)
+        HaloPlanUsageChoices(agentsMode: agentsMode, percentStyle: percentStyle, items: items, selectedProvider: selectedProvider)
     }
 }
 
 struct HaloPlanUsageChoices: Hashable, Sendable {
-    var enabled: Bool
     var agentsMode: PlanUsageAgentsMode
     var percentStyle: PlanUsagePercentStyle
     var items: Set<PlanUsageItem>

@@ -17,7 +17,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .notch: "Notch"
         case .daemon: "Daemon"
         case .agents: "Agents"
-        case .plan: "Plan"
+        case .plan: "Usage"
         case .about: "About"
         }
     }
@@ -28,7 +28,7 @@ enum SettingsSectionID: Int, CaseIterable {
         case .notch: "Appearance and interaction"
         case .daemon: "Local service and history"
         case .agents: "Integrations and filters"
-        case .plan: "Subscription usage"
+        case .plan: "Plan limits"
         case .about: "Version and updates"
         }
     }

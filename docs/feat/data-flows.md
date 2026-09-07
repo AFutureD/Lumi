@@ -93,7 +93,7 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 - **用户相关数据**：每个登录（Claude Code、Codex）的邮箱、套餐名、开关；各时间窗口（Session、Weekly、Fable）的已用百分比与重置时间；最近一次成功的时间与失败原因。
 - **创建来源**：daemon 每 5 分钟（以及 Mac 每次询问时）重读 Agent 自己保存的登录（`~/.claude/.credentials.json`，没有则读 Claude Code 的钥匙串项；`~/.claude.json`；`~/.codex/auth.json`），对打开了开关的账号用其中的 token 询问服务商的额度接口。Lumi 不换发 token、不写回。
 - **更新来源**：Settings 里打开开关立即问一次；限流时按服务商给的时间等待；token 过期就停在「登录已过期」，直到用户在 Agent 里重新登录。
-- **主要消费者**：“Settings > Plan”的账号行、“Settings > Notch”的 Usage 段与预览、Notch 展开态顶栏（[PLN-R-001](modules/mac-plan-usage.md#pln-r-001-只读-agent-的登录文件不换发不写回)）。不进 iPhone，不进 Relay。
+- **主要消费者**：“Settings > Usage”的账号卡、“Settings > Notch”的 Usage 段与预览、Notch 展开态顶栏（[PLN-R-001](modules/mac-plan-usage.md#pln-r-001-只读-agent-的登录文件不换发不写回)）。不进 iPhone，不进 Relay。
 - **保留方式**：开关记在 daemon 侧，App 重启不丢；百分比只在 daemon 内存里，daemon 重启后几秒内重新取得；失败时保留上一次的数字。
 - **展示边界**：百分比是服务商自己的口径；Notch 的「已用 / 剩余」只是 100 减一下，不做任何估算。
 

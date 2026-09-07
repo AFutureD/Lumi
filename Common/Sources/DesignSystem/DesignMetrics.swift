@@ -175,9 +175,16 @@ public extension DesignSystem {
         public static let topBarGlyph: Double = 12
         public static let topBarIconBox: Double = 15
         public static let compactSlot: Double = 28
-        /// Plan-usage cluster in the top bar: glyph and percentages 4 apart;
-        /// the two agents sit `topBarLeadingGap` apart.
-        public static let planUsageGap: Double = 4
+        // Plan-usage cluster in the top bar (Notch handoff page 6): per
+        // window a 10px label and an 11px mono value 3 apart, windows 6
+        // apart, the agent mark 6 before its first window, agents 8 apart.
+        // Values are at least 16 wide so single digits keep the rhythm.
+        public static let planUsageLabelGap: Double = 3
+        public static let planUsageItemGap: Double = 6
+        public static let planUsageIconGap: Double = 6
+        public static let planUsageGroupGap: Double = 8
+        public static let planUsageValueMinWidth: Double = 16
+        public static let planUsageMarkRadius: Double = 3
 
         // List rows: grid `8px | 1fr | auto`, column gap 9, row gap 2,
         // padding `3 14 4` → a single-line row is ~28pt.

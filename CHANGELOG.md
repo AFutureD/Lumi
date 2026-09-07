@@ -6,7 +6,7 @@
 
 ### 套餐用量
 
-- [Lumi for Mac] - “Settings > Plan”新增 Usage 段：列出这台 Mac 上 Claude Code 与 Codex 的登录（邮箱与套餐），各有一个开关；打开后 daemon 每 5 分钟向服务商询问套餐额度。“Settings > Notch”新增 Usage 段：打开后 Notch 展开态顶栏左侧的 Lumi 标记换成套餐用量——Claude 图标、Session / Weekly / Fable 限额百分比，Codex 图标、Weekly 限额百分比；可选两家同时显示或点击切换，百分比按已用或剩余，五个数字各自可开关，设置页里有效果预览。悬停看各窗口的重置时间。
+- [Lumi for Mac] - “Settings > Usage”新增 Plan 段：一账号一张卡，卡头是登录（邮箱与套餐、读取来源、刷新时间）与开关，打开后 daemon 每 5 分钟向服务商询问套餐额度，卡身按窗口列出 `42% used`、用量条与重置倒计时（≥ 90% 变橙）。“Settings > Notch”新增 Usage 段：Preview 黑条、Agents（Switch on click / Show both）、Percent（Used / Remaining）、Show 多选药丸（Claude Code：5-hour / Weekly / Fable；Codex：5-hour / Weekly，只列服务商报了的窗口，一颗都不选即关闭）。选了之后 Notch 展开态顶栏左侧的 Lumi 标记换成额度簇：Claude 标记 `5h 42% · 7d 18% · Fable 7%`，Codex 标记 `7d 12%`；≥ 90% 的数字变橙，悬停看重置时间。
 - daemon 只读 Agent 自己保存的登录（`~/.claude/.credentials.json`，没有则读 Claude Code 的钥匙串项，不弹提示；`~/.codex/auth.json`），不换发 token、不写回；文件缺失、登录过期、被拒、限流都在 Settings 行里写明原因，失败时保留上一次的数字。
 
 ## [0.1.6] - 2026-09-05

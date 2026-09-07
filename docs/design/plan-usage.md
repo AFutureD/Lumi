@@ -44,10 +44,10 @@
 
 ## Mac
 
-- `PlanUsageModel`（`ApplicationCoordinator` 持有一份）：App 运行期间每 60 秒发 `plan_usage`（快照相同不重发布），daemon 从不可达变可达时立即重拉；`setEnabled` 发 `set_plan_usage` 并用返回值覆盖。它同时持有 Notch 显示偏好 `HaloPlanUsagePreferences`（UserDefaults `Lumi.Notch.PlanUsage.*`：`Enabled`、`AgentsMode`、`PercentStyle`、`Items`、`SelectedProvider`），三处界面共用。
-- **Settings › Plan**：`Usage` 段一张卡，复用 Integrations 的行（图标、名字、文件路径、副标题、行尾开关）。副标题 = `邮箱 · 套餐`，状态非 `ok` 时接状态文案（见术语表）；`credentialsMissing` 的行开关禁用。
-- **Settings › Notch › Usage**：`Show plan usage`、`Agents`（Switch on click · Show both）、`Percent`（Used · Remaining）、五个数字开关（默认关 Codex session）、`Preview`（黑底 32pt 条，渲染与顶栏同一个视图；没有可显示账号时用样例并标 `sample`）。
-- **Notch 顶栏**：`HaloPlanUsagePresentation.cluster(state:choices:now:)` 纯函数决定画什么——只列打开了开关且勾了数字的账号；`switchOnClick` 只出选中的那家（不可用时换另一家），整簇是按钮；未勾的数字不占位，没报的窗口 `–`；没有 limits 的账号图标 45% 透明；已用 ≥ 90% 用 `InkDark.warning`（Orange D400）；tooltip 列每个窗口的「已用/剩余 + 重置倒计时」。返回 `nil` 时顶栏保持品牌簇。
+- `PlanUsageModel`（`ApplicationCoordinator` 持有一份）：App 运行期间每 60 秒发 `plan_usage`（快照相同不重发布），daemon 从不可达变可达时立即重拉；`setEnabled` 发 `set_plan_usage` 并用返回值覆盖。它同时持有 Notch 显示偏好 `HaloPlanUsagePreferences`（UserDefaults `Lumi.Notch.PlanUsage.*`：`AgentsMode`、`PercentStyle`、`Items`（空集 = 关闭）、`SelectedProvider`），三处界面共用。
+- **Settings › Usage › Plan**（handoff `design_handoff_plan_usage` 第 9 页）：一账号一张卡（`PlanSettingsPanel`）。卡头：22pt 标记（不可用 .55）、名字 13/590、`邮箱 · 套餐` 11、读取来源 11 等宽（`Keychain · ~/.claude/.credentials.json` / `~/.codex/auth.json`）、`updated 1m ago`（开关开着才显示）、开关（`credentialsMissing` 禁用 .4）。卡身：状态 `ok`/`rateLimited` 且有 limits 时一列一个窗口（`SESSION · 5 HOURS` 10/510/.04em、`42%` 17/590 + `used`、6pt 条——条永远画已用，75–89% Orange 500、≥90% Orange 600 且数字 Orange 700、`resets in 2h 10m`）；否则一行 12px 文案（关着 / Fetching / 状态文案 + 说明），不放按钮。刷新时间与倒计时用 `TimelineView` 每 30 秒重算。值在 `DesignSystem.PlanUsage`。
+- **Settings › Notch › Usage**（第 7b 页）：顺序 Preview（黑底 32pt 条 + 一句提示，渲染与顶栏同一个视图；没有可显示账号时用样例并标 `sample`；点击切换模式下整条可点）→ `Agents`（Switch on click · Show both）→ `Percent`（Used · Remaining）→ `Show`：一行一家，20pt 标记 + 名字（104 宽）+ 多选药丸（`5-hour` / `Weekly` / `Fable`；只列服务商报了的窗口；选中 = 蓝底 .12 + 勾），账号不可用时整行 .5、名字下写原因。**没有总开关**：`items` 为空即关闭。药丸不用 segmented（多选与上面两行的单选区分开）。
+- **Notch 顶栏**（Notch 第 6 页）：`HaloPlanUsagePresentation.cluster(state:choices:now:)` 纯函数决定画什么——只列打开了开关、勾了窗口且服务商报了的账号；一格 = 标签（`5h` / `7d` / `Fable`，10/510 White 42%）+ 数字（11 SF Mono tabular 纯白，最小宽 16），标签↔数字 3、格↔格 6、标记↔首格 6、两家 8；`switchOnClick` 只出选中的那家（不可用时换另一家），整簇是按钮；没报的窗口不占位，某家没有可画的格就整组消失；已用 ≥ 90% 数字用 `InkDark.warning`（Orange D400），没有第二档；tooltip 列每个窗口的「已用/剩余 + 重置倒计时」。返回 `nil`（含一颗都没选）时顶栏保持品牌簇。
 - 图标：`AgentIcons.mark`——两家 SVG 标记（`codex.svg`、`claude.svg`，都是透明背景）直接画在黑底上，15pt；浅色界面（Settings 行、Usage 表、Session 列表）用 `AgentIcons.image`，同一标记加白色圆角底块。
 
 ## 当前限制

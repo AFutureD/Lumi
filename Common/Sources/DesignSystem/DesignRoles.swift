@@ -92,6 +92,8 @@ public extension DesignSystem {
         public static let destructive = Palette.redDark.d500
         /// 警示 — a plan-usage window at 90 % or more (Orange D400).
         public static let warning = Palette.orangeDark.d400
+        /// Plan-usage window label in the top bar (`5h` / `7d` / `Fable`) (White 42 %).
+        public static let planUsageLabel = DesignColor(white: 1, alpha: 0.42)
         /// Ink on the white primary button.
         public static let onAccentFill = DesignColor(hex: 0x111111)
 

@@ -1,4 +1,5 @@
 import DesignSystem
+import Transport
 import AppKit
 import NookApp
 import SwiftUI
@@ -83,13 +84,25 @@ struct HaloSettingsView: View {
                 }
             }
 
+            // Plan usage in the top bar (macOS handoff page 7b): preview
+            // first, the two single-choice rows, then the multi-select pills.
             SettingsSection(title: "Usage") {
                 SettingsCard {
-                    SettingsRow(title: "Show plan usage", subtitle: "Replaces the Lumi mark in the expanded panel's top bar.") {
-                        Toggle("Show plan usage", isOn: $planUsagePreferences.enabled)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("Preview")
+                                .font(Design.Font.UI.body)
+                            Spacer(minLength: 8)
+                            Text(planUsagePreferences.agentsMode == .showBoth
+                                 ? "Both agents side by side, 8pt apart."
+                                 : "Click the preview to switch to the other agent.")
+                                .font(Design.Font.UI.caption)
+                                .foregroundStyle(Design.Color.UI.inkQuaternary)
+                        }
+                        HaloPlanUsagePreviewStrip(model: planUsage, preferences: planUsagePreferences)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                     Divider()
                     SettingsRow(title: "Agents", minHeight: 52) {
                         Picker("Agents", selection: $planUsagePreferences.agentsMode) {
@@ -112,34 +125,23 @@ struct HaloSettingsView: View {
                         .controlSize(.small)
                         .fixedSize()
                     }
-                    ForEach(PlanUsageItem.allCases, id: \.self) { item in
-                        Divider()
-                        SettingsRow(title: item.title, minHeight: 44) {
-                            Toggle(item.title, isOn: Binding(
-                                get: { planUsagePreferences.items.contains(item) },
-                                set: { planUsagePreferences.setItem(item, on: $0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                        }
-                    }
                     Divider()
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Preview")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show")
                             .font(Design.Font.UI.body)
-                        HaloPlanUsagePreviewStrip(model: planUsage, preferences: planUsagePreferences)
-                        if !planUsagePreferences.enabled {
-                            Text("Turn on “Show plan usage” to see the cluster.")
-                                .font(Design.Font.UI.caption)
-                                .foregroundStyle(.secondary)
-                        } else if planUsage.state?.accounts.contains(where: \.enabled) != true {
-                            Text("No account is switched on under Settings › Plan; the strip shows sample numbers.")
-                                .font(Design.Font.UI.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text("Pick any number of windows · none picked hides plan usage")
+                            .font(Design.Font.UI.caption)
+                            .foregroundStyle(Design.Color.UI.inkQuaternary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
+                    Divider()
+                    HaloPlanUsageShowRow(provider: .claude, model: planUsage, preferences: planUsagePreferences)
+                    Divider()
+                    HaloPlanUsageShowRow(provider: .codex, model: planUsage, preferences: planUsagePreferences)
+                    Divider()
+                    SettingsFootnote(text: "Windows the provider does not report have no pill and take no room in the top bar; an agent with nothing picked has no group there. Order is fixed: 5-hour → Weekly → Fable.")
                 }
             }
 
@@ -359,5 +361,75 @@ private struct AdjustmentSliderRow: View {
 
     private var isDefaultValue: Bool {
         abs(value - defaultValue) < (step / 2)
+    }
+}
+
+/// One agent under Settings › Notch › Usage › Show: mark, name (with the
+/// reason when there is nothing to pick), then one multi-select pill per
+/// window the provider reports, left-aligned after the name.
+private struct HaloPlanUsageShowRow: View {
+    let provider: AgentProvider
+    @ObservedObject var model: PlanUsageModel
+    @ObservedObject var preferences: HaloPlanUsagePreferences
+
+    private typealias PU = DesignSystem.PlanUsage
+
+    var body: some View {
+        let account = model.state?.accounts.first { $0.provider == provider }
+        let items = account.map(HaloPlanUsagePresentation.availableItems) ?? []
+        let reason = items.isEmpty ? HaloPlanUsagePresentation.unavailableReason(account) : nil
+        HStack(spacing: PU.showRowGap) {
+            if let mark = AgentIcons.image(for: provider.kind, pointSize: PU.showMark) {
+                Image(nsImage: mark)
+                    .resizable()
+                    .frame(width: PU.showMark, height: PU.showMark)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(HaloPlanUsagePresentation.agentName(provider))
+                    .font(Design.Font.UI.body)
+                if let reason {
+                    Text(reason)
+                        .designText(DesignSystem.Typography.footnote)
+                        .foregroundStyle(Design.Color.UI.warningText)
+                        .lineLimit(2)
+                }
+            }
+            .frame(width: PU.showNameWidth, alignment: .leading)
+            HStack(spacing: PU.pillGap) {
+                ForEach(items, id: \.self) { item in
+                    pill(item)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, PU.showRowVerticalPadding)
+        .frame(minHeight: PU.showRowMinimumHeight)
+        .opacity(items.isEmpty ? PU.unavailableRowOpacity : 1)
+    }
+
+    private func pill(_ item: PlanUsageItem) -> some View {
+        let selected = preferences.items.contains(item)
+        return Button {
+            preferences.toggle(item)
+        } label: {
+            HStack(spacing: PU.pillInnerGap) {
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: PU.pillCheck, weight: .semibold))
+                }
+                Text(item.pillTitle)
+                    .designText(DesignSystem.Typography.planUsagePill)
+            }
+            .foregroundStyle(Color(selected ? PU.pillSelectedText : PU.pillText))
+            .padding(.horizontal, PU.pillHorizontalPadding)
+            .frame(height: PU.pillHeight)
+            .background(Color(selected ? PU.pillSelectedFill : PU.pillFill), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color(selected ? PU.pillSelectedRing : PU.pillRing), lineWidth: 0.5))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(HaloPlanUsagePresentation.agentName(provider)) \(item.pillTitle)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

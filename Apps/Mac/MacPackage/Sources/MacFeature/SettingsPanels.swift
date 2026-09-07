@@ -456,7 +456,7 @@ struct AgentsSettingsPanel: View {
 
 /// One integration: 20pt icon, name with the mono config path on the same
 /// baseline, a state (or warning) subtitle, and a single trailing button.
-struct IntegrationRow<Action: View>: View {
+private struct IntegrationRow<Action: View>: View {
     let icon: NSImage?
     let name: String
     let configPath: String

@@ -1,28 +1,27 @@
 import Core
+import DesignSystem
 import Transport
 import Foundation
 
 /// What the Notch top bar draws for plan usage: one group per agent, each
-/// an icon followed by the chosen percentages in the design's order.
+/// the agent's mark followed by `label value` cells in the design's order
+/// (5 h → 7 d → model window).
 struct HaloPlanUsageCluster: Hashable, Sendable {
     struct Entry: Hashable, Sendable {
         var item: PlanUsageItem
-        /// `42%`, or `–` when the window is not reported.
+        /// `5h` / `7d` / `Fable`.
+        var label: String
+        /// `42%`.
         var text: String
-        /// Used ≥ 90 % (remaining ≤ 10 %): drawn in the warning colour.
+        /// Used ≥ 90 %: drawn in the warning colour.
         var isWarning: Bool
-        /// `Session resets in 2h 10m`; nothing for an unreported window.
-        var help: String?
+        /// `Session 42% used, resets in 2h 10m`.
+        var help: String
     }
 
     struct Group: Hashable, Sendable {
         var provider: AgentProvider
-        /// False when the account has no current limits (not signed in,
-        /// rejected, never fetched): the icon dims and entries read `–`.
-        var isAvailable: Bool
         var entries: [Entry]
-        /// The account's status, for the tooltip.
-        var statusText: String?
     }
 
     var groups: [Group]
@@ -31,59 +30,46 @@ struct HaloPlanUsageCluster: Hashable, Sendable {
 
     var help: String {
         groups.map { group in
-            let name = group.provider == .claude ? "Claude Code" : "Codex"
-            let parts = group.entries.compactMap(\.help)
-            if parts.isEmpty { return "\(name): \(group.statusText ?? "no limits reported")" }
-            return "\(name) · " + parts.joined(separator: " · ")
+            "\(HaloPlanUsagePresentation.agentName(group.provider)) · " + group.entries.map(\.help).joined(separator: " · ")
         }.joined(separator: "\n")
     }
 }
 
 enum HaloPlanUsagePresentation {
-    static let warningThreshold: Double = 90
+    static let warningThreshold = DesignSystem.PlanUsage.warningPercent
 
-    /// `nil` when the cluster has nothing to show — the top bar keeps its
-    /// brand cluster: the feature is off, no account is switched on, or
-    /// every chosen item belongs to an account that is off.
-    static func cluster(state: PlanUsageState?, choices: HaloPlanUsageChoices, now: Date) -> HaloPlanUsageCluster? {
-        guard choices.enabled, let state else { return nil }
-        let providers: [AgentProvider] = [.claude, .codex]
-        let eligible = providers.filter { provider in
-            guard let account = state.accounts.first(where: { $0.provider == provider }), account.enabled else { return false }
-            return PlanUsageItem.allCases.contains { $0.provider == provider && choices.items.contains($0) }
-        }
-        guard !eligible.isEmpty else { return nil }
-
-        let shown: [AgentProvider]
-        var next: AgentProvider?
-        switch choices.agentsMode {
-        case .showBoth:
-            shown = eligible
-        case .switchOnClick:
-            let current = eligible.contains(choices.selectedProvider) ? choices.selectedProvider : eligible[0]
-            shown = [current]
-            next = eligible.first { $0 != current }
-        }
-
-        let groups = shown.compactMap { provider -> HaloPlanUsageCluster.Group? in
-            guard let account = state.accounts.first(where: { $0.provider == provider }) else { return nil }
-            let entries = PlanUsageItem.allCases
-                .filter { $0.provider == provider && choices.items.contains($0) }
-                .map { entry($0, account: account, style: choices.percentStyle, now: now) }
-            return HaloPlanUsageCluster.Group(
-                provider: provider,
-                isAvailable: !account.limits.isEmpty,
-                entries: entries,
-                statusText: statusText(account)
-            )
-        }
-        return HaloPlanUsageCluster(groups: groups, nextProvider: next)
+    static func agentName(_ provider: AgentProvider) -> String {
+        provider == .claude ? "Claude Code" : "Codex"
     }
 
-    static func entry(_ item: PlanUsageItem, account: PlanUsageAccount, style: PlanUsagePercentStyle, now: Date) -> HaloPlanUsageCluster.Entry {
-        guard let limit = account.limit(item.window, model: item.model) else {
-            return .init(item: item, text: "–", isWarning: false, help: nil)
+    /// `nil` when the cluster has nothing to show — the top bar keeps its
+    /// brand cluster: no item is chosen (that is the off state), no chosen
+    /// item belongs to an account that is switched on, or none of those
+    /// accounts reports a chosen window. Windows the provider did not report
+    /// take no room; an agent with nothing to show takes none either.
+    static func cluster(state: PlanUsageState?, choices: HaloPlanUsageChoices, now: Date) -> HaloPlanUsageCluster? {
+        guard let state, !choices.items.isEmpty else { return nil }
+        let candidates: [HaloPlanUsageCluster.Group] = [AgentProvider.claude, .codex].compactMap { provider in
+            guard let account = state.accounts.first(where: { $0.provider == provider }), account.enabled else { return nil }
+            let entries = PlanUsageItem.allCases
+                .filter { $0.provider == provider && choices.items.contains($0) }
+                .compactMap { entry($0, account: account, style: choices.percentStyle, now: now) }
+            return entries.isEmpty ? nil : HaloPlanUsageCluster.Group(provider: provider, entries: entries)
         }
+        guard !candidates.isEmpty else { return nil }
+        switch choices.agentsMode {
+        case .showBoth:
+            return HaloPlanUsageCluster(groups: candidates, nextProvider: nil)
+        case .switchOnClick:
+            let current = candidates.first { $0.provider == choices.selectedProvider } ?? candidates[0]
+            let next = candidates.first { $0.provider != current.provider }?.provider
+            return HaloPlanUsageCluster(groups: [current], nextProvider: next)
+        }
+    }
+
+    /// `nil` when the provider did not report the window.
+    static func entry(_ item: PlanUsageItem, account: PlanUsageAccount, style: PlanUsagePercentStyle, now: Date) -> HaloPlanUsageCluster.Entry? {
+        guard let limit = account.limit(item.window, model: item.model) else { return nil }
         let shown = style == .used ? limit.usedPercent : 100 - limit.usedPercent
         var help = "\(item.shortTitle) \(Int(shown.rounded()))% \(style == .used ? "used" : "left")"
         if let resetsAt = limit.resetsAt {
@@ -93,13 +79,30 @@ enum HaloPlanUsagePresentation {
         }
         return .init(
             item: item,
+            label: item.notchLabel,
             text: "\(Int(shown.rounded()))%",
             isWarning: limit.usedPercent >= warningThreshold,
             help: help
         )
     }
 
-    /// The Settings row's subtitle and the Notch tooltip share these words.
+    /// The items an account can offer under Settings › Notch › Usage › Show:
+    /// only windows the provider reported, only while the account is on.
+    static func availableItems(_ account: PlanUsageAccount) -> [PlanUsageItem] {
+        guard account.enabled else { return [] }
+        return PlanUsageItem.allCases.filter { $0.provider == account.provider && account.limit($0.window, model: $0.model) != nil }
+    }
+
+    /// Why a Show row offers nothing, for the line under the agent's name.
+    static func unavailableReason(_ account: PlanUsageAccount?, now: Date = Date()) -> String? {
+        guard let account else { return "Daemon not connected" }
+        if let status = statusText(account, now: now) { return status }
+        if !account.enabled { return "Switched off · Settings › Usage" }
+        if account.limits.isEmpty { return "Fetching from the provider…" }
+        return nil
+    }
+
+    /// The Settings row's status and the Notch tooltip share these words.
     static func statusText(_ account: PlanUsageAccount, now: Date = Date()) -> String? {
         switch account.status {
         case .ok:
@@ -107,7 +110,7 @@ enum HaloPlanUsagePresentation {
         case .credentialsMissing:
             return "Not signed in" + (account.statusDetail.map { " · \($0)" } ?? "")
         case .signInExpired:
-            return "Saved sign-in expired · sign in again with \(account.provider == .claude ? "Claude Code" : "Codex")"
+            return "Saved sign-in expired · sign in again with \(agentName(account.provider))"
         case .signInRejected:
             return "Sign-in rejected by the service"
         case .rateLimited:
@@ -118,6 +121,28 @@ enum HaloPlanUsagePresentation {
         case .failed:
             return "Unavailable" + (account.statusDetail.map { " · \($0)" } ?? "")
         }
+    }
+
+    /// Card window title: `SESSION · 5 HOURS`, `WEEKLY · 7 DAYS`, `FABLE · 7 DAYS`.
+    static func windowTitle(_ limit: PlanUsageLimit) -> String {
+        if let model = limit.model { return "\(model) · 7 days".uppercased() }
+        return limit.window == .session ? "SESSION · 5 HOURS" : "WEEKLY · 7 DAYS"
+    }
+
+    /// `resets in 2h 10m` / `resets now`.
+    static func resetText(_ limit: PlanUsageLimit, now: Date) -> String? {
+        guard let resetsAt = limit.resetsAt else { return nil }
+        return resetsAt > now ? "resets in \(SessionElapsedFormatter.string(from: resetsAt.timeIntervalSince(now)))" : "resets now"
+    }
+
+    /// `updated 1m ago`.
+    static func updatedText(_ fetchedAt: Date?, now: Date) -> String? {
+        guard let fetchedAt else { return nil }
+        let elapsed = max(0, now.timeIntervalSince(fetchedAt))
+        if elapsed < 60 { return "updated just now" }
+        if elapsed < 3_600 { return "updated \(Int(elapsed / 60))m ago" }
+        if elapsed < 86_400 { return "updated \(Int(elapsed / 3_600))h ago" }
+        return "updated \(Int(elapsed / 86_400))d ago"
     }
 
     /// Stand-in numbers for the Settings preview while the daemon has none.
