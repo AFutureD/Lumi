@@ -152,9 +152,12 @@ public enum IPCOperation: Hashable, Sendable {
     /// The daemon's plan-usage snapshot: every tracked sign-in with its
     /// rate-limit windows. Read-only.
     case planUsage
-    /// Switch one account's fetching on or off (`planAccount` + `enabled`);
-    /// answers with the updated snapshot.
-    case setPlanUsage
+    /// Every daemon-owned setting (`settings`). Read-only.
+    case getSettings
+    /// Replace every daemon-owned setting (`settings`); the daemon applies
+    /// what changed (starts or stops polling a plan-usage account) and
+    /// answers with what it stored.
+    case setSettings
 
     public var rawValue: String {
         switch self {
@@ -180,7 +183,8 @@ public enum IPCOperation: Hashable, Sendable {
         case .setSessionFilters: "set_session_filters"
         case .usageReport: "usage_report"
         case .planUsage: "plan_usage"
-        case .setPlanUsage: "set_plan_usage"
+        case .getSettings: "get_settings"
+        case .setSettings: "set_settings"
         }
     }
 }
@@ -212,7 +216,8 @@ extension IPCOperation: Codable {
         case "set_session_filters": .setSessionFilters
         case "usage_report": .usageReport
         case "plan_usage": .planUsage
-        case "set_plan_usage": .setPlanUsage
+        case "get_settings": .getSettings
+        case "set_settings": .setSettings
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown IPC operation: \(value)")
         }
     }
@@ -255,9 +260,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     /// change is measured against, answered in `UsageReport.comparison`.
     public let compareSince: UsageDay?
     public let compareUntil: UsageDay?
-    /// `set_plan_usage`: which sign-in to switch, and to what.
-    public let planAccount: PlanUsageAccountID?
-    public let enabled: Bool?
+    /// `set_settings`: the whole settings value to store.
+    public let settings: DaemonSettings?
 
     public init(
         operation: IPCOperation,
@@ -275,8 +279,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         until: UsageDay? = nil,
         compareSince: UsageDay? = nil,
         compareUntil: UsageDay? = nil,
-        planAccount: PlanUsageAccountID? = nil,
-        enabled: Bool? = nil
+        settings: DaemonSettings? = nil
     ) {
         self.operation = operation
         self.sessionID = sessionID
@@ -293,8 +296,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.until = until
         self.compareSince = compareSince
         self.compareUntil = compareUntil
-        self.planAccount = planAccount
-        self.enabled = enabled
+        self.settings = settings
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -313,8 +315,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case until
         case compareSince
         case compareUntil
-        case planAccount
-        case enabled
+        case settings
     }
 
     public init(from decoder: Decoder) throws {
@@ -334,8 +335,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         until = try c.decodeIfPresent(UsageDay.self, forKey: .until)
         compareSince = try c.decodeIfPresent(UsageDay.self, forKey: .compareSince)
         compareUntil = try c.decodeIfPresent(UsageDay.self, forKey: .compareUntil)
-        planAccount = try c.decodeIfPresent(PlanUsageAccountID.self, forKey: .planAccount)
-        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        settings = try c.decodeIfPresent(DaemonSettings.self, forKey: .settings)
     }
 }
 
@@ -427,8 +427,10 @@ public struct IPCResponse: Codable, Hashable, Sendable {
     public let filters: [SessionFilterRule]?
     /// `usage_report`: the grouped token / cost report for the requested range.
     public let usage: UsageReport?
-    /// `plan_usage` / `set_plan_usage`: the daemon's plan-usage snapshot.
+    /// `plan_usage`: the daemon's plan-usage snapshot.
     public let planUsage: PlanUsageState?
+    /// `get_settings` / `set_settings`: every daemon-owned setting as stored.
+    public let settings: DaemonSettings?
 
     public init(
         status: IPCResponseStatus,
@@ -443,7 +445,8 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         pairing: RelayPairingSession? = nil,
         filters: [SessionFilterRule]? = nil,
         usage: UsageReport? = nil,
-        planUsage: PlanUsageState? = nil
+        planUsage: PlanUsageState? = nil,
+        settings: DaemonSettings? = nil
     ) {
         self.status = status
         self.sessions = sessions
@@ -458,6 +461,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         self.filters = filters
         self.usage = usage
         self.planUsage = planUsage
+        self.settings = settings
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -474,6 +478,7 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         case filters
         case usage
         case planUsage
+        case settings
     }
 
     public init(from decoder: Decoder) throws {
@@ -491,5 +496,6 @@ public struct IPCResponse: Codable, Hashable, Sendable {
         filters = try c.decodeIfPresent([SessionFilterRule].self, forKey: .filters)
         usage = try c.decodeIfPresent(UsageReport.self, forKey: .usage)
         planUsage = try c.decodeIfPresent(PlanUsageState.self, forKey: .planUsage)
+        settings = try c.decodeIfPresent(DaemonSettings.self, forKey: .settings)
     }
 }

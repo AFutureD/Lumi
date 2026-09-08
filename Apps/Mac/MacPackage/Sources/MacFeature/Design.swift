@@ -32,6 +32,7 @@ extension NSFont {
         case .regular: .regular
         case .medium: .medium
         case .semibold: .semibold
+        case .bold: .bold
         }
         switch style.family {
         case .sans:

@@ -233,7 +233,26 @@ public actor SQLiteSessionRepository: SessionRepository {
                 """)
             try db.execute(sql: Self.usageSchema)
         }
+        // Daemon-owned settings: one dotted key per leaf value. No foreign
+        // keys — `clear_history` and session deletes never touch it. The
+        // first rows (plan-usage switches and percent style) replace the
+        // Mac's defaults keys and the daemon's `plan-usage-settings.json`.
+        migrator.registerMigration("lumi-v12-settings") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value BLOB NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """)
+        }
         try migrator.migrate(database)
+    }
+
+    /// The settings store over this repository's database — the same file,
+    /// its own table and contract (see `docs/design/data-communication-storage.md`).
+    public nonisolated func makeSettingsStore() -> SQLiteSettingsStore {
+        SQLiteSettingsStore(database: database)
     }
 
     /// The usage store over this repository's database. Usage shares the

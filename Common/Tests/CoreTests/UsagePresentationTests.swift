@@ -1,9 +1,16 @@
 import Core
-import DesignSystem
 import Transport
 import Foundation
 import Testing
-@testable import MacFeature
+
+/// Gregorian UTC with Sunday as the locale's first weekday — the Usage
+/// presets must still start weeks on Monday.
+private let utc: Calendar = {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    calendar.firstWeekday = 1
+    return calendar
+}()
 
 private let saturday = UsageDay(year: 2026, month: 9, day: 5)
 private let status = UsagePricingStatus(source: .builtin, modelCount: 1)
@@ -45,7 +52,7 @@ private func report(
     #expect(all.tokens == "2.0K")
     #expect(all.tokensExact == "2,000")
     #expect(all.composition == "Cache read 40.0% · output 27.5%")
-    #expect(all.segments.map(\.id) == ["input", "cacheRead", "cacheWrite", "output"])
+    #expect(all.segments.map(\.kind) == [.input, .cacheRead, .cacheWrite, .output])
     #expect(abs(all.segments.reduce(0) { $0 + $1.fraction } - 1) < 1e-9)
     #expect(all.sessions == "3" && all.turns == "4" && all.calls == "6")
     #expect(!all.allUnpriced)
@@ -54,7 +61,7 @@ private func report(
     #expect(codexOnly.cost == "—")
     #expect(codexOnly.allUnpriced)
     #expect(codexOnly.costDelta == "no comparable previous period")
-    #expect(codexOnly.segments.map(\.id) == ["input", "output"])
+    #expect(codexOnly.segments.map(\.kind) == [.input, .output])
     #expect(codexOnly.calls == "2")
 
     // An agent absent from the range is a real zero, not unpriced.
@@ -123,7 +130,7 @@ private func report(
     #expect(all.unit == .day)
     #expect(all.title(.cost) == "COST PER DAY")
     #expect(all.series.map(\.id) == ["claude", "codex"])
-    #expect(all.series.map(\.colorIndex) == [DesignSystem.Chart.claudeSeries, DesignSystem.Chart.codexSeries])
+    #expect(all.series.map(\.colorIndex) == [UsageTrend.claudeSeriesIndex, UsageTrend.codexSeriesIndex])
     #expect(all.series.map(\.legend) == ["Claude Code", "Codex"])
     #expect(all.bars[0].value(.cost, series: "claude") == 10)
     #expect(all.bars[0].value(.cost, series: "codex") == 0)     // unpriced adds no cost…

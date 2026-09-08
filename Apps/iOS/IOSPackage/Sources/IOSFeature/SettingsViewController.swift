@@ -18,7 +18,7 @@ final class SettingsViewController: UIViewController, UICollectionViewDelegate {
         self.notifications = notifications
         super.init(nibName: nil, bundle: nil)
         title = "Settings"
-        tabBarItem = UITabBarItem(title: "Settings", image: UIImage(systemName: "gearshape"), tag: 2)
+        tabBarItem = UITabBarItem(title: "Settings", image: UIImage(systemName: "gearshape"), tag: 3)
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }

@@ -7,8 +7,10 @@ import Foundation
 // in-memory snapshot per account. Nothing here is Session or token-cost
 // data; it is the provider's own answer, refreshed every few minutes.
 //
-// These types cross the daemon ↔ Mac IPC boundary (`plan_usage`,
-// `set_plan_usage`), so they live in Transport.
+// These types cross the daemon ↔ Mac IPC boundary (`plan_usage`) and the
+// Relay (`fetch_plan_usage` → `plan_usage`), so they live in Transport.
+// Which accounts are polled is a setting (`PlanUsageSettings`); each
+// account's `enabled` mirrors it for display.
 
 /// One sign-in the daemon tracks. Today there is one per provider and the id
 /// is the provider's name (`claude`, `codex`); a second sign-in of the same
@@ -78,7 +80,8 @@ public struct PlanUsageAccount: Codable, Hashable, Sendable {
     public var email: String?
     /// The subscription as the provider names it (`Max 20x`, `Pro 5x`).
     public var plan: String?
-    /// The user's switch: only enabled accounts are fetched.
+    /// Mirrors `PlanUsageSettings.enabledAccounts`; only enabled accounts
+    /// are fetched. Change it through `set_settings`, never here.
     public var enabled: Bool
     public var status: PlanUsageAccountStatus
     /// Human-readable cause for `failed` / `signInRejected` / `rateLimited`.

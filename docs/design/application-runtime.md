@@ -102,8 +102,9 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 
 ### 同步与展示
 
-- 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`，收齐后用 `SyncReconcilePlan` 对账（裁剪 / 整取 / 补尾 / 改 summary），pending 到齐写 lastSync。
-- 之后：`session_message` 事件通过与 daemon 相同的 `apply` 归约进缓存与内存（经同一写队列，和整 Session 替换保持顺序）；`session_info` / `session_removed` 直接落地；未知 Session 的事件触发一次整取。
+- 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`，收齐后用 `SyncReconcilePlan` **惰性**对账（`materialized` = 本机已持有时间线或详情正打开的 Session）：裁剪、改 summary、未知的插入 summary-only 行（`replaceSession` 空时间线）；整取 / 补尾只对 materialized 的 Session 发；pending 到齐写 lastSync。
+- 点开详情（`openSession`）：本机没有时间线就 `fetch_session` 整取，有但落后于最近一次索引就 `fetch_timeline_since` 补尾（同一 `SyncReconcilePlan` 规则算单个 Session）；详情页在第一次内容到达前显示 `Loading session…`；关闭详情（`closeSession`）后它仍算已持有，之后的对账继续补差异。
+- 之后：`session_message` 事件对已持有的 Session 通过与 daemon 相同的 `apply` 归约进缓存与内存（经同一写队列，和整 Session 替换保持顺序）；对只有摘要的 Session 只走 `SessionReduction.summary`，时间线不落地；未知 Session 的事件用摘要归约器建一条 summary-only 行，不整取。`session_info` / `session_removed` 直接落地。
 - 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、任一 presence `online`（含 Host 重连）、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
 - 列表始终显示缓存；Mac 离线只在 Macs 页标 Offline + 上次同步 + Relay host；没有缓存且离线时才显示 `Mac unavailable`。
 - 本机隐藏（详情 Delete）的 Session 继续在后台进缓存；事件 / summary / 整取 / index 任一路径带来真实的新活动（`lastActivityAt` 超过隐藏时刻）就重新显示——纯元数据变化（改标题、配置）不会唤回。

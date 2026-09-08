@@ -6,11 +6,11 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ## 模块概览
 
-- **iPhone 入口**：底部三个 Tab —— Sessions（合并列表）、Macs（已配对的 Mac）、Settings。
+- **iPhone 入口**：底部四个 Tab —— Sessions（合并列表）、Usage（每台 Mac 的套餐额度与花费，见 [iPhone 用量](iphone-usage.md)）、Macs（已配对的 Mac）、Settings。
 - **Mac 入口**：侧边栏“iPhone”显示 6 位配对码和二维码，并在这里按 Match 批准某台 iPhone。
 - **前置条件**：iPhone 运行 iOS 26 或更高版本；Mac 的 daemon 和 Relay 可用。配对全程需要停在 Mac 的“iPhone”页完成，配对之后的日常同步不需要打开 Mac App。
 - **主要结果**：Sessions 把所有 Mac 的 Session 合并成一条列表；Macs 显示每台 Mac 的在线状态和它的 Relay 地址。
-- **隐私提示**：已配对 iPhone 会通过端到端加密通道收到 Session 的完整副本，并缓存在本机（每台 Mac 一个数据库）；配对凭据进 Keychain（[IOS-R-010](#ios-r-010-session-内容缓存在本机)）。唯一的例外是推送提醒的标题和状态：以明文经 Relay 转发，不落存储（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）。
+- **隐私提示**：已配对 iPhone 会通过端到端加密通道收到每个 Session 的摘要，点开过的 Session 才收到完整时间线，并缓存在本机（每台 Mac 一个数据库）；配对凭据进 Keychain（[IOS-R-010](#ios-r-010-session-内容缓存在本机)）。唯一的例外是推送提醒的标题和状态：以明文经 Relay 转发，不落存储（[IOS-R-016](#ios-r-016-关键时刻推送提醒)）。
 
 ## 配对并查看
 
@@ -23,9 +23,9 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
    - 系统反馈：iPhone 显示 “Paired · syncing…” 约 1.5 秒后回到 Macs 列表，该 Mac 显示 `Online · <Relay 地址>`；Mac 的 Paired iPhones 里这台 iPhone 显示 Active。
    - 数据结果：这台 iPhone 获得独立授权，并与 Mac 互相核对了身份（[IOS-R-001](#ios-r-001-每台设备独立授权)、[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。数字不一样就在 Mac 上点 Don't match：iPhone 提示 “Mac 拒绝了这次配对”，什么都不保存。
 4. 切到 Sessions Tab。
-   - 系统反馈：该 Mac 在线并完成一轮对账后，它的 Session 出现在合并列表里，状态点颜色与 Mac、Notch 一致（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；之后 Agent 的每条活动实时到达。
+   - 系统反馈：该 Mac 在线并完成一轮对账后，它的 Session 出现在合并列表里（这一步只传摘要，几秒即成），状态点颜色与 Mac、Notch 一致（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；之后每个 Session 的状态实时跟着 Mac 变。
 5. 点一行 Session。
-   - 系统反馈：进入详情，默认 Activity Tab；Info Tab 显示指标和 Session 信息。
+   - 系统反馈：进入详情，第一次点开先显示 `Loading session…`，Mac 把这个 Session 的时间线传过来后换成 Activity Tab；再次点开直接显示，只补新增的部分（[IOS-R-007](#ios-r-007-在线只读并按-mac-增量同步)）。Info Tab 显示指标和 Session 信息。
    - 数据结果：不向 Agent 发送任何命令（[IOS-R-007](#ios-r-007-在线只读并按-mac-增量同步)）；绿色「已结束未查看」的 Session 打开即算已查看，列表、Mac 和 Notch 一起变灰（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)）。
 
 完成信号：Macs 里该 Mac 显示 Online，Sessions 里能打开它的 Session 时间线。
@@ -38,7 +38,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - **Subagent 组**：子 Agent（包括子 Agent 的子 Agent）不单独占行，Session 运行中时默认展开、其他状态默认折叠成一条计数条——叠在一起的状态点（running → waiting → failed → done）+ `3 subagents · 2 running · 1 done`（只写非零档，与 Mac、Notch 文案一致）+ 箭头；点整条展开成标签（每枚显示状态点、名字、用时；一行最多两枚，放不下的名字末尾省略），再点收起，逐行独立记忆。点一枚标签进入该 Subagent 自己的详情，按下时标签变深作为反馈（[IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
 - **过滤**：标题下方两枚下拉按钮 —— `Macs`（每台已配对 Mac）和 `Status`（Running 蓝 / Waiting 橙 / Completed 灰；失败、中断和待查看的 Session 都归入 Completed 组），点开在按钮下方落下一张勾选面板（组名标题加每项一个复选框、图标和 Session 计数），勾选即时生效、面板不关，一组至少留一项；点面板外或再点一次按钮收起，直接点另一个按钮可切换组；任一组被过滤时按钮变蓝并显示已选数量角标，右端出现 `Reset` 一键回全选。选择会被记住，新配对的 Mac 默认显示。
 - **搜索**：导航栏右上的放大镜默认收拢，点开才展开搜索框（系统搜索控件）；按标题、Agent、工作目录和 Subagent 名称即时过滤当前列表。
-- **刷新**：下拉列表，或右上 `···` > “Refresh list”，向每台 Mac 重新索取 Session 索引并只补差异。
+- **刷新**：下拉列表，或右上 `···` > “Refresh list”，向每台 Mac 重新索取 Session 索引：摘要全部对齐，时间线只给点开过的 Session 补差异。
 - **空状态**：未配对时提示去 Macs 配对；Mac 在线但没有 Session 时显示 No live sessions；Mac 在线但首轮对账未完成时显示 Syncing…；过滤或搜索排空时显示 No matching sessions；Mac 不在线且本机没有缓存时显示 Mac unavailable；有缓存就照常显示（[IOS-R-006](#ios-r-006-mac-离线时继续显示缓存)）。
 
 ## Session 详情
@@ -117,12 +117,12 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 结果：启动立即有内容；新鲜度由 Macs 页表达，而不是靠隐藏内容。
 - 限制或例外：本机没有缓存且 Mac 离线时，列表显示 Mac unavailable。
 
-### IOS-R-007 在线只读并按 Mac 增量同步
+### IOS-R-007 在线只读，列表同步摘要，内容点开才取
 
 - 条件：对应 Mac 在线。
-- 行为：iPhone 先用 Session 索引与本机缓存对账（多余的删、缺失的整取、有变化的只补差异），之后实时应用 Mac 上的每条 Agent 活动。
-- 结果：daemon、Mac 和该 iPhone 的可见数据一致；Mac App 是否打开不影响同步。
-- 限制或例外：iPhone 不提供审批、终止、输入或其他远程控制。
+- 行为：iPhone 先用 Session 索引与本机缓存对账：每个 Session 的摘要（标题、状态、时间）都对齐，多余的删；时间线只给点开过的 Session 补差异。点开一个从未点开的 Session 时才把它整个取来，之后它的每条活动实时到达；没点开过的 Session 只跟着 Mac 更新状态。
+- 结果：列表几秒内就绪，不随 Mac 上的历史体量变慢；daemon、Mac 和该 iPhone 的可见数据一致；Mac App 是否打开不影响同步。
+- 限制或例外：iPhone 不提供审批、终止、输入或其他远程控制；没点开过的 Session 在列表里没有「最近活动」那一行；一个很长的 Session 第一次点开要等它整个传完。
 
 ### IOS-R-008 一台 iPhone 可连接多台 Mac
 
@@ -140,9 +140,9 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ### IOS-R-010 Session 内容缓存在本机
 
-- 条件：iPhone 收到任意 Mac 的 Session。
-- 行为：内容写入本机的每台 Mac 一个数据库（与 Mac 同一种格式），重启 App 立即显示；Mac 永远是数据源，本机只是缓存。
-- 结果：退出 App 不丢内容；Mac 离线也能翻看；重新上线只传差异。
+- 条件：iPhone 收到任意 Mac 的 Session 摘要或时间线。
+- 行为：写入本机的每台 Mac 一个数据库（与 Mac 同一种格式），重启 App 立即显示；Mac 永远是数据源，本机只是缓存。
+- 结果：退出 App 不丢内容；点开过的 Session 在 Mac 离线时也能翻看；重新上线只传差异。
 - 限制或例外：Settings > Clear received data 清空全部缓存并自动重新取回；移除某台 Mac 会删掉它的缓存文件；Keychain 只存配对凭据，设备名、过滤选择和上次同步时间另存。
 
 ### IOS-R-011 Subagent 收成父 Session 的标签
@@ -187,6 +187,13 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 结果：App 挂起或未打开也能第一时间知道哪个 Session 需要回来看；点通知直接落在那个 Session 的详情页，打开即视为已查看（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)），这个 Session 已送达的通知同时清掉。
 - 限制或例外：通知的标题和状态以明文经 Relay 转发，Relay 不把它们写入存储（运行日志只记录长度），Session 的完整内容仍走端到端加密通道。提醒只发给这台 Mac 点过 Match 的 iPhone——Paired iPhones 里显示 Unverified 的（Mac 没批准过、或钥匙被中转服务换过）和 Session 内容一样收不到（[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。同一 Session 的提醒有数秒冷却；超过约两分钟才补录到达的旧回合不再提醒；还没在任何界面出现过的 Session 不提醒；回合开始不提醒。在 Mac 上撤销这台 iPhone 后提醒立即停止；Mac 离线（daemon 没在跑）时没有提醒来源。
 
+### IOS-R-017 用量与套餐额度只读且不缓存
+
+- 条件：打开 Usage Tab。
+- 行为：iPhone 向每台配对的 Mac 索取套餐额度快照与所选范围的用量报表，页面可见时定期再问（Plan 每 60 秒、History 每 30 秒），下拉刷新立即问。
+- 结果：数字与 Mac 上 Settings › Usage、Usage 页一致；「已用 / 剩余」跟每台 Mac 自己的设置走。
+- 限制或例外：只在内存里——退出 App 再进必是加载态，Mac 离线时保留这次运行里最后一份并写明是多久前的；iPhone 上不能改开关、Percent，也没有 Detail 表。详见 [iPhone 用量](iphone-usage.md)。
+
 ## 空状态与故障
 
 - **No Macs paired**：去 Macs Tab 点 `+` > Add Device 输码，或直接扫 Mac 上的二维码。
@@ -202,7 +209,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ## 业务数据
 
-iPhone 为每台 Mac 维护一条通道和一个 SQLite 缓存；启动先显示缓存，在线后用索引对账补差异，再实时应用 Agent 活动。Keychain 保存配对凭据（每台 Mac 连同自己的 Relay 地址）；本机还保存设备名、设备与状态过滤选择、每台 Mac 的上次同步时间和 Advanced 里上次填的 Relay URL（只作预填）。完整生命周期见[数据流](../data-flows.md)。
+iPhone 为每台 Mac 维护一条通道和一个 SQLite 缓存；启动先显示缓存，在线后用索引对齐摘要（时间线只给点开过的补差异），再实时跟着 Agent 活动更新。Keychain 保存配对凭据（每台 Mac 连同自己的 Relay 地址）；本机还保存设备名、设备与状态过滤选择、每台 Mac 的上次同步时间和 Advanced 里上次填的 Relay URL（只作预填）。完整生命周期见[数据流](../data-flows.md)。
 
 ## 相关文档
 

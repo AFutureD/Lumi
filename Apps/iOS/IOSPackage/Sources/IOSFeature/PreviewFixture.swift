@@ -1,14 +1,15 @@
 import Transport
 import Foundation
 
-/// Developer-only data behind `-LumiPreviewData`: two Macs and the
-/// sessions of the design screens, so every screen can be checked without
-/// a paired Mac. Never used in a normal launch.
+/// Developer-only data behind `-LumiPreviewData`: two Macs, the sessions of
+/// the design screens and (in `PreviewFixture+Usage`) their Usage tab
+/// snapshots, so every screen can be checked without a paired Mac. Never
+/// used in a normal launch.
 enum PreviewFixture {
     static func channelStates(now: Date) -> [MacChannelState] {
         let pro = HostID("preview-macbook-pro")
         let mini = HostID("preview-mac-mini")
-        return [
+        var states = [
             MacChannelState(
                 hostID: pro,
                 displayName: "MacBook Pro",
@@ -40,6 +41,12 @@ enum PreviewFixture {
                 hasLoadedCache: true
             ),
         ]
+        // The Usage tab's snapshots (memory only in a real launch, too).
+        for index in states.indices {
+            states[index].usage = usageSnapshot(for: states[index].hostID, now: now)
+            states[index].planUsage = planUsageSnapshot(for: states[index].hostID, now: now)
+        }
+        return states
     }
 
     // MARK: - MacBook Pro

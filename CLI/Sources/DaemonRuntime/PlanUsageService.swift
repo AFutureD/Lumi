@@ -33,26 +33,18 @@ public actor PlanUsageService: Service {
         /// specific first (`ClaudeKeychainCredentials.serviceCandidates`).
         public var claudeKeychainServices: [String]
         public var codexAuth: String
-        public var settings: String
 
         public init(
             claudeCredentials: String,
             claudeState: String,
             claudeKeychainServices: [String] = [ClaudeKeychainCredentials.baseService],
-            codexAuth: String,
-            settings: String
+            codexAuth: String
         ) {
             self.claudeCredentials = claudeCredentials
             self.claudeState = claudeState
             self.claudeKeychainServices = claudeKeychainServices
             self.codexAuth = codexAuth
-            self.settings = settings
         }
-    }
-
-    /// The user's switches, persisted as `{"enabled":{"claude":true}}`.
-    struct Settings: Codable, Hashable, Sendable {
-        var enabled: [String: Bool] = [:]
     }
 
     private let paths: Paths
@@ -60,8 +52,9 @@ public actor PlanUsageService: Service {
     private let fetch: Fetch
     private let readKeychain: KeychainRead
     private let pollIntervalSeconds: Double
-    private var settings = Settings()
-    private var didLoadSettings = false
+    /// The switches, from the daemon's settings table (`plan_usage.enabled.*`);
+    /// `apply` keeps them current after `set_settings`.
+    private var enabledAccounts: Set<PlanUsageAccountID>
     private var accounts: [PlanUsageAccountID: PlanUsageAccount] = [:]
     /// A failed `security` run is not repeated on every ask (the Mac asks
     /// every minute); the next poll tries again.
@@ -72,12 +65,14 @@ public actor PlanUsageService: Service {
 
     public init(
         paths: Paths,
+        settings: PlanUsageSettings,
         fetchEnabled: Bool,
         fetch: Fetch? = nil,
         readKeychain: KeychainRead? = nil,
         pollIntervalSeconds: Double = PlanUsageService.defaultPollIntervalSeconds
     ) {
         self.paths = paths
+        self.enabledAccounts = Set(settings.enabledAccounts)
         self.fetchEnabled = fetchEnabled
         let services = paths.claudeKeychainServices
         self.readKeychain = readKeychain ?? { ClaudeKeychainCredentials.read(services: services) }
@@ -88,12 +83,11 @@ public actor PlanUsageService: Service {
         }
         self.pollIntervalSeconds = pollIntervalSeconds
         for id in order {
-            accounts[id] = PlanUsageAccount(id: id, provider: id == .claude ? .claude : .codex, enabled: false, status: .credentialsMissing)
+            accounts[id] = PlanUsageAccount(id: id, provider: id == .claude ? .claude : .codex, enabled: enabledAccounts.contains(id), status: .credentialsMissing)
         }
     }
 
     public func run() async throws {
-        loadSettings()
         await pollUntilShutdown(everySeconds: pollIntervalSeconds) { await self.refreshAll() }
     }
 
@@ -101,25 +95,33 @@ public actor PlanUsageService: Service {
         PlanUsageState(accounts: order.compactMap { accounts[$0] }, generatedAt: now)
     }
 
-    /// Switches one account. Enabling fetches right away so the caller's
-    /// answer already carries limits; disabling drops them.
-    public func setEnabled(_ enabled: Bool, for id: PlanUsageAccountID, now: Date = Date()) async throws -> PlanUsageState {
-        guard accounts[id] != nil else { throw PlanUsageServiceError.unknownAccount(id) }
-        loadSettings()
-        settings.enabled[id.rawValue] = enabled
-        try persistSettings()
-        accounts[id]?.enabled = enabled
-        if enabled {
-            await refresh(id, now: now)
-        } else {
-            accounts[id]?.limits = []
-            accounts[id]?.fetchedAt = nil
-            accounts[id]?.retryAt = nil
-            if accounts[id]?.status != .credentialsMissing { accounts[id]?.status = .ok }
-            accounts[id]?.statusDetail = nil
+    /// Every id the service knows; `set_settings` rejects any other.
+    public var knownAccounts: [PlanUsageAccountID] { order }
+
+    /// The switches changed (`set_settings`). An account switched on is
+    /// fetched right away so the caller's answer already carries limits;
+    /// one switched off drops them; the rest are left alone.
+    public func apply(_ settings: PlanUsageSettings, now: Date = Date()) async throws {
+        let wanted = Set(settings.enabledAccounts)
+        if let stranger = wanted.first(where: { accounts[$0] == nil }) {
+            throw PlanUsageServiceError.unknownAccount(stranger)
         }
-        log.info("plan_usage_account_switched", metadata: .fields(["account": id.rawValue, "enabled": enabled]))
-        return state(now: now)
+        let changed = wanted.symmetricDifference(enabledAccounts)
+        enabledAccounts = wanted
+        for id in order where changed.contains(id) {
+            let enabled = wanted.contains(id)
+            accounts[id]?.enabled = enabled
+            if enabled {
+                await refresh(id, now: now)
+            } else {
+                accounts[id]?.limits = []
+                accounts[id]?.fetchedAt = nil
+                accounts[id]?.retryAt = nil
+                if accounts[id]?.status != .credentialsMissing { accounts[id]?.status = .ok }
+                accounts[id]?.statusDetail = nil
+            }
+            log.info("plan_usage_account_switched", metadata: .fields(["account": id.rawValue, "enabled": enabled]))
+        }
     }
 
     /// `localOnly`: re-read the sign-in files without asking the providers —
@@ -128,7 +130,6 @@ public actor PlanUsageService: Service {
     /// file has just appeared is fetched anyway (once): that is the moment
     /// the user is waiting for.
     public func refreshAll(now: Date = Date(), localOnly: Bool = false) async {
-        loadSettings()
         for id in order {
             await refresh(id, now: now, localOnly: localOnly)
         }
@@ -141,7 +142,7 @@ public actor PlanUsageService: Service {
     func refresh(_ id: PlanUsageAccountID, now: Date, localOnly: Bool = false) async {
         guard var account = accounts[id] else { return }
         let hadCredentials = account.status != .credentialsMissing
-        account.enabled = settings.enabled[id.rawValue] ?? false
+        account.enabled = enabledAccounts.contains(id)
         let credential: Credential
         switch id {
         case .claude: credential = await readClaude(into: &account, now: now)
@@ -305,26 +306,6 @@ public actor PlanUsageService: Service {
             account.statusDetail = "HTTP \(response.statusCode)"
             log.error("plan_usage_fetch_failed", metadata: .fields(["account": id.rawValue, "http": response.statusCode]))
         }
-    }
-
-    // MARK: - Settings file
-
-    private func loadSettings() {
-        guard !didLoadSettings else { return }
-        didLoadSettings = true
-        guard let data = FileManager.default.contents(atPath: paths.settings) else { return }
-        do {
-            settings = try JSONDecoder().decode(Settings.self, from: data)
-            for id in order { accounts[id]?.enabled = settings.enabled[id.rawValue] ?? false }
-        } catch {
-            log.error("plan_usage_settings_unreadable", metadata: .fields(["path": paths.settings, "error": error]))
-        }
-    }
-
-    private func persistSettings() throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(settings).write(to: URL(fileURLWithPath: paths.settings), options: .atomic)
     }
 
     // MARK: - Helpers

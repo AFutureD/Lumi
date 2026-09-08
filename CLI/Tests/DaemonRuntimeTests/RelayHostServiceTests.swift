@@ -44,6 +44,8 @@ private final class RelayHarness {
 
     init(
         healthProvider: @escaping RelayHostService.HealthProvider = { nil },
+        usageProvider: @escaping RelayHostService.UsageProvider = { _ in throw DaemonServiceError.unavailable("usage") },
+        planUsageProvider: @escaping RelayHostService.PlanUsageProvider = { throw DaemonServiceError.unavailable("plan_usage") },
         preregisterDevice: Bool = true,
         pinDeviceKey: Bool = true,
         pairingCodeLifetime: Duration = .seconds(5 * 60),
@@ -70,6 +72,8 @@ private final class RelayHarness {
             rest: rest,
             hostName: { "Test Mac" },
             healthProvider: healthProvider,
+            usageProvider: usageProvider,
+            planUsageProvider: planUsageProvider,
             onConnectionChange: { connected in connections.append(connected) },
             eventCoalesceInterval: .milliseconds(20),
             reconnectDelay: .milliseconds(50),
@@ -718,5 +722,88 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.service.summariesChanged([SessionID("ghost"), SessionID("a")])
     let info = try await harness.collect(from: device) { $0.kind == .sessionInfo }
     #expect(info.last?.payload.summaries?.map(\.id) == [SessionID("a")])
+    await harness.stop()
+}
+
+@Test func hostAnswersUsageAndPlanUsageRequestsFromAnIPhone() async throws {
+    let now = Date(timeIntervalSince1970: 1_788_616_800)
+    let report = UsageReport(
+        since: UsageDay(year: 2026, month: 8, day: 31), until: UsageDay(year: 2026, month: 9, day: 5), generatedAt: now,
+        totals: UsageSlice(tokens: UsageTokens(input: 10), costUSD: 1.5, calls: 1, sessions: 1, turns: 1),
+        byAgent: [], byProject: [], byModel: [], byDay: [], byWeek: [], byMonth: [],
+        trendUnit: .day, trend: [], comparison: nil,
+        pricing: UsagePricingStatus(source: .builtin, fetchedAt: nil, modelCount: 1),
+        scan: UsageScanStatus(scannedFiles: 1, pendingFiles: 0, lastScanAt: now, isScanning: false)
+    )
+    let state = PlanUsageState(accounts: [PlanUsageAccount(id: .claude, provider: .claude, enabled: true, status: .ok, limits: [PlanUsageLimit(window: .session, usedPercent: 42)])], generatedAt: now)
+    let settings = DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [.claude], percentStyle: .remaining))
+    let presets = PresetLog()
+    let harness = RelayHarness(
+        usageProvider: { preset in
+            presets.append(preset)
+            if preset == .thisMonth { throw DaemonServiceError.unavailable("usage") }
+            return report
+        },
+        planUsageProvider: { (state, settings) }
+    )
+    let device = try await harness.connect()
+
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u1"), usageRange: .thisWeek), via: device)
+    var seen = try await harness.collect(from: device) { $0.kind == .usageReport }
+    #expect(seen.last?.payload.requestID == RequestID("u1"))
+    #expect(seen.last?.payload.usage == report)
+    #expect(presets.snapshot == [.thisWeek])
+
+    // The daemon could not build the report: the answer still comes, empty.
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u2"), usageRange: .thisMonth), via: device, sequence: 2)
+    seen = try await harness.collect(from: device) { $0.kind == .usageReport }
+    #expect(seen.last?.payload.requestID == RequestID("u2") && seen.last?.payload.usage == nil)
+
+    // A request without a preset is dropped, the next one still answered.
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u3")), via: device, sequence: 3)
+    try await harness.request(RemoteSessionPayload(kind: .fetchPlanUsage, requestID: RequestID("p1")), via: device, sequence: 4)
+    seen = try await harness.collect(from: device) { $0.kind == .planUsage }
+    #expect(!seen.contains { $0.payload.requestID == RequestID("u3") })
+    #expect(seen.last?.payload.planUsage == state && seen.last?.payload.settings == settings)
+    await harness.stop()
+}
+
+private final class PresetLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UsageRangePreset] = []
+    func append(_ value: UsageRangePreset) { lock.lock(); values.append(value); lock.unlock() }
+    var snapshot: [UsageRangePreset] { lock.lock(); defer { lock.unlock() }; return values }
+}
+
+@Test func hostInterleavesSmallAnswersWithBulkSessionSends() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let now = Date(timeIntervalSince1970: 1_788_616_800)
+    let report = UsageReport(
+        since: UsageDay(year: 2026, month: 9, day: 7), until: UsageDay(year: 2026, month: 9, day: 8), generatedAt: now,
+        totals: UsageSlice(tokens: UsageTokens(input: 1), costUSD: 0.1, calls: 1, sessions: 1, turns: 1),
+        byAgent: [], byProject: [], byModel: [],
+        pricing: UsagePricingStatus(source: .builtin, modelCount: 1),
+        scan: UsageScanStatus(scannedFiles: 1, pendingFiles: 0, isScanning: false)
+    )
+    let harness = RelayHarness(usageProvider: { _ in report })
+    for id in ["a", "b", "c", "d"] {
+        try await harness.repository.replaceSession(sampleDetail(id, items: 40, at: base))
+    }
+    let device = try await harness.connect()
+    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("i")), via: device)
+    _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+
+    // Four whole sessions queued, then a Usage ask right behind them: the
+    // answer must not wait for the last session.
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: ["a", "b", "c", "d"].map(SessionID.init)), via: device, sequence: 2)
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u"), usageRange: .today), via: device, sequence: 3)
+    let seen = try await harness.collect(from: device) { payload in
+        payload.kind == .sessionFull && payload.session?.summary.id == SessionID("d")
+    }
+    let kinds = seen.map(\.payload.kind)
+    let usageAt = try #require(kinds.firstIndex(of: .usageReport))
+    let lastSessionAt = try #require(kinds.lastIndex(of: .sessionFull))
+    #expect(usageAt < lastSessionAt)
+    #expect(kinds.filter { $0 == .sessionFull }.count == 4)
     await harness.stop()
 }

@@ -19,6 +19,9 @@ final class SessionDetailViewController: UIViewController {
     private let container = UIView()
     private let activity = ActivityListViewController()
     private let info = SessionInfoViewController()
+    /// Shown while the session's content is on its way from the Mac — the
+    /// list only carries summaries, the timeline is taken on open.
+    private let loading = SessionLoadingView()
 
     init(relay: RelayDeviceController, hostID: HostID, sessionID: SessionID) {
         self.relay = relay
@@ -92,8 +95,17 @@ final class SessionDetailViewController: UIViewController {
             activity.scroll(toActivityAt: index, position: .top, animated: false)
             syncingScroll = false
         }
+        loading.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(loading)
+        NSLayoutConstraint.activate([
+            loading.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            loading.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
         selectTab(0)
 
+        // Opening is what fetches the content (whole, or the tail a held
+        // copy lacks) and keeps it live while this screen is up.
+        relay.openSession(hostID: hostID, id: sessionID)
         observer = relay.observe { [weak self] in self?.update() }
         update()
         ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -108,11 +120,19 @@ final class SessionDetailViewController: UIViewController {
         PushNotificationRouting.removeDelivered(hostID: hostID, sessionID: sessionID)
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isMovingFromParent || isBeingDismissed || navigationController == nil {
+            relay.closeSession(hostID: hostID, id: sessionID)
+        }
+    }
+
     private func update() {
         guard let detail = relay.session(hostID: hostID, id: sessionID) else {
             if presentation != nil { navigationController?.popViewController(animated: true) }
             return
         }
+        loading.isHidden = !(detail.timeline.isEmpty && relay.isFetchingSession(hostID: hostID, id: sessionID))
         let next = SessionDetailPresentationBuilder.make(detail: detail)
         guard next != presentation else { return }
         presentation = next
@@ -398,6 +418,32 @@ final class MetricCardView: UIView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: m.horizontalPadding),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -m.horizontalPadding),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
+}
+
+/// `Loading session…` with a spinner, centred under the header while the
+/// first fetch of a session's content is in flight.
+private final class SessionLoadingView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.startAnimating()
+        let label = UILabel()
+        label.setText("Loading session…", style: IOSDS.Typography.body, color: .secondaryLabel)
+        let stack = UIStackView(arrangedSubviews: [spinner, label])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = IOSDS.Layout.fieldRowGap / 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
     }
 

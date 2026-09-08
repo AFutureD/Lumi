@@ -206,7 +206,7 @@ private struct Harness {
     )
     let repository = InMemorySessionRepository()
     let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
-    await service.attachUsage(store: harness.store, scanner: harness.scanner, prices: prices)
+    await service.attachUsage(UsageReporting(store: harness.store, scanner: harness.scanner, prices: prices, calendar: Harness.utc))
 
     let ok = await service.handle(TransportEnvelope(payload: IPCRequest(
         operation: .usageReport,

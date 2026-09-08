@@ -106,7 +106,8 @@ public enum RelayPayloadBatcher {
         return chunks
     }
 
-    static func fits(_ payload: RemoteSessionPayload) throws -> Bool {
+    /// Whether one payload ships as a single frame under the worker's cap.
+    public static func fits(_ payload: RemoteSessionPayload) throws -> Bool {
         try RelayCryptography.prepare(payload).byteCount <= maxCompressedBytes
     }
 }

@@ -28,6 +28,11 @@ struct MacChannelState: Sendable {
     let health: DaemonHealth?
     /// The cache file has been read into memory (false only during launch).
     let hasLoadedCache: Bool
+    /// The Usage tab's History figures for this Mac — memory only, asked
+    /// for while the tab is open (`fetch_usage`).
+    var usage: UsageSnapshot? = nil
+    /// The Usage tab's Plan cards for this Mac — memory only (`fetch_plan_usage`).
+    var planUsage: PlanUsageSnapshot? = nil
 
     var isOnline: Bool { isConnected && isHostOnline }
     /// Sessions the lists show: the cache, always — staleness is shown per
@@ -221,8 +226,39 @@ final class RelayDeviceController {
         notify()
     }
 
+    /// The detail screen opened a session: its content is fetched now
+    /// (whole, or the tail the held copy lacks) and kept live until closed.
+    func openSession(hostID: HostID, id: SessionID) {
+        channels[hostID]?.openSession(id)
+        notify()
+    }
+
+    func closeSession(hostID: HostID, id: SessionID) {
+        channels[hostID]?.closeSession(id)
+    }
+
+    /// The session's content is on its way (the detail shows a loading row).
+    func isFetchingSession(hostID: HostID, id: SessionID) -> Bool {
+        channels[hostID]?.isFetching(id) ?? false
+    }
+
     func usePreview(_ states: [MacChannelState]) {
         previewStates = states
+        notify()
+    }
+
+    /// Usage › History: ask every Mac for the preset (each expands it with
+    /// its own calendar). The preview keeps its fixture.
+    func requestUsage(_ preset: UsageRangePreset) {
+        guard previewStates == nil else { return }
+        for channel in channels.values { channel.requestUsage(preset) }
+        notify()
+    }
+
+    /// Usage › Plan: ask every Mac for its accounts and settings.
+    func requestPlanUsage() {
+        guard previewStates == nil else { return }
+        for channel in channels.values { channel.requestPlanUsage() }
         notify()
     }
 
@@ -384,21 +420,49 @@ extension MacChannelState {
             lastSyncAt: lastSyncAt,
             lastError: lastError,
             health: health,
-            hasLoadedCache: hasLoadedCache
+            hasLoadedCache: hasLoadedCache,
+            usage: usage,
+            planUsage: planUsage
         )
     }
+}
+
+/// One Mac's answer to `fetch_usage`: the report for the preset last asked
+/// for, when it landed, and what went wrong if it did not. A newer ask keeps
+/// the previous report on screen until the answer arrives (`isLoading`).
+struct UsageSnapshot: Equatable, Sendable {
+    var report: UsageReport?
+    var preset: UsageRangePreset?
+    var fetchedAt: Date?
+    var isLoading = false
+    /// The last ask failed (timed out, or the daemon answered without a report).
+    var error: String?
+}
+
+/// One Mac's answer to `fetch_plan_usage`: its accounts and the settings the
+/// numbers follow (percent style), plus when they landed.
+struct PlanUsageSnapshot: Equatable, Sendable {
+    var state: PlanUsageState?
+    var settings: DaemonSettings?
+    var fetchedAt: Date?
+    var isLoading = false
+    var error: String?
 }
 
 /// One Mac-to-iPhone channel: this Mac's SQLite cache, the in-memory copy
 /// the screens read, and the one Relay socket every session of that Mac is
 /// multiplexed through.
 ///
-/// Sync is index-first: every connect (and pull-to-refresh, and any sequence
-/// gap) asks the daemon for `session_index`; `SyncReconcilePlan` turns the
-/// difference against `cache.sessionIndex()` into prunes, summary writes,
-/// whole-session fetches and timeline-tail fetches; afterwards the daemon's
-/// event stream (`session_message`) is applied through the same
-/// `SessionRepository.apply` reducer the daemon and the Mac run.
+/// Sync is index-first and lazy: every connect (and pull-to-refresh, and
+/// any sequence gap) asks the daemon for `session_index`; `SyncReconcilePlan`
+/// turns the difference against `cache.sessionIndex()` into prunes and
+/// summary writes for every session, and whole-session / timeline-tail
+/// fetches only for the sessions whose timeline this iPhone already holds
+/// (opened once, or being looked at). A session's content is first taken
+/// when the person opens it (`openSession`). Afterwards the daemon's event
+/// stream (`session_message`) is applied through the same
+/// `SessionRepository.apply` reducer the daemon and the Mac run for held
+/// sessions, and through the summary reducer alone for the rest.
 @MainActor
 final class RelayDeviceChannel {
     /// As many sessions as the daemon's `list_sessions` serves.
@@ -407,8 +471,18 @@ final class RelayDeviceChannel {
     struct Timeouts: Sendable {
         var index: Duration = .seconds(20)
         var fetch: Duration = .seconds(30)
+        /// `fetch_usage` / `fetch_plan_usage`: one try, then the tab shows
+        /// the failure and the next poll asks again.
+        var usage: Duration = .seconds(20)
         var tick: Duration = .seconds(1)
         var retryDelay: Duration = .seconds(10)
+    }
+
+    /// A Usage-tab request in flight. Kept apart from `pending`: those gate
+    /// `hasCompleteSync`, and a usage answer is not part of the sync.
+    private enum UsageRequest {
+        case usage(UsageRangePreset)
+        case planUsage
     }
 
     private enum PendingKind {
@@ -452,10 +526,20 @@ final class RelayDeviceChannel {
     /// Sequence of device → host `request` frames on this connection.
     private var requestSequence: UInt64 = 0
     private var pending: [RequestID: PendingRequest] = [:]
+    private var usageRequests: [RequestID: (kind: UsageRequest, sentAt: Date)] = [:]
+    /// `nil` until the Usage tab first asks — the UI's "never loaded" state.
+    private var usage: UsageSnapshot?
+    private var planUsage: PlanUsageSnapshot?
     private var indexParts: [RequestID: [RemoteSessionPayload]] = [:]
     private var partBuffers: [SessionID: [RemoteSessionPayload]] = [:]
     /// `generatedAt` of the index whose fetches are still landing.
     private var indexGeneratedAt: Date?
+    /// Sessions a detail screen is showing: their timeline is kept current
+    /// even before the first fetch landed.
+    private var openSessions: Set<SessionID> = []
+    /// The daemon's timeline facts from the latest index, so opening a
+    /// session held from an earlier run knows whether its copy is behind.
+    private var remoteFacts: [SessionID: SessionIndexEntry] = [:]
     /// Sessions hidden on this iPhone (`Delete`), kept out of `sessions` but
     /// still in the cache and still fed by the daemon; one rule on every
     /// path — event, summary, whole session, index — shows a hidden session
@@ -502,7 +586,9 @@ final class RelayDeviceChannel {
             lastSyncAt: settings.lastSync(for: credentials.hostID),
             lastError: lastError,
             health: health,
-            hasLoadedCache: cacheLoaded
+            hasLoadedCache: cacheLoaded,
+            usage: usage,
+            planUsage: planUsage
         )
     }
 
@@ -537,6 +623,88 @@ final class RelayDeviceChannel {
     func refreshSession(_ id: SessionID) {
         guard isConnected else { return }
         send(kind: .fetchSession(remaining: [id]), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: [id]))
+    }
+
+    /// A detail screen opened the session: take its content now — whole
+    /// when nothing is held, the tail when the held copy is behind the
+    /// daemon's index — and keep it current while the screen is up.
+    func openSession(_ id: SessionID) {
+        openSessions.insert(id)
+        guard isConnected, isHostOnline, !isFetching(id) else { return }
+        guard let local = detail(id) else { return }
+        let localEntry = SessionIndexEntry(summary: local.summary, timelineItemCount: local.timeline.count, lastItemAt: local.timeline.last?.occurredAt)
+        let remoteEntry = remoteFacts[id] ?? localEntry
+        let plan = SyncReconcilePlan.make(local: [localEntry], remote: [remoteEntry])
+        if local.timeline.isEmpty || plan.fetchFull.contains(id) {
+            send(kind: .fetchSession(remaining: [id]), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: [id]))
+        } else if let since = plan.fetchSince.first(where: { $0.sessionID == id }) {
+            send(kind: .fetchTimeline(id), payload: RemoteSessionPayload(kind: .fetchTimelineSince, sessionIDs: [id], since: since.since))
+        }
+    }
+
+    func closeSession(_ id: SessionID) {
+        openSessions.remove(id)
+    }
+
+    /// A whole-session or tail fetch for the session is in flight.
+    func isFetching(_ id: SessionID) -> Bool {
+        pending.values.contains { request in
+            switch request.kind {
+            case let .fetchSession(remaining): remaining.contains(id)
+            case let .fetchTimeline(target): target == id
+            case .index: false
+            }
+        }
+    }
+
+    private func detail(_ id: SessionID) -> SessionDetail? {
+        sessions.first { $0.summary.id == id } ?? hidden[id]?.detail
+    }
+
+    /// Sessions whose timeline this iPhone holds or shows: the only ones
+    /// the index reconcile is allowed to fetch for.
+    private var materializedIDs: Set<SessionID> {
+        var ids = openSessions
+        for detail in sessions where !detail.timeline.isEmpty { ids.insert(detail.summary.id) }
+        for (id, entry) in hidden where !entry.detail.timeline.isEmpty { ids.insert(id) }
+        return ids
+    }
+
+    /// Ask for the History report of a preset. Offline: the last report
+    /// stays, marked with the error, so the tab can say how old it is.
+    func requestUsage(_ preset: UsageRangePreset) {
+        var snapshot = usage ?? UsageSnapshot()
+        defer { usage = snapshot }
+        guard isConnected, isHostOnline else {
+            snapshot.isLoading = false
+            snapshot.error = "offline"
+            return
+        }
+        // One ask per preset in flight; a different preset supersedes it.
+        for (id, request) in usageRequests {
+            if case .usage = request.kind { usageRequests[id] = nil }
+        }
+        snapshot.isLoading = true
+        snapshot.error = nil
+        let requestID = RequestID()
+        usageRequests[requestID] = (.usage(preset), Date())
+        sendRequest(RemoteSessionPayload(kind: .fetchUsage, generatedAt: Date(), requestID: requestID, usageRange: preset))
+    }
+
+    func requestPlanUsage() {
+        var snapshot = planUsage ?? PlanUsageSnapshot()
+        defer { planUsage = snapshot }
+        guard isConnected, isHostOnline else {
+            snapshot.isLoading = false
+            snapshot.error = "offline"
+            return
+        }
+        guard !usageRequests.values.contains(where: { if case .planUsage = $0.kind { true } else { false } }) else { return }
+        snapshot.isLoading = true
+        snapshot.error = nil
+        let requestID = RequestID()
+        usageRequests[requestID] = (.planUsage, Date())
+        sendRequest(RemoteSessionPayload(kind: .fetchPlanUsage, generatedAt: Date(), requestID: requestID))
     }
 
     func stop(removeLocalData: Bool) async {
@@ -810,6 +978,21 @@ final class RelayDeviceChannel {
     /// miss drops everything in flight and re-indexes after a pause.
     private func expirePendingRequests() {
         let now = Date()
+        let lateUsage = usageRequests.filter { Duration.seconds(now.timeIntervalSince($0.value.sentAt)) > timeouts.usage }
+        if !lateUsage.isEmpty {
+            for (id, request) in lateUsage {
+                usageRequests[id] = nil
+                switch request.kind {
+                case .usage:
+                    usage?.isLoading = false
+                    usage?.error = "timed out"
+                case .planUsage:
+                    planUsage?.isLoading = false
+                    planUsage?.error = "timed out"
+                }
+            }
+            onChange()
+        }
         var expired: [(RequestID, PendingRequest)] = []
         for (id, request) in pending {
             let limit: Duration = if case .index = request.kind { timeouts.index } else { timeouts.fetch }
@@ -860,6 +1043,7 @@ final class RelayDeviceChannel {
                 pending = [:]
                 indexParts = [:]
                 partBuffers = [:]
+                failUsageRequests("offline")
             }
         case let .frame(frame):
             guard frame.hostID == credentials.hostID,
@@ -920,16 +1104,14 @@ final class RelayDeviceChannel {
         case .sessionMessage:
             await applyEvents(payload.events ?? [])
         case .sessionInfo:
-            var missing: [SessionID] = []
             for summary in payload.summaries ?? [] {
                 if updateSummary(summary) {
                     enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
                 } else {
-                    missing.append(summary.id)
+                    insertSummaryOnly(summary)
                 }
             }
             sortSessions()
-            requestMissing(missing)
         case .sessionRemoved:
             let ids = payload.sessionIDs ?? []
             for id in ids {
@@ -941,50 +1123,110 @@ final class RelayDeviceChannel {
             }
         case .health:
             health = payload.health
-        case .syncIndex, .fetchSession, .fetchTimelineSince, .sessionReviewed:
+        case .usageReport:
+            guard let requestID = payload.requestID, let request = usageRequests[requestID], case let .usage(preset) = request.kind else { return }
+            usageRequests[requestID] = nil
+            var snapshot = usage ?? UsageSnapshot()
+            snapshot.isLoading = false
+            if let report = payload.usage {
+                snapshot.report = report
+                snapshot.preset = preset
+                snapshot.fetchedAt = payload.generatedAt
+                snapshot.error = nil
+            } else {
+                snapshot.error = "The Mac could not build the report."
+            }
+            usage = snapshot
+        case .planUsage:
+            guard let requestID = payload.requestID, let request = usageRequests[requestID], case .planUsage = request.kind else { return }
+            usageRequests[requestID] = nil
+            var snapshot = planUsage ?? PlanUsageSnapshot()
+            snapshot.isLoading = false
+            if let state = payload.planUsage {
+                snapshot.state = state
+                snapshot.settings = payload.settings
+                snapshot.fetchedAt = payload.generatedAt
+                snapshot.error = nil
+            } else {
+                snapshot.error = "The Mac could not read its plan usage."
+            }
+            planUsage = snapshot
+        case .syncIndex, .fetchSession, .fetchTimelineSince, .sessionReviewed, .fetchUsage, .fetchPlanUsage:
             // Device → host only; never expected from the daemon.
             return
         }
     }
 
+    /// Every Usage-tab ask in flight fails with one reason (offline, timed out).
+    private func failUsageRequests(_ reason: String) {
+        for (_, request) in usageRequests {
+            switch request.kind {
+            case .usage:
+                usage?.isLoading = false
+                usage?.error = reason
+            case .planUsage:
+                planUsage?.isLoading = false
+                planUsage?.error = reason
+            }
+        }
+        usageRequests = [:]
+    }
+
     private func applyEvents(_ events: [AgentIngressEvent]) async {
-        var missing: [SessionID] = []
+        let held = materializedIDs
         for event in events {
             let id = event.sessionID
-            let known = hidden[id] != nil || sessions.contains { $0.summary.id == id }
-            let inFlight = pending.values.contains {
-                if case let .fetchSession(remaining) = $0.kind { return remaining.contains(id) }
-                return false
-            }
-            guard known || inFlight else {
-                missing.append(id)
-                continue
-            }
-            let applied: Bool
-            do {
-                // Through the write queue: a whole-session replace enqueued a
-                // moment ago must land before this event, or it would erase it.
-                applied = try await cacheWrite { [cache] in try await cache.apply(event) }
-            } catch {
-                lastError = "Unable to apply an update: \(error)"
-                continue
-            }
-            guard applied else { continue }
             if event.disposition == .discard {
                 sessions.removeAll { $0.summary.id == id }
                 hidden[id] = nil
+                enqueueCacheWrite { [cache] in _ = try await cache.apply(event) }
                 continue
             }
-            if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
-                sessions[index] = SessionDetailReduction.applying(event, to: sessions[index])
-            } else if var entry = hidden[id] {
-                entry.detail = SessionDetailReduction.applying(event, to: entry.detail)
-                hidden[id] = entry
-                revealIfNewer(id)
+            guard let current = detail(id) else {
+                // A session this iPhone never saw: it exists from now on as
+                // a summary, reduced from the event; the next index carries
+                // the daemon's own summary, its timeline waits for a tap.
+                insertSummaryOnly(SessionReduction.summary(applying: event, to: nil))
+                continue
+            }
+            if held.contains(id) {
+                let applied: Bool
+                do {
+                    // Through the write queue: a whole-session replace enqueued a
+                    // moment ago must land before this event, or it would erase it.
+                    applied = try await cacheWrite { [cache] in try await cache.apply(event) }
+                } catch {
+                    lastError = "Unable to apply an update: \(error)"
+                    continue
+                }
+                guard applied else { continue }
+                if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
+                    sessions[index] = SessionDetailReduction.applying(event, to: sessions[index])
+                } else if var entry = hidden[id] {
+                    entry.detail = SessionDetailReduction.applying(event, to: entry.detail)
+                    hidden[id] = entry
+                    revealIfNewer(id)
+                }
+            } else {
+                // Not held: the summary follows the event (status, phase,
+                // title), the timeline stays away until the session is opened.
+                let summary = SessionReduction.summary(applying: event, to: current.summary)
+                guard summary != current.summary else { continue }
+                _ = updateSummary(summary)
+                enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
             }
         }
         sortSessions()
-        requestMissing(missing)
+    }
+
+    /// A session known only by its summary: shown in the list, cached as a
+    /// row with no timeline, fetched whole when opened.
+    private func insertSummaryOnly(_ summary: SessionSummary) {
+        let id = summary.id
+        guard detail(id) == nil else { return }
+        let detail = SessionDetail(summary: summary, turns: [], timeline: [])
+        sessions.append(detail)
+        enqueueCacheWrite { [cache] in try await cache.replaceSession(detail) }
     }
 
     /// Summary-only change (reviewed, archived, index reconcile): updates the
@@ -1019,18 +1261,6 @@ final class RelayDeviceChannel {
     }
 
     /// A session the daemon talks about but the cache does not hold: take it whole.
-    private func requestMissing(_ ids: [SessionID]) {
-        let inFlight = Set(pending.values.flatMap { request -> [SessionID] in
-            if case let .fetchSession(remaining) = request.kind { return Array(remaining) }
-            return []
-        })
-        let wanted = Array(Set(ids).subtracting(inFlight))
-        guard !wanted.isEmpty, isConnected else { return }
-        for chunk in stride(from: 0, to: wanted.count, by: 20).map({ Array(wanted[$0..<min($0 + 20, wanted.count)]) }) {
-            send(kind: .fetchSession(remaining: Set(chunk)), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: chunk))
-        }
-    }
-
     /// Writes a whole (`replacing`) or partial session into cache and memory.
     private func install(_ detail: SessionDetail, replacing: Bool) {
         let id = detail.summary.id
@@ -1091,7 +1321,8 @@ final class RelayDeviceChannel {
             lastError = "Unable to read the session cache: \(error)"
             return
         }
-        let plan = SyncReconcilePlan.make(local: local, remote: remote)
+        remoteFacts = Dictionary(remote.map { ($0.summary.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let plan = SyncReconcilePlan.make(local: local, remote: remote, materialized: materializedIDs)
         let remoteIDs = Set(remote.map(\.summary.id))
         if !plan.prune.isEmpty {
             sessions.removeAll { plan.prune.contains($0.summary.id) }
@@ -1101,6 +1332,9 @@ final class RelayDeviceChannel {
         for summary in plan.infoOnly {
             _ = updateSummary(summary)
             enqueueCacheWrite { [cache] in try await cache.updateSummary(summary) }
+        }
+        for summary in plan.insert {
+            insertSummaryOnly(summary)
         }
         sortSessions()
 

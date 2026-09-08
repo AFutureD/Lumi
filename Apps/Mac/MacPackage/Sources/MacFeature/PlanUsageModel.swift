@@ -1,3 +1,4 @@
+import Core
 import Diagnostics
 import Logging
 import Transport
@@ -5,20 +6,32 @@ import Foundation
 
 private let log = Logger(label: "ui")
 
-/// The Mac's copy of the daemon's plan-usage snapshot, shared by Settings ›
-/// Plan (the switches), Settings › Notch › Usage (the display choices and
-/// their preview) and the Notch top bar. Polled every minute for as long as
-/// the app runs — the Notch is always on screen — and at once when the
-/// daemon comes back.
+/// The Mac's copy of the daemon's plan-usage snapshot and of the settings
+/// that shape it (which accounts are polled, whether a percentage reads as
+/// used or remaining), shared by Settings › Usage › Plan, Settings › Notch ›
+/// Usage and the Notch top bar. Polled every minute for as long as the app
+/// runs — the Notch is always on screen — and at once when the daemon comes
+/// back. Settings are written through the daemon (`set_settings`) so every
+/// device reads the same value.
 @MainActor
 final class PlanUsageModel: ObservableObject {
     @Published private(set) var state: PlanUsageState?
+    /// The daemon's settings as last read or stored; defaults until the
+    /// first answer.
+    @Published private(set) var settings: DaemonSettings = .defaults
+    /// The first successful `get_settings` happened: writes may proceed
+    /// (a write before that would clobber the daemon's switches with defaults).
+    @Published private(set) var settingsLoaded = false
     /// The last failure, cleared by the next successful load.
     @Published private(set) var errorMessage: String?
     /// Accounts with a switch in flight; their toggles are disabled meanwhile.
     @Published private(set) var updating: Set<PlanUsageAccountID> = []
     /// How the Notch shows the numbers — the Mac's own choices.
     let preferences: HaloPlanUsagePreferences
+    /// Before the settings table, the percent style was a Mac defaults key;
+    /// the first successful load carries it over once and removes it.
+    private let legacyDefaults: UserDefaults
+    static let legacyPercentStyleKey = "Lumi.Notch.PlanUsage.PercentStyle"
 
     private let client: PlanUsageClient
     private weak var store: MacSessionStore?
@@ -30,12 +43,14 @@ final class PlanUsageModel: ObservableObject {
         client: PlanUsageClient = PlanUsageClient(),
         store: MacSessionStore? = nil,
         pollInterval: Duration = .seconds(60),
-        preferences: HaloPlanUsagePreferences = HaloPlanUsagePreferences()
+        preferences: HaloPlanUsagePreferences = HaloPlanUsagePreferences(),
+        legacyDefaults: UserDefaults = .standard
     ) {
         self.client = client
         self.store = store
         self.pollInterval = pollInterval
         self.preferences = preferences
+        self.legacyDefaults = legacyDefaults
         // The daemon coming back is the moment a stale "unavailable" answer
         // should be replaced, not a minute later.
         store?.observe { [weak self, weak store] in
@@ -62,6 +77,8 @@ final class PlanUsageModel: ObservableObject {
         pollTask = nil
     }
 
+    var percentStyle: PlanUsagePercentStyle { settings.planUsage.percentStyle }
+
     func refresh() async {
         do {
             let fresh = try await client.state()
@@ -71,6 +88,16 @@ final class PlanUsageModel: ObservableObject {
         } catch {
             errorMessage = (error as? IPCFailure)?.message ?? error.localizedDescription
             log.warning("plan_usage_load_failed", metadata: .fields(["error": error]))
+            return
+        }
+        do {
+            let fresh = try await client.settings()
+            if fresh != settings { settings = fresh }
+            settingsLoaded = true
+            await importLegacyPercentStyle()
+        } catch {
+            errorMessage = (error as? IPCFailure)?.message ?? error.localizedDescription
+            log.warning("settings_load_failed", metadata: .fields(["error": error]))
         }
     }
 
@@ -78,13 +105,45 @@ final class PlanUsageModel: ObservableObject {
         guard !updating.contains(account) else { return }
         updating.insert(account)
         defer { updating.remove(account) }
+        var next = settings
+        next.planUsage.enabledAccounts.removeAll { $0 == account }
+        if enabled { next.planUsage.enabledAccounts.append(account) }
+        guard await save(next, reason: "switch") else { return }
+        // The daemon fetched the account while storing the switch; show it.
+        if let fresh = try? await client.state(), fresh != state { state = fresh }
+    }
+
+    func setPercentStyle(_ style: PlanUsagePercentStyle) async {
+        var next = settings
+        next.planUsage.percentStyle = style
+        _ = await save(next, reason: "percent_style")
+    }
+
+    /// `set_settings`; the stored answer replaces the local copy.
+    @discardableResult
+    private func save(_ next: DaemonSettings, reason: String) async -> Bool {
+        guard settingsLoaded else {
+            errorMessage = "Settings have not been read from the daemon yet."
+            log.warning("settings_save_skipped", metadata: .fields(["reason": reason]))
+            return false
+        }
         do {
-            state = try await client.setEnabled(enabled, for: account)
+            settings = try await client.save(next)
             errorMessage = nil
+            return true
         } catch {
             errorMessage = (error as? IPCFailure)?.message ?? error.localizedDescription
-            log.warning("plan_usage_switch_failed", metadata: .fields(["account": account.rawValue, "enabled": enabled, "error": error]))
+            log.warning("settings_save_failed", metadata: .fields(["reason": reason, "error": error]))
+            return false
         }
+    }
+
+    private func importLegacyPercentStyle() async {
+        guard let raw = legacyDefaults.string(forKey: Self.legacyPercentStyleKey) else { return }
+        legacyDefaults.removeObject(forKey: Self.legacyPercentStyleKey)
+        guard let style = PlanUsagePercentStyle(rawValue: raw), style != settings.planUsage.percentStyle else { return }
+        log.info("settings_legacy_percent_style_imported", metadata: .fields(["percent_style": raw]))
+        await setPercentStyle(style)
     }
 
     func account(_ id: PlanUsageAccountID) -> PlanUsageAccount? {
@@ -158,30 +217,22 @@ enum PlanUsageAgentsMode: String, CaseIterable, Codable, Sendable {
     case showBoth
 }
 
-enum PlanUsagePercentStyle: String, CaseIterable, Codable, Sendable {
-    /// The provider's own figure.
-    case used
-    /// `100 − used`.
-    case remaining
-}
-
-/// The Notch's plan-usage display choices, in `UserDefaults` under
-/// `Lumi.Notch.PlanUsage.*`. Observable so the top bar, the Settings
-/// section and its preview all move together. There is no master switch:
-/// an empty item set is "off".
+/// The Notch's own plan-usage display choices, in `UserDefaults` under
+/// `Lumi.Notch.PlanUsage.*` — Mac-only choices (the percent style is a
+/// daemon setting, see `PlanUsageModel.settings`). Observable so the top
+/// bar, the Settings section and its preview all move together. There is no
+/// master switch: an empty item set is "off".
 @MainActor
 final class HaloPlanUsagePreferences: ObservableObject {
     private let defaults: UserDefaults
 
     @Published var agentsMode: PlanUsageAgentsMode { didSet { defaults.set(agentsMode.rawValue, forKey: Key.agentsMode) } }
-    @Published var percentStyle: PlanUsagePercentStyle { didSet { defaults.set(percentStyle.rawValue, forKey: Key.percentStyle) } }
     @Published var items: Set<PlanUsageItem> { didSet { defaults.set(items.map(\.rawValue).sorted(), forKey: Key.items) } }
     /// `switchOnClick`: the agent last left on screen.
     @Published var selectedProvider: AgentProvider { didSet { defaults.set(selectedProvider.rawValue, forKey: Key.selectedProvider) } }
 
     private enum Key {
         static let agentsMode = "Lumi.Notch.PlanUsage.AgentsMode"
-        static let percentStyle = "Lumi.Notch.PlanUsage.PercentStyle"
         static let items = "Lumi.Notch.PlanUsage.Items"
         static let selectedProvider = "Lumi.Notch.PlanUsage.SelectedProvider"
     }
@@ -189,7 +240,6 @@ final class HaloPlanUsagePreferences: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         agentsMode = defaults.string(forKey: Key.agentsMode).flatMap(PlanUsageAgentsMode.init(rawValue:)) ?? .showBoth
-        percentStyle = defaults.string(forKey: Key.percentStyle).flatMap(PlanUsagePercentStyle.init(rawValue:)) ?? .used
         items = defaults.object(forKey: Key.items) == nil
             ? PlanUsageItem.defaults
             : Set((defaults.stringArray(forKey: Key.items) ?? []).compactMap(PlanUsageItem.init(rawValue:)))
@@ -204,8 +254,9 @@ final class HaloPlanUsagePreferences: ObservableObject {
         setItem(item, on: !items.contains(item))
     }
 
-    /// The choices as one value, for the pure presentation function.
-    var snapshot: HaloPlanUsageChoices {
+    /// The choices as one value, for the pure presentation function; the
+    /// percent style comes from the daemon's settings.
+    func snapshot(percentStyle: PlanUsagePercentStyle) -> HaloPlanUsageChoices {
         HaloPlanUsageChoices(agentsMode: agentsMode, percentStyle: percentStyle, items: items, selectedProvider: selectedProvider)
     }
 }

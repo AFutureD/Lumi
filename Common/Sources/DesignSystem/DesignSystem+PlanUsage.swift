@@ -73,6 +73,14 @@ public extension DesignSystem {
         public static let barFillWarning = Palette.orange.s600
         /// The card value at 90 % and up: Orange 700.
         public static let valueWarning = Palette.orange.s700
+
+        // MARK: Notices (iPhone Plan / History cards, handoff `design_handoff_ios_usage`)
+
+        /// Warning wording — `Saved sign-in expired…`, `Rate limited…`,
+        /// `<Mac> offline · numbers from 2h ago` — `#8A5A28`.
+        public static let noticeWarningText = DesignColor(rgb: 138, 90, 40)
+        /// The page-level offline banner's fill `rgba(255,204,153,.22)`.
+        public static let noticeWarningFill = DesignColor(rgb: 255, 204, 153).opacity(0.22)
     }
 }
 

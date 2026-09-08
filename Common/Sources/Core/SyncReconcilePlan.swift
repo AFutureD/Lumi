@@ -14,6 +14,14 @@ import Foundation
 ///   rows are not missed — upserts by id make the overlap harmless).
 /// - `infoOnly`: sessions whose timeline facts match but whose summary
 ///   changed (phase flip, reviewed, archived); write the summary, nothing else.
+/// - `insert`: sessions unknown locally that the mirror keeps summary-only
+///   (lazy mirrors: the timeline is taken only when the person opens it).
+///
+/// A lazy mirror passes `materialized`: the sessions whose timeline it
+/// holds (or is showing). Every other session is reconciled by summary
+/// alone — unknown ones are inserted summary-only, known ones get
+/// `infoOnly` when the summary moved — and never fetched here; the mirror
+/// fetches on open. `nil` is the eager mirror: everything is fetched.
 public struct SyncReconcilePlan: Hashable, Sendable {
     public struct SinceRequest: Hashable, Sendable {
         public let sessionID: SessionID
@@ -29,9 +37,10 @@ public struct SyncReconcilePlan: Hashable, Sendable {
     public let fetchFull: [SessionID]
     public let fetchSince: [SinceRequest]
     public let infoOnly: [SessionSummary]
+    public let insert: [SessionSummary]
 
     public var isEmpty: Bool {
-        prune.isEmpty && fetchFull.isEmpty && fetchSince.isEmpty && infoOnly.isEmpty
+        prune.isEmpty && fetchFull.isEmpty && fetchSince.isEmpty && infoOnly.isEmpty && insert.isEmpty
     }
 
     /// Rows beyond this many missing locally are cheaper to replace than to patch.
@@ -42,7 +51,8 @@ public struct SyncReconcilePlan: Hashable, Sendable {
     public static func make(
         local: [SessionIndexEntry],
         remote: [SessionIndexEntry],
-        largeDeltaThreshold: Int = defaultLargeDeltaThreshold
+        largeDeltaThreshold: Int = defaultLargeDeltaThreshold,
+        materialized: Set<SessionID>? = nil
     ) -> SyncReconcilePlan {
         let localByID = Dictionary(local.map { ($0.summary.id, $0) }, uniquingKeysWith: { first, _ in first })
         let remoteIDs = Set(remote.map(\.summary.id))
@@ -50,10 +60,15 @@ public struct SyncReconcilePlan: Hashable, Sendable {
         var fetchFull: [SessionID] = []
         var fetchSince: [SinceRequest] = []
         var infoOnly: [SessionSummary] = []
+        var insert: [SessionSummary] = []
         for entry in remote {
             let id = entry.summary.id
             guard let cached = localByID[id] else {
-                fetchFull.append(id)
+                if materialized == nil { fetchFull.append(id) } else { insert.append(entry.summary) }
+                continue
+            }
+            if let materialized, !materialized.contains(id) {
+                if cached.summary != entry.summary { infoOnly.append(entry.summary) }
                 continue
             }
             let timelineMatches = cached.timelineItemCount == entry.timelineItemCount
@@ -71,13 +86,14 @@ public struct SyncReconcilePlan: Hashable, Sendable {
             }
         }
         let prune = Set(localByID.keys.filter { !remoteIDs.contains($0) })
-        return SyncReconcilePlan(prune: prune, fetchFull: fetchFull, fetchSince: fetchSince, infoOnly: infoOnly)
+        return SyncReconcilePlan(prune: prune, fetchFull: fetchFull, fetchSince: fetchSince, infoOnly: infoOnly, insert: insert)
     }
 
-    public init(prune: Set<SessionID>, fetchFull: [SessionID], fetchSince: [SinceRequest], infoOnly: [SessionSummary]) {
+    public init(prune: Set<SessionID>, fetchFull: [SessionID], fetchSince: [SinceRequest], infoOnly: [SessionSummary], insert: [SessionSummary] = []) {
         self.prune = prune
         self.fetchFull = fetchFull
         self.fetchSince = fetchSince
+        self.insert = insert
         self.infoOnly = infoOnly
     }
 }

@@ -114,6 +114,8 @@ enum LumenMain {
                 transportFactory: RelayWebSocketTransportFactory(),
                 rest: LiveRelayHostREST(baseURL: configuration.relayURL),
                 healthProvider: { await service.currentHealth() },
+                usageProvider: { preset in try await service.usageReport(preset: preset) },
+                planUsageProvider: { try await service.planUsageSnapshot() },
                 onConnectionChange: { connected in await service.setRelayConnected(connected) }
             )
             : nil
@@ -149,7 +151,13 @@ enum LumenMain {
             priceTable: { await modelPrices.current().table },
             pollIntervalSeconds: configuration.usagePollIntervalSeconds
         )
-        await service.attachUsage(store: usageStore, scanner: usageScanner, prices: modelPrices)
+        await service.attachUsage(UsageReporting(store: usageStore, scanner: usageScanner, prices: modelPrices))
+        // Settings: the daemon's own table. A `plan-usage-settings.json`
+        // from before the table is read once into it, then removed.
+        let settingsStore = repository.makeSettingsStore()
+        await service.attachSettings(store: settingsStore)
+        try await LegacyPlanUsageSettingsImport.run(path: configuration.legacyPlanUsageSettingsPath, into: settingsStore)
+        let settings = try await settingsStore.settings()
         // Plan usage: the agents' own sign-in files, read every poll, and
         // the providers' usage endpoints for the accounts switched on.
         let planUsage = PlanUsageService(
@@ -159,9 +167,9 @@ enum LumenMain {
                 claudeKeychainServices: ClaudeKeychainCredentials.serviceCandidates(
                     configDirectory: configuration.claudeConfigDirectoryOverride
                 ),
-                codexAuth: configuration.codexAuthPath,
-                settings: configuration.planUsageSettingsPath
+                codexAuth: configuration.codexAuthPath
             ),
+            settings: settings.planUsage,
             fetchEnabled: configuration.planUsageFetchEnabled,
             pollIntervalSeconds: configuration.planUsagePollIntervalSeconds
         )

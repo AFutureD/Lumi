@@ -338,6 +338,11 @@ public enum RemotePayloadKind: Hashable, Sendable {
     case fetchTimelineSince
     /// The human looked at the sessions in `sessionIDs` on the iPhone.
     case sessionReviewed
+    /// Send me the token / cost report for a calendar preset (`usageRange`),
+    /// expanded with the daemon's own local days.
+    case fetchUsage
+    /// Send me the plan-usage snapshot and the settings that shape it.
+    case fetchPlanUsage
 
     // MARK: host → device
     /// One part of the index (`index`, `part`, `partCount`, `requestID`).
@@ -354,6 +359,11 @@ public enum RemotePayloadKind: Hashable, Sendable {
     case sessionRemoved
     /// The daemon's health (`health`).
     case health
+    /// The answer to `fetch_usage` (`usage`, `requestID`); `usage` is absent
+    /// when the daemon could not build or ship the report.
+    case usageReport
+    /// The answer to `fetch_plan_usage` (`planUsage`, `settings`, `requestID`).
+    case planUsage
 
     public var rawValue: String {
         switch self {
@@ -368,6 +378,10 @@ public enum RemotePayloadKind: Hashable, Sendable {
         case .sessionMessage: "session_message"
         case .sessionRemoved: "session_removed"
         case .health: "health"
+        case .fetchUsage: "fetch_usage"
+        case .fetchPlanUsage: "fetch_plan_usage"
+        case .usageReport: "usage_report"
+        case .planUsage: "plan_usage"
         }
     }
 }
@@ -388,6 +402,10 @@ extension RemotePayloadKind: Codable {
         case "session_message": .sessionMessage
         case "session_removed": .sessionRemoved
         case "health": .health
+        case "fetch_usage": .fetchUsage
+        case "fetch_plan_usage": .fetchPlanUsage
+        case "usage_report": .usageReport
+        case "plan_usage": .planUsage
         default: throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown remote payload kind: \(value)")
         }
     }
@@ -445,6 +463,14 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
     public let session: SessionDetail?
     public let events: [AgentIngressEvent]?
     public let health: DaemonHealth?
+    /// `fetch_usage`: which calendar preset to expand.
+    public let usageRange: UsageRangePreset?
+    /// `usage_report`: the report, absent on failure.
+    public let usage: UsageReport?
+    /// `plan_usage`: the snapshot.
+    public let planUsage: PlanUsageState?
+    /// `plan_usage`: the daemon's settings (the percent style the numbers follow).
+    public let settings: DaemonSettings?
 
     public init(
         kind: RemotePayloadKind,
@@ -458,7 +484,11 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         summaries: [SessionSummary]? = nil,
         session: SessionDetail? = nil,
         events: [AgentIngressEvent]? = nil,
-        health: DaemonHealth? = nil
+        health: DaemonHealth? = nil,
+        usageRange: UsageRangePreset? = nil,
+        usage: UsageReport? = nil,
+        planUsage: PlanUsageState? = nil,
+        settings: DaemonSettings? = nil
     ) {
         self.kind = kind
         self.generatedAt = generatedAt
@@ -472,6 +502,10 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         self.session = session
         self.events = events
         self.health = health
+        self.usageRange = usageRange
+        self.usage = usage
+        self.planUsage = planUsage
+        self.settings = settings
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -487,6 +521,10 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         case session
         case events
         case health
+        case usageRange
+        case usage
+        case planUsage
+        case settings
     }
 
     public init(from decoder: Decoder) throws {
@@ -503,6 +541,10 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         session = try c.decodeIfPresent(SessionDetail.self, forKey: .session)
         events = try c.decodeIfPresent([AgentIngressEvent].self, forKey: .events)
         health = try c.decodeIfPresent(DaemonHealth.self, forKey: .health)
+        usageRange = try c.decodeIfPresent(UsageRangePreset.self, forKey: .usageRange)
+        usage = try c.decodeIfPresent(UsageReport.self, forKey: .usage)
+        planUsage = try c.decodeIfPresent(PlanUsageState.self, forKey: .planUsage)
+        settings = try c.decodeIfPresent(DaemonSettings.self, forKey: .settings)
     }
 }
 

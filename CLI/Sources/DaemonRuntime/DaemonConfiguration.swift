@@ -32,7 +32,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
     /// Keychain service name of its sign-in.
     public let claudeConfigDirectoryOverride: String?
     public let codexAuthPath: String
-    public let planUsageSettingsPath: String
+    public let legacyPlanUsageSettingsPath: String
     public let planUsageFetchEnabled: Bool
     public let planUsagePollIntervalSeconds: Double
     /// The Relay the daemon registers with as the host; paired iPhones sync
@@ -70,7 +70,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
         claudeStatePath: String? = nil,
         claudeConfigDirectoryOverride: String? = nil,
         codexAuthPath: String? = nil,
-        planUsageSettingsPath: String? = nil,
+        legacyPlanUsageSettingsPath: String? = nil,
         planUsageFetchEnabled: Bool = true,
         planUsagePollIntervalSeconds: Double = 5 * 60,
         relayURL: URL = DaemonConfiguration.defaultRelayURL,
@@ -103,7 +103,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
         self.claudeStatePath = claudeStatePath ?? claudeHome.appendingPathComponent(".claude.json").path
         self.claudeConfigDirectoryOverride = claudeConfigDirectoryOverride
         self.codexAuthPath = codexAuthPath ?? codexHome.appendingPathComponent("auth.json").path
-        self.planUsageSettingsPath = planUsageSettingsPath ?? daemonDirectory.appendingPathComponent("plan-usage-settings.json").path
+        self.legacyPlanUsageSettingsPath = legacyPlanUsageSettingsPath ?? daemonDirectory.appendingPathComponent("plan-usage-settings.json").path
         self.planUsageFetchEnabled = planUsageFetchEnabled
         self.planUsagePollIntervalSeconds = planUsagePollIntervalSeconds
         self.relayURL = relayURL

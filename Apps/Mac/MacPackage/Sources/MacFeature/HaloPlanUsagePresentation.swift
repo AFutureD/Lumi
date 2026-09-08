@@ -30,17 +30,13 @@ struct HaloPlanUsageCluster: Hashable, Sendable {
 
     var help: String {
         groups.map { group in
-            "\(HaloPlanUsagePresentation.agentName(group.provider)) · " + group.entries.map(\.help).joined(separator: " · ")
+            "\(PlanUsagePresentation.agentName(group.provider)) · " + group.entries.map(\.help).joined(separator: " · ")
         }.joined(separator: "\n")
     }
 }
 
 enum HaloPlanUsagePresentation {
     static let warningThreshold = DesignSystem.PlanUsage.warningPercent
-
-    static func agentName(_ provider: AgentProvider) -> String {
-        provider == .claude ? "Claude Code" : "Codex"
-    }
 
     /// `nil` when the cluster has nothing to show — the top bar keeps its
     /// brand cluster: no item is chosen (that is the off state), no chosen
@@ -70,8 +66,8 @@ enum HaloPlanUsagePresentation {
     /// `nil` when the provider did not report the window.
     static func entry(_ item: PlanUsageItem, account: PlanUsageAccount, style: PlanUsagePercentStyle, now: Date) -> HaloPlanUsageCluster.Entry? {
         guard let limit = account.limit(item.window, model: item.model) else { return nil }
-        let shown = style == .used ? limit.usedPercent : 100 - limit.usedPercent
-        var help = "\(item.shortTitle) \(Int(shown.rounded()))% \(style == .used ? "used" : "left")"
+        let percent = PlanUsagePresentation.percent(limit, style: style)
+        var help = "\(item.shortTitle) \(percent.value)% \(percent.word)"
         if let resetsAt = limit.resetsAt {
             help += resetsAt > now
                 ? ", resets in \(SessionElapsedFormatter.string(from: resetsAt.timeIntervalSince(now)))"
@@ -80,7 +76,7 @@ enum HaloPlanUsagePresentation {
         return .init(
             item: item,
             label: item.notchLabel,
-            text: "\(Int(shown.rounded()))%",
+            text: "\(percent.value)%",
             isWarning: limit.usedPercent >= warningThreshold,
             help: help
         )
@@ -96,53 +92,10 @@ enum HaloPlanUsagePresentation {
     /// Why a Show row offers nothing, for the line under the agent's name.
     static func unavailableReason(_ account: PlanUsageAccount?, now: Date = Date()) -> String? {
         guard let account else { return "Daemon not connected" }
-        if let status = statusText(account, now: now) { return status }
+        if let status = PlanUsagePresentation.statusText(account, now: now) { return status }
         if !account.enabled { return "Switched off · Settings › Usage" }
         if account.limits.isEmpty { return "Fetching from the provider…" }
         return nil
-    }
-
-    /// The Settings row's status and the Notch tooltip share these words.
-    static func statusText(_ account: PlanUsageAccount, now: Date = Date()) -> String? {
-        switch account.status {
-        case .ok:
-            return nil
-        case .credentialsMissing:
-            return "Not signed in" + (account.statusDetail.map { " · \($0)" } ?? "")
-        case .signInExpired:
-            return "Saved sign-in expired · sign in again with \(agentName(account.provider))"
-        case .signInRejected:
-            return "Sign-in rejected by the service"
-        case .rateLimited:
-            if let retryAt = account.retryAt, retryAt > now {
-                return "Rate limited · retry in \(SessionElapsedFormatter.string(from: retryAt.timeIntervalSince(now)))"
-            }
-            return "Rate limited"
-        case .failed:
-            return "Unavailable" + (account.statusDetail.map { " · \($0)" } ?? "")
-        }
-    }
-
-    /// Card window title: `SESSION · 5 HOURS`, `WEEKLY · 7 DAYS`, `FABLE · 7 DAYS`.
-    static func windowTitle(_ limit: PlanUsageLimit) -> String {
-        if let model = limit.model { return "\(model) · 7 days".uppercased() }
-        return limit.window == .session ? "SESSION · 5 HOURS" : "WEEKLY · 7 DAYS"
-    }
-
-    /// `resets in 2h 10m` / `resets now`.
-    static func resetText(_ limit: PlanUsageLimit, now: Date) -> String? {
-        guard let resetsAt = limit.resetsAt else { return nil }
-        return resetsAt > now ? "resets in \(SessionElapsedFormatter.string(from: resetsAt.timeIntervalSince(now)))" : "resets now"
-    }
-
-    /// `updated 1m ago`.
-    static func updatedText(_ fetchedAt: Date?, now: Date) -> String? {
-        guard let fetchedAt else { return nil }
-        let elapsed = max(0, now.timeIntervalSince(fetchedAt))
-        if elapsed < 60 { return "updated just now" }
-        if elapsed < 3_600 { return "updated \(Int(elapsed / 60))m ago" }
-        if elapsed < 86_400 { return "updated \(Int(elapsed / 3_600))h ago" }
-        return "updated \(Int(elapsed / 86_400))d ago"
     }
 
     /// Stand-in numbers for the Settings preview while the daemon has none.

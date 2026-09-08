@@ -11,6 +11,8 @@ public enum DesignFontWeight: Hashable, Sendable {
     case medium
     /// 590 — Emphasized. List titles, section titles, status pills.
     case semibold
+    /// 700 — only the iPhone Usage card's big number (28pt Cost / Tokens).
+    case bold
 }
 
 public enum DesignFontFamily: Hashable, Sendable {

@@ -1,3 +1,4 @@
+import Core
 import DesignSystem
 import Transport
 import AppKit
@@ -116,7 +117,10 @@ struct HaloSettingsView: View {
                     }
                     Divider()
                     SettingsRow(title: "Percent", minHeight: 52) {
-                        Picker("Percent", selection: $planUsagePreferences.percentStyle) {
+                        Picker("Percent", selection: Binding(
+                            get: { planUsage.percentStyle },
+                            set: { style in Task { await planUsage.setPercentStyle(style) } }
+                        )) {
                             Text("Used").tag(PlanUsagePercentStyle.used)
                             Text("Remaining").tag(PlanUsagePercentStyle.remaining)
                         }
@@ -385,7 +389,7 @@ private struct HaloPlanUsageShowRow: View {
                     .frame(width: PU.showMark, height: PU.showMark)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(HaloPlanUsagePresentation.agentName(provider))
+                Text(PlanUsagePresentation.agentName(provider))
                     .font(Design.Font.UI.body)
                 if let reason {
                     Text(reason)
@@ -429,7 +433,7 @@ private struct HaloPlanUsageShowRow: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(HaloPlanUsagePresentation.agentName(provider)) \(item.pillTitle)")
+        .accessibilityLabel("\(PlanUsagePresentation.agentName(provider)) \(item.pillTitle)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -38,15 +38,19 @@ Mac 上的 daemon 使用构建内置的 Relay。用户从 Mac 侧边栏进入“
 
 ### 用量
 
-侧边栏的 Usage 页按 Today / This week / This month / Custom 日期范围显示这台 Mac 上 Claude Code 与 Codex 的 token 与花费。上半张 Summary 卡给出 Cost（带较上一周期的涨跌）、Tokens（带输入 / 缓存读 / 缓存写 / 输出的构成条）、Sessions / Turns / Calls，以及一张按时间的堆叠趋势图（单日按小时、其余按天、超过 90 天按周；可看全部或某一个 Agent，按 Cost 或 Tokens）；下半张 Detail 卡是一张可排序的明细表，能按 Project、Agent（每个 Agent 下挂它用过的模型）、Time（日 / 周 / 月）、Model 换分组，含缓存命中率。数据来自 Agent 自己的本机对话记录，与 Session 列表无关——没进列表的会话也算，删除 Session 不影响数字；花费按 models.dev 公开价目估算，没有价格的模型单独标出。
+Mac 侧边栏的 Usage 页按 Today / This week / This month / Custom 日期范围显示这台 Mac 上 Claude Code 与 Codex 的 token 与花费。上半张 Summary 卡给出 Cost（带较上一周期的涨跌）、Tokens（带输入 / 缓存读 / 缓存写 / 输出的构成条）、Sessions / Turns / Calls，以及一张按时间的堆叠趋势图（单日按小时、其余按天、超过 90 天按周；可看全部或某一个 Agent，按 Cost 或 Tokens）；下半张 Detail 卡是一张可排序的明细表，能按 Project、Agent（每个 Agent 下挂它用过的模型）、Time（日 / 周 / 月）、Model 换分组，含缓存命中率。数据来自 Agent 自己的本机对话记录，与 Session 列表无关——没进列表的会话也算，删除 Session 不影响数字；花费按 models.dev 公开价目估算，没有价格的模型单独标出。
 
-[查看模块详情](modules/mac-usage.md)
+iPhone 的 Usage Tab › History 把同一份数字带到手机上：Today / This week / This month 三档，可看全部 Mac 的合计或某一台；数字卡是 Cost、Tokens、Sessions / Turns / Calls，图卡是每天的花费柱状图（点柱子读单日，菜单切某一家按模型堆叠）。只有总览，明细表留在 Mac。
+
+[Mac 模块详情](modules/mac-usage.md) · [iPhone 模块详情](modules/iphone-usage.md)
 
 ### 套餐用量
 
-“Settings > Usage”给 Claude Code 与 Codex 各一张卡：登录（邮箱、套餐）、开关，打开后 daemon 每 5 分钟向服务商询问订阅额度用了多少，卡里按窗口列出百分比、用量条与重置倒计时。“Settings > Notch”的 Usage 段决定 Notch 怎么显示：黑底预览、两家同时显示或点击切换、百分比按已用或剩余、每家用药丸多选要显示的窗口；选了之后展开态顶栏左侧换成额度簇——Claude 标记 `5h 42% · 7d 18% · Fable 7%`、Codex 标记 `7d 12%`。Lumi 只读 Agent 自己的登录文件，不换发、不写回；登录缺失或过期时行里写明原因。
+Mac 的“Settings > Usage”给 Claude Code 与 Codex 各一张卡：登录（邮箱、套餐）、开关，打开后 daemon 每 5 分钟向服务商询问订阅额度用了多少，卡里按窗口列出百分比、用量条与重置倒计时。“Settings > Notch”的 Usage 段决定 Notch 怎么显示：黑底预览、两家同时显示或点击切换、百分比按已用或剩余、每家用药丸多选要显示的窗口；选了之后展开态顶栏左侧换成额度簇——Claude 标记 `5h 42% · 7d 18% · Fable 7%`、Codex 标记 `7d 12%`。Lumi 只读 Agent 自己的登录文件，不换发、不写回；登录缺失或过期时行里写明原因。
 
-[查看模块详情](modules/mac-plan-usage.md)
+iPhone 的 Usage Tab › Plan 把每台 Mac 的这些卡放在一页：一台 Mac 一张卡，卡内每个账号一小节，每个窗口一行百分比、用量条和重置倒计时；开关与「已用 / 剩余」都跟 Mac 上的设置走，iPhone 只看不改。
+
+[Mac 模块详情](modules/mac-plan-usage.md) · [iPhone 模块详情](modules/iphone-usage.md)
 
 ### 软件更新
 

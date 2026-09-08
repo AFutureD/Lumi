@@ -1,10 +1,10 @@
 # Lumi for iOS
 
-UIKit, iOS 18+. The UI and controller logic live in `IOSPackage` (`IOSFeature`); the Xcode app target supplies the application delegate, signing, entitlements and generated Info.plist settings. Open `Lumi.xcworkspace` at the repository root.
+UIKit, iOS 26+. The UI and controller logic live in `IOSPackage` (`IOSFeature`); the Xcode app target supplies the application delegate, signing, entitlements and generated Info.plist settings. Open `Lumi.xcworkspace` at the repository root.
 
 ## Screens
 
-Three tabs — **Sessions** (one merged list across every paired Mac; inline large title with `···` and the system search button in the bar; `Macs` / `Status` dropdown multi-select filters; collapsible subagent groups; pull-to-refresh), **Macs** (paired Macs, swipe to remove, `+` to scan or paste a pairing code, or rename this iPhone), **Settings** (notification permission, version, clear received data). A session opens Activity (three-lane strip + timeline, tap a row for the detail sheet) / Info (metrics + Overview / Lineage / Model / Usage).
+Four tabs — **Sessions** (one merged list across every paired Mac; inline large title with `···` and the system search button in the bar; `Macs` / `Status` dropdown multi-select filters; collapsible subagent groups; pull-to-refresh), **Usage** (`Plan` / `History` segments: each paired Mac's plan limits per agent, and cost / tokens for Today / This week / This month across All Macs or one Mac, with a tappable cost-per-day chart; read from each Mac's daemon, memory only, polled while the tab is open), **Macs** (paired Macs, swipe to remove, `+` to scan or paste a pairing code, or rename this iPhone), **Settings** (notification permission, version, clear received data). A session opens Activity (three-lane strip + timeline, tap a row for the detail sheet) / Info (metrics + Overview / Lineage / Model / Usage).
 
 Design source: `/DESIGN SYSTEM.html` at the repo root; every product value goes through `DesignSystem.IOS` in `Common/Sources/DesignSystem`. System controls keep system metrics and colours.
 
@@ -28,4 +28,4 @@ Package tests (swift-testing) run through the app scheme:
 xcodebuild -workspace Apps/iOS/LumiIOS.xcworkspace -scheme LumiIOS -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -skipMacroValidation -only-testing:IOSFeatureTests test
 ```
 
-The project intentionally does not use SwiftUI.
+The project is UIKit throughout; the one piece of SwiftUI is the Usage › History chart (Swift Charts), hosted in a `UIHostingController` inside its UIKit card.

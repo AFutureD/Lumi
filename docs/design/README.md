@@ -13,8 +13,8 @@
 5. [App 与运行时设计](application-runtime.md)：macOS、Notch、iOS、缓存、刷新和并发边界。
 6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Relay 部署和 CI。
 7. [日志设计](logging.md)：三端共用的分级 / 分类 / 结构化字段，文件位置、错误汇总、Relay 的 JSON 行，以及什么永远不进日志。
-8. [Usage 设计](usage.md)：与 Session 无关的用量链路——daemon 扫描 Agent 对话记录、桶模型与去重、models.dev 计价、`usage_report` 与 Mac 的 Usage 页。
-9. [套餐用量设计](plan-usage.md)：daemon 只读 Agent 登录文件、询问服务商额度接口、`plan_usage` / `set_plan_usage`，Settings 的 Plan 页与 Notch 顶栏的用量簇。
+8. [Usage 设计](usage.md)：与 Session 无关的用量链路——daemon 扫描 Agent 对话记录、桶模型与去重、models.dev 计价、`usage_report`（IPC）与 `fetch_usage`（Relay），Mac 的 Usage 页与 iPhone 的 Usage › History。
+9. [套餐用量设计](plan-usage.md)：daemon 只读 Agent 登录文件、询问服务商额度接口、`plan_usage` 与 settings 表里的开关 / Percent（`get_settings` / `set_settings`），Settings 的 Plan 段、Notch 顶栏的用量簇与 iPhone 的 Usage › Plan。
 
 ## 设计状态
 

@@ -1,3 +1,4 @@
+import Core
 import Foundation
 
 public extension DesignSystem {
@@ -19,8 +20,8 @@ public extension DesignSystem {
         /// Models without a published price: Neutral 300 / 中性灰 Dark.
         public static let unpriced = AdaptiveDesignColor(light: Palette.neutral.s300, dark: DesignColor(white: 1, alpha: 0.38))
         /// Which series stacks in the `All agents` chart for each agent.
-        public static let claudeSeries = 0
-        public static let codexSeries = 2
+        public static let claudeSeries = UsageTrend.claudeSeriesIndex
+        public static let codexSeries = UsageTrend.codexSeriesIndex
 
         // Token composition bar: Input → Cache read → Cache write → Output.
         public static var compositionInput: AdaptiveDesignColor { series[0] }
@@ -33,7 +34,7 @@ public extension DesignSystem {
         public static let gridLine = AdaptiveDesignColor(light: DesignColor(white: 0, alpha: 0.08), dark: DesignColor(white: 1, alpha: 0.10))
         public static let baseline = AdaptiveDesignColor(light: DesignColor(white: 0, alpha: 0.16), dark: DesignColor(white: 1, alpha: 0.24))
         public static let axisLabel = AdaptiveDesignColor(light: DesignColor(rgb: 150, 150, 150), dark: InkDark.tertiary)
-        public static let gridLines = 4
+        public static let gridLines = UsageTrend.gridLineCount
         public static let gridDash: [Double] = [3, 3]
         public static let plotHeight: Double = 148
         /// The x-axis label row under the plot and the space the top grid

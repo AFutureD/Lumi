@@ -1,3 +1,4 @@
+import Core
 import DesignSystem
 import Transport
 import AppKit
@@ -34,13 +35,13 @@ struct HaloPlanUsageClusterView: View {
     }
 
     private var liveCluster: HaloPlanUsageCluster? {
-        HaloPlanUsagePresentation.cluster(state: model.state, choices: preferences.snapshot, now: Date())
+        HaloPlanUsagePresentation.cluster(state: model.state, choices: preferences.snapshot(percentStyle: model.percentStyle), now: Date())
     }
 
     private var cluster: HaloPlanUsageCluster? {
         if let live = liveCluster { return live }
         guard sampleWhenEmpty else { return nil }
-        return HaloPlanUsagePresentation.cluster(state: HaloPlanUsagePresentation.sampleState(), choices: preferences.snapshot, now: Date())
+        return HaloPlanUsagePresentation.cluster(state: HaloPlanUsagePresentation.sampleState(), choices: preferences.snapshot(percentStyle: model.percentStyle), now: Date())
     }
 
     @ViewBuilder
@@ -85,7 +86,7 @@ struct HaloPlanUsageClusterView: View {
                 row.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Switches to \(HaloPlanUsagePresentation.agentName(next))")
+            .accessibilityHint("Switches to \(PlanUsagePresentation.agentName(next))")
         } else {
             row
         }

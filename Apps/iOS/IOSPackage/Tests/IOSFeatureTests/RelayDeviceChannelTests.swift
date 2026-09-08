@@ -20,6 +20,12 @@ private actor FakeHost {
     private var loop: Task<Void, Never>?
     private(set) var requests: [RemoteSessionPayload] = []
     private(set) var reviewed: [SessionID] = []
+    /// What `fetch_usage` answers with; `nil` = the daemon could not build it.
+    var usageReport: UsageReport?
+    var planUsage: (state: PlanUsageState, settings: DaemonSettings)?
+
+    func setUsageReport(_ report: UsageReport?) { usageReport = report }
+    func setPlanUsage(_ state: PlanUsageState, settings: DaemonSettings) { planUsage = (state, settings) }
 
     init(link: RelayInMemoryLink, hostID: HostID, deviceID: DeviceID, devicePublicKey: Data) {
         self.link = link
@@ -75,6 +81,13 @@ private actor FakeHost {
                 }
             case .sessionReviewed:
                 reviewed += payload.sessionIDs ?? []
+            case .fetchUsage:
+                try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .usageReport, generatedAt: now, requestID: payload.requestID, usage: usageReport))])
+            case .fetchPlanUsage:
+                try await send([RelayCryptography.prepare(RemoteSessionPayload(
+                    kind: .planUsage, generatedAt: now, requestID: payload.requestID,
+                    planUsage: planUsage?.state, settings: planUsage?.settings
+                ))])
             default:
                 break
             }
@@ -143,7 +156,7 @@ private struct Harness {
             pairingPollInterval: .milliseconds(20),
             makeRepository: { _ in cache },
             removeRepository: { _ in },
-            requestTimeouts: .init(index: .seconds(2), fetch: .seconds(2), tick: .milliseconds(100), retryDelay: .milliseconds(200)),
+            requestTimeouts: .init(index: .seconds(2), fetch: .seconds(2), usage: .seconds(1), tick: .milliseconds(100), retryDelay: .milliseconds(200)),
             persistsCredentials: false
         )
         controller = RelayDeviceController(settings: settings, dependencies: dependencies, loadStoredCredentials: false)
@@ -207,25 +220,49 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     try await harness.host.start()
     await harness.waitUntil { harness.state?.hasCompleteSync == true }
     #expect(harness.state?.sessions.map(\.summary.id) == [SessionID("B"), SessionID("A")])
+    // A is held → patched from the tail; B was unknown → summary only, no
+    // timeline until someone opens it; C pruned.
     #expect(harness.session("A")?.timeline.count == 5)
-    #expect(harness.session("B")?.timeline.count == 2)
+    #expect(harness.session("B")?.timeline.isEmpty == true)
     #expect(harness.settings.lastSync(for: harness.hostID) != nil)
     #expect(harness.state?.health?.daemonVersion == "fake")
-    // A grew → patched from the tail; B was unknown → taken whole; C pruned.
-    let kinds = await harness.host.requests.map(\.kind)
+    var kinds = await harness.host.requests.map(\.kind)
     #expect(kinds.contains(.fetchTimelineSince))
-    #expect(kinds.contains(.fetchSession))
-    #expect(try await harness.cache.sessionIndex(limit: 10).map(\.summary.id).sorted { $0.rawValue < $1.rawValue } == [SessionID("A"), SessionID("B")])
+    #expect(!kinds.contains(.fetchSession))
+    let index = try await harness.cache.sessionIndex(limit: 10)
+    #expect(index.map(\.summary.id).sorted { $0.rawValue < $1.rawValue } == [SessionID("A"), SessionID("B")])
+    #expect(index.first { $0.summary.id == SessionID("B") }?.timelineItemCount == 0)
+
+    // Opening B takes it whole; while it is on its way the channel says so.
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("B"))
+    #expect(harness.controller.isFetchingSession(hostID: harness.hostID, id: SessionID("B")))
+    await harness.waitUntil { harness.session("B")?.timeline.count == 2 }
+    #expect(!harness.controller.isFetchingSession(hostID: harness.hostID, id: SessionID("B")))
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.timeline.count != 2 {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.timeline.count == 2)
+    kinds = await harness.host.requests.map(\.kind)
+    #expect(kinds.filter { $0 == .fetchSession }.count == 1)
+    // Opening a held, current session asks for nothing more.
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(await harness.host.requests.count == kinds.count)
     await harness.host.stop()
 }
 
-@Test @MainActor func liveEventsApplyAndUnknownSessionsAreFetched() async throws {
+@Test @MainActor func liveEventsApplyToHeldSessionsAndOnlyMoveSummariesOtherwise() async throws {
     let base = Date(timeIntervalSince1970: 1_000)
     let harness = Harness()
     try await harness.host.repository.replaceSession(detail("A", items: 1, at: base))
+    // A is held from an earlier run; the host also has S, which the iPhone
+    // will know by summary only.
+    try await harness.cache.replaceSession(detail("A", items: 1, at: base))
+    try await harness.host.repository.replaceSession(detail("S", items: 1, at: base))
     try await harness.host.start()
     try await harness.controller.addChannel(harness.credentials)
     await harness.waitUntil { harness.state?.hasCompleteSync == true }
+    #expect(harness.session("S")?.timeline.isEmpty == true)
 
     let grow = AgentIngressEvent(
         eventID: EventID("e1"), sessionID: SessionID("A"), turnID: TurnID("A-turn"), agent: .codex,
@@ -241,7 +278,26 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     #expect(harness.session("A")?.summary.phase == .executing)
     #expect(try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 10)?.timeline.count == 2)
 
-    // An event for a session the cache never saw makes the device take it whole.
+    // An event for a summary-only session moves its summary and nothing else.
+    let touchS = AgentIngressEvent(
+        eventID: EventID("e-s"), sessionID: SessionID("S"), turnID: TurnID("S-turn"), agent: .codex,
+        occurredAt: base.addingTimeInterval(20), phase: .idle,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("S-item-9"), sessionID: SessionID("S"), turnID: TurnID("S-turn"),
+            occurredAt: base.addingTimeInterval(20),
+            payload: .message(MessageTimelinePayload(role: .assistant, text: "done"))
+        )
+    )
+    try await harness.host.push(events: [touchS])
+    await harness.waitUntil { harness.session("S")?.summary.phase == .idle }
+    #expect(harness.session("S")?.timeline.isEmpty == true)
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("S"), cursor: nil, limit: 10)?.summary.phase != .idle {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await harness.cache.sessionDetail(id: SessionID("S"), cursor: nil, limit: 10)?.timeline.isEmpty == true)
+
+    // An event for a session the cache never saw creates it as a summary —
+    // no fetch; the timeline waits for a tap.
     try await harness.host.repository.replaceSession(detail("Z", items: 3, at: base.addingTimeInterval(200)))
     let unknown = AgentIngressEvent(
         eventID: EventID("e2"), sessionID: SessionID("Z"), agent: .codex,
@@ -249,8 +305,11 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     )
     try await harness.host.push(events: [unknown])
     await harness.waitUntil { harness.session("Z") != nil }
-    #expect(harness.session("Z")?.timeline.count == 3)
-    #expect(harness.state?.sessions.first?.summary.id == SessionID("Z"))
+    #expect(harness.session("Z")?.timeline.isEmpty == true)
+    #expect(harness.session("Z")?.summary.phase == .thinking)
+    #expect(await harness.host.requests.contains { $0.kind == .fetchSession } == false)
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("Z"))
+    await harness.waitUntil { harness.session("Z")?.timeline.count == 3 }
     await harness.host.stop()
 }
 
@@ -306,7 +365,11 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
 
     harness.controller.clearReceivedData()
     #expect(harness.state?.sessions.isEmpty == true)
+    // The refill is summaries only; the content comes back on open.
     await harness.waitUntil { harness.session("A") != nil && harness.state?.hasCompleteSync == true }
+    #expect(harness.session("A")?.timeline.isEmpty == true)
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 2 }
     #expect(harness.session("A")?.timeline.count == 2)
     await harness.host.stop()
 }
@@ -339,7 +402,7 @@ private final class RevokingTransportFactory: RelayFrameTransportFactory, @unche
         transportFactory: factory,
         makeRepository: { _ in cache },
         removeRepository: { _ in },
-        requestTimeouts: .init(index: .seconds(2), fetch: .seconds(2), tick: .milliseconds(100), retryDelay: .milliseconds(200)),
+        requestTimeouts: .init(index: .seconds(2), fetch: .seconds(2), usage: .seconds(1), tick: .milliseconds(100), retryDelay: .milliseconds(200)),
         persistsCredentials: false
     )
     let controller = RelayDeviceController(settings: settings, dependencies: dependencies, loadStoredCredentials: false)
@@ -420,8 +483,14 @@ private final class RevokingTransportFactory: RelayFrameTransportFactory, @unche
     )
     try await harness.host.push(events: [grow])
     await harness.waitUntil { harness.session("B") != nil }
-    #expect(harness.session("B")?.timeline.count == 2)
-    #expect(try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.timeline.count == 2)
+    // B was never opened, so the event only moved its summary — in memory
+    // and in the cache — and that was enough to bring it back.
+    #expect(harness.session("B")?.summary.phase == .executing)
+    #expect(harness.session("B")?.timeline.isEmpty == true)
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.summary.phase != .executing {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.summary.phase == .executing)
     await harness.host.stop()
 }
 
@@ -560,4 +629,49 @@ private actor ScriptedPairingAPI: RelayPairingAPI {
     // …and the Mac pressed Don't match.
     #expect(offline.failure == .rejected)
     #expect(harness.controller.channelStates.isEmpty)
+}
+
+@Test @MainActor func usageAndPlanUsageAnswersLandInMemoryOnly() async throws {
+    let now = Date(timeIntervalSince1970: 1_788_616_800)
+    let harness = Harness()
+    let report = UsageReport(
+        since: UsageDay(year: 2026, month: 8, day: 31), until: UsageDay(year: 2026, month: 9, day: 5), generatedAt: now,
+        totals: UsageSlice(tokens: UsageTokens(input: 10), costUSD: 1.5, calls: 1, sessions: 1, turns: 1),
+        byAgent: [], byProject: [], byModel: [],
+        pricing: UsagePricingStatus(source: .builtin, modelCount: 1),
+        scan: UsageScanStatus(scannedFiles: 1, pendingFiles: 0, isScanning: false)
+    )
+    let state = PlanUsageState(accounts: [PlanUsageAccount(id: .claude, provider: .claude, enabled: true, status: .ok, limits: [PlanUsageLimit(window: .session, usedPercent: 42)])], generatedAt: now)
+    let settings = DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [.claude], percentStyle: .remaining))
+    await harness.host.setUsageReport(report)
+    await harness.host.setPlanUsage(state, settings: settings)
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    // Nothing asked yet: no snapshot, and the sync did not wait for one.
+    #expect(harness.state?.usage == nil && harness.state?.planUsage == nil)
+
+    harness.controller.requestUsage(.thisWeek)
+    #expect(harness.state?.usage?.isLoading == true)
+    await harness.waitUntil { harness.state?.usage?.report != nil }
+    #expect(harness.state?.usage?.report == report)
+    #expect(harness.state?.usage?.preset == .thisWeek)
+    #expect(harness.state?.usage?.isLoading == false && harness.state?.usage?.error == nil)
+
+    harness.controller.requestPlanUsage()
+    await harness.waitUntil { harness.state?.planUsage?.state != nil }
+    #expect(harness.state?.planUsage?.state == state)
+    #expect(harness.state?.planUsage?.settings == settings)
+    // The cache never sees any of it.
+    #expect(try await harness.cache.sessionIndex(limit: 10).isEmpty)
+
+    // The daemon could not build the report: the last one stays, with the error.
+    await harness.host.setUsageReport(nil)
+    harness.controller.requestUsage(.today)
+    await harness.waitUntil { harness.state?.usage?.error != nil }
+    #expect(harness.state?.usage?.report == report && harness.state?.usage?.preset == .thisWeek)
+    #expect(harness.state?.usage?.error == "The Mac could not build the report.")
+    #expect(await harness.host.requests.filter { $0.kind == .fetchUsage }.map(\.usageRange) == [.thisWeek, .today])
+    await harness.host.stop()
 }

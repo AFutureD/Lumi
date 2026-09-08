@@ -21,6 +21,10 @@ private let pairingLog = Logger(label: "pairing")
 /// always on the wire before any push that follows it.
 public actor RelayHostService: Service {
     public typealias HealthProvider = @Sendable () async -> DaemonHealth?
+    /// `fetch_usage`: a preset, expanded and folded by the daemon.
+    public typealias UsageProvider = @Sendable (UsageRangePreset) async throws -> UsageReport
+    /// `fetch_plan_usage`: the snapshot and the settings it follows.
+    public typealias PlanUsageProvider = @Sendable () async throws -> (state: PlanUsageState, settings: DaemonSettings)
     public typealias ConnectionObserver = @Sendable (Bool) async -> Void
 
     public static let indexLimit = 10_000
@@ -39,6 +43,10 @@ public actor RelayHostService: Service {
         case reviewed([SessionID])
         /// After a sequence heal: fetch fresh health and nudge that device.
         case healthNudge(device: DeviceID)
+        /// `fetch_usage`: the report for a preset in this Mac's own days.
+        case usage(device: DeviceID, requestID: RequestID?, preset: UsageRangePreset)
+        /// `fetch_plan_usage`: the snapshot plus the settings it follows.
+        case planUsage(device: DeviceID, requestID: RequestID?)
     }
 
     private let repository: any SessionRepository
@@ -50,6 +58,8 @@ public actor RelayHostService: Service {
     private let rest: any RelayHostREST
     private let hostName: @Sendable () -> String?
     private let healthProvider: HealthProvider
+    private let usageProvider: UsageProvider
+    private let planUsageProvider: PlanUsageProvider
     private let onConnectionChange: ConnectionObserver
     private let eventCoalesceInterval: Duration
     private let reconnectDelay: Duration
@@ -128,6 +138,8 @@ public actor RelayHostService: Service {
         rest: any RelayHostREST,
         hostName: @escaping @Sendable () -> String? = { Host.current().localizedName },
         healthProvider: @escaping HealthProvider,
+        usageProvider: @escaping UsageProvider,
+        planUsageProvider: @escaping PlanUsageProvider,
         onConnectionChange: @escaping ConnectionObserver,
         eventCoalesceInterval: Duration = .seconds(1),
         reconnectDelay: Duration = .seconds(2),
@@ -145,6 +157,8 @@ public actor RelayHostService: Service {
         self.rest = rest
         self.hostName = hostName
         self.healthProvider = healthProvider
+        self.usageProvider = usageProvider
+        self.planUsageProvider = planUsageProvider
         self.onConnectionChange = onConnectionChange
         self.eventCoalesceInterval = eventCoalesceInterval
         self.reconnectDelay = reconnectDelay
@@ -713,6 +727,14 @@ public actor RelayHostService: Service {
             // An iPhone opened the session: the Mac window and the Notch turn
             // grey through the local stream, other iPhones through `session_info`.
             enqueue(.reviewed(payload.sessionIDs ?? []))
+        case .fetchUsage:
+            guard let preset = payload.usageRange else {
+                log.warning("request_missing_usage_range", metadata: .fields(["device": deviceID.rawValue]))
+                return
+            }
+            enqueue(.usage(device: deviceID, requestID: payload.requestID, preset: preset))
+        case .fetchPlanUsage:
+            enqueue(.planUsage(device: deviceID, requestID: payload.requestID))
         default:
             log.warning("request_kind_ignored", metadata: .fields(["device": deviceID.rawValue, "kind": payload.kind.rawValue]))
         }
@@ -906,17 +928,56 @@ public actor RelayHostService: Service {
 
     // MARK: - Serial send loop
 
+    /// Two lanes, one consumer. Bulk items (whole sessions, timeline tails)
+    /// can take seconds each on a slow link, so they alternate with the
+    /// small lane (answers, pushes, health, usage) instead of queueing
+    /// ahead of it — one device catching up on a day of history no longer
+    /// stalls another device's index or a Usage tab's ask. Within a lane
+    /// the order is FIFO, so an answer still precedes a push enqueued after
+    /// it. A whole-session request for many ids becomes one item per id so
+    /// the lanes can interleave between sessions.
+    ///
+    /// Repeats collapse: a device that asks for the index (or usage, or plan
+    /// usage) again has given up on its earlier ask, so the earlier queued
+    /// answer is dropped and only the newest request id is answered.
     private func enqueue(_ item: WorkItem) {
-        queue.append(item)
+        if case let .fetch(device, requestID, ids) = item, ids.count > 1 {
+            for id in ids { queue.append(.fetch(device: device, requestID: requestID, ids: [id])) }
+        } else {
+            if let key = item.dedupeKey {
+                let dropped = queue.count
+                queue.removeAll { $0.dedupeKey == key }
+                if queue.count < dropped {
+                    log.debug("request_superseded", metadata: .fields(["item": item.logName, "dropped": dropped - queue.count]))
+                }
+            }
+            queue.append(item)
+        }
         sendSignalIn.yield(())
     }
 
-    /// The single consumer of the FIFO work queue: an answer is always on the
-    /// wire before any push enqueued after it.
+    /// The lane whose turn it is next; a bulk item only when a small one
+    /// went out before it (or nothing small is waiting).
+    private var bulkTurn = false
+
+    private func dequeue() -> WorkItem? {
+        guard !queue.isEmpty else { return nil }
+        let bulkIndex = queue.firstIndex { $0.isBulk }
+        let smallIndex = queue.firstIndex { !$0.isBulk }
+        let chosen: Int
+        switch (bulkTurn, bulkIndex, smallIndex) {
+        case let (true, .some(bulk), _): chosen = bulk
+        case let (_, _, .some(small)): chosen = small
+        case let (_, .some(bulk), nil): chosen = bulk
+        default: return nil
+        }
+        bulkTurn = !queue[chosen].isBulk
+        return queue.remove(at: chosen)
+    }
+
     private func runSendLoop() async {
         for await _ in sendSignals {
-            while !Task.isCancelled, !queue.isEmpty {
-                let item = queue.removeFirst()
+            while !Task.isCancelled, let item = dequeue() {
                 do {
                     try await process(item)
                 } catch {
@@ -1055,6 +1116,37 @@ public actor RelayHostService: Service {
             guard let health = await healthProvider() else { return }
             let prepared = try RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))
             try await send([prepared], to: [device])
+        case let .usage(device, requestID, preset):
+            // A failed build answers with an empty report so the iPhone can
+            // say "can't reach" instead of waiting out a timeout. A month is
+            // a few hundred rows; a report that would not fit one frame is a
+            // bug worth an error line, not a silent stall.
+            var answer = RemoteSessionPayload(kind: .usageReport, generatedAt: now, requestID: requestID)
+            do {
+                let report = try await usageProvider(preset)
+                let full = RemoteSessionPayload(kind: .usageReport, generatedAt: now, requestID: requestID, usage: report)
+                if try RelayPayloadBatcher.fits(full) {
+                    answer = full
+                    convertLog.info("usage_relay_sent", metadata: .fields([
+                        "device": device.rawValue, "preset": preset.rawValue,
+                        "days": report.byDay.count, "trend": report.trend.count, "models": report.byModel.count,
+                    ]))
+                } else {
+                    log.error("usage_relay_too_large", metadata: .fields(["device": device.rawValue, "preset": preset.rawValue, "trend": report.trend.count]))
+                }
+            } catch {
+                log.error("usage_relay_failed", metadata: .fields(["device": device.rawValue, "preset": preset.rawValue, "error": error]))
+            }
+            try await send([try RelayCryptography.prepare(answer)], to: [device])
+        case let .planUsage(device, requestID):
+            var answer = RemoteSessionPayload(kind: .planUsage, generatedAt: now, requestID: requestID)
+            do {
+                let snapshot = try await planUsageProvider()
+                answer = RemoteSessionPayload(kind: .planUsage, generatedAt: now, requestID: requestID, planUsage: snapshot.state, settings: snapshot.settings)
+            } catch {
+                log.error("plan_usage_relay_failed", metadata: .fields(["device": device.rawValue, "error": error]))
+            }
+            try await send([try RelayCryptography.prepare(answer)], to: [device])
         }
     }
 
@@ -1148,10 +1240,30 @@ public actor RelayHostService: Service {
 private extension RelayHostService.WorkItem {
     var traceID: String? {
         switch self {
-        case let .index(_, requestID), let .fetch(_, requestID, _), let .timeline(_, requestID, _, _), let .removed(_, requestID, _):
+        case let .index(_, requestID), let .fetch(_, requestID, _), let .timeline(_, requestID, _, _), let .removed(_, requestID, _),
+             let .usage(_, requestID, _), let .planUsage(_, requestID):
             requestID?.rawValue
         case .events, .summaries, .health, .reviewed, .healthNudge:
             nil
+        }
+    }
+
+    /// Requests a device repeats only after giving up on the earlier one:
+    /// the same key means the earlier queued answer can go.
+    var dedupeKey: String? {
+        switch self {
+        case let .index(device, _): "index:\(device.rawValue)"
+        case let .usage(device, _, _): "usage:\(device.rawValue)"
+        case let .planUsage(device, _): "plan_usage:\(device.rawValue)"
+        default: nil
+        }
+    }
+
+    /// Whole sessions and timeline tails: seconds each on a slow link.
+    var isBulk: Bool {
+        switch self {
+        case .fetch, .timeline: true
+        default: false
         }
     }
 
@@ -1166,6 +1278,8 @@ private extension RelayHostService.WorkItem {
         case .health: "health"
         case .reviewed: "reviewed"
         case .healthNudge: "health_nudge"
+        case .usage: "usage"
+        case .planUsage: "plan_usage"
         }
     }
 }

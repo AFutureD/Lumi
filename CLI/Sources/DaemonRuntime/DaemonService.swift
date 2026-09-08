@@ -22,13 +22,10 @@ public actor DaemonService {
     private var relay: RelayHostService?
     private var hookIngest: HookIngestService?
     private var filterEngine: SessionFilterEngine?
-    private var usageStore: (any UsageStore)?
-    private var usageScanner: UsageScanService?
-    private var modelPrices: ModelPriceRefresher?
+    private var usageReporting: UsageReporting?
     private var planUsage: PlanUsageService?
+    private var settingsStore: (any SettingsStore)?
     public nonisolated let subscriptions: DaemonSubscriptionHub
-    /// Longest `usage_report` range: a year and a day, so "this year" always fits.
-    static let maximumUsageRangeDays = 366
 
     public init(
         repository: any SessionRepository,
@@ -68,17 +65,34 @@ public actor DaemonService {
         filterEngine = engine
     }
 
-    /// Usage: the bucket store `usage_report` reads, the scanner whose
-    /// progress it reports, and the price table it prices with.
-    public func attachUsage(store: any UsageStore, scanner: UsageScanService, prices: ModelPriceRefresher) {
-        usageStore = store
-        usageScanner = scanner
-        modelPrices = prices
+    /// Usage: the report builder `usage_report` (IPC) and `fetch_usage`
+    /// (Relay) both call.
+    public func attachUsage(_ reporting: UsageReporting) {
+        usageReporting = reporting
     }
 
-    /// Plan usage: the poller `plan_usage` reads and `set_plan_usage` switches.
+    /// Plan usage: the poller `plan_usage` reads and `set_settings` switches.
     public func attachPlanUsage(_ service: PlanUsageService) {
         planUsage = service
+    }
+
+    /// The settings table behind `get_settings` / `set_settings`.
+    public func attachSettings(store: any SettingsStore) {
+        settingsStore = store
+    }
+
+    /// `fetch_usage` from an iPhone: a preset expanded with this Mac's days.
+    public func usageReport(preset: UsageRangePreset, now: Date = Date()) async throws -> UsageReport {
+        guard let usageReporting else { throw DaemonServiceError.unavailable("usage") }
+        return try await usageReporting.report(preset: preset, now: now)
+    }
+
+    /// `fetch_plan_usage` from an iPhone: the same re-read `plan_usage` does,
+    /// plus the settings the numbers follow.
+    public func planUsageSnapshot(now: Date = Date()) async throws -> (state: PlanUsageState, settings: DaemonSettings) {
+        guard let planUsage, let settingsStore else { throw DaemonServiceError.unavailable("plan_usage") }
+        await planUsage.refreshAll(now: now, localOnly: true)
+        return (await planUsage.state(now: now), try await settingsStore.settings())
     }
 
     /// Streams a summary-only change (reviewed, archived) to local subscribers.
@@ -300,7 +314,7 @@ public actor DaemonService {
                     payload = failure(code: "missing_device_id", message: "The remove request has no device id.")
                 }
             case .usageReport:
-                guard let usageStore, let usageScanner, let modelPrices else {
+                guard let usageReporting else {
                     payload = failure(code: "usage_unavailable", message: "The daemon runs without a usage scanner.")
                     break
                 }
@@ -308,45 +322,18 @@ public actor DaemonService {
                     payload = failure(code: "missing_usage_range", message: "The usage request needs since and until (YYYY-MM-DD).")
                     break
                 }
-                guard since <= until, let days = since.days(until: until), days < Self.maximumUsageRangeDays else {
+                do {
+                    payload = IPCResponse(status: .ok, usage: try await usageReporting.report(
+                        since: since, until: until,
+                        compareSince: envelope.payload.compareSince, compareUntil: envelope.payload.compareUntil,
+                        now: now
+                    ))
+                } catch let UsageReporting.Failure.invalidRange(comparison) {
                     payload = failure(
                         code: "invalid_usage_range",
-                        message: "The usage range must run forward and span at most \(Self.maximumUsageRangeDays) days."
+                        message: "The \(comparison ? "comparison " : "usage ")range must run forward and span at most \(UsageReporting.maximumRangeDays) days."
                     )
-                    break
                 }
-                // The optional comparison period is validated like the main one.
-                var comparison: (since: UsageDay, until: UsageDay, buckets: [UsageBucket])?
-                if let compareSince = envelope.payload.compareSince, let compareUntil = envelope.payload.compareUntil {
-                    guard compareSince <= compareUntil, let span = compareSince.days(until: compareUntil), span < Self.maximumUsageRangeDays else {
-                        payload = failure(code: "invalid_usage_range", message: "The comparison range must run forward and span at most \(Self.maximumUsageRangeDays) days.")
-                        break
-                    }
-                    comparison = (compareSince, compareUntil, try await usageStore.buckets(since: compareSince, until: compareUntil))
-                }
-                let buckets = try await usageStore.buckets(since: since, until: until)
-                let prices = await modelPrices.current()
-                let scan = await usageScanner.status()
-                // Folding a month of buckets is CPU work; keep it off this actor so hook frames are not queued behind it.
-                let report = await Task.detached(priority: .userInitiated) { [comparison] in
-                    UsageReportBuilder.build(
-                        buckets: buckets,
-                        prices: prices.table,
-                        since: since,
-                        until: until,
-                        comparison: comparison,
-                        generatedAt: now,
-                        pricing: prices.status,
-                        scan: scan
-                    )
-                }.value
-                log.debug("usage_report_built", metadata: .fields([
-                    "since": since.rawValue, "until": until.rawValue,
-                    "buckets": buckets.count, "projects": report.byProject.count, "models": report.byModel.count,
-                    "days": report.byDay.count, "trend": report.trend.count, "trend_unit": report.trendUnit.rawValue,
-                    "comparison": comparison?.buckets.count ?? 0,
-                ]))
-                payload = IPCResponse(status: .ok, usage: report)
             case .planUsage:
                 if let planUsage {
                     // The sign-in files are re-read on every ask (no network),
@@ -356,20 +343,34 @@ public actor DaemonService {
                 } else {
                     payload = failure(code: "plan_usage_unavailable", message: "The daemon runs without plan usage.")
                 }
-            case .setPlanUsage:
-                guard let planUsage else {
-                    payload = failure(code: "plan_usage_unavailable", message: "The daemon runs without plan usage.")
+            case .getSettings:
+                if let settingsStore {
+                    payload = IPCResponse(status: .ok, settings: try await settingsStore.settings())
+                } else {
+                    payload = failure(code: "settings_unavailable", message: "The daemon runs without a settings store.")
+                }
+            case .setSettings:
+                guard let settingsStore else {
+                    payload = failure(code: "settings_unavailable", message: "The daemon runs without a settings store.")
                     break
                 }
-                guard let account = envelope.payload.planAccount, let enabled = envelope.payload.enabled else {
-                    payload = failure(code: "missing_plan_account", message: "The set_plan_usage request needs planAccount and enabled.")
+                guard let wanted = envelope.payload.settings else {
+                    payload = failure(code: "missing_settings", message: "The set_settings request needs settings.")
                     break
                 }
-                do {
-                    payload = IPCResponse(status: .ok, planUsage: try await planUsage.setEnabled(enabled, for: account, now: now))
-                } catch PlanUsageServiceError.unknownAccount {
-                    payload = failure(code: "unknown_plan_account", message: "No plan-usage account is called \(account.rawValue).")
+                let known = await planUsage?.knownAccounts ?? [.claude, .codex]
+                if let stranger = wanted.planUsage.enabledAccounts.first(where: { !known.contains($0) }) {
+                    payload = failure(code: "invalid_settings", message: "No plan-usage account is called \(stranger.rawValue).")
+                    break
                 }
+                let before = try await settingsStore.settings()
+                try await settingsStore.replace(wanted)
+                let stored = try await settingsStore.settings()
+                if let planUsage { try await planUsage.apply(stored.planUsage, now: now) }
+                let previousRows = Dictionary(uniqueKeysWithValues: try SettingsKeys.rows(before).map { ($0.key, $0.value) })
+                let changed = try SettingsKeys.rows(stored).filter { previousRows[$0.key] != $0.value }.map(\.key)
+                dbLog.info("settings_updated", metadata: .fields(["changed": changed.joined(separator: ",")]))
+                payload = IPCResponse(status: .ok, settings: stored)
             case .getSessionFilters:
                 payload = IPCResponse(status: .ok, filters: try await repository.sessionFilterRules())
             case .setSessionFilters:
@@ -493,4 +494,9 @@ public actor DaemonService {
     ) -> TransportEnvelope<IPCResponse> {
         TransportEnvelope(requestID: requestID, payload: payload)
     }
+}
+
+/// A Relay request asked for something this daemon runs without.
+public enum DaemonServiceError: Error, Equatable, Sendable {
+    case unavailable(String)
 }

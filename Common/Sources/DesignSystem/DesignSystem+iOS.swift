@@ -309,6 +309,19 @@ public extension DesignSystem {
             public static let statusLabel = DesignTextStyle(size: 11, weight: .semibold, lineHeight: 14)
             /// Scanner caption 17 / Semibold / 22.
             public static let scannerTitle = DesignTextStyle(size: 17, weight: .semibold, lineHeight: 22)
+            /// Usage big number — 28 / Bold / 34 / −.022em, tabular.
+            public static let usageBigValue = DesignTextStyle(size: 28, weight: .bold, lineHeight: 34, trackingEm: -0.022)
+            /// Uppercase label (`COST`, `SESSION · 5 HOURS`, `COST PER DAY`) — 12 / Medium / 16 / .04em.
+            public static let usageLabel = DesignTextStyle(size: 12, weight: .medium, lineHeight: 16, trackingEm: 0.04)
+            /// SESSIONS / TURNS / CALLS value — 17 / Semibold / 22, tabular.
+            public static let usageCount = DesignTextStyle(size: 17, weight: .semibold, lineHeight: 22)
+            /// Chart axis label — 11 / Regular / 14, tabular.
+            public static let usageAxisLabel = DesignTextStyle(size: 11, weight: .regular, lineHeight: 14)
+            public static let usageAxisLabelSelected = DesignTextStyle(size: 11, weight: .semibold, lineHeight: 14)
+            /// Chart legend — 12 / Regular / 16.
+            public static let usageLegend = DesignTextStyle(size: 12, weight: .regular, lineHeight: 16)
+            /// Plan window percent — 20 / Semibold / 24, tabular.
+            public static let planUsagePercent = DesignTextStyle(size: 20, weight: .semibold, lineHeight: 24)
         }
 
         // MARK: - Colour
@@ -371,6 +384,111 @@ public extension DesignSystem {
             public static let scannerDim = DesignColor(white: 0, alpha: 0.45)
             /// System green used by the notification-allowed dot and the online Mac dot.
             public static let systemGreen = DesignColor(hex: 0x34C759)
+        }
+
+        // MARK: - Usage tab (handoff `design_handoff_ios_usage`, pages 8–9c)
+
+        /// Usage › History: the range row, the figures card and the chart
+        /// card. Cards are inset-grouped (`Layout.cardMargin` / `cardRadius`,
+        /// `secondarySystemGroupedBackground`); only the product's own rows
+        /// are specified here.
+        public enum Usage {
+            /// Segmented control row under the navigation bar (`Header.segmentHeight` tall).
+            public static let segmentTop: Double = 8
+            public static let segmentBottom: Double = 10
+            /// Range row: `height 22`, two menu buttons `gap 14`, then the first card.
+            public static let rangeRowHeight: Double = 22
+            public static let rangeRowGap: Double = 14
+            public static let rangeRowBottom: Double = 16
+            /// The `chevron.down` after a menu title (6pt tall glyph).
+            public static let menuChevron: Double = 6
+            public static let menuChevronGap: Double = 3
+            /// Figures card ↔ chart card.
+            public static let cardGap: Double = 20
+            /// Card header: `min-height 38`, `padding 9 16`, hairline below.
+            public static let cardHeaderMinimumHeight: Double = 38
+            public static let cardHeaderVerticalPadding: Double = 9
+            public static let cardHorizontalPadding: Double = 16
+            /// COST / TOKENS block: `padding 12 16 10`, label → number gap, number → delta gap.
+            public static let blockTopPadding: Double = 12
+            public static let blockBottomPadding: Double = 10
+            public static let blockLabelGap: Double = 2
+            public static let valueDeltaGap: Double = 8
+            /// Token composition bar: `height 6`, radius 3, under the number, caption below.
+            public static let compositionBarHeight: Double = 6
+            public static let compositionBarRadius: Double = 3
+            public static let compositionBarTopGap: Double = 8
+            public static let compositionCaptionGap: Double = 6
+            /// SESSIONS / TURNS / CALLS row: `min-height 44`, three equal columns.
+            public static let countsRowMinimumHeight: Double = 44
+            public static let countsLabelGap: Double = 1
+            /// Notice rows (unpriced models, coverage, loading): `padding 10 16`.
+            public static let noticeVerticalPadding: Double = 10
+            public static let noticeGap: Double = 8
+            public static let loadingSpinner: Double = 16
+            /// Chart card: title row, plot `height 152`, axis-label row, legend.
+            public static let chartTitleRowHeight: Double = 22
+            public static let chartTopPadding: Double = 12
+            public static let chartTitleGap: Double = 10
+            public static let chartHeight: Double = 152
+            public static let chartAxisRowHeight: Double = 18
+            public static let chartLegendGap: Double = 8
+            public static let chartBottomPadding: Double = 12
+            /// Bars: `gap 8` for Today / This week, `2` for the 30-bar month; top radius 3.
+            public static let barGapDay: Double = 8
+            public static let barGapMonth: Double = 2
+            public static let barRadius: Double = 3
+            /// Every bar but the selected one drops to this opacity.
+            public static let dimmedBar: Double = 0.3
+            /// Legend: 8×8 radius-2 swatches, 12px text, wraps with `row-gap 4`.
+            public static let legendSwatch: Double = 8
+            public static let legendSwatchRadius: Double = 2
+            public static let legendItemGap: Double = 6
+            public static let legendGap: Double = 12
+            public static let legendRowGap: Double = 4
+            /// Page-level offline banner: `padding 10 16`, radius 10.
+            public static let bannerVerticalPadding: Double = 10
+
+            /// Card hairline `rgba(60,60,67,.22)`; the chart's baseline `1px rgba(60,60,67,.18)`.
+            public static let hairline = DesignColor(rgb: 60, 60, 67, alpha: 0.22)
+            public static let chartBaseline = DesignColor(rgb: 60, 60, 67, alpha: 0.18)
+            /// Secondary text `rgba(60,60,67,.6)`; tertiary `rgba(60,60,67,.45)`.
+            public static let secondaryText = DesignColor(rgb: 60, 60, 67, alpha: 0.6)
+            public static let tertiaryText = DesignColor(rgb: 60, 60, 67, alpha: 0.45)
+            /// The selected bar's axis label `rgb(0,0,0)`.
+            public static let selectedAxisLabel = DesignColor(rgb: 0, 0, 0)
+            /// Composition bar track `rgba(120,120,128,.16)`.
+            public static let barTrack = DesignColor(rgb: 120, 120, 128, alpha: 0.16)
+        }
+
+        /// Usage › Plan: one inset-grouped card per Mac, one account section
+        /// per cell. The bar is tint in every band; only the number warms at
+        /// `DesignSystem.PlanUsage.warningPercent`.
+        public enum PlanUsage {
+            /// Group title: Mac name, 6px status dot, status word.
+            public static let statusDot: Double = 6
+            public static let statusDotGap: Double = 6
+            /// Account header: `padding 9 16 3`, mark 20×20, gap 8 to the name.
+            public static let headerTop: Double = 9
+            public static let headerBottom: Double = 3
+            public static let horizontalPadding: Double = 16
+            public static let headerGap: Double = 8
+            public static let mark: Double = 20
+            /// One window row: `padding 6 16 10`, lines `gap 5`.
+            public static let rowTop: Double = 6
+            public static let rowBottom: Double = 10
+            public static let rowGap: Double = 5
+            public static let barHeight: Double = 6
+            public static let barRadius: Double = 3
+            /// Note rows (`Switched off on this Mac`, warnings, loading): `padding 6 16 12`.
+            public static let noteTop: Double = 6
+            public static let noteBottom: Double = 12
+            public static let loadingSpinner: Double = 16
+            public static let loadingGap: Double = 8
+            /// Mark and name of an account without usable limits.
+            public static let unavailableOpacity: Double = 0.55
+            public static let barTrack = DesignColor(rgb: 120, 120, 128, alpha: 0.16)
+            public static let barFill = Palette.blue.s600
         }
 
         /// Breathing: dot `2.4s ease-in-out infinite` (opacity 1 → .45, scale

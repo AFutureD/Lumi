@@ -33,7 +33,7 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         self.onAddDevice = onAddDevice
         super.init(nibName: nil, bundle: nil)
         title = "Macs"
-        tabBarItem = UITabBarItem(title: "Macs", image: UIImage(systemName: "laptopcomputer"), tag: 1)
+        tabBarItem = UITabBarItem(title: "Macs", image: UIImage(systemName: "laptopcomputer"), tag: 2)
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }

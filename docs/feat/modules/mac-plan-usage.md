@@ -9,7 +9,7 @@ Lumi for Mac 能把 Claude Code 与 Codex 的订阅额度用了多少放进 Notc
 - **入口**：“Settings > Usage”的 Plan 段开账号开关、看各窗口的数字；“Settings > Notch”的 Usage 段决定 Notch 显示什么。
 - **前置条件**：daemon 运行中；对应 Agent 在这台 Mac 上登录过（Claude Code 的 Keychain 项或 `~/.claude/.credentials.json`，Codex 的 `~/.codex/auth.json`）。
 - **主要结果**：Notch 展开态顶栏左侧出现额度簇；Settings › Usage 的卡里有邮箱、套餐、每个窗口的百分比、用量条与重置倒计时。
-- **只读边界**：只读 Agent 保存的登录，不换发 token、不写回；不进 iPhone。
+- **只读边界**：只读 Agent 保存的登录，不换发 token、不写回。开关与 `Percent` 保存在这台 Mac 的 daemon 里，iPhone 的 Usage Tab › Plan 读同一份（[iPhone 用量](iphone-usage.md)）。
 - **相关文档**：[Mac 会话查看](mac-session-view.md)（Notch）、[数据流](../data-flows.md#套餐用量)。
 
 ## 主流程
@@ -20,7 +20,7 @@ Lumi for Mac 能把 Claude Code 与 Codex 的订阅额度用了多少放进 Notc
 2. 打开“Settings > Notch”，看 Usage 段最上面的 Preview 黑条。
    - 系统反馈：黑条里就是将出现在 Notch 里的那一串；没有账号打开开关时显示样例数字并标 `sample`。
    - 规则引用：[PLN-R-003](#pln-r-003-notch-顶栏按设置显示可显示的账号)。
-3. 在同一段里选 `Agents`（Switch on click / Show both）、`Percent`（Used / Remaining），在 `Show` 里点药丸选每家要显示的窗口（Claude Code：5-hour / Weekly / Fable；Codex：5-hour / Weekly）。
+3. 在同一段里选 `Agents`（Switch on click / Show both）、`Percent`（Used / Remaining，同时决定 iPhone 上这台 Mac 的数字怎么读），在 `Show` 里点药丸选每家要显示的窗口（Claude Code：5-hour / Weekly / Fable；Codex：5-hour / Weekly）。
    - 系统反馈：预览随每次改动即时变化；一颗药丸都不选，预览回到 Lumi 标记，Notch 也不再显示套餐用量。
 4. 展开 Notch。
    - 系统反馈：顶栏左侧的 Lumi 标记换成额度簇：Claude 标记 `5h 42% · 7d 18% · Fable 7%`，Codex 标记 `7d 12%`。悬停看每个窗口多久后重置；`Switch on click` 时点一下簇换另一家。

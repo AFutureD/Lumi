@@ -1,13 +1,13 @@
 # Usage 设计
 
-> 基线：2026-09-05 当前仓库实现。Usage 是与 Session 平行的一条链路：daemon 直接读 Agent 自己的对话记录统计 token，按 models.dev 价目计价，只在 Mac 的 Usage 页展示。
+> 基线：2026-09-08 当前仓库实现。Usage 是与 Session 平行的一条链路：daemon 直接读 Agent 自己的对话记录统计 token，按 models.dev 价目计价；Mac 的 Usage 页看全貌（Summary + Detail），iPhone 的 Usage Tab 看 Summary（经 Relay 向每台 Mac 索取）。
 
 ## 目标与边界
 
 - 回答"这台 Mac 上的 Claude Code / Codex 在某段时间花了多少 token、多少钱、花在哪个项目和模型上"。
 - 数据来源是 Agent 的本机文件，不是 Lumi 的 Session：没进列表的会话（安装 Lumi 之前的、被 Filters 隐藏的、从未触发 Hook 的）也计入；删除 Session、Clear history、reingest 都不影响 Usage。
 - 计价是估算：按公开价目，含长上下文分档（一次调用的上下文超过模型阈值就整次按高档计），不含批量 / Flex / 速度档，不含订阅套餐折算；没有公开价格的模型单独标出、不计入任何 Cost。
-- 只有 Mac 页面；不进 Relay，不进 iPhone。
+- 两个消费者：Mac 的 Usage 页（Summary + Detail），iPhone 的 Usage › History（只有 Summary；按项目 / Agent / 模型分组的 Detail 表留在 Mac）。两端都只读，daemon 是唯一数据源，iPhone 不落盘。
 
 ## 数据来源
 
@@ -62,19 +62,25 @@ input × in + cache_read × (cache_read ?? in) + cache_write_5m × (cache_write 
 
 1 小时缓存写按 Anthropic 公布的 2× input 计（models.dev 只有 5 分钟档）；provider 没公布缓存价的（OpenAI 无 cache_write）按 input 计，而不是按免费计。
 
-## IPC 与报表
+## 报表：IPC 与 Relay
 
-`usage_report {since, until}`（本地日闭区间，跨度 ≤ 366 天）→ `UsageReport`：
+两个入口，一份构建（daemon 内 `UsageReporting`：范围校验 → 读桶 → 在 `DaemonService` actor 之外的 detached task 里由纯函数 `UsageReportBuilder` 折叠；一年的桶通常几万行，一帧即可）：
+
+- **IPC `usage_report {since, until, compareSince?, compareUntil?}`**（Mac）：本地日闭区间，跨度 ≤ 366 天。上一周期由 Mac 定（Today → 昨天；This week → 上周同几天；This month → 上月同几天；Custom N 天 → 之前的 N 天），daemon 只校验两段并从同一次桶快照算出两段。
+- **Relay `fetch_usage {usageRange}`**（iPhone）：只给档位 `today` / `thisWeek` / `thisMonth`（`UsageRangePreset`，wire 上没有 Custom），daemon 用**自己的本地日历**展开成 since / until 与对比区间（同一份 `UsageRange` 算法，Core 共享），答 `usage_report {usage, requestID}`。这样 iPhone 与 Mac 跨时区、或多台 Mac 跨时区时，每台 Mac 的数字都与它自己的 Usage 页一致；`usage` 缺失表示 daemon 没建出报表（日志 `usage_relay_failed` / `usage_relay_too_large`），iPhone 显示拉取失败而不是干等超时。
+
+`UsageRangeKind`（Core，含 `custom`，Mac 的分段控件）与 `UsageRangePreset`（Transport，三个档位）是两个枚举：前者是页面的选择，后者是能上 wire 的子集，互转在 Core。
+
+`UsageReport`：
 
 - `totals` 与 `byAgent` / `byProject`（按 `workspace`）/ `byModel`（按 provider + model，带价目来源 `provider`：自家 provider 或字母序第一个列出该模型的其它家，界面暂不显示）四组 `UsageSlice`：六类 token、`costUSD`（只含有价格部分；全无价格时为 nil）、`unpricedTokens`、`calls`、`sessions`（去重 session id；Subagent 与父级同一个）、`turns`（去重 (session, turn)）、`lastDay`。
 - `byDay` / `byWeek` / `byMonth`：按时段的切片（`period` = 单位 + 起始日；周从周一起，月为自然月），只有有调用的时段成行，升序。Detail 的 Time 分组直接用它们，所以 Sessions / Turns 在周、月上也是准确的去重数。
-- `trendUnit` + `trend`：趋势图的行，粒度由 daemon 按范围定（单日 = hour，≤ 90 天 = day，更长 = week），一行一个 (时段, agent, model)；Mac 自己决定按 Agent 还是按模型堆叠。
+- `trendUnit` + `trend`：趋势图的行，粒度由 daemon 按范围定（单日 = hour，≤ 90 天 = day，更长 = week），一行一个 (时段, agent, model)；客户端自己决定按 Agent 还是按模型堆叠，iPhone 点选一根柱子时的 Cost / Tokens 也直接从这些行求和（真实的按桶聚合，不是按比例推算）。
+- `comparison`：上一周期的 `totals` 与 `byAgent`，供 Summary 的「较上一周期」用。
 - `pricing`：价目来源（builtin / cached / fresh）、拉取时间、模型数。
 - `scan`：已扫文件数、待扫文件数、上次扫描时间、是否正在扫。
 
-- `comparison`：请求带 `compareSince` / `compareUntil` 时，同一次读桶顺带算出上一周期的 `totals` 与 `byAgent`，供 Summary 的「较上一周期」用。上一周期由 Mac 定（Today → 昨天；This week → 上周同几天；This month → 上月同几天；Custom N 天 → 之前的 N 天），daemon 不知道范围档位，但两段数据来自同一次快照、同一条请求。
-
-聚合在 daemon 内存里完成（`UsageReportBuilder`，纯函数，报表构建放在 `DaemonService` actor 之外的 detached task 里，不挡 hook 帧）：一年的桶通常几万行，一次 IPC 帧即可。
+Summary 的推导（大数字文案、构成条段、趋势图的柱与序列、y 轴的整数上限）是 Core 里的纯函数 `UsageSummaryFigures` / `UsageTrend`，Mac 与 iPhone 共用；颜色不在里面——段只说自己是哪类 token、序列只带色阶序号，两端各自映射到设计系统的图表序列。
 
 ## Mac 页面
 
@@ -86,6 +92,15 @@ input × in + cache_read × (cache_read ?? in) + cache_write_5m × (cache_write 
 
 页面可见时每 30 秒重拉（重拉不清空数字、不切加载态），切换范围或工具栏 Refresh 立即重拉；范围、Summary 的 Agent、趋势指标、Detail 的分组与粒度都记在 UserDefaults。
 
+## iPhone
+
+Usage Tab 的 History 段（设计交接 `design_handoff_ios_usage` 第 9 页），只有 Summary：
+
+- 范围行两个菜单：`Today · This week · This month`（没有 Custom）和 scope（`All Macs` / 某台 Mac）。换档位时向每台配对的 Mac 发一次 `fetch_usage`；页面可见时每 30 秒再发，下拉刷新立即发，离开 Tab 停。答复只在内存里（`UsageSnapshot`：报表、档位、到达时间、加载中、错误），退出即忘，每次冷启动都是加载态。
+- All Macs 是 iPhone 侧的合并（`UsageAggregate`，纯函数）：totals / byAgent / byModel / trend 按 (agent, model, 时段) 相加，Sessions / Turns 跨 Mac 相加（不同 Mac 的会话不会重复），有一台没有对比区间就不画涨跌；单台 scope 直接用那台的报表。各 Mac 的桶按各自的本地日对齐，iPhone 画坐标轴用自己的日历——跨时区时轴标签可能与某台 Mac 的日期差一天，数字不受影响。
+- 数字卡 = Cost（带涨跌）、Tokens（带构成条）、Sessions / Turns / Calls，永远是整段所有 Agent 的合计；图卡的 agent 菜单只改图：All agents 按 Agent 堆两段，选单家按它的模型堆（份额前三 + `Other N models`），y 轴始终按 All agents 的桶峰值标定，所以只看一家时柱子整体变矮。点柱子读单桶：卡头换成桶名 + Clear，Cost / Tokens 换成该桶的合计（从 `trend` 行求和）。
+- 状态：某台 Mac 离线 → 保留它上一份报表并注明 `<Mac> data as of 2h ago`；全部拉不到 → `Can't reach any Mac`；没有配对 Mac → `Pair a Mac`；有无价格模型 → `N models have no price · counted in tokens, not in cost`。
+
 ## 与 ccusage 的对账
 
 2026-09-05 用 `npx ccusage@latest claude daily --json` / `codex daily --json` 对 08-01..09-04 逐日对账：token 各字段完全一致（Claude 的 `output_tokens` 靠「取最大副本」对齐，Codex 的分叉日靠复制期判定对齐）。长上下文分档两边口径一致（超过阈值整次按高档）；剩余费用差只来自 ccusage 对 `codex-auto-review` 按日期猜模型计价，Lumi 记为无价格。
@@ -96,7 +111,7 @@ input × in + cache_read × (cache_read ?? in) + cache_write_5m × (cache_write 
 - Codex 分叉回放靠「复制期间时间戳成簇」判定；若将来 Codex 保留原始时间戳复制，则由全局去重键（时间戳 + 用量签名）吸收。子线程首次真实调用若在复制结束 1 秒内到达会被当成副本漏掉。
 - `day` 用扫描时的本地时区，之后改时区不会重算历史桶。
 - Codex 已归档会话也计入，但 Codex 在别的机器上产生的会话不会出现。
-- iPhone 没有 Usage。
+- iPhone 的 History 不做 Custom 范围，也没有 Detail 表；点柱子是它唯一的单桶读数方式。
 
 ## 相关文档
 

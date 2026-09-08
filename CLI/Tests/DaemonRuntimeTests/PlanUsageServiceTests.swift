@@ -22,8 +22,7 @@ private final class Harness: Sendable {
         paths = PlanUsageService.Paths(
             claudeCredentials: home.appendingPathComponent(".claude/.credentials.json").path,
             claudeState: home.appendingPathComponent(".claude.json").path,
-            codexAuth: home.appendingPathComponent(".codex/auth.json").path,
-            settings: home.appendingPathComponent("plan-usage-settings.json").path
+            codexAuth: home.appendingPathComponent(".codex/auth.json").path
         )
     }
 
@@ -37,8 +36,12 @@ private final class Harness: Sendable {
         answers.withLock { $0.append((status, headers, Data(body.utf8))) }
     }
 
+    /// The switches a service starts with — what the daemon reads from its
+    /// settings table before constructing the poller.
+    let enabled = Mutex<[PlanUsageAccountID]>([])
+
     func service(fetchEnabled: Bool = true) -> PlanUsageService {
-        PlanUsageService(paths: paths, fetchEnabled: fetchEnabled, fetch: { request in
+        PlanUsageService(paths: paths, settings: PlanUsageSettings(enabledAccounts: enabled.withLock { $0 }, percentStyle: .used), fetchEnabled: fetchEnabled, fetch: { request in
             self.requests.withLock { $0.append(request) }
             guard let next = self.answers.withLock({ $0.isEmpty ? nil : $0.removeFirst() }) else { throw URLError(.notConnectedToInternet) }
             let response = HTTPURLResponse(url: request.url!, statusCode: next.0, httpVersion: nil, headerFields: next.1)!
@@ -75,6 +78,14 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
     return try #require(state.account(id))
 }
 
+
+/// `set_settings` as the daemon applies it: the new switch set, then the snapshot.
+private func apply(_ enabled: [PlanUsageAccountID], to service: PlanUsageService, harness: Harness, now: Date) async throws -> PlanUsageState {
+    harness.enabled.withLock { $0 = enabled }
+    try await service.apply(PlanUsageSettings(enabledAccounts: enabled, percentStyle: .used), now: now)
+    return await service.state(now: now)
+}
+
 @Test func accountsStartFromTheFilesAndOnlyEnabledOnesFetch() async throws {
     let harness = try Harness()
     let service = harness.service()
@@ -99,7 +110,7 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
 
     // Switching on fetches at once, with the provider's own headers.
     harness.answer(200, Harness.claudeBody)
-    state = try await service.setEnabled(true, for: .claude, now: now)
+    state = try await apply([.claude], to: service, harness: harness, now: now)
     let claude = try #require(state.account(.claude))
     #expect(claude.enabled && claude.status == .ok && claude.fetchedAt == now)
     #expect(claude.limits.map(\.usedPercent) == [42, 18, 7])
@@ -108,17 +119,17 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
     #expect(request.url == ClaudePlanUsage.usageURL)
     #expect(request.value(forHTTPHeaderField: "User-Agent") == ClaudePlanUsage.userAgent)
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer claude-token")
-    #expect(FileManager.default.contents(atPath: harness.paths.settings).map { String(decoding: $0, as: UTF8.self) } == #"{"enabled":{"claude":true}}"#)
 
     harness.answer(200, Harness.codexBody)
-    state = try await service.setEnabled(true, for: .codex, now: now)
+    state = try await apply([.claude, .codex], to: service, harness: harness, now: now)
     let codex = try #require(state.account(.codex))
     #expect(codex.plan == "Pro 20x")
     #expect(codex.limits == [PlanUsageLimit(window: .session, usedPercent: 12), PlanUsageLimit(window: .weekly, usedPercent: 3)])
     #expect(harness.requests.withLock { $0.last?.value(forHTTPHeaderField: "ChatGPT-Account-Id") } == "acct-1")
 
-    // Switching off drops the limits and stops fetching; the switch persists.
-    state = try await service.setEnabled(false, for: .codex, now: now)
+    // Switching off drops the limits and stops fetching; a service built
+    // from the same switches (the daemon's next start) agrees.
+    state = try await apply([.claude], to: service, harness: harness, now: now)
     #expect(state.account(.codex)?.limits.isEmpty == true)
     #expect(state.account(.codex)?.status == .ok)
     let reloaded = harness.service()
@@ -130,8 +141,10 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
     #expect(harness.requests.withLock { $0.count } == 3)
 
     await #expect(throws: PlanUsageServiceError.unknownAccount(PlanUsageAccountID("gemini"))) {
-        try await service.setEnabled(true, for: PlanUsageAccountID("gemini"), now: now)
+        try await service.apply(PlanUsageSettings(enabledAccounts: [.claude, PlanUsageAccountID("gemini")], percentStyle: .used), now: now)
     }
+    // A rejected set leaves the switches as they were.
+    #expect(await service.state(now: now).account(.claude)?.enabled == true)
 }
 
 @Test func failuresKeepTheLastLimitsAndSayWhy() async throws {
@@ -139,7 +152,7 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
     try harness.signInClaude()
     let service = harness.service()
     harness.answer(200, Harness.claudeBody)
-    _ = try await service.setEnabled(true, for: .claude, now: now)
+    _ = try await apply([.claude], to: service, harness: harness, now: now)
 
     // 5xx: limits stay, status says failed.
     harness.answer(503, "down")
@@ -204,7 +217,7 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
 
     // On, file removed then restored: the local ask notices the file and fetches once.
     harness.answer(200, Harness.codexBody)
-    _ = try await service.setEnabled(true, for: .codex, now: now)
+    _ = try await apply([.codex], to: service, harness: harness, now: now)
     try FileManager.default.removeItem(atPath: harness.paths.codexAuth)
     await service.refreshAll(now: now, localOnly: true)
     #expect(try await account(.codex, in: service).status == .credentialsMissing)
@@ -226,7 +239,7 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
 
     harness.keychain.withLock { $0 = .found(item) }
     harness.answer(200, Harness.claudeBody)
-    var state = try await service.setEnabled(true, for: .claude, now: now)
+    var state = try await apply([.claude], to: service, harness: harness, now: now)
     #expect(state.account(.claude)?.status == .ok)
     #expect(state.account(.claude)?.plan == "Pro")
     #expect(harness.requests.withLock { $0.first?.value(forHTTPHeaderField: "Authorization") } == "Bearer kc-token")
@@ -269,34 +282,72 @@ private func account(_ id: PlanUsageAccountID, in service: PlanUsageService) asy
     let harness = try Harness()
     try harness.signInCodex()
     let service = harness.service(fetchEnabled: false)
-    let state = try await service.setEnabled(true, for: .codex, now: now)
+    let state = try await apply([.codex], to: service, harness: harness, now: now)
     #expect(state.account(.codex)?.enabled == true)
     #expect(state.account(.codex)?.limits.isEmpty == true)
     #expect(harness.requests.withLock { $0.count } == 0)
 }
 
-@Test func serviceAnswersPlanUsageOverIPC() async throws {
+@Test func serviceAnswersPlanUsageAndSettingsOverIPC() async throws {
     let harness = try Harness()
     try harness.signInCodex()
     let planUsage = harness.service()
     let repository = InMemorySessionRepository()
+    let settings = InMemorySettingsStore()
     let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
     await service.attachPlanUsage(planUsage)
+    await service.attachSettings(store: settings)
 
     let initial = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .planUsage)))
     #expect(initial.payload.status == .ok)
     #expect(initial.payload.planUsage?.accounts.map(\.id) == [.claude, .codex])
+    let defaults = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSettings)))
+    #expect(defaults.payload.settings == .defaults)
 
+    // Switching Codex on through settings fetches at once; the answer is what was stored.
     harness.answer(200, Harness.codexBody)
-    let switched = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setPlanUsage, planAccount: .codex, enabled: true)))
-    #expect(switched.payload.planUsage?.account(.codex)?.limits.count == 2)
+    let wanted = DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [.codex], percentStyle: .remaining))
+    let switched = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setSettings, settings: wanted)))
+    #expect(switched.payload.settings == wanted)
+    #expect(try await settings.settings() == wanted)
+    let after = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .planUsage)))
+    #expect(after.payload.planUsage?.account(.codex)?.limits.count == 2)
+    #expect(after.payload.planUsage?.account(.codex)?.enabled == true)
 
-    let missing = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setPlanUsage, planAccount: .codex)))
-    #expect(missing.payload.failure?.code == "missing_plan_account")
-    let unknown = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setPlanUsage, planAccount: PlanUsageAccountID("x"), enabled: true)))
-    #expect(unknown.payload.failure?.code == "unknown_plan_account")
+    let missing = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .setSettings)))
+    #expect(missing.payload.failure?.code == "missing_settings")
+    let unknown = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .setSettings,
+        settings: DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [PlanUsageAccountID("x")], percentStyle: .used))
+    )))
+    #expect(unknown.payload.failure?.code == "invalid_settings")
+    #expect(try await settings.settings() == wanted)
+
+    // The Relay snapshot re-reads the files and carries the settings.
+    let snapshot = try await service.planUsageSnapshot()
+    #expect(snapshot.settings == wanted && snapshot.state.account(.codex)?.limits.count == 2)
 
     let bare = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
     let unavailable = await bare.handle(TransportEnvelope(payload: IPCRequest(operation: .planUsage)))
     #expect(unavailable.payload.failure?.code == "plan_usage_unavailable")
+    #expect(await bare.handle(TransportEnvelope(payload: IPCRequest(operation: .getSettings))).payload.failure?.code == "settings_unavailable")
+}
+
+@Test func legacySettingsFileIsImportedOnceThenRemoved() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-plan-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let path = directory.appendingPathComponent("plan-usage-settings.json").path
+    try Data(#"{"enabled":{"claude":true,"codex":false}}"#.utf8).write(to: URL(fileURLWithPath: path))
+    let store = InMemorySettingsStore()
+    try await LegacyPlanUsageSettingsImport.run(path: path, into: store)
+    #expect(try await store.settings().planUsage.enabledAccounts == [.claude])
+    #expect(!FileManager.default.fileExists(atPath: path))
+
+    // A file left behind after the table already holds switches is stale: removed, not applied.
+    try Data(#"{"enabled":{"codex":true}}"#.utf8).write(to: URL(fileURLWithPath: path))
+    try await LegacyPlanUsageSettingsImport.run(path: path, into: store)
+    #expect(try await store.settings().planUsage.enabledAccounts == [.claude])
+    #expect(!FileManager.default.fileExists(atPath: path))
+    // No file: nothing to do.
+    try await LegacyPlanUsageSettingsImport.run(path: path, into: store)
 }

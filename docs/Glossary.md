@@ -79,11 +79,23 @@
 | 价目表里没有的模型，其 token 不计入任何 Cost；趋势图里是灰段，图例后缀 `· no price` | Unpriced（表里显示 `—`） | 无价格 |
 | 缓存读取占全部 token 的比例（cache read ÷ total） | Cache ratio | 缓存命中率 |
 | 页头右侧说明价目表来自哪、多久前更新 | Prices · models.dev · updated … ago / Prices · built-in snapshot | 价格更新时间 |
+| iPhone 底部第二个 Tab：套餐额度与花费都在这里 | Usage（Tab） | Usage Tab |
+| iPhone Usage Tab 里的两段 | Plan · History | Plan 段 · History 段 |
+| iPhone History 的范围菜单：看全部 Mac 的合计还是某一台 | All Macs · 某台 Mac 名 | scope |
+| iPhone History 图卡的标题；选了某一家 Agent 时后缀 | COST PER DAY · COST PER HOUR / · BY MODEL | 图卡标题 |
+| iPhone History 图里按模型堆叠时，份额前三以外合并成的一段 | Other N models | 其余模型 |
+| iPhone History 点柱子后卡头右端取消选中的按钮 | Clear | 取消选中 |
+| iPhone Usage 卡头右端：正在拉新数字 / 断网时数字有多旧 | updating… / offline · 5m ago | 刷新中 · 离线 |
+| iPhone 没有配对 Mac 时 Usage 两段里的那一行 | Pair a Mac | 去配对 |
+| iPhone History 某台 Mac 离线时的注记 | <Mac> data as of 2h ago | 覆盖不全 |
+| iPhone History 全部 Mac 都拉不到 | Can't reach any Mac | 全部拉不到 |
+| iPhone 第一次点开某个 Session、时间线还在路上时详情页中央的那一行 | Loading session… | 加载 Session |
 
 - Usage 与 Session 无关：删除 Session、清空历史都不会改变 Usage 的数字。
 - Cost 是按公开价目算出的估算值，不是账单，也不含订阅套餐的折算。
 - Usage 页里 Claude 的 Agent 一律写 `Claude Code`（会话列表里的 Agent 名仍是 `Claude`）。
 - Sessions 与 Turns 是去重计数，跨 Agent 不能相加：Agent 与 Model 分组不列这两列。
+- iPhone 上只有 Summary（History 段），没有 Detail、没有 Custom；`All Macs` 的合计里 Sessions / Turns 跨 Mac 相加（不同 Mac 的会话不重复）。
 
 ## 套餐用量
 
@@ -110,12 +122,16 @@
 | 服务拒绝了这份登录 | Sign-in rejected by the service | 登录被拒 |
 | 服务限流，稍后再问 | Rate limited · retry in … | 限流 |
 | 其他失败 | Unavailable · … | 不可用 |
+| iPhone Plan 卡里开关关着的账号，卡头右端 | off | 关着 |
+| iPhone Plan 段首次加载 | Loading plan limits… | 加载中 |
+| iPhone Plan 卡里 Mac 离线时的注记 | <Mac> offline · numbers from 2h ago | 离线快照 |
 
 - Settings 侧栏项叫 `Usage`（副标题 `Plan limits`），里面的段叫 `Plan`；Notch 设置里的段叫 `Usage`。Settings 的 `Usage` 与侧栏 Monitor 组的 Usage 页同词不同义：Monitor 那页是 token 花费，Settings 这页是套餐额度。
 - 没有「Show plan usage」总开关：Show 里一颗药丸都不选就是关。
 - 套餐用量里 Claude 一律写 `Claude Code`，与 Usage 页一致。
 - 百分比来自服务商自己的接口，Lumi 只读 Agent 保存的登录（文件或 Claude Code 的钥匙串项），不换发、不写回。
 - 不要写「配额」「额度百分比」「订阅用量」；统一用「套餐用量」。
+- 开关与 `Percent`（Used · Remaining）保存在这台 Mac 的 daemon 里；iPhone 的 Plan 段跟随各台 Mac 自己的设置，不提供这两个设置。iPhone 的条统一蓝色，只有数字在 ≥ 90% 变橙。
 
 ### 禁用说法（套餐用量）
 

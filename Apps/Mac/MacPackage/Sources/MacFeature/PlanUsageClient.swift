@@ -7,7 +7,8 @@ import Foundation
 private let log = Logger(label: "ui")
 
 /// The Mac's line to the daemon's plan-usage poller: `plan_usage` for the
-/// current snapshot, `set_plan_usage` to switch one sign-in. The daemon
+/// current snapshot, `get_settings` / `set_settings` for the switches and
+/// the percent style that live in the daemon's settings table. The daemon
 /// reads the sign-in files and calls the providers; the Mac only renders.
 @MainActor
 final class PlanUsageClient {
@@ -26,15 +27,26 @@ final class PlanUsageClient {
         try await unwrap(client.send(IPCRequest(operation: .planUsage), socketPath: socketPath))
     }
 
-    func setEnabled(_ enabled: Bool, for account: PlanUsageAccountID) async throws -> PlanUsageState {
-        let state = try await unwrap(client.send(
-            IPCRequest(operation: .setPlanUsage, planAccount: account, enabled: enabled),
-            socketPath: socketPath
-        ))
-        log.info("plan_usage_account_switched", metadata: .fields([
-            "account": account.rawValue, "enabled": enabled, "status": state.account(account)?.status.rawValue,
+    func settings() async throws -> DaemonSettings {
+        try await unwrapSettings(client.send(IPCRequest(operation: .getSettings), socketPath: socketPath))
+    }
+
+    /// Replaces every daemon-owned setting; the answer is what the daemon stored.
+    func save(_ settings: DaemonSettings) async throws -> DaemonSettings {
+        let stored = try await unwrapSettings(client.send(IPCRequest(operation: .setSettings, settings: settings), socketPath: socketPath))
+        log.info("settings_saved", metadata: .fields([
+            "plan_usage_enabled": stored.planUsage.enabledAccounts.map(\.rawValue).joined(separator: ","),
+            "percent_style": stored.planUsage.percentStyle.rawValue,
         ]))
-        return state
+        return stored
+    }
+
+    private func unwrapSettings(_ response: IPCResponse) throws -> DaemonSettings {
+        if let failure = response.failure { throw failure }
+        guard let settings = response.settings else {
+            throw IPCFailure(code: "missing_settings", message: "The daemon answered without settings.", retryable: true)
+        }
+        return settings
     }
 
     private func unwrap(_ response: IPCResponse) throws -> PlanUsageState {

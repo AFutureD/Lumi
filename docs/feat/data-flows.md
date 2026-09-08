@@ -33,7 +33,7 @@ flowchart LR
 2. daemon 归并重复或乱序事件，更新该设备的 Session。
 3. Mac App 在收到 Agent 事件后更新自己的同步副本和界面。
 4. daemon 把同一条事件按目标 iPhone 加密，经 Relay 转发（Mac App 是否打开无关）；回合结束、失败或中断时另发一条明文标题的推送提醒。
-5. iPhone 用与 daemon 相同的规则更新本机缓存和界面；对不上的地方用 Session 索引对账补齐。
+5. iPhone 用与 daemon 相同的规则更新本机缓存和界面（点开过的 Session 连时间线一起，其余只更新摘要）；对不上的地方用 Session 索引对账补齐。
 
 Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷新、Agent 事件。删除、清空、标记已查看和 Notch 归档会立即同步操作结果；手动刷新的重算保留这两个人为标记。规则见 [MAC-R-009](modules/mac-session-view.md#mac-r-009-mac-界面只有三种同步入口)。
 
@@ -77,14 +77,14 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 
 - **daemon 离线**：Mac 保留已同步内容供查看，但“Settings > Daemon”显示 Not connected；恢复后可手动刷新。
 - **Mac 或通道离线**：iPhone 在 Macs 页将该 Mac 标为 Offline，继续显示缓存；其他 Mac 通道不受影响。退出 Mac App 不算离线（Relay 连接在 daemon）。
-- **恢复在线**：iPhone 向 Mac 索取 Session 索引对账——多余的删、缺失的整取、变过的只补差异（[IOS-R-007](modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-增量同步)），之后继续实时接收。
+- **恢复在线**：iPhone 向 Mac 索取 Session 索引对账——摘要全部对齐、多余的删，时间线只给点开过的 Session 补差异，其余等点开再取（[IOS-R-007](modules/iphone-live-view.md#ios-r-007-在线只读并按-mac-增量同步)），之后继续实时接收。
 
 ## 用量
 
 - **用户相关数据**：每次模型调用的 token（输入、缓存读、缓存写、输出）按会话、回合、模型、本地日与小时累加；工作目录；models.dev 价目与其拉取时间。
 - **创建来源**：daemon 直接扫描 Claude Code（`~/.claude/projects`，含子 Agent）与 Codex（`~/.codex/sessions`、`archived_sessions`）写在本机的对话记录，安装后首次全量、之后每 30 秒跟进；不依赖 Hook，也不依赖 Session 是否进入 Lumi。
 - **更新来源**：文件新增内容按游标增量读取；同一次调用在文件里重复出现（Claude 每个内容块、Codex 分叉回放）只算一次。价目每 24 小时刷新，刷新后对历史生效。
-- **主要消费者**：Mac 的 Usage 页（[USG-R-001](modules/mac-usage.md#usg-r-001-用量来自-agent-的本机记录与-session-无关)）。不进 iPhone，不进 Relay。
+- **主要消费者**：Mac 的 Usage 页（[USG-R-001](modules/mac-usage.md#usg-r-001-用量来自-agent-的本机记录与-session-无关)）；iPhone 的 Usage Tab › History 经 Relay 向每台 Mac 索取同一份报表（只给档位 Today / This week / This month，每台 Mac 按自己的本地日算），只在内存里，退出即忘（[IOS-R-017](modules/iphone-live-view.md#ios-r-017-用量与套餐额度只读且不缓存)）。
 - **保留方式**：与 Session 无关——删除 Session、清空历史都不动用量；Agent 自己删除记录后，已累加的桶仍保留。
 - **展示边界**：Cost 是按公开价目基础档的估算，不含订阅折算；价目表没有的模型显示无价格。
 
@@ -93,8 +93,8 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 - **用户相关数据**：每个登录（Claude Code、Codex）的邮箱、套餐名、开关；各时间窗口（Session、Weekly、Fable）的已用百分比与重置时间；最近一次成功的时间与失败原因。
 - **创建来源**：daemon 每 5 分钟（以及 Mac 每次询问时）重读 Agent 自己保存的登录（`~/.claude/.credentials.json`，没有则读 Claude Code 的钥匙串项；`~/.claude.json`；`~/.codex/auth.json`），对打开了开关的账号用其中的 token 询问服务商的额度接口。Lumi 不换发 token、不写回。
 - **更新来源**：Settings 里打开开关立即问一次；限流时按服务商给的时间等待；token 过期就停在「登录已过期」，直到用户在 Agent 里重新登录。
-- **主要消费者**：“Settings > Usage”的账号卡、“Settings > Notch”的 Usage 段与预览、Notch 展开态顶栏（[PLN-R-001](modules/mac-plan-usage.md#pln-r-001-只读-agent-的登录文件不换发不写回)）。不进 iPhone，不进 Relay。
-- **保留方式**：开关记在 daemon 侧，App 重启不丢；百分比只在 daemon 内存里，daemon 重启后几秒内重新取得；失败时保留上一次的数字。
+- **主要消费者**：“Settings > Usage”的账号卡、“Settings > Notch”的 Usage 段与预览、Notch 展开态顶栏（[PLN-R-001](modules/mac-plan-usage.md#pln-r-001-只读-agent-的登录文件不换发不写回)）；iPhone 的 Usage Tab › Plan 经 Relay 看每台 Mac 的同一份快照（只读）。
+- **保留方式**：开关与「已用 / 剩余」记在 daemon 的设置表里，Mac 与 iPhone 读同一份，App 重启不丢；百分比只在 daemon 内存里，daemon 重启后几秒内重新取得；失败时保留上一次的数字；iPhone 拿到的快照只在内存里。
 - **展示边界**：百分比是服务商自己的口径；Notch 的「已用 / 剩余」只是 100 减一下，不做任何估算。
 
 ## 软件更新

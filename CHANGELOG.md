@@ -6,11 +6,21 @@
 
 ### 会话查看
 
+- [Lumi for iPhone] - Session 内容改为点开才同步：列表只同步每个 Session 的摘要（标题、状态、时间，几秒即齐），第一次点开某个 Session 时才把它的时间线取来（详情页先显示 `Loading session…`），之后只补差异；没点开过的 Session 只跟着 Mac 更新状态。此前重新上线要把所有变过的 Session 整个补齐，长历史下要等几分钟。
+- daemon 的 Relay 发送队列分小项 / 大块两条道交替发送，一台 iPhone 补历史不再挡住另一台的索引和用量应答；同一设备重复的索引请求只答最新一条。
 - [Lumi for Mac] - 修复 App 内存常驻 150 MB 左右、启动瞬间接近 180 MB 的问题：Notch 每次刷新都把 7 天内每个 Session 的完整时间线读进内存再丢掉。现在完整的 Session 详情只保留最近用到的几份（选中的那条固定保留），Notch 每次刷新只取正在工作、等待或刚结束的少数 Session，其余只用摘要显示；已读进内存的 Session 直接吸收 daemon 推来的更新，不再反复读库。
 - [Lumi for Mac] - Notch 里被中途打断的 Session（Failed / Interrupted，或结束信号先于 Turn End 到达的 Completed）现在按 Session 状态判定为已结束：标题变为正文色，悬停出现 Archive 按钮。
 
+### 用量
+
+- [Lumi for iPhone] - 新增底部 Usage Tab（Sessions · Usage · Macs · Settings）。History 段按 Today / This week / This month 看所有 Mac 或某一台的花费与 token：Cost（带较上一周期的涨跌）、Tokens（带构成条）、Sessions / Turns / Calls，以及一张每日花费柱状图——点柱子读单日，菜单可切某一家按模型堆叠（多于四个模型时前三 + `Other N models`）。数字来自每台 Mac 的 daemon，各台按自己的本地日算，只在内存里；明细表留在 Mac。
+- daemon 的 Relay 新增 `fetch_usage`（只给档位，daemon 用自己的日历展开）与 `fetch_plan_usage` 两种请求；IPC 的 `usage_report` 与它们共用一份报表构建。
+
 ### 套餐用量
 
+- [Lumi for iPhone] - Usage Tab 的 Plan 段：一台 Mac 一张卡，卡内 Claude Code、Codex 各一小节，每个窗口一行 `SESSION · 5 HOURS` / `WEEKLY · 7 DAYS` / `FABLE · 7 DAYS`、百分比、用量条与 `resets in …`；条统一蓝色，只有数字在 ≥ 90% 变橙。开关关着、未登录、登录过期、限流、Mac 离线都在卡里写明；「已用 / 剩余」跟每台 Mac 自己的设置。
+- [Lumi for Mac] - “Settings > Notch”的 Percent（Used / Remaining）改为保存在 daemon 里，iPhone 读同一份；升级后第一次启动把原来的本机偏好带过去。
+- daemon 新增 `settings` 表（一行一个点分 key，如 `plan_usage.percent_style`、`plan_usage.enabled.claude`）与 `get_settings` / `set_settings`；套餐用量的开关从 `plan-usage-settings.json` 迁入（第一次启动导入后删文件），`set_plan_usage` 随之删除。只与 Mac App / Notch 相关的设置仍留在 Mac 本地。
 - [Lumi for Mac] - “Settings > Usage”新增 Plan 段：一账号一张卡，卡头是登录（邮箱与套餐、读取来源、刷新时间）与开关，打开后 daemon 每 5 分钟向服务商询问套餐额度，卡身按窗口列出 `42% used`、用量条与重置倒计时（≥ 90% 变橙）。“Settings > Notch”新增 Usage 段：Preview 黑条、Agents（Switch on click / Show both）、Percent（Used / Remaining）、Show 多选药丸（Claude Code：5-hour / Weekly / Fable；Codex：5-hour / Weekly，只列服务商报了的窗口，一颗都不选即关闭）。选了之后 Notch 展开态顶栏左侧的 Lumi 标记换成额度簇：Claude 标记 `5h 42% · 7d 18% · Fable 7%`，Codex 标记 `7d 12%`；≥ 90% 的数字变橙，悬停看重置时间。
 - daemon 只读 Agent 自己保存的登录（`~/.claude/.credentials.json`，没有则读 Claude Code 的钥匙串项，不弹提示；`~/.codex/auth.json`），不换发 token、不写回；文件缺失、登录过期、被拒、限流都在 Settings 行里写明原因，失败时保留上一次的数字。
 

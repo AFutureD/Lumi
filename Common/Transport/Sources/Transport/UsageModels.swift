@@ -11,6 +11,16 @@ import Foundation
 // These types cross the daemon ↔ Mac IPC boundary (`usage_report`), so they
 // live in Transport.
 
+/// A day range named by the calendar rather than by dates, for callers that
+/// cannot know the daemon's local days (an iPhone in another time zone).
+/// The daemon expands it with its own calendar: today, Monday through today,
+/// or the first of the month through today — inclusive, never past today.
+public enum UsageRangePreset: String, Codable, Hashable, Sendable, CaseIterable {
+    case today
+    case thisWeek
+    case thisMonth
+}
+
 /// A calendar day in the daemon's local time zone, `YYYY-MM-DD` on the wire.
 /// Usage ranges are inclusive on both ends and never finer than a day.
 public struct UsageDay: Hashable, Sendable, Comparable, RawRepresentable, Codable, CustomStringConvertible {

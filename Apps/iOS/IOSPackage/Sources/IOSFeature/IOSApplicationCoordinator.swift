@@ -7,7 +7,7 @@ import UIKit
 
 private let pushLog = os.Logger(subsystem: "app.huanan.lumi", category: "push")
 
-/// Owns the Relay controller and the three tabs (Sessions / Macs / Settings).
+/// Owns the Relay controller and the four tabs (Sessions / Usage / Macs / Settings).
 @MainActor
 public final class IOSApplicationCoordinator: NSObject {
     private let settings = LocalSettings.shared
@@ -15,6 +15,10 @@ public final class IOSApplicationCoordinator: NSObject {
     private let notifications = NotificationAuthorization()
     private let tabs = UITabBarController()
     private lazy var sessions = SessionsViewController(relay: relay, settings: settings)
+    private lazy var usage = UsageViewController(
+        relay: relay,
+        onPairMac: { [weak self] in self?.presentAddMac(prefill: nil) }
+    )
     private lazy var macs = MacsViewController(
         relay: relay,
         settings: settings,
@@ -41,7 +45,7 @@ public final class IOSApplicationCoordinator: NSObject {
         if ProcessInfo.processInfo.arguments.contains("-LumiPreviewData") {
             relay.usePreview(PreviewFixture.channelStates(now: Date()))
         }
-        tabs.viewControllers = [sessions, macs, settingsScreen].map { screen in
+        tabs.viewControllers = [sessions, usage, macs, settingsScreen].map { screen in
             let navigation = UINavigationController(rootViewController: screen)
             navigation.navigationBar.prefersLargeTitles = true
             return navigation
@@ -118,7 +122,7 @@ public final class IOSApplicationCoordinator: NSObject {
 
     private func presentAddMac(prefill: PairingLink?) {
         guard addMac == nil else { return }
-        tabs.selectedIndex = 1
+        tabs.selectedIndex = 2
         let screen = AddMacViewController(relay: relay, settings: settings, prefill: prefill) { [weak self] in
             self?.tabs.presentedViewController?.dismiss(animated: true)
         }

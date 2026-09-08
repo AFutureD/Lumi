@@ -101,22 +101,7 @@ private func choices(
     #expect(HaloPlanUsagePresentation.unavailableReason(fetching, now: now) == "Fetching from the provider…")
 
     let limited = PlanUsageAccount(id: .codex, provider: .codex, enabled: true, status: .rateLimited, retryAt: now.addingTimeInterval(240))
-    #expect(HaloPlanUsagePresentation.statusText(limited, now: now) == "Rate limited · retry in 4m 0s")
     let missing = PlanUsageAccount(id: .claude, provider: .claude, enabled: false, status: .credentialsMissing, statusDetail: "No ~/.claude/.credentials.json")
-    #expect(HaloPlanUsagePresentation.statusText(missing) == "Not signed in · No ~/.claude/.credentials.json")
-    #expect(HaloPlanUsagePresentation.statusText(PlanUsageAccount(id: .claude, provider: .claude, enabled: true, status: .ok)) == nil)
-}
-
-@Test func cardWordingFollowsTheHandoff() throws {
-    let claude = try #require(state().account(.claude))
-    #expect(claude.limits.map(HaloPlanUsagePresentation.windowTitle) == ["SESSION · 5 HOURS", "WEEKLY · 7 DAYS", "FABLE · 7 DAYS"])
-    #expect(HaloPlanUsagePresentation.resetText(claude.limits[0], now: now) == "resets in 2h 10m")
-    #expect(HaloPlanUsagePresentation.resetText(claude.limits[1], now: now) == nil)
-    #expect(HaloPlanUsagePresentation.resetText(try #require(state().account(.codex)).limits[0], now: now) == "resets now")
-    #expect(HaloPlanUsagePresentation.updatedText(claude.fetchedAt, now: now) == "updated 1m ago")
-    #expect(HaloPlanUsagePresentation.updatedText(now.addingTimeInterval(-10), now: now) == "updated just now")
-    #expect(HaloPlanUsagePresentation.updatedText(now.addingTimeInterval(-7_200), now: now) == "updated 2h ago")
-    #expect(HaloPlanUsagePresentation.updatedText(nil, now: now) == nil)
 }
 
 @MainActor
@@ -125,15 +110,14 @@ private func choices(
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
     let fresh = HaloPlanUsagePreferences(defaults: defaults)
-    #expect(fresh.agentsMode == .showBoth && fresh.percentStyle == .used)
+    #expect(fresh.agentsMode == .showBoth)
     #expect(fresh.items == PlanUsageItem.defaults && fresh.selectedProvider == .claude)
     fresh.agentsMode = .switchOnClick
-    fresh.percentStyle = .remaining
     fresh.toggle(.claudeFable)
     fresh.toggle(.codexSession)
     fresh.selectedProvider = .codex
     let reopened = HaloPlanUsagePreferences(defaults: defaults)
-    #expect(reopened.agentsMode == .switchOnClick && reopened.percentStyle == .remaining)
+    #expect(reopened.agentsMode == .switchOnClick)
     #expect(reopened.items == [.claudeSession, .claudeWeekly, .codexWeekly, .codexSession])
     #expect(reopened.selectedProvider == .codex)
     // Clearing every pill persists as an empty list, not as "unset".

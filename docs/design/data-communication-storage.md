@@ -30,7 +30,7 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 | 位置 | 数据角色 | 保存内容 | 默认路径或介质 |
 | --- | --- | --- | --- |
 | Codex state | 外部只读元数据源 | Thread 标题、主 Session / Subagent 类型和 lineage；不复制整张表 | `${CODEX_HOME:-~/.codex}/state_5.sqlite` 的 `threads` |
-| daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记 | `~/Library/Application Support/Lumi/Lumen/sessions.sqlite3` |
+| daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记、Usage 桶、daemon 设置（`settings` 表，见下） | `~/Library/Application Support/Lumi/Lumen/sessions.sqlite3` |
 | Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Lumi/Storage/cache.sqlite` |
 | iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session 与 Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
 | daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `app.huanan.lumi.daemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
@@ -54,6 +54,7 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 | `ignored_sessions` | 删除/基线/helper discard tombstone | 阻止后到事件重新创建 Session；仅新的 prompt / SessionStart（未处理过的事件）能复活，重放的事件先被 `processed_events` 拒绝；客户端 `replaceSession` / `mergeSession` 会清该 Session 的本地墓碑（以 daemon 为准） |
 | `metadata` | repository 状态 | 当前保存首次 rollout baseline 标记 |
 | `session_filters` | 过滤规则（用户设置，不是会话历史） | 一行一条规则：`id` 主键 + `position` 排序 + `rule` JSON BLOB；整表替换写入。只有 daemon 读写（镜像里这张表恒空）。`clear_history` / 单条删除都不碰它（migration `lumi-v7-session-filters`） |
+| `settings` | daemon 拥有的设置（用户设置，不是会话历史） | 一行一个叶子值：`key` 主键是点分路径（`plan_usage.percent_style`、`plan_usage.enabled.claude`），`value` 是该值的 JSON，`updated_at` 只在值变化时更新。只有 daemon 读写（镜像恒空）；`clear_history` / 单条删除都不碰它（migration `lumi-v12-settings`）。归属规则见下文「设置」 |
 | `usage_buckets` / `usage_seen` / `usage_cursors` | Usage：按 `(agent, session_id, turn_id, model, day, hour, tier)` 累加的 token 桶（含来源报告的费用）、全局去重键、每个 transcript / rollout 文件的扫描游标（按 inode 识别文件，含前缀哈希与解析状态 BLOB） | 与 `sessions` 无外键：删 Session、`clear_history`、`reingest` 都不碰；只有 daemon 写（镜像恒空）。详见 [Usage 设计](usage.md)（migration `lumi-v9-usage` 建表，`lumi-v10-usage-rules` 因解析规则变更、`lumi-v11-usage-hour` 因主键加小时各整体重建一次） |
 
 `turns` 表已在 migration `lumi-v8` 删除：Turn 聚合（`TurnSummary`：prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage）改为读取时由 `TurnProjection` 从 timeline 的 turn-scoped 行现算——时间线是唯一事实源，`SessionDetail.turns` 的 API 与 wire 形状不变，写入方传来的 `turns` 被忽略。
@@ -64,6 +65,17 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 
 客户端整 Session 替换（`replaceSession`）在一个 GRDB write transaction 内执行：清该 id 的墓碑，删除现有行，由外键级联删除 Timeline，再插入。镜像还用到 `sessionIndex`（summary + timeline 行数 + 最新行时间）、`updateSummary`（只改 summary）、`mergeSession`（按 id upsert 一段 timeline 尾）和 `timelineSince`（按时间切 timeline）。
 
+### 设置
+
+哪些设置进 daemon 的 `settings` 表、哪些留在 App 本地，按一条规则分：**daemon 要执行的、或 iPhone 也要读的，进表；只与 macOS App / Notch 自己相关的，留在 App 的 UserDefaults。** 现在表里只有套餐用量的两组叶子：
+
+| key | 值 | 谁读 |
+| --- | --- | --- |
+| `plan_usage.enabled.<account>` | Bool，`claude` / `codex` | daemon 决定问哪家；Mac Plan 卡开关；iPhone 从 `PlanUsageAccount.enabled` 看结果 |
+| `plan_usage.percent_style` | `"used"` / `"remaining"` | Mac Notch 顶栏与 Settings；iPhone Usage › Plan 的数字 |
+
+IPC `get_settings` / `set_settings` 传的是整份 `DaemonSettings`（Transport），daemon 只写变化的叶子，写完把变化的 key 记进 `settings_updated` 日志。留在 Mac 的：窗口布局、Usage 页的范围 / 分组记忆、Activity 的时间线模式、Notch 用量簇的 Agents 模式 / Show 药丸 / 选中的 provider、opennook 外观。旧的 `Lumen/plan-usage-settings.json` 与 Mac 的 `Lumi.Notch.PlanUsage.PercentStyle` 键在升级后的第一次启动各导入一次，然后删除。
+
 ## 保存与保留策略
 
 - daemon、Mac 和 iOS 不按天数或最后活动时间自动清理 Session。
@@ -71,6 +83,7 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 - 删除 Lumi 数据不会删除 Codex rollout 或 Codex 自身历史。
 - iOS 用户移除一个 Mac 时，删除该通道的凭据、连接和 SQLite 缓存文件；Settings > Clear received data 清空全部通道缓存（不写墓碑、不清 `processed_events`）并重新索取 index。
 - Relay 不保存业务快照，因此没有 Relay 侧 Session 保留期限。
+- `settings` 表与 `usage_*` 表不随任何会话删除动作清理；iPhone 经 Relay 拿到的 Usage 报表与套餐用量快照只在内存里，退出即忘。
 - 模型配置、内部上下文和消耗指标遵循 Session 的同一保留与删除规则，不单独过期。
 
 ## 本地通信协议
@@ -109,6 +122,9 @@ migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下�
 | `relay_revoke_device` / `relay_refresh_devices` | 撤销一台 iPhone / 重新拉设备列表，都返回最新状态 | 短连接请求 |
 | `relay_remove_device` | 删除一台已撤销 iPhone 的记录（Relay 记录 + daemon 钉住的钥匙一起删），返回最新状态 | 短连接请求 |
 | `get_session_filters` | 读取 daemon 存储的过滤规则（有序全量） | 短连接请求（Settings · Agents 面板出现时） |
+| `plan_usage` | daemon 的套餐用量快照 `PlanUsageState`：每个账号的登录身份、开关投影、状态、各窗口百分比与重置时间；每次被问都重读登录文件（不联网）。只读（见 [套餐用量设计](plan-usage.md)） | 短连接请求（App 运行期间每 60 秒） |
+| `get_settings` | daemon 拥有的全部设置 `DaemonSettings`（目前：套餐用量的开关与 Percent），见上文「设置」 | 短连接请求（随 `plan_usage` 每 60 秒） |
+| `set_settings` | `{settings}` 整体替换：校验（账号 id 已知）→ 只写变化的叶子 → 套餐用量按开关差异立刻拉 / 清 → 回存储后的值。不 publish、不通知 Relay：iPhone 下次 `fetch_plan_usage` 自然拿到 | 短连接请求（Settings › Usage 的开关、Settings › Notch › Usage 的 Percent） |
 | `usage_report` | `{since, until, compareSince?, compareUntil?}`（本地日 `YYYY-MM-DD`，闭区间，跨度 ≤ 366 天）→ `UsageReport`：totals + byAgent / byProject / byModel / byDay / byWeek / byMonth 切片、趋势行（`trendUnit` + 按 (时段, agent, model) 的 `trend`）、上一周期的 `comparison`（totals + byAgent）、价目状态、扫描进度。daemon 读桶、查询时按 models.dev 价目计价（见 [Usage 设计](usage.md)） | 短连接请求（Usage 页可见时每 30 秒；切换范围 / Refresh 立即） |
 | `set_session_filters` | 整表替换过滤规则：校验（≤100 条、条件非空、运算符合法）后写入 `session_filters` 表并同步进内存判定引擎。规则改动不追溯已有 Session——判定在 Session 首条用户消息到达时做一次并冻结在 `hiddenByFilter` 上（`filterEvaluated` 闩保证只判一次），因此不 publish、不通知 Relay | 短连接请求 |
 
@@ -171,6 +187,13 @@ sequenceDiagram
     R-->>I: 不透明转发
     I->>IDB: replaceSession / mergeSession
     Note over I: 全部 pending 到齐 → lastSync = index.generatedAt
+    opt Usage Tab 可见
+        I->>R: request(fetch_usage{usageRange}) / request(fetch_plan_usage)
+        R-->>H: 原样转发
+        H->>D: 读 usage 桶 / settings，问 PlanUsageService
+        H-->>R: data(usage_report{usage}) / data(plan_usage{planUsage, settings})
+        R-->>I: 不透明转发（只进内存，不进 IDB）
+    end
     loop 之后的每个 daemon 事件
         H->>H: 1s 合并 → session_message{events}
         H-->>R: data(session_message) 只发已同步设备
@@ -187,6 +210,8 @@ sequenceDiagram
 | | `fetch_session` | `sessionIDs`：整 Session（缺失 / 差异很大 / 用户在详情点 Refresh session） |
 | | `fetch_timeline_since` | `sessionIDs[0]` + `since`：该 Session `occurredAt ≥ since` 的 timeline（本地 `lastItemAt − 60s`） |
 | | `session_reviewed` | `sessionIDs`：iPhone 打开了这些 Session |
+| | `fetch_usage` | `usageRange`（`today` / `thisWeek` / `thisMonth`）：给我这个档位的 Usage 报表，daemon 用自己的本地日历展开 |
+| | `fetch_plan_usage` | 给我套餐用量快照和它跟随的设置 |
 | daemon → 设备（`data` 帧） | `session_index` | `index: [SessionIndexEntry{summary, timelineItemCount, lastItemAt}]`，按 600 KB 压缩分 `part / partCount` |
 | | `session_info` | `summaries`：不经事件的 summary 变化（已查看、Notch 归档） |
 | | `session_full` | 一个 Session 的一个分片（part 0 带 turns，末片 `session.nextCursor == nil`），回显 `requestID` |
@@ -194,10 +219,12 @@ sequenceDiagram
 | | `session_message` | `events: [AgentIngressEvent]`：daemon 事件流原样转发 |
 | | `session_removed` | `sessionIDs`：daemon 删除 / 清空 / 应答 fetch 时不存在 |
 | | `health` | `DaemonHealth` |
+| | `usage_report` | `usage: UsageReport`（daemon 建不出来时缺失）+ `requestID`；只在 iPhone 内存里，不进缓存 |
+| | `plan_usage` | `planUsage: PlanUsageState` + `settings: DaemonSettings` + `requestID`；同上 |
 
-iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）：本地有 index 无 → `pruneSessions`（不写墓碑）；index 有本地无、本地 0 行、本地行数多于远端、或差 200 行以上 → `fetch_session`；行数 / 最新行时间不等 → `fetch_timeline_since`；仅 summary 不等 → `updateSummary`。`session_message` 里未知 Session 的事件会触发一次 `fetch_session`。
+iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）是惰性的：调用方给出 `materialized`（本机已持有时间线、或详情正打开的 Session）。本地有 index 无 → `pruneSessions`（不写墓碑）；index 有本地无 → 插入 summary-only 行（`insert`，不取时间线）；不在 `materialized` 里的 → 只在 summary 不等时 `updateSummary`；在 `materialized` 里的才按时间线事实判断：本地 0 行、本地行数多于远端、或差 200 行以上 → `fetch_session`，行数 / 最新行时间不等 → `fetch_timeline_since`。点开详情才对那一个 Session 做整取 / 补尾。`session_message` 里未知 Session 的事件由摘要归约器建一条 summary-only 行，不触发整取。
 
-- payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用不同公钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环保证应答先于其后的推送。
+- payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用不同公钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环、两条道：小项（索引、`session_info` / `session_removed` / 事件推送、health、usage / plan usage 应答）与大块（整 Session、时间线尾，一个 Session 一项）交替出队，道内 FIFO——一台设备补一天的历史不会挡住另一台设备的索引或 Usage 应答；同一设备重复的索引 / usage / plan usage 请求只答最新的一条（旧的已被 iPhone 放弃）。
 - 推送（events / info / removed / health）只发给本连接内请求过 index 的设备；Relay 对离线设备丢帧，设备重连、Host 上线或重连（Relay 再次广播 `online`，daemon 已忘记谁同步过）、回到前台、序号断档、下拉刷新时都重新 `sync_index`。
 - 离线设备的缺口由 APNs 提醒补：回合结束 / 失败 / 中断时 daemon 经 Relay 的明文通知接口（REST，独立于帧序）向已注册 token 的 iPhone 发一条 alert；通知只提示、不带数据，iPhone 下次进前台照常对账。
 - daemon 收到未知设备、或用缓存公钥解不开的 `request` 时，先按需刷新一次设备列表（最多 2 秒一次）再处理：刚配对或刚换钥匙重配的 iPhone 的第一个请求不会被丢弃。刷新时只承认与本机在 Match 时钉住的公钥相同的设备；其余（Mac 没批准过的行、Relay 换过的钥匙）Unverified，不发帧、请求丢弃（见 [Relay、配对与安全设计](relay-pairing-security.md)）。

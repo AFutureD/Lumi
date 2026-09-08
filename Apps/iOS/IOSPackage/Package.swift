@@ -25,7 +25,8 @@ let package = Package(
                 .product(name: "Persistence", package: "Common"),
                 .product(name: "DesignSystem", package: "Common"),
                 .product(name: "Transport", package: "Transport"),
-            ]
+            ],
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "IOSFeatureTests",

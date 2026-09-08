@@ -381,13 +381,26 @@ import Testing
     #expect(state.account(.claude)?.limit(.weekly, model: "Fable")?.usedPercent == 7)
     #expect(state.account(.claude)?.limit(.weekly)?.usedPercent == 18)
 
-    let request = IPCRequest(operation: .setPlanUsage, planAccount: .codex, enabled: true)
+    let settings = DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [.codex], percentStyle: .remaining))
+    let request = IPCRequest(operation: .setSettings, settings: settings)
     let requestJSON = String(decoding: try TransportCoding.makeEncoder().encode(request), as: UTF8.self)
-    #expect(requestJSON.contains(#""operation":"set_plan_usage""#))
-    #expect(requestJSON.contains(#""planAccount":"codex""#))
+    #expect(requestJSON.contains(#""operation":"set_settings""#))
+    #expect(requestJSON.contains(#""enabledAccounts":["codex"]"#))
+    #expect(requestJSON.contains(#""percentStyle":"remaining""#))
     let decodedRequest = try TransportCoding.makeDecoder().decode(IPCRequest.self, from: Data(requestJSON.utf8))
-    #expect(decodedRequest.planAccount == .codex)
-    #expect(decodedRequest.enabled == true)
+    #expect(decodedRequest.settings == settings)
+    let settingsResponse = try TransportCoding.makeDecoder().decode(IPCResponse.self, from: try TransportCoding.makeEncoder().encode(IPCResponse(status: .ok, settings: settings)))
+    #expect(settingsResponse.settings == settings)
+    #expect(IPCOperation.getSettings.rawValue == "get_settings")
+
+    // Relay: the iPhone names a preset, the daemon answers with the snapshot and its settings.
+    let fetch = RemoteSessionPayload(kind: .fetchUsage, usageRange: .thisWeek)
+    let fetchJSON = String(decoding: try TransportCoding.makeEncoder().encode(fetch), as: UTF8.self)
+    #expect(fetchJSON.contains(#""kind":"fetch_usage""#) && fetchJSON.contains(#""usageRange":"thisWeek""#))
+    let answer = RemoteSessionPayload(kind: .planUsage, requestID: RequestID(), planUsage: state, settings: settings)
+    let decodedAnswer = try TransportCoding.makeDecoder().decode(RemoteSessionPayload.self, from: try TransportCoding.makeEncoder().encode(answer))
+    #expect(decodedAnswer.planUsage == state && decodedAnswer.settings == settings && decodedAnswer.kind == .planUsage)
+    #expect(RemotePayloadKind.fetchPlanUsage.rawValue == "fetch_plan_usage" && RemotePayloadKind.usageReport.rawValue == "usage_report")
 
     #expect(throws: DecodingError.self) {
         try JSONDecoder().decode(PlanUsageWindow.self, from: Data("\"monthly\"".utf8))

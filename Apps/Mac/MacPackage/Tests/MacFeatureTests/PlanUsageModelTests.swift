@@ -36,33 +36,71 @@ private func state(codexEnabled: Bool) -> PlanUsageState {
 
 @MainActor
 @Test func modelLoadsSwitchesAndSurfacesFailures() async throws {
+    let codexOn = DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [.codex], percentStyle: .used))
     let daemon = ScriptedPlanUsageDaemon(responses: [
-        IPCResponse(status: .ok, planUsage: state(codexEnabled: false)),
-        IPCResponse(status: .ok, planUsage: state(codexEnabled: true)),
-        IPCResponse(status: .error, failure: IPCFailure(code: "plan_usage_unavailable", message: "The daemon runs without plan usage.", retryable: false)),
+        IPCResponse(status: .ok, planUsage: state(codexEnabled: false)),   // plan_usage
+        IPCResponse(status: .ok, settings: .defaults),                       // get_settings
+        IPCResponse(status: .ok, settings: codexOn),                         // set_settings (switch)
+        IPCResponse(status: .ok, planUsage: state(codexEnabled: true)),    // plan_usage after the switch
+        IPCResponse(status: .error, failure: IPCFailure(code: "settings_unavailable", message: "The daemon runs without a settings store.", retryable: false)),
     ])
     let suite = "PlanUsageModelTests-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
     let model = PlanUsageModel(
         client: PlanUsageClient(client: daemon, socketPath: "/tmp/lumi-test.sock"),
-        preferences: HaloPlanUsagePreferences(defaults: defaults)
+        preferences: HaloPlanUsagePreferences(defaults: defaults),
+        legacyDefaults: defaults
     )
+
+    // Nothing is written before the daemon's settings were read.
+    await model.setEnabled(true, for: .codex)
+    #expect(daemon.requests.isEmpty && model.errorMessage != nil)
 
     await model.refresh()
     #expect(model.state == state(codexEnabled: false))
+    #expect(model.settings == .defaults && model.settingsLoaded)
     #expect(model.errorMessage == nil)
     #expect(model.account(.codex)?.email == "dev@example.com")
 
     await model.setEnabled(true, for: .codex)
+    #expect(model.settings == codexOn)
     #expect(model.state == state(codexEnabled: true))
     #expect(model.updating.isEmpty)
-    let switchRequest = try #require(daemon.requests.last)
-    #expect(switchRequest.operation == .setPlanUsage && switchRequest.planAccount == .codex && switchRequest.enabled == true)
+    let switchRequest = try #require(daemon.requests[2])
+    #expect(switchRequest.operation == .setSettings && switchRequest.settings == codexOn)
 
-    // A failed switch keeps the last snapshot and reports the daemon's words.
-    await model.setEnabled(false, for: .codex)
-    #expect(model.state == state(codexEnabled: true))
-    #expect(model.errorMessage == "The daemon runs without plan usage.")
-    #expect(daemon.requests.map(\.operation) == [.planUsage, .setPlanUsage, .setPlanUsage])
+    // A failed write keeps the last settings and reports the daemon's words.
+    await model.setPercentStyle(.remaining)
+    #expect(model.settings == codexOn)
+    #expect(model.errorMessage == "The daemon runs without a settings store.")
+    #expect(daemon.requests.map(\.operation) == [.planUsage, .getSettings, .setSettings, .planUsage, .setSettings])
+}
+
+@MainActor
+@Test func legacyPercentStyleKeyIsCarriedToTheDaemonOnce() async throws {
+    let remaining = DaemonSettings(planUsage: PlanUsageSettings(enabledAccounts: [], percentStyle: .remaining))
+    let daemon = ScriptedPlanUsageDaemon(responses: [
+        IPCResponse(status: .ok, planUsage: state(codexEnabled: false)),
+        IPCResponse(status: .ok, settings: .defaults),
+        IPCResponse(status: .ok, settings: remaining),
+        IPCResponse(status: .ok, planUsage: state(codexEnabled: false)),
+        IPCResponse(status: .ok, settings: remaining),
+    ])
+    let suite = "PlanUsageModelTests-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("remaining", forKey: PlanUsageModel.legacyPercentStyleKey)
+    let model = PlanUsageModel(
+        client: PlanUsageClient(client: daemon, socketPath: "/tmp/lumi-test.sock"),
+        preferences: HaloPlanUsagePreferences(defaults: defaults),
+        legacyDefaults: defaults
+    )
+    await model.refresh()
+    #expect(model.percentStyle == .remaining)
+    #expect(defaults.string(forKey: PlanUsageModel.legacyPercentStyleKey) == nil)
+    #expect(daemon.requests.map(\.operation) == [.planUsage, .getSettings, .setSettings])
+    // The next refresh finds no key and writes nothing.
+    await model.refresh()
+    #expect(daemon.requests.map(\.operation) == [.planUsage, .getSettings, .setSettings, .planUsage, .getSettings])
 }
