@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-09
+
 ### 会话查看
 
 - [Lumi for iPhone] - Session 内容改为点开才同步：列表只同步每个 Session 的摘要（标题、状态、时间，几秒即齐），第一次点开某个 Session 时才把它的时间线取来（详情页先显示 `Loading session…`），之后只补差异；没点开过的 Session 只跟着 Mac 更新状态。此前重新上线要把所有变过的 Session 整个补齐，长历史下要等几分钟。
@@ -160,7 +162,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AFutureD/Lumi/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/AFutureD/Lumi/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/AFutureD/Lumi/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/AFutureD/Lumi/compare/v0.1.3...v0.1.4
