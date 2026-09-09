@@ -189,30 +189,4 @@ enum UsageAggregate {
             )
         }
     }
-
-    // MARK: Selected bucket
-
-    /// The slice a selected bar stands for: every agent's part of the bucket,
-    /// or one agent's when the chart is filtered. Cost and tokens are the
-    /// real per-bucket sums from the daemon's `trend` rows, not a share of
-    /// the range. Sessions / turns / calls are not bucketed on the wire and
-    /// stay at zero.
-    static func bucketSlice(bar: UsageTrendBar, agent: UsageSummaryAgent) -> UsageSlice {
-        var cost = 0.0
-        var tokens = 0.0
-        if let provider = agent.provider {
-            let value = bar.values[provider.rawValue] ?? UsageTrendValue()
-            cost = value.cost
-            tokens = value.tokens
-        } else {
-            cost = bar.total(.cost)
-            tokens = bar.total(.tokens)
-        }
-        return UsageSlice(
-            agent: agent.provider,
-            period: bar.period,
-            tokens: UsageTokens(input: Int64(tokens.rounded())),
-            costUSD: cost
-        )
-    }
 }

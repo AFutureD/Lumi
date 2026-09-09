@@ -25,7 +25,7 @@ final class UsageChartCardView: UIView {
         clipsToBounds = true
 
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let titleRow = UIStackView(arrangedSubviews: [titleLabel, agentButton])
+        let titleRow = UsageMenuRow(arrangedSubviews: [titleLabel, agentButton])
         titleRow.axis = .horizontal
         titleRow.alignment = .center
         titleRow.heightAnchor.constraint(equalToConstant: U.chartTitleRowHeight).isActive = true

@@ -75,7 +75,7 @@ input × in + cache_read × (cache_read ?? in) + cache_write_5m × (cache_write 
 
 - `totals` 与 `byAgent` / `byProject`（按 `workspace`）/ `byModel`（按 provider + model，带价目来源 `provider`：自家 provider 或字母序第一个列出该模型的其它家，界面暂不显示）四组 `UsageSlice`：六类 token、`costUSD`（只含有价格部分；全无价格时为 nil）、`unpricedTokens`、`calls`、`sessions`（去重 session id；Subagent 与父级同一个）、`turns`（去重 (session, turn)）、`lastDay`。
 - `byDay` / `byWeek` / `byMonth`：按时段的切片（`period` = 单位 + 起始日；周从周一起，月为自然月），只有有调用的时段成行，升序。Detail 的 Time 分组直接用它们，所以 Sessions / Turns 在周、月上也是准确的去重数。
-- `trendUnit` + `trend`：趋势图的行，粒度由 daemon 按范围定（单日 = hour，≤ 90 天 = day，更长 = week），一行一个 (时段, agent, model)；客户端自己决定按 Agent 还是按模型堆叠，iPhone 点选一根柱子时的 Cost / Tokens 也直接从这些行求和（真实的按桶聚合，不是按比例推算）。
+- `trendUnit` + `trend`：趋势图的行，粒度由 daemon 按范围定（单日 = hour，≤ 90 天 = day，更长 = week），一行一个 (时段, agent, model)；客户端自己决定按 Agent 还是按模型堆叠，iPhone 柱顶浮层里的 Cost / Tokens 也直接从这些行求和（真实的按桶聚合，不是按比例推算）。
 - `comparison`：上一周期的 `totals` 与 `byAgent`，供 Summary 的「较上一周期」用。
 - `pricing`：价目来源（builtin / cached / fresh）、拉取时间、模型数。
 - `scan`：已扫文件数、待扫文件数、上次扫描时间、是否正在扫。
@@ -98,7 +98,7 @@ Usage Tab 的 History 段（设计交接 `design_handoff_ios_usage` 第 9 页）
 
 - 范围行两个菜单：`Today · This week · This month`（没有 Custom）和 scope（`All Macs` / 某台 Mac）。换档位时向每台配对的 Mac 发一次 `fetch_usage`；页面可见时每 30 秒再发，下拉刷新立即发，离开 Tab 停。答复只在内存里（`UsageSnapshot`：报表、档位、到达时间、加载中、错误），退出即忘，每次冷启动都是加载态。
 - All Macs 是 iPhone 侧的合并（`UsageAggregate`，纯函数）：totals / byAgent / byModel / trend 按 (agent, model, 时段) 相加，Sessions / Turns 跨 Mac 相加（不同 Mac 的会话不会重复），有一台没有对比区间就不画涨跌；单台 scope 直接用那台的报表。各 Mac 的桶按各自的本地日对齐，iPhone 画坐标轴用自己的日历——跨时区时轴标签可能与某台 Mac 的日期差一天，数字不受影响。
-- 数字卡 = Cost（带涨跌）、Tokens（带构成条）、Sessions / Turns / Calls，永远是整段所有 Agent 的合计；图卡的 agent 菜单只改图：All agents 按 Agent 堆两段，选单家按它的模型堆（份额前三 + `Other N models`），y 轴始终按 All agents 的桶峰值标定，所以只看一家时柱子整体变矮。点柱子读单桶：卡头换成桶名 + Clear，Cost / Tokens 换成该桶的合计（从 `trend` 行求和）。
+- 数字卡 = Cost（带涨跌）、Tokens（带构成条）、Sessions / Turns / Calls，永远是整段所有 Agent 的合计；图卡的 agent 菜单只改图：All agents 按 Agent 堆两段，选单家按它的模型堆（份额前三 + `Other N models`），y 轴始终按 All agents 的桶峰值标定，所以只看一家时柱子整体变矮。点柱子在柱顶弹出浮层（与 Mac 悬停浮层同一张卡：日期 + 总额 + 每序列一行，再加一行 Tokens，从 `trend` 行直接取）；再点同一根、点空柱或换范围收起。浮层是图自己的状态，数字卡不跟着变。
 - 状态：某台 Mac 离线 → 保留它上一份报表并注明 `<Mac> data as of 2h ago`；全部拉不到 → `Can't reach any Mac`；没有配对 Mac → `Pair a Mac`；有无价格模型 → `N models have no price · counted in tokens, not in cost`。
 
 ## 与 ccusage 的对账
@@ -111,7 +111,7 @@ Usage Tab 的 History 段（设计交接 `design_handoff_ios_usage` 第 9 页）
 - Codex 分叉回放靠「复制期间时间戳成簇」判定；若将来 Codex 保留原始时间戳复制，则由全局去重键（时间戳 + 用量签名）吸收。子线程首次真实调用若在复制结束 1 秒内到达会被当成副本漏掉。
 - `day` 用扫描时的本地时区，之后改时区不会重算历史桶。
 - Codex 已归档会话也计入，但 Codex 在别的机器上产生的会话不会出现。
-- iPhone 的 History 不做 Custom 范围，也没有 Detail 表；点柱子是它唯一的单桶读数方式。
+- iPhone 的 History 不做 Custom 范围，也没有 Detail 表；柱顶浮层是它唯一的单桶读数方式。
 
 ## 相关文档
 

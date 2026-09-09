@@ -2,9 +2,10 @@ import Core
 import DesignSystem
 import UIKit
 
-/// What the figures card shows (handoff pages 9 / 9b): the header (range
-/// or selected bucket), the COST and TOKENS blocks, the three counts, and
-/// any notices — or, before a report is in, one loading / message line.
+/// What the figures card shows (handoff page 9): the header (the range and
+/// the stamp), the COST and TOKENS blocks, the three counts, and any
+/// notices — or, before a report is in, one loading / message line. It is
+/// always the whole range; the chart's bucket popup does not touch it.
 struct UsageFiguresModel: Equatable {
     struct Notice: Equatable {
         let text: String
@@ -13,11 +14,11 @@ struct UsageFiguresModel: Equatable {
 
     struct Figures: Equatable {
         var cost: String
-        /// `↑ 18% vs last week` for the range; the agent split for a bucket.
+        /// `↑ 18% vs last week` / `no spend in this range`.
         var costCaption: String
         var tokens: String
         var segments: [UsageSummaryFigures.Segment]
-        /// `Cache read 78% · output 7%` / `composition for the whole range`.
+        /// `Cache read 78% · output 7%`.
         var composition: String
         var sessions: String
         var turns: String
@@ -30,14 +31,11 @@ struct UsageFiguresModel: Equatable {
         case message(String, warning: Bool)
     }
 
-    /// `Sep 1 – 7, 2026`, or the selected bar's `Thu 9/4`.
+    /// `Sep 1 – 7, 2026`.
     var title: String
-    /// A bucket title reads 13/semibold tint.
-    var titleEmphasized: Bool
-    /// `updated 2m ago` / `updating…` / `offline · 5m ago`; hidden when `Clear` shows.
+    /// `updated 2m ago` / `updating…` / `offline · 5m ago`.
     var stamp: String?
     var stampTint: Bool
-    var showsClear: Bool
     var body: Body
     var notices: [Notice]
 }
@@ -47,11 +45,8 @@ struct UsageFiguresModel: Equatable {
 final class UsageFiguresCardView: UIView {
     private typealias U = IOSDS.Usage
 
-    var onClear: () -> Void = {}
-
     private let titleLabel = UILabel()
     private let stampLabel = UILabel()
-    private let clearButton = UIButton(type: .system)
     private let costValue = UILabel()
     private let costCaption = UILabel()
     private let tokensValue = UILabel()
@@ -77,20 +72,12 @@ final class UsageFiguresCardView: UIView {
         clipsToBounds = true
 
         // Header
+        titleLabel.font = .design(IOSDS.Typography.caption, tabular: true)
+        titleLabel.textColor = UIColor(U.secondaryText)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stampLabel.font = .design(IOSDS.Typography.caption, tabular: true)
         stampLabel.textAlignment = .right
-        var clear = UIButton.Configuration.plain()
-        clear.title = "Clear"
-        clear.contentInsets = .zero
-        clear.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = UIFont.design(IOSDS.Typography.action)
-            return outgoing
-        }
-        clearButton.configuration = clear
-        clearButton.addAction(UIAction { [weak self] _ in self?.onClear() }, for: .touchUpInside)
-        let header = UIStackView(arrangedSubviews: [titleLabel, stampLabel, clearButton])
+        let header = UIStackView(arrangedSubviews: [titleLabel, stampLabel])
         header.axis = .horizontal
         header.alignment = .center
         header.spacing = U.valueDeltaGap
@@ -190,18 +177,10 @@ final class UsageFiguresCardView: UIView {
     func apply(_ model: UsageFiguresModel) {
         guard model != self.model else { return }
         self.model = model
-        if model.titleEmphasized {
-            titleLabel.font = .design(IOSDS.Typography.captionEmphasized)
-            titleLabel.textColor = .tintColor
-        } else {
-            titleLabel.font = .design(IOSDS.Typography.caption, tabular: true)
-            titleLabel.textColor = UIColor(U.secondaryText)
-        }
         titleLabel.text = model.title
         stampLabel.text = model.stamp
         stampLabel.textColor = model.stampTint ? .tintColor : UIColor(U.tertiaryText)
-        stampLabel.isHidden = model.showsClear || model.stamp == nil
-        clearButton.isHidden = !model.showsClear
+        stampLabel.isHidden = model.stamp == nil
 
         switch model.body {
         case .figures(let figures):

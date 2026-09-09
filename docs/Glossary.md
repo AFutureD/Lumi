@@ -84,7 +84,7 @@
 | iPhone History 的范围菜单：看全部 Mac 的合计还是某一台 | All Macs · 某台 Mac 名 | scope |
 | iPhone History 图卡的标题；选了某一家 Agent 时后缀 | COST PER DAY · COST PER HOUR / · BY MODEL | 图卡标题 |
 | iPhone History 图里按模型堆叠时，份额前三以外合并成的一段 | Other N models | 其余模型 |
-| iPhone History 点柱子后卡头右端取消选中的按钮 | Clear | 取消选中 |
+| 趋势图里柱顶的浮层：日期、总额、每序列一行；Mac 悬停出现，iPhone 点柱子出现、再点一次收起 | （无界面用词） | 柱顶浮层 |
 | iPhone Usage 卡头右端：正在拉新数字 / 断网时数字有多旧 | updating… / offline · 5m ago | 刷新中 · 离线 |
 | iPhone 没有配对 Mac 时 Usage 两段里的那一行 | Pair a Mac | 去配对 |
 | iPhone History 某台 Mac 离线时的注记 | <Mac> data as of 2h ago | 覆盖不全 |
@@ -96,6 +96,13 @@
 - Usage 页里 Claude 的 Agent 一律写 `Claude Code`（会话列表里的 Agent 名仍是 `Claude`）。
 - Sessions 与 Turns 是去重计数，跨 Agent 不能相加：Agent 与 Model 分组不列这两列。
 - iPhone 上只有 Summary（History 段），没有 Detail、没有 Custom；`All Macs` 的合计里 Sessions / Turns 跨 Mac 相加（不同 Mac 的会话不重复）。
+- iPhone History 的数字卡永远是整段的合计；点柱子只开柱顶浮层，不改数字卡。
+
+### 禁用说法（Usage）
+
+| 说法 | 原因 |
+| ---- | ---- |
+| Clear（iPhone History 卡头） | 2026-09-09 起点柱子只开柱顶浮层，数字卡不再切到单日，也就没有取消选中的按钮 |
 
 ## 套餐用量
 

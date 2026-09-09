@@ -2,7 +2,10 @@ import DesignSystem
 import UIKit
 
 /// A tint title with a small `chevron.down` that opens a `UIMenu` on tap —
-/// the range, scope and agent choosers of Usage › History.
+/// the range, scope and agent choosers of Usage › History. The title is
+/// 18pt tall on screen; taps count anywhere in a 44pt box around it, so
+/// the row holding it must be a `UsageMenuRow` (a plain row stops the
+/// touch at its own 22pt bounds first).
 final class UsageMenuButton: UIButton {
     private let style: DesignTextStyle
 
@@ -30,6 +33,14 @@ final class UsageMenuButton: UIButton {
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
+    /// Hit test extended to the HIG minimum, centred on the visible title.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let minimum = IOSDS.Layout.minimumTapTarget
+        let dx = min(0, (bounds.width - minimum) / 2)
+        let dy = min(0, (bounds.height - minimum) / 2)
+        return bounds.insetBy(dx: dx, dy: dy).contains(point)
+    }
+
     var title: String {
         get { configuration?.title ?? "" }
         set { configuration?.title = newValue }
@@ -42,5 +53,21 @@ final class UsageMenuButton: UIButton {
         }
         menu = UIMenu(options: .singleSelection, children: actions)
         if selected < titles.count { self.title = titles[selected] }
+    }
+}
+
+/// A horizontal row whose menu buttons' extended hit boxes reach past the
+/// row's own bounds: the touch is offered to each arranged subview before
+/// the row's bounds are checked.
+final class UsageMenuRow: UIStackView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, isUserInteractionEnabled, alpha > 0.01 else { return nil }
+        for subview in arrangedSubviews.reversed() where !subview.isHidden {
+            let converted = subview.convert(point, from: self)
+            if subview.point(inside: converted, with: event), let hit = subview.hitTest(converted, with: event) {
+                return hit
+            }
+        }
+        return super.hitTest(point, with: event)
     }
 }

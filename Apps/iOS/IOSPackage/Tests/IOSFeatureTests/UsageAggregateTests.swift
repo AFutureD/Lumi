@@ -177,36 +177,18 @@ struct UsageHistoryStateTests {
         #expect(state.range == .thisWeek)
         #expect(state.scope == nil)
         #expect(state.chartAgent == .all)
-        #expect(state.selectedBucket == nil)
         #expect(state.preset == .thisWeek)
     }
 
-    @Test func rangeAndAgentClearSelectionScopeKeepsIt() {
+    @Test func rangeScopeAndAgentAreIndependent() {
         var state = UsageHistoryState()
-        state.toggle(bucket: "2026-09-07")
-        #expect(state.selectedBucket == "2026-09-07")
-
-        state.select(scope: pro)
-        #expect(state.selectedBucket == "2026-09-07")
-
-        state.select(range: .thisWeek) // unchanged range keeps it
-        #expect(state.selectedBucket == "2026-09-07")
         state.select(range: .today)
-        #expect(state.selectedBucket == nil)
-
-        state.toggle(bucket: "x")
+        state.select(scope: pro)
         state.select(agent: .claude)
-        #expect(state.selectedBucket == nil)
+        #expect(state.range == .today)
+        #expect(state.preset == .today)
+        #expect(state.scope == pro)
         #expect(state.chartAgent == .claude)
-    }
-
-    @Test func tappingTheSelectedBucketAgainClearsIt() {
-        var state = UsageHistoryState()
-        state.toggle(bucket: "a")
-        state.toggle(bucket: "b")
-        #expect(state.selectedBucket == "b")
-        state.toggle(bucket: "b")
-        #expect(state.selectedBucket == nil)
     }
 
     @Test func unpairedScopeFallsBackToAllMacs() {
@@ -229,22 +211,6 @@ struct UsageHistoryTextTests {
         #expect(UsageHistoryText.unpricedNotice(modelCount: 0) == nil)
         #expect(UsageHistoryText.unpricedNotice(modelCount: 1) == "1 model has no price · counted in tokens, not in cost")
         #expect(UsageHistoryText.unpricedNotice(modelCount: 2) == "2 models have no price · counted in tokens, not in cost")
-    }
-
-    @Test func bucketCostSplitAndSlice() {
-        let bar = UsageTrendBar(
-            id: "b", period: day(monday), axisLabel: "M", title: "Mon 9/7",
-            values: ["claude": UsageTrendValue(cost: 4.05, tokens: 1_000), "codex": UsageTrendValue(cost: 1.12, tokens: 500)]
-        )
-        #expect(UsageHistoryText.bucketCostSplit(bar: bar, agent: .all) == "Claude Code $4.05 · Codex $1.12")
-        #expect(UsageHistoryText.bucketCostSplit(bar: bar, agent: .claude) == "Claude Code only")
-
-        let whole = UsageAggregate.bucketSlice(bar: bar, agent: .all)
-        #expect(whole.costUSD == 5.17)
-        #expect(whole.tokens.total == 1_500)
-        let claude = UsageAggregate.bucketSlice(bar: bar, agent: .claude)
-        #expect(claude.costUSD == 4.05)
-        #expect(claude.tokens.total == 1_000)
     }
 }
 

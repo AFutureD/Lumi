@@ -7,11 +7,12 @@ import UIKit
 
 private let log = os.Logger(subsystem: "app.huanan.lumi", category: "usage.history")
 
-/// Usage › History (handoff pages 9 / 9b / 9c): the range row, the figures
-/// card and the chart card. Reads every Mac's `MacChannelState.usage`,
-/// merges for `All Macs` (`UsageAggregate`), and keeps what it is looking at
-/// in `UsageHistoryState`. The parent tab asks the Macs and polls; the range
-/// menu asks straight away.
+/// Usage › History (handoff pages 9 / 9c): the range row, the figures card
+/// and the chart card. Reads every Mac's `MacChannelState.usage`, merges for
+/// `All Macs` (`UsageAggregate`), and keeps what it is looking at in
+/// `UsageHistoryState`. The parent tab asks the Macs and polls; the range
+/// menu asks straight away. The figures card is always the whole range;
+/// tapping a bar only opens the chart's own popup.
 @MainActor
 final class UsageHistoryViewController: UIViewController {
     private typealias U = IOSDS.Usage
@@ -44,13 +45,11 @@ final class UsageHistoryViewController: UIViewController {
         let model = UsageChartModel(
             trend: UsageTrend(unit: .day, bars: [], series: []),
             yMaximum: 1,
-            barInset: U.barGapDay / 2,
-            onTap: { _ in }
+            barInset: U.barGapDay / 2
         )
         chartModel = model
         hosting = UIHostingController(rootView: UsageHistoryChart(model: model))
         super.init(nibName: nil, bundle: nil)
-        model.onTap = { [weak self] bucket in self?.tapped(bucket: bucket) }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
@@ -66,7 +65,7 @@ final class UsageHistoryViewController: UIViewController {
         scrollView.refreshControl = refresh
         view.addSubview(scrollView)
 
-        let rangeRow = UIStackView(arrangedSubviews: [rangeButton, scopeButton, UIView()])
+        let rangeRow = UsageMenuRow(arrangedSubviews: [rangeButton, scopeButton, UIView()])
         rangeRow.axis = .horizontal
         rangeRow.alignment = .center
         rangeRow.spacing = U.rangeRowGap
@@ -97,12 +96,6 @@ final class UsageHistoryViewController: UIViewController {
         chartCard.install(hosting)
         hosting.didMove(toParent: self)
 
-        figuresCard.onClear = { [weak self] in
-            guard let self else { return }
-            log.info("history_clear_selection")
-            state.clearSelection()
-            render()
-        }
         pairCard.onPair = { [weak self] in self?.onPairMac() }
 
         observer = relay.observe { [weak self] in self?.render() }
@@ -153,12 +146,6 @@ final class UsageHistoryViewController: UIViewController {
         guard agent != state.chartAgent else { return }
         log.info("history_agent agent=\(agent.rawValue, privacy: .public)")
         state.select(agent: agent)
-        render()
-    }
-
-    private func tapped(bucket: String) {
-        state.toggle(bucket: bucket)
-        log.info("history_bucket bucket=\(self.state.selectedBucket ?? "none", privacy: .public)")
         render()
     }
 
@@ -236,7 +223,7 @@ final class UsageHistoryViewController: UIViewController {
             }
             figuresCard.apply(UsageFiguresModel(
                 title: UsageHistoryText.rangeCaption(since: range.since, until: range.until),
-                titleEmphasized: false, stamp: stamp.0, stampTint: stamp.1, showsClear: false,
+                stamp: stamp.0, stampTint: stamp.1,
                 body: body, notices: []
             ))
             figuresCard.isHidden = false
@@ -249,15 +236,11 @@ final class UsageHistoryViewController: UIViewController {
         let chartTrend = state.chartAgent == .all
             ? allTrend
             : UsageAggregate.reducingModels(UsageTrend.build(report: report, range: range, agent: state.chartAgent, calendar: calendar))
-        if let selected = state.selectedBucket, !allTrend.bars.contains(where: { $0.id == selected }) {
-            log.debug("history_selection_dropped bucket=\(selected, privacy: .public)")
-            state.clearSelection()
-        }
         let figures = UsageSummaryFigures.build(report: report, agent: .all, comparisonLabel: range.comparisonLabel(calendar: calendar))
 
         var model = UsageFiguresModel(
             title: UsageHistoryText.rangeCaption(since: report.since, until: report.until),
-            titleEmphasized: false, stamp: stamp.0, stampTint: stamp.1, showsClear: false,
+            stamp: stamp.0, stampTint: stamp.1,
             body: .figures(UsageFiguresModel.Figures(
                 cost: figures.cost,
                 costCaption: (report.totals.costUSD ?? 0) == 0 && !figures.allUnpriced ? "no spend in this range" : figures.costDelta,
@@ -268,20 +251,6 @@ final class UsageHistoryViewController: UIViewController {
             )),
             notices: []
         )
-        if let selected = state.selectedBucket, let bar = allTrend.bars.first(where: { $0.id == selected }) {
-            let slice = UsageAggregate.bucketSlice(bar: bar, agent: state.chartAgent)
-            model.title = bar.title
-            model.titleEmphasized = true
-            model.showsClear = true
-            model.body = .figures(UsageFiguresModel.Figures(
-                cost: UsageFormatting.cost(slice.costUSD),
-                costCaption: UsageHistoryText.bucketCostSplit(bar: bar, agent: state.chartAgent),
-                tokens: UsageFormatting.tokens(slice.tokens.total),
-                segments: figures.segments,
-                composition: "composition for the whole range",
-                sessions: figures.sessions, turns: figures.turns, calls: figures.calls
-            ))
-        }
         let unpriced = report.byModel.filter { $0.costUSD == nil }.count
         if let notice = UsageHistoryText.unpricedNotice(modelCount: unpriced) {
             model.notices.append(.init(text: notice, warning: true))
@@ -304,7 +273,6 @@ final class UsageHistoryViewController: UIViewController {
         chartModel.trend = chartTrend
         chartModel.yMaximum = UsageTrend.niceMaximum(allTrend.maximum(.cost))
         chartModel.barInset = (chartTrend.bars.count > 7 ? U.barGapMonth : U.barGapDay) / 2
-        chartModel.selected = state.selectedBucket
         chartCard.isHidden = false
         chartCard.refit()
     }

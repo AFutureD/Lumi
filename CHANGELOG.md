@@ -13,7 +13,7 @@
 
 ### 用量
 
-- [Lumi for iPhone] - 新增底部 Usage Tab（Sessions · Usage · Macs · Settings）。History 段按 Today / This week / This month 看所有 Mac 或某一台的花费与 token：Cost（带较上一周期的涨跌）、Tokens（带构成条）、Sessions / Turns / Calls，以及一张每日花费柱状图——点柱子读单日，菜单可切某一家按模型堆叠（多于四个模型时前三 + `Other N models`）。数字来自每台 Mac 的 daemon，各台按自己的本地日算，只在内存里；明细表留在 Mac。
+- [Lumi for iPhone] - 新增底部 Usage Tab（Sessions · Usage · Macs · Settings）。History 段按 Today / This week / This month 看所有 Mac 或某一台的花费与 token：Cost（带较上一周期的涨跌）、Tokens（带构成条）、Sessions / Turns / Calls，以及一张每日花费柱状图——点柱子在柱顶弹出当日浮层（总额、每家 / 每模型一行、Tokens），菜单可切某一家按模型堆叠（多于四个模型时前三 + `Other N models`）。数字来自每台 Mac 的 daemon，各台按自己的本地日算，只在内存里；明细表留在 Mac。
 - daemon 的 Relay 新增 `fetch_usage`（只给档位，daemon 用自己的日历展开）与 `fetch_plan_usage` 两种请求；IPC 的 `usage_report` 与它们共用一份报表构建。
 
 ### 套餐用量

@@ -21,12 +21,12 @@ iPhone 的 Usage Tab 把每台 Mac 的两组数字带到手机上：**Plan** 是
    - 系统反馈：标题下是两个菜单 `This week ⌄`、`All Macs ⌄`；数字卡卡头写范围（`Sep 1 – 7, 2026`），`COST` 大数字带 `↑ 18% vs last week`，`TOKENS` 大数字下面是四段构成条与 `Cache read 78% · output 7%`，最后一行 `SESSIONS · TURNS · CALLS`；图卡 `COST PER DAY`，一天一根柱，Claude Code 深蓝、Codex 浅蓝叠着，图例在下。
    - 规则引用：[USE-R-002](#use-r-002-history-只有总览合计不受图的过滤影响)。
 3. 点图里的一根柱子。
-   - 系统反馈：其余柱子变淡，卡头换成这一天（`Thu, Sep 4`）和 `Clear`，Cost / Tokens 换成这一天的数字，Cost 下面写两家拆分 `Claude Code $4.05 · Codex $1.12`。再点一次或点 `Clear` 回到整段。
+   - 系统反馈：其余柱子变淡，柱顶弹出一张小浮层：这一天（`Thu 9/4`）和总花费，Claude Code、Codex 各一行各自的花费，最后一行 `Tokens`。数字卡不动。再点同一根、点一根空柱或换范围，浮层收起。
 4. 在图卡右上点 `All agents ⌄` 选一家。
    - 系统反馈：标题变 `COST PER DAY · BY MODEL`，柱子改按这家的模型堆叠，图例换成模型名（模型多于四个时只画前三 + `Other N models`）；数字卡不变。柱子整体变矮——纵轴不重新标定，量级差异自己显现。
    - 规则引用：[USE-R-002](#use-r-002-history-只有总览合计不受图的过滤影响)。
 5. 换范围（`Today` / `This month`）或换 scope（某台 Mac）。
-   - 系统反馈：换范围清掉柱子的选中态，Today 按小时画柱、This month 30 根；换成某台 Mac 时 Cost、Tokens、三个计数一起缩到那台的份额。
+   - 系统反馈：换范围收起浮层，Today 按小时画柱、This month 30 根；换成某台 Mac 时 Cost、Tokens、三个计数一起缩到那台的份额。
    - 规则引用：[USE-R-003](#use-r-003-范围按每台-mac-自己的本地日算)。
 
 完成信号：Plan 的数字与 Mac 上 Settings › Usage 的卡一致；History 的 Cost 与 Mac 上 Usage 页同范围的 Summary 一致。
@@ -34,7 +34,7 @@ iPhone 的 Usage Tab 把每台 Mac 的两组数字带到手机上：**Plan** 是
 ## 页面结构
 
 - **Plan**：Inset Grouped 列表，一台 Mac 一段。段头 = Mac 名 + 状态点 + `Online` / `Offline · 2h ago`。卡内一账号一小节：Agent 标记 + 名字 + `updated 2m ago`（关着写 `off`），下面每个服务商报了的窗口一行（没报的不占位）。条永远画已用；数字按这台 Mac 的 `Percent` 设置显示已用或剩余（剩余时右下补 `42% used`）；≥ 90% 只有数字变橙。段脚说明数字每 5 分钟由各台 Mac 刷新。
-- **History**：范围行（`Today · This week · This month` 与 `All Macs` / 某台 Mac 两个菜单）→ 数字卡（卡头范围或选中的那天 + Clear / `updated 2m ago`；`COST`、`TOKENS` 同一号大数字；`SESSIONS / TURNS / CALLS` 三等分）→ 图卡（`COST PER DAY[ · BY MODEL]` + agent 菜单；152 高的堆叠柱；图例）。
+- **History**：范围行（`Today · This week · This month` 与 `All Macs` / 某台 Mac 两个菜单）→ 数字卡（卡头范围 + `updated 2m ago`；`COST`、`TOKENS` 同一号大数字；`SESSIONS / TURNS / CALLS` 三等分）→ 图卡（`COST PER DAY[ · BY MODEL]` + agent 菜单；152 高的堆叠柱；图例）。
 - **刷新**：进入 Tab 立即问一次；下拉刷新；页面可见时 Plan 每 60 秒、History 每 30 秒；离开 Tab 停。
 
 ## 规则

@@ -28,6 +28,9 @@ public extension DesignSystem {
             public static let infoListTop: Double = 18
             /// Group title → card gap.
             public static let groupHeaderGap: Double = 7
+            /// The smallest area a tap can land on (HIG); small controls
+            /// extend their hit test to this without growing on screen.
+            public static let minimumTapTarget: Double = 44
             /// Field row: `min-height 44`, `padding 8 16`.
             public static let fieldRowMinimumHeight: Double = 44
             public static let fieldRowVerticalPadding: Double = 8
@@ -438,8 +441,16 @@ public extension DesignSystem {
             public static let barGapDay: Double = 8
             public static let barGapMonth: Double = 2
             public static let barRadius: Double = 3
-            /// Every bar but the selected one drops to this opacity.
+            /// Every bar but the tapped one drops to this opacity.
             public static let dimmedBar: Double = 0.3
+            /// The tapped bar's popup reuses `DesignSystem.Chart.Annotation`;
+            /// a model name is capped here so the card fits the phone's plot.
+            public static let popupNameMaximumWidth: Double = 160
+            /// The popup grows out of the bar top: a spring of this duration
+            /// over opacity and scale (from this scale), and the other bars
+            /// dim on the same spring.
+            public static let popupSpringDuration: Double = 0.28
+            public static let popupEntranceScale: Double = 0.94
             /// Legend: 8×8 radius-2 swatches, 12px text, wraps with `row-gap 4`.
             public static let legendSwatch: Double = 8
             public static let legendSwatchRadius: Double = 2
@@ -455,8 +466,8 @@ public extension DesignSystem {
             /// Secondary text `rgba(60,60,67,.6)`; tertiary `rgba(60,60,67,.45)`.
             public static let secondaryText = DesignColor(rgb: 60, 60, 67, alpha: 0.6)
             public static let tertiaryText = DesignColor(rgb: 60, 60, 67, alpha: 0.45)
-            /// The selected bar's axis label `rgb(0,0,0)`.
-            public static let selectedAxisLabel = DesignColor(rgb: 0, 0, 0)
+            /// The tapped bar's axis label `rgb(0,0,0)`; primary ink in dark.
+            public static let selectedAxisLabel = AdaptiveDesignColor(light: DesignColor(rgb: 0, 0, 0), dark: InkDark.primary)
             /// Composition bar track `rgba(120,120,128,.16)`.
             public static let barTrack = DesignColor(rgb: 120, 120, 128, alpha: 0.16)
         }

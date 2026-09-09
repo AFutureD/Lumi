@@ -4,6 +4,9 @@ import DesignSystem
 import Observation
 import SwiftUI
 import UIKit
+import os
+
+private let log = os.Logger(subsystem: "app.huanan.lumi", category: "usage.history")
 
 /// The chart card's data, owned by UIKit and read by SwiftUI. The only
 /// SwiftUI in the app: Swift Charts draws the stacked bars, everything
@@ -18,15 +21,11 @@ final class UsageChartModel {
     var yMaximum: Double
     /// Half the gap between bars (`8` for day bars, `2` for the 30-bar month).
     var barInset: CGFloat
-    var selected: String?
-    var onTap: (String) -> Void
 
-    init(trend: UsageTrend, yMaximum: Double, barInset: CGFloat, selected: String? = nil, onTap: @escaping (String) -> Void) {
+    init(trend: UsageTrend, yMaximum: Double, barInset: CGFloat) {
         self.trend = trend
         self.yMaximum = yMaximum
         self.barInset = barInset
-        self.selected = selected
-        self.onTap = onTap
     }
 }
 
@@ -39,13 +38,24 @@ extension UsageTrendSeries {
 
 /// `COST PER DAY`: stacked `BarMark`s per bucket, a 1px baseline, no y
 /// axis, 11pt axis labels (the Core axis already blanks all but five of the
-/// month's 30), tap a bar to select it (the others dim to .3), and a
-/// wrapping legend. Height is the plot (152) + the axis row + the legend.
+/// month's 30), and a wrapping legend. Height is the plot (152) + the axis
+/// row + the legend.
+///
+/// Tapping a bar opens the bucket popup over it (the other bars dim to .3);
+/// tapping the same bar, an empty one, or changing the range closes it. The
+/// popup is the chart's own state — nothing above the chart follows it.
+/// Every change of `shown` runs on one spring: the popup fades and scales
+/// out of the bar top (and slides to the next bar), the bars dim with it.
 struct UsageHistoryChart: View {
     private typealias U = DesignSystem.IOS.Usage
 
     let model: UsageChartModel
-    @State private var selection: String?
+    /// The `chartXSelection` binding; reset after every tap so the same bar
+    /// can be tapped again.
+    @State private var tapped: String?
+    /// `UsageTrendBar.id` of the bar whose popup is open.
+    @State private var shown: String?
+    @State private var popupSize: CGSize = .zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: U.chartLegendGap) {
@@ -55,12 +65,26 @@ struct UsageHistoryChart: View {
                 legend
             }
         }
+        .onChange(of: model.trend.bars.map(\.id)) { _, _ in show(nil) }
+    }
+
+    private static let spring = Animation.spring(duration: U.popupSpringDuration)
+
+    private func show(_ bucket: String?) {
+        withAnimation(Self.spring) { shown = bucket }
+    }
+
+    /// The bar whose popup is open; a bar that lost its cost (the agent
+    /// filter changed) closes it.
+    private var shownBar: UsageTrendBar? {
+        guard let bar = model.trend.bars.first(where: { $0.id == shown }), bar.total(.cost) > 0 else { return nil }
+        return bar
     }
 
     private var chart: some View {
         let trend = model.trend
         let barIDs = trend.bars.map(\.id)
-        let selected = model.selected
+        let selected = shownBar?.id
         return Chart {
             ForEach(trend.bars) { bar in
                 let dimmed = selected != nil && selected != bar.id
@@ -83,7 +107,7 @@ struct UsageHistoryChart: View {
         .chartForegroundStyleScale(domain: trend.series.map(\.id), range: trend.series.map { Color(uiColor: $0.uiColor) })
         .chartXScale(domain: barIDs)
         .chartYScale(domain: 0...max(model.yMaximum, 1e-9))
-        .chartXSelection(value: $selection)
+        .chartXSelection(value: $tapped)
         // The default iOS selection gesture is press-and-drag; a bar here is
         // tapped, so a plain tap drives the same binding.
         .chartGesture { proxy in
@@ -95,9 +119,14 @@ struct UsageHistoryChart: View {
                 AxisValueLabel(centered: true) {
                     if let id = value.as(String.self) {
                         let isSelected = id == selected
+                        // The label switches weight, not size: kept out of
+                        // the popup's spring so it never animates its width
+                        // (and truncates) on the way.
                         Text(trend.bars.first { $0.id == id }?.axisLabel ?? "")
                             .font(Font(isSelected ? DesignSystem.IOS.Typography.usageAxisLabelSelected : DesignSystem.IOS.Typography.usageAxisLabel).monospacedDigit())
-                            .foregroundStyle(Color(isSelected ? U.selectedAxisLabel : U.tertiaryText))
+                            .foregroundStyle(isSelected ? Color(uiColor: UIColor(U.selectedAxisLabel)) : Color(U.tertiaryText))
+                            .fixedSize()
+                            .transaction { $0.animation = nil }
                     }
                 }
             }
@@ -111,15 +140,52 @@ struct UsageHistoryChart: View {
         .chartPlotStyle { plot in
             plot.frame(height: U.chartHeight)
         }
-        // A tap lands here as a new value; UIKit decides what it means
-        // (select, or clear when it is the selected bar) and the binding is
-        // reset so the same bar can be tapped again.
-        .onChange(of: selection) { _, new in
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                // The popup is a plain overlay above the whole chart — a
+                // chart annotation sits in the marks' own layer, where the
+                // bars drawn after it paint over it. It is hidden until
+                // measured, so it never flashes at the bar top first.
+                let plotFrame = proxy.plotFrame.map { geometry[$0] } ?? CGRect(origin: .zero, size: proxy.plotSize)
+                if let placement = popup(in: plotFrame, proxy: proxy) {
+                    UsageBucketPopup(bar: placement.bar, series: trend.series)
+                        .onGeometryChange(for: CGSize.self, of: \.size) { popupSize = $0 }
+                        .opacity(popupSize == .zero ? 0 : 1)
+                        .position(placement.center)
+                        .transition(.opacity.combined(with: .scale(scale: U.popupEntranceScale, anchor: .bottom)))
+                }
+            }
+            .allowsHitTesting(false)
+        }
+        // A tap lands here as a new value: it opens that bar's popup, or
+        // closes the popup when it is the open bar or an empty one. The
+        // binding is reset so the same bar can be tapped again.
+        .onChange(of: tapped) { _, new in
             guard let new else { return }
-            model.onTap(new)
-            Task { @MainActor in selection = nil }
+            let hasCost = trend.bars.first { $0.id == new }?.total(.cost) ?? 0 > 0
+            show((shown == new || !hasCost) ? nil : new)
+            log.info("history_bucket bucket=\(shown ?? "none", privacy: .public)")
+            Task { @MainActor in tapped = nil }
         }
         .accessibilityLabel(trend.title(.cost))
+    }
+
+    /// Where the popup goes: centred over the open bar, its bottom 8pt
+    /// above the bar's top; slid sideways to stay inside the plot, and
+    /// pushed down when it would leave the plot at the top.
+    private func popup(in plotFrame: CGRect, proxy: ChartProxy) -> (bar: UsageTrendBar, center: CGPoint)? {
+        let bars = model.trend.bars
+        guard let bar = shownBar, let index = bars.firstIndex(where: { $0.id == bar.id }),
+              let barTop = proxy.position(forY: bar.total(.cost)) else { return nil }
+        let slot = plotFrame.width / CGFloat(max(bars.count, 1))
+        let anchorX = plotFrame.minX + slot * (CGFloat(index) + 0.5)
+        let anchorY = plotFrame.minY + barTop
+        // The popup is narrower than any plot (its model name is capped),
+        // so clamping never inverts.
+        let halfWidth = min(max(popupSize.width, DesignSystem.Chart.Annotation.minimumWidth), plotFrame.width) / 2
+        let x = min(max(anchorX, plotFrame.minX + halfWidth), plotFrame.maxX - halfWidth)
+        let top = max(anchorY - DesignSystem.Chart.Annotation.offset - popupSize.height, plotFrame.minY)
+        return (bar, CGPoint(x: x, y: top + popupSize.height / 2))
     }
 
     private var legend: some View {
@@ -136,6 +202,68 @@ struct UsageHistoryChart: View {
                 }
             }
         }
+    }
+}
+
+/// The bucket popup: date + total cost, one row per series that has a
+/// value, then the bucket's tokens. Same card as the Mac hover annotation,
+/// with a capped model name so it always fits the phone's plot. Its fill
+/// is adaptive, so every colour on it is too.
+private struct UsageBucketPopup: View {
+    private typealias A = DesignSystem.Chart.Annotation
+
+    let bar: UsageTrendBar
+    let series: [UsageTrendSeries]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: A.rowGap) {
+            HStack(spacing: DesignSystem.Spacing.l) {
+                Text(bar.title)
+                    .font(Font(DesignSystem.Typography.usageAnnotationDate))
+                    .foregroundStyle(Color(uiColor: .inkSecondary))
+                Spacer(minLength: 0)
+                Text(UsageFormatting.cost(bar.total(.cost)))
+                    .font(Font(DesignSystem.Typography.usageAnnotationTotal))
+                    .foregroundStyle(Color(uiColor: .inkPrimary))
+            }
+            ForEach(series.filter { bar.value(.cost, series: $0.id) > 0 }) { item in
+                HStack(spacing: DesignSystem.Spacing.s) {
+                    RoundedRectangle(cornerRadius: DesignSystem.Chart.legendSwatchRadius, style: .continuous)
+                        .fill(Color(uiColor: item.uiColor))
+                        .frame(width: A.swatch, height: A.swatch)
+                    Text(item.name)
+                        .font(Font(DesignSystem.Typography.footnote))
+                        .foregroundStyle(Color(uiColor: UIColor(A.name)))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: DesignSystem.IOS.Usage.popupNameMaximumWidth, alignment: .leading)
+                    Spacer(minLength: DesignSystem.Spacing.l)
+                    Text(UsageFormatting.cost(bar.value(.cost, series: item.id)))
+                        .font(Font(DesignSystem.IOS.Typography.usageAxisLabel).monospacedDigit())
+                        .foregroundStyle(Color(uiColor: .inkPrimary))
+                }
+            }
+            HStack(spacing: DesignSystem.Spacing.l) {
+                Text("Tokens")
+                    .font(Font(DesignSystem.Typography.footnote))
+                    .foregroundStyle(Color(uiColor: .inkSecondary))
+                Spacer(minLength: 0)
+                Text(UsageFormatting.tokens(Int64(bar.total(.tokens).rounded())))
+                    .font(Font(DesignSystem.IOS.Typography.usageAxisLabel).monospacedDigit())
+                    .foregroundStyle(Color(uiColor: .inkPrimary))
+            }
+        }
+        .padding(.top, A.paddingTop)
+        .padding(.horizontal, A.paddingHorizontal)
+        .padding(.bottom, A.paddingBottom)
+        .frame(minWidth: A.minimumWidth, alignment: .leading)
+        .background(Color(uiColor: UIColor(A.fill)), in: RoundedRectangle(cornerRadius: A.radius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: A.radius, style: .continuous)
+                .strokeBorder(Color(uiColor: UIColor(A.ring)), lineWidth: DesignSystem.Stroke.hairline)
+        }
+        .shadow(color: Color(A.shadow), radius: A.shadowBlur / 2, y: A.shadowOffsetY)
+        .fixedSize()
     }
 }
 
