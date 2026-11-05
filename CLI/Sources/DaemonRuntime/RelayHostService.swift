@@ -548,7 +548,7 @@ public actor RelayHostService: Service {
                 "unverified": devices.filter { $0.revokedAt == nil && !$0.keyVerified }.count,
             ]))
         }
-        await resendRevocations(listed, credentials: credentials)
+        await resendRevocations(listed)
     }
 
     /// The Relay's row for a device as this Mac judges it, for display:
@@ -593,7 +593,7 @@ public actor RelayHostService: Service {
     /// The Relay follows this Mac's revocations: a device revoked here that
     /// the Relay still lists as active (the revoke never reached it, or it
     /// did not apply it) is revoked there again on every refresh.
-    private func resendRevocations(_ listed: [PairedDevice], credentials: RelayHostCredentials) async {
+    private func resendRevocations(_ listed: [PairedDevice]) async {
         for device in listed where device.revokedAt == nil && state.revokedAt(for: device.id) != nil {
             // Said once per device: a Relay that keeps refusing would
             // otherwise repeat itself on every 10 s refresh.
@@ -601,25 +601,35 @@ public actor RelayHostService: Service {
             if firstSighting {
                 log.warning("device_revocation_unapplied", metadata: .fields(["device": device.id.rawValue]))
             }
-            do {
-                try await rest.revoke(hostID: credentials.hostID, deviceID: device.id, hostSecret: credentials.hostSecret)
+            if await sendRevocation(of: device.id, logsFailure: firstSighting) {
                 unappliedRevocationLogged.remove(device.id)
-                log.info("device_revocation_sent", metadata: .fields(["device": device.id.rawValue]))
-            } catch {
-                lastError = "The Relay has not applied a revocation: \(error)"
-                if firstSighting {
-                    log.warning("device_revocation_send_failed", metadata: .fields(["device": device.id.rawValue, "error": error]))
-                }
             }
+        }
+    }
+
+    /// Tells the Relay a device is revoked (it closes the device's socket
+    /// and drops its push token). False when the Relay did not take it; the
+    /// next refresh tries again.
+    private func sendRevocation(of deviceID: DeviceID, logsFailure: Bool = true) async -> Bool {
+        guard let credentials else { return false }
+        do {
+            try await rest.revoke(hostID: credentials.hostID, deviceID: deviceID, hostSecret: credentials.hostSecret)
+            log.info("device_revocation_sent", metadata: .fields(["device": deviceID.rawValue]))
+            return true
+        } catch {
+            lastError = "The Relay has not applied a revocation: \(error)"
+            if logsFailure {
+                log.warning("device_revocation_send_failed", metadata: .fields(["device": deviceID.rawValue, "error": error]))
+            }
+            return false
         }
     }
 
     /// Revokes an iPhone on this Mac first — written to the state file, so
     /// neither a restart nor anything the Relay answers brings it back —
-    /// then lets the refresh carry the revocation to the Relay (closing the
-    /// device's socket and dropping its push token there). A revocation
-    /// that cannot be written throws and changes nothing. Only pairing
-    /// again trusts the device.
+    /// then tells the Relay. A revocation that cannot be written throws and
+    /// changes nothing; one the Relay does not take stays in force here and
+    /// is sent again on every refresh. Only pairing again trusts the device.
     public func revoke(deviceID: DeviceID) async throws {
         do {
             try state.revoke(deviceID, at: Date())
@@ -630,6 +640,7 @@ public actor RelayHostService: Service {
         channelSessions[deviceID] = nil
         devices = devices.map { verdict(on: $0) }
         log.info("device_revoked", metadata: .fields(["device": deviceID.rawValue]))
+        _ = await sendRevocation(of: deviceID)
         await refreshDevices()
     }
 
