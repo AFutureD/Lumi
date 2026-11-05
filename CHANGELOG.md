@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-06
+
 ### 配对与同步
 
 - 升级提示：Lumi for Mac 与 Lumi for iPhone 要都更新到这一版才能继续同步。只更新一端时，iPhone 的 Macs 页仍显示 Online、Mac 上这台 iPhone 仍是 Active，但 Session 不再更新；两端都更新后自动恢复，不需要重新配对。
@@ -172,7 +174,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/AFutureD/Lumi/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AFutureD/Lumi/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/AFutureD/Lumi/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/AFutureD/Lumi/compare/v0.1.4...v0.1.5
