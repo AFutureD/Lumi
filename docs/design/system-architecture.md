@@ -180,7 +180,7 @@ flowchart TD
 
 1. 从 Keychain 恢复所有 Mac 通道凭据。
 2. 为每台 Mac 打开独立 SQLite 缓存，先把缓存内容显示出来。
-3. 建立 Device WSS；Host 在线即发送密封的 `sync_index` 请求，收齐 index 后用 `SyncReconcilePlan` 对账（裁剪 / 整取 / 补尾 / 改 summary）。
+3. 建立 Device WSS；Host 在线即发送密封的 `sync_index` 请求——它同时与 daemon 打开一个通道会话（一次性钥匙派生的会话密钥，只在内存里）——收齐 index 后用 `SyncReconcilePlan` 对账（裁剪 / 整取 / 补尾 / 改 summary）。
 4. 之后应用 `session_message` 事件流；序号断档、重连、回到前台、下拉刷新都重新索取 index。
 
 ## 当前实现约束

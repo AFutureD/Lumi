@@ -39,8 +39,10 @@ extension RelayFrameKind: Codable {
 }
 
 /// The routing envelope the Relay understands. Host → device sequences are
-/// strictly increasing per device channel (the Relay drops reuse); device →
-/// host sequences are connection-local and only diagnostic.
+/// strictly increasing per device channel (the Relay drops reuse, and the
+/// iPhone accepts each channel session's frames only in rising order);
+/// device → host sequences count up per connection and the daemon accepts
+/// a channel session's requests only in rising order.
 public struct RelayRoutingFrame: Codable, Hashable, Sendable {
     public let version: ProtocolVersion
     public let hostID: HostID
@@ -110,6 +112,12 @@ public struct PairedDevice: Codable, Hashable, Sendable {
 
     public func withKeyVerified(_ verified: Bool) -> PairedDevice {
         PairedDevice(id: id, name: name, publicKey: publicKey, keyVerified: verified, pairedAt: pairedAt, revokedAt: revokedAt)
+    }
+
+    /// The same row as this Mac revoked it: no longer verified, whatever the
+    /// Relay lists.
+    public func revoked(at date: Date) -> PairedDevice {
+        PairedDevice(id: id, name: name, publicKey: publicKey, keyVerified: false, pairedAt: pairedAt, revokedAt: date)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -330,7 +338,8 @@ public struct RelayHostStatus: Codable, Hashable, Sendable {
 /// frames; everything else travels host → device in `data` frames.
 public enum RemotePayloadKind: Hashable, Sendable {
     // MARK: device → host
-    /// Send me the session index.
+    /// Open a channel session and send me the session index (`requestID`,
+    /// `ephemeralKey`: the iPhone's key for this session).
     case syncIndex
     /// Send me these sessions in full (`sessionIDs`).
     case fetchSession
@@ -345,6 +354,10 @@ public enum RemotePayloadKind: Hashable, Sendable {
     case fetchPlanUsage
 
     // MARK: host → device
+    /// The channel session a `sync_index` asked for is open (`requestID`,
+    /// `ephemeralKey`: the daemon's key for this session). Everything after
+    /// it is sealed with the session's key.
+    case channelOpened
     /// One part of the index (`index`, `part`, `partCount`, `requestID`).
     case sessionIndex
     /// Summaries that changed without a timeline event (`summaries`).
@@ -371,6 +384,7 @@ public enum RemotePayloadKind: Hashable, Sendable {
         case .fetchSession: "fetch_session"
         case .fetchTimelineSince: "fetch_timeline_since"
         case .sessionReviewed: "session_reviewed"
+        case .channelOpened: "channel_opened"
         case .sessionIndex: "session_index"
         case .sessionInfo: "session_info"
         case .sessionFull: "session_full"
@@ -395,6 +409,7 @@ extension RemotePayloadKind: Codable {
         case "fetch_session": .fetchSession
         case "fetch_timeline_since": .fetchTimelineSince
         case "session_reviewed": .sessionReviewed
+        case "channel_opened": .channelOpened
         case "session_index": .sessionIndex
         case "session_info": .sessionInfo
         case "session_full": .sessionFull
@@ -471,6 +486,9 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
     public let planUsage: PlanUsageState?
     /// `plan_usage`: the daemon's settings (the percent style the numbers follow).
     public let settings: DaemonSettings?
+    /// `sync_index` / `channel_opened`: the sender's one-time public key for
+    /// the channel session being opened.
+    public let ephemeralKey: Data?
 
     public init(
         kind: RemotePayloadKind,
@@ -488,7 +506,8 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         usageRange: UsageRangePreset? = nil,
         usage: UsageReport? = nil,
         planUsage: PlanUsageState? = nil,
-        settings: DaemonSettings? = nil
+        settings: DaemonSettings? = nil,
+        ephemeralKey: Data? = nil
     ) {
         self.kind = kind
         self.generatedAt = generatedAt
@@ -506,6 +525,7 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         self.usage = usage
         self.planUsage = planUsage
         self.settings = settings
+        self.ephemeralKey = ephemeralKey
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -525,6 +545,7 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         case usage
         case planUsage
         case settings
+        case ephemeralKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -545,6 +566,7 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         usage = try c.decodeIfPresent(UsageReport.self, forKey: .usage)
         planUsage = try c.decodeIfPresent(PlanUsageState.self, forKey: .planUsage)
         settings = try c.decodeIfPresent(DaemonSettings.self, forKey: .settings)
+        ephemeralKey = try c.decodeIfPresent(Data.self, forKey: .ephemeralKey)
     }
 }
 

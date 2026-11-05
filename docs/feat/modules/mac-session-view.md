@@ -169,7 +169,9 @@ Activity 标题右侧有两枚下拉按钮：
 - 码的寿命：5 分钟有效，到点立刻作废，但不会自动换新——卡片停在过期态（倒计时处显示 Expired、二维码收起、旧码变灰），提示点 New code 再出一个。
 - 出新码的时机：只在进入这一页、点 New code 或一次配对有了结果之后；New code 在有 iPhone 待确认时暂不可用。离开页面码也作废，回来时重新出码；daemon 重启后这一页自动出新码。
 - iPhone 提交后：卡片下方出现 “<iPhone 名> wants to pair”、Relay 地址和时间、一组 6 位数字（如 `482 913`）以及 Don't match / Match 两个按钮。和 iPhone 屏幕上的数字一样才点 Match（默认键盘焦点在 Don't match，Return 不触发任何一个）；60 秒没点自动拒绝。
-- 结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始；iPhone 那边中途取消则不显示结果，直接换新码。
+- 结果（Paired ✓ / Pairing declined ✕）停 2 秒后卡片收起、新码开始。
+- 不显示结果、直接换新码：iPhone 那边中途取消时。
+- iPhone 提交后，Mac 没能和 Relay 完成下一步时：不会出现数字，这个码作废。Relay 还连得上，页面随即换出新码；连不上，码的位置显示 Relay unavailable（或“拿不到配对码…每 30 秒自动重试”），恢复后才有新码。iPhone 用新码重来（[摩擦点：配对失败](../friction-points.md#配对失败)）。
 - 整个确认过程要停在这一页完成——离开页面或退出 Mac App 会取消进行中的配对。
 - 规则见 [IOS-R-002](./iphone-live-view.md#ios-r-002-配对码短时且一次性)、[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)。
 
@@ -177,9 +179,11 @@ Activity 标题右侧有两枚下拉按钮：
 
 “iPhone”页面右列的 Paired iPhones 列表每行是一台 iPhone：名称旁一枚状态 tag，行尾一个文字动作；标题旁的数量只统计 Active 的设备。
 
-- Active：这台 Mac 在 Match 时记住了这台 iPhone 的身份，正在向它同步（[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。行尾是 “Revoke”：确认后只关闭该设备的通道，其他 iPhone 不受影响，记录保留为 Revoked。
+- Active：这台 Mac 在 Match 时记住了这台 iPhone 的身份，正在向它同步（[IOS-R-014](./iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。行尾是 “Revoke”。
 - Unverified：这台 iPhone 的身份不是这台 Mac 点 Match 批准过的（此版本之前配对的，或中转服务换过钥匙），不向它发送任何 Session 内容，下方提示 `Key not verified · pair this iPhone again`；行尾同样是 “Revoke”。恢复方式见[用户摩擦点](../friction-points.md#iphone-在-mac-上显示-unverified)。
-- Revoked：已被撤销。行尾是 “Remove”：确认后删掉这条配对记录（这台 iPhone 之后用新码可以重新配对）。
+- Revoked：这台 Mac 撤销了它。行尾是 “Remove”：确认后删掉这条配对记录（这台 iPhone 之后用新码可以重新配对）。
+
+点 “Revoke” 并确认后，这一行立即变成 Revoked，Mac 不再向这台 iPhone 发送任何内容，其他 iPhone 不受影响。只要 daemon 在运行，Mac 连不上 Relay（页面显示 Relay unavailable）时也一样；daemon 没在运行时撤销不了，这一行保持原状。撤销之后只有重新配对并点 Match 才会回到 Active（[IOS-R-004](./iphone-live-view.md#ios-r-004-撤销按设备生效)）。
 
 刚配对成功的那一行会短暂高亮一次。
 

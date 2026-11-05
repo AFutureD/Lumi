@@ -94,8 +94,8 @@
 
 ### 设备被撤销
 
-- 用户看到：连接关闭；Macs 页这台 Mac 显示 `Revoked · <Relay 地址>`，缓存仍可翻看；推送提醒停止。
-- 可执行动作：在 Mac“iPhone”页看码，iPhone 重新走一遍配对（沿用原设备身份）。
+- 用户看到：Mac 的 Paired iPhones 里这台 iPhone 立即变成 Revoked；iPhone 的连接关闭，Macs 页这台 Mac 显示 `Revoked · <Relay 地址>`，缓存仍可翻看；推送提醒停止。
+- 可执行动作：在 Mac“iPhone”页看码，iPhone 重新走一遍配对（沿用原设备身份）；这是恢复访问的唯一方式（[IOS-R-004](../modules/iphone-live-view.md#ios-r-004-撤销按设备生效)、[摩擦点：设备被撤销](../friction-points.md#设备被撤销)）。
 - 数据影响：只影响被撤销的 iPhone。
 
 ### 升级后 Mac 上显示 Unverified
@@ -103,6 +103,12 @@
 - 用户看到：iPhone 的 Macs 页该 Mac 显示 Online，但 Session 停止更新；Mac 的 Paired iPhones 里这台 iPhone 显示 Unverified。旧版本配对过的 iPhone 升级后都会遇到。
 - 可执行动作：重新走一遍配对（输码、对数字、Mac 点 Match），沿用原设备身份（[IOS-R-014](../modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)、[摩擦点：Unverified](../friction-points.md#iphone-在-mac-上显示-unverified)）。
 - 数据影响：本机缓存保留，重配后继续增量同步。
+
+### 只更新了 Mac 或 iPhone 其中一端
+
+- 用户看到：iPhone 的 Macs 页该 Mac 显示 Online，但 Session 停止更新，Usage Tab 取不到这台 Mac 的数据（`Can't reach … · timed out`）；Mac 的 Paired iPhones 里这台 iPhone 仍是 Active。
+- 可执行动作：把 Mac 和 iPhone 上的 Lumi 都更新到最新版本（[IOS-R-018](../modules/iphone-live-view.md#ios-r-018-mac-与-iphone-都更新后才同步)、[摩擦点：Online 但不更新](../friction-points.md#iphone-显示-online-但-session-不更新)）。
+- 数据影响：配对关系和本机缓存保留，两端都更新后自动恢复同步。
 
 ## 为同一台 Mac 配对第二台 iPhone
 

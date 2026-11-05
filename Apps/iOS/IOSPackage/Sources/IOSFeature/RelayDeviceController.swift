@@ -453,6 +453,13 @@ struct PlanUsageSnapshot: Equatable, Sendable {
 /// the screens read, and the one Relay socket every session of that Mac is
 /// multiplexed through.
 ///
+/// The Relay only carries frames; it decides nothing here. Every
+/// `sync_index` opens a channel session: both ends add a one-time key and
+/// derive a session key that exists only in memory. A frame counts only
+/// when it authenticates under the current session and its sequence moved
+/// forward — so a frame the Relay repeats, reorders or keeps from an
+/// earlier session changes nothing, and neither does a presence flag.
+///
 /// Sync is index-first and lazy: every connect (and pull-to-refresh, and
 /// any sequence gap) asks the daemon for `session_index`; `SyncReconcilePlan`
 /// turns the difference against `cache.sessionIndex()` into prunes and
@@ -521,10 +528,20 @@ final class RelayDeviceChannel {
     private var hasCompleteSync = false
     private var lastError: String?
     private var health: DaemonHealth?
-    /// Highest frame sequence seen on this connection, for gap detection.
-    private var lastReceivedSequence: UInt64 = 0
-    /// Sequence of device → host `request` frames on this connection.
+    /// The channel session this connection syncs under. Memory only: gone
+    /// with the connection or the Mac going offline, replaced by the next
+    /// `sync_index`.
+    private var channelSession: ChannelSession?
+    /// A `sync_index` on its way: this end's one-time key, waiting for the
+    /// daemon's `channel_opened`.
+    private var channelOpening: ChannelOpening?
+    /// Requests made while a session is opening; sent, in order, once it is.
+    private var outbox: [RemoteSessionPayload] = []
+    /// Sequence of device → host `request` frames on this connection. The
+    /// daemon takes a session's requests only in rising order.
     private var requestSequence: UInt64 = 0
+    /// Sealed requests leave in the order they were sealed.
+    private var sendQueue: Task<Void, Never>?
     private var pending: [RequestID: PendingRequest] = [:]
     private var usageRequests: [RequestID: (kind: UsageRequest, sentAt: Date)] = [:]
     /// `nil` until the Usage tab first asks — the UI's "never loaded" state.
@@ -552,6 +569,19 @@ final class RelayDeviceChannel {
     private struct HiddenSession {
         let hiddenAt: Date
         var detail: SessionDetail
+    }
+
+    private struct ChannelSession {
+        let key: RelayChannelKey
+        /// Highest frame sequence that authenticated in this session: the
+        /// replay floor and the gap detector.
+        var lastReceivedSequence: UInt64
+    }
+
+    private struct ChannelOpening {
+        /// The `sync_index` that asked; `channel_opened` must echo it.
+        let requestID: RequestID
+        let ephemeral: RelayEphemeralKey
     }
 
     init(
@@ -714,6 +744,7 @@ final class RelayDeviceChannel {
         await transport?.disconnect()
         isConnected = false
         isHostOnline = false
+        endChannelSession()
         pending = [:]
         indexParts = [:]
         partBuffers = [:]
@@ -840,8 +871,9 @@ final class RelayDeviceChannel {
         isConnected = false
         isHostOnline = false
         hasCompleteSync = false
-        lastReceivedSequence = 0
+        endChannelSession()
         requestSequence = 0
+        sendQueue = nil
         pending = [:]
         indexParts = [:]
         partBuffers = [:]
@@ -879,6 +911,7 @@ final class RelayDeviceChannel {
         isConnected = false
         isHostOnline = false
         hasCompleteSync = false
+        endChannelSession()
         pending = [:]
         indexParts = [:]
         partBuffers = [:]
@@ -919,11 +952,72 @@ final class RelayDeviceChannel {
 
     // MARK: - Requests
 
-    private func requestIndex() {
+    /// Asks for the index — and with it opens a new channel session: this
+    /// end's one-time key goes out in a `sync_index` sealed with the
+    /// handshake key, and the daemon's `channel_opened` completes the
+    /// session key (`receiveOpening`). Until then the previous session, if
+    /// any, keeps taking frames, and requests wait in the outbox.
+    ///
+    /// One at a time, unless `superseding`: the daemon just (re)appeared
+    /// behind the Relay and cannot know an opening sent before that.
+    private func requestIndex(superseding: Bool = false, attempts: Int = 1) {
         guard isConnected, isHostOnline else { return }
-        // One index request in flight at a time.
-        guard !pending.values.contains(where: { if case .index = $0.kind { true } else { false } }) else { return }
-        send(kind: .index, payload: RemoteSessionPayload(kind: .syncIndex))
+        guard superseding || !pending.values.contains(where: { if case .index = $0.kind { true } else { false } }) else { return }
+        let ephemeral = RelayEphemeralKey()
+        let requestID = RequestID()
+        let opening: RemoteSessionPayload
+        let handshakeKey: RelayChannelKey
+        do {
+            handshakeKey = try self.handshakeKey()
+            opening = RemoteSessionPayload(kind: .syncIndex, generatedAt: Date(), requestID: requestID, ephemeralKey: try ephemeral.publicKey)
+        } catch {
+            lastError = "Unable to start syncing: \(error)"
+            return
+        }
+        // The daemon answers a request only in the session it arrived in:
+        // whatever is still unanswered is asked again once this one opens.
+        // An earlier index is void — its answer belongs to its own session.
+        requeueUnansweredRequests()
+        channelOpening = ChannelOpening(requestID: requestID, ephemeral: ephemeral)
+        pending[requestID] = PendingRequest(kind: .index, payload: opening, sentAt: Date(), attempts: attempts)
+        transmit(opening, key: handshakeKey)
+    }
+
+    private func requeueUnansweredRequests() {
+        var queued = Set(outbox.compactMap(\.requestID))
+        for (id, request) in pending {
+            if case .index = request.kind {
+                pending[id] = nil
+                indexParts[id] = nil
+            } else if queued.insert(id).inserted {
+                outbox.append(request.payload)
+            }
+        }
+        for (id, request) in usageRequests where queued.insert(id).inserted {
+            switch request.kind {
+            case let .usage(preset):
+                outbox.append(RemoteSessionPayload(kind: .fetchUsage, generatedAt: Date(), requestID: id, usageRange: preset))
+            case .planUsage:
+                outbox.append(RemoteSessionPayload(kind: .fetchPlanUsage, generatedAt: Date(), requestID: id))
+            }
+        }
+    }
+
+    /// The key the two long-term keys of this pairing derive. It seals only
+    /// the `sync_index` / `channel_opened` exchange.
+    private func handshakeKey() throws -> RelayChannelKey {
+        try RelayCryptography.handshakeKey(
+            privateKey: credentials.keyPair.privateKey,
+            peerPublicKey: credentials.hostPublicKey,
+            hostID: credentials.hostID,
+            deviceID: credentials.deviceID
+        )
+    }
+
+    private func endChannelSession() {
+        channelSession = nil
+        channelOpening = nil
+        outbox = []
     }
 
     private func send(kind: PendingKind, payload: RemoteSessionPayload, attempts: Int = 1) {
@@ -939,22 +1033,49 @@ final class RelayDeviceChannel {
         sendRequest(stamped)
     }
 
+    /// Sends a request inside the open channel session. While a session is
+    /// opening the request waits for it; with none at all there is nobody
+    /// to hear it and the caller's own timeout or next sync covers it.
     private func sendRequest(_ payload: RemoteSessionPayload) {
+        if channelOpening != nil {
+            outbox.append(payload)
+        } else if let session = channelSession {
+            transmit(payload, key: session.key)
+        }
+    }
+
+    private func flushOutbox() {
+        guard let session = channelSession else { return }
+        let waiting = outbox
+        outbox = []
+        for payload in waiting { transmit(payload, key: session.key) }
+    }
+
+    /// Seals now, on the next request sequence, and sends behind every
+    /// request sealed before it — the daemon drops a request whose sequence
+    /// is not past the previous one's.
+    private func transmit(_ payload: RemoteSessionPayload, key: RelayChannelKey) {
         guard let transport else { return }
-        requestSequence &+= 1
-        let credentials = self.credentials
-        let sequence = requestSequence
-        Task { [weak self] in
+        requestSequence += 1
+        let frame: RelayRoutingFrame
+        do {
+            frame = try RelayCryptography.seal(
+                payload,
+                hostID: credentials.hostID,
+                deviceID: credentials.deviceID,
+                sequence: requestSequence,
+                kind: .request,
+                key: key
+            )
+        } catch {
+            lastError = "Unable to send request: \(error)"
+            onChange()
+            return
+        }
+        let previous = sendQueue
+        sendQueue = Task { [weak self] in
+            await previous?.value
             do {
-                let frame = try RelayCryptography.seal(
-                    payload,
-                    hostID: credentials.hostID,
-                    deviceID: credentials.deviceID,
-                    sequence: sequence,
-                    kind: .request,
-                    privateKey: credentials.keyPair.privateKey,
-                    peerPublicKey: credentials.hostPublicKey
-                )
                 try await transport.send(frame)
             } catch {
                 self?.lastError = "Unable to send request: \(error)"
@@ -1003,16 +1124,22 @@ final class RelayDeviceChannel {
         for (id, request) in expired {
             pending[id] = nil
             indexParts[id] = nil
-            if request.attempts < 2 {
-                send(kind: request.kind, payload: request.payload, attempts: request.attempts + 1)
-            } else {
+            outbox.removeAll { $0.requestID == id }
+            if request.attempts >= 2 {
                 giveUp = true
+            } else if case .index = request.kind {
+                // Never the same opening twice: a fresh one-time key.
+                requestIndex(superseding: true, attempts: request.attempts + 1)
+            } else {
+                send(kind: request.kind, payload: request.payload, attempts: request.attempts + 1)
             }
         }
         if giveUp {
             pending = [:]
             indexParts = [:]
             partBuffers = [:]
+            channelOpening = nil
+            outbox = []
             lastError = "The Mac did not answer; retrying."
             onChange()
             retryTask?.cancel()
@@ -1029,17 +1156,17 @@ final class RelayDeviceChannel {
     private func handle(_ message: RelayIncomingMessage) async {
         switch message {
         case let .presence(online):
-            let wasOnline = isHostOnline
+            // Presence is the Relay's word, not the daemon's: it starts or
+            // stops asking, and never touches what a session has received.
             isHostOnline = online
+            hasCompleteSync = false
             if online {
                 // First sight of the daemon — or the daemon reconnected behind
-                // the Relay (which repeats `online`) and forgot who had synced,
-                // so its pushes stop until we index again. Either way: index.
-                if !wasOnline { lastReceivedSequence = 0 }
-                hasCompleteSync = false
-                requestIndex()
+                // the Relay (which repeats `online`) and forgot every session,
+                // so nothing reaches us until we open one again.
+                requestIndex(superseding: true)
             } else {
-                hasCompleteSync = false
+                endChannelSession()
                 pending = [:]
                 indexParts = [:]
                 partBuffers = [:]
@@ -1048,22 +1175,24 @@ final class RelayDeviceChannel {
         case let .frame(frame):
             guard frame.hostID == credentials.hostID,
                   frame.deviceID == credentials.deviceID,
-                  frame.kind == .data,
-                  frame.sequence > lastReceivedSequence else { return }
-            let gap = lastReceivedSequence != 0 && frame.sequence > lastReceivedSequence + 1
-            lastReceivedSequence = frame.sequence
-            isHostOnline = true
+                  frame.kind == .data else { return }
+            if receiveOpening(frame) { break }
+            // Authenticate first: a frame that does not open under this
+            // session's key is not the daemon's for this session and moves
+            // nothing.
+            guard let session = channelSession, frame.sequence > session.lastReceivedSequence else { return }
+            let payload: RemoteSessionPayload
             do {
-                let payload = try RelayCryptography.open(
-                    frame,
-                    privateKey: credentials.keyPair.privateKey,
-                    peerPublicKey: credentials.hostPublicKey
-                )
-                await apply(payload)
-                lastError = nil
+                payload = try RelayCryptography.open(frame, key: session.key)
             } catch {
                 lastError = "Unable to decrypt relay update: \(error)"
+                break
             }
+            let gap = frame.sequence > session.lastReceivedSequence + 1
+            channelSession?.lastReceivedSequence = frame.sequence
+            isHostOnline = true
+            await apply(payload)
+            lastError = nil
             if gap {
                 // Dropped frames: whatever they carried is healed by the index.
                 hasCompleteSync = false
@@ -1076,6 +1205,40 @@ final class RelayDeviceChannel {
             return
         }
         onChange()
+    }
+
+    /// While a `sync_index` is pending: a frame sealed with the handshake
+    /// key is the daemon's answer to an opening. `channel_opened` echoing
+    /// this one carries the daemon's one-time key; the session key both
+    /// ends derive takes over from the frame after it. Returns false for a
+    /// frame that is not sealed with the handshake key (the current
+    /// session's, usually).
+    private func receiveOpening(_ frame: RelayRoutingFrame) -> Bool {
+        guard let opening = channelOpening,
+              let handshakeKey = try? handshakeKey(),
+              let payload = try? RelayCryptography.open(frame, key: handshakeKey) else { return false }
+        // The answer to an opening this iPhone has since replaced is void.
+        guard payload.kind == .channelOpened, payload.requestID == opening.requestID,
+              let hostEphemeralKey = payload.ephemeralKey else { return true }
+        do {
+            let key = try RelayCryptography.sessionKey(
+                as: .device,
+                ephemeral: opening.ephemeral,
+                peerEphemeralPublicKey: hostEphemeralKey,
+                privateKey: credentials.keyPair.privateKey,
+                peerPublicKey: credentials.hostPublicKey,
+                hostID: credentials.hostID,
+                deviceID: credentials.deviceID
+            )
+            channelSession = ChannelSession(key: key, lastReceivedSequence: frame.sequence)
+            channelOpening = nil
+            isHostOnline = true
+            lastError = nil
+            flushOutbox()
+        } catch {
+            lastError = "Unable to start syncing: \(error)"
+        }
+        return true
     }
 
     private func apply(_ payload: RemoteSessionPayload) async {
@@ -1153,6 +1316,10 @@ final class RelayDeviceChannel {
             planUsage = snapshot
         case .syncIndex, .fetchSession, .fetchTimelineSince, .sessionReviewed, .fetchUsage, .fetchPlanUsage:
             // Device → host only; never expected from the daemon.
+            return
+        case .channelOpened:
+            // Only ever sealed with the handshake key (`receiveOpening`); inside
+            // a session it means nothing.
             return
         }
     }

@@ -158,11 +158,14 @@ Release Environment 保存 Developer ID p12、p12 密码、App Store Connect p8 
 - 单事件流多 Session 复用。
 - rollout offset 恢复和首次基线。
 - 单 Session 删除后被动晚事件不复活；新 prompt / SessionStart 复活。`needsReview` 在 turn end 置位并粘滞，只有已查看清除。
-- `RelayHostService`（内存 Relay 双端）：序号先落盘且按设备独立；`sync_index` 分片 + health；`fetch_session` 缺失回 `session_removed`；`fetch_timeline_since` 只回 `since` 之后；事件合并成批、只推已同步设备；`session_info`；Worker 回报非单调序号后自愈并向该设备补发 health；未知设备的首个请求先刷新设备列表再应答；iPhone 的 `session_reviewed` 经本地流（`summary` 帧）到达 Mac；Relay 断开后重连并清空已同步集合；配对 offer 与撤销。
+- `RelayHostService`（内存 Relay 双端，测试设备先开通道会话再发请求）：
+  - 同步：序号先落盘且按设备独立；`sync_index` 打开通道会话（`channel_opened` + index 分片 + health）；`fetch_session` 缺失回 `session_removed`；`fetch_timeline_since` 只回 `since` 之后；事件合并成批、只推会话已打开的设备；`session_info`；iPhone 的 `session_reviewed` 经本地流（`summary` 帧）到达 Mac；Relay 断开后重连并结束所有通道会话。
+  - 把 Relay 当对手：reveal 失败后会话整个作废、换设备提交无效；一个配对会话只绑一台设备；撤销在 Relay 谎报“仍有效”、拒绝撤销、daemon 重启后都保持，只有重新 Match 解除；Relay 回报的撤销被本机采纳；Match 被 Relay 拒绝时信任记录复原，但不撤回其间的撤销；重复、乱序、别的会话里的请求和用握手密钥封的非开场请求都被丢弃；当前会话的开场帧重复送达不换会话；会话打开期间的推送排在 index 之后送达；Worker 回报非单调序号后在抬高的序号上重开会话；超出范围的序号回报不采信。
+  - 状态文件：钉住 / 撤销 / 忘记的落盘语义、升级前的文件照常读入、序号不越过上限。
 
 ### Relay/Remote
 
-- X25519/HKDF/ChaChaPoly round trip 和错误设备解密失败。
+- X25519/HKDF/ChaChaPoly round trip；握手密钥只属于一对设备和一条通道；每个通道会话的钥匙各不相同，握手密钥解不开会话帧，长期密钥不对的一端派生不出同一把会话密钥；路由头改序号或换方向都验证失败。
 - 一次性配对、列表、撤销和鉴权。
 - 每设备独立 sequence。
 - Host 离线 presence。
@@ -175,7 +178,7 @@ Release Environment 保存 Developer ID p12、p12 密码、App Store Connect p8 
 - Mac Hook merge、`RelayHostStatusClient`（脚本化 daemon 的 relay_* 应答）和 Notch snapshot/activity 规则。
 - macOS 更新的两个入口共享同一个 updater；自动检查选择由 Sparkle 保存，更新 feed 强制签名，安装包在解包前完成来源和完整性验证。
 - Xcode UI/runtime 验证三栏布局、Notch、配对和删除。
-- iOS Simulator 验证多 Mac 分组、Timeline，以及 `RelayDeviceChannel`（内存 Relay + 假 host）：冷启动先显示缓存再对账、事件实时应用与未知 Session 整取、info / removed / reviewed 双向、Clear received data 后回填、凭据被拒后停止重连并标 Revoked、Host 重复 `online` 再次 index、隐藏会话只在更新副本到达时回来、重配同一 Mac 复用 Device ID、孙级子 Agent 并入顶层行。
+- iOS Simulator 验证多 Mac 分组、Timeline，以及 `RelayDeviceChannel`（内存 Relay + 假 host）：冷启动先显示缓存再对账、事件实时应用与未知 Session 整取、info / removed / reviewed 双向、Clear received data 后回填、凭据被拒后停止重连并标 Revoked、Host 重复 `online` 再次 index、隐藏会话只在更新副本到达时回来、重配同一 Mac 复用 Device ID、孙级子 Agent 并入顶层行；把 Relay 当对手的三项——同一会话里重复的帧和以前会话留下的帧都不生效（含 Relay 谎报 Mac 上下线之后）、验证不过的高序号帧不推进序号、会话打开期间发起的请求排队后按序送达。
 
 ## 边界检查
 
@@ -186,6 +189,8 @@ Release Environment 保存 Developer ID p12、p12 密码、App Store Connect p8 
 
 协议变更时先修改 Transport Package 和 fixture，再更新所有消费者。兼容新增字段应保持可选；破坏性改动提升 protocol major。
 
+protocol major 管的是 Relay 能解析的路由帧。帧里密封的那一层（两端之间的密钥协商和载荷语义）Relay 看不到，它的版本写在密钥派生标签里（当前 `Lumi Relay/v2/…`）：标签不同的两端派生出不同的钥匙，互相解不开，不会误读成旧格式。这一层的破坏性改动不需要改 Relay，但 Lumi for Mac 与 Lumi for iPhone 必须同一批发布（见 [Relay、配对与安全设计](relay-pairing-security.md#不保证什么)）。
+
 ## 发布门槛
 
 正式发布前仍需完成：
@@ -195,6 +200,7 @@ Release Environment 保存 Developer ID p12、p12 密码、App Store Connect p8 
 3. 真实 Codex `/hooks` 触发的端到端链路。
 4. 物理 iPhone 摄像头配对、前后台和弱网恢复。
 5. 第二个更高 build 从旧版通过 Sparkle 完成替换、重启、helper/daemon 刷新；并验证超大 Session、长连接和 Durable Object 重启。
+6. 通道会话在真机和线上 Relay 上的端到端验证：配对后首次同步、前后台切换与弱网下重开会话、Mac 上撤销后 iPhone 的表现；并确认 Mac 与 iPhone 的新版本同一批放出（只更新一端时同步停住）。
 
 APNs 推送已接入：Debug 构建走 sandbox（entitlement `aps-environment: development`），App Store 导出重签名后自动变 production；Relay 侧凭证是 `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_PRIVATE_KEY` 三个 wrangler secret 加 `APNS_TOPIC` 变量。真机推送验收（sandbox 与 TestFlight production）计入上面的待验收清单。
 

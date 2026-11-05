@@ -3,11 +3,47 @@ import Transport
 import Foundation
 import Testing
 
-@Test func pairedKeysRoundTripEncryptedSessionPayload() throws {
+/// The two ends of one paired Mac ↔ iPhone channel, each holding only its
+/// own private keys.
+private struct PairedChannel {
     let host = RelayCryptography.makeKeyPair()
     let device = RelayCryptography.makeKeyPair()
     let hostID = HostID("host-test-000001")
     let deviceID = DeviceID("device-test-0001")
+
+    var hostHandshakeKey: RelayChannelKey {
+        get throws {
+            try RelayCryptography.handshakeKey(privateKey: host.privateKey, peerPublicKey: device.publicKey, hostID: hostID, deviceID: deviceID)
+        }
+    }
+
+    var deviceHandshakeKey: RelayChannelKey {
+        get throws {
+            try RelayCryptography.handshakeKey(privateKey: device.privateKey, peerPublicKey: host.publicKey, hostID: hostID, deviceID: deviceID)
+        }
+    }
+
+    /// One channel session: each end derives the key from its own one-time
+    /// key and the other's public half.
+    func openSession() throws -> (host: RelayChannelKey, device: RelayChannelKey) {
+        let hostEphemeral = RelayEphemeralKey()
+        let deviceEphemeral = RelayEphemeralKey()
+        return (
+            try RelayCryptography.sessionKey(
+                as: .host, ephemeral: hostEphemeral, peerEphemeralPublicKey: try deviceEphemeral.publicKey,
+                privateKey: host.privateKey, peerPublicKey: device.publicKey, hostID: hostID, deviceID: deviceID
+            ),
+            try RelayCryptography.sessionKey(
+                as: .device, ephemeral: deviceEphemeral, peerEphemeralPublicKey: try hostEphemeral.publicKey,
+                privateKey: device.privateKey, peerPublicKey: host.publicKey, hostID: hostID, deviceID: deviceID
+            )
+        )
+    }
+}
+
+@Test func aChannelSessionRoundTripsAnEncryptedSessionPayload() throws {
+    let channel = PairedChannel()
+    let session = try channel.openSession()
     let date = Date(timeIntervalSince1970: 1_700_000_000)
     let payload = RemoteSessionPayload(
         kind: .sessionFull,
@@ -30,17 +66,12 @@ import Testing
 
     let frame = try RelayCryptography.seal(
         RelayCryptography.prepare(payload),
-        hostID: hostID,
-        deviceID: deviceID,
+        hostID: channel.hostID,
+        deviceID: channel.deviceID,
         sequence: 7,
-        privateKey: host.privateKey,
-        peerPublicKey: device.publicKey
+        key: session.host
     )
-    let opened = try RelayCryptography.open(
-        frame,
-        privateKey: device.privateKey,
-        peerPublicKey: host.publicKey
-    )
+    let opened = try RelayCryptography.open(frame, key: session.device)
 
     #expect(opened == payload)
     #expect(frame.sequence == 7)
@@ -77,49 +108,49 @@ import Testing
     let prepared = try RelayCryptography.prepare(payload)
     #expect(prepared.byteCount < encodedCount / 2)
 
-    let host = RelayCryptography.makeKeyPair()
-    let device = RelayCryptography.makeKeyPair()
-    let frame = try RelayCryptography.seal(
-        prepared,
-        hostID: HostID("host-test-000001"),
-        deviceID: DeviceID("device-test-0001"),
-        sequence: 1,
-        privateKey: host.privateKey,
-        peerPublicKey: device.publicKey
-    )
-    let opened = try RelayCryptography.open(
-        frame,
-        privateKey: device.privateKey,
-        peerPublicKey: host.publicKey
-    )
-    #expect(opened == payload)
+    let channel = PairedChannel()
+    let session = try channel.openSession()
+    let frame = try RelayCryptography.seal(prepared, hostID: channel.hostID, deviceID: channel.deviceID, sequence: 1, key: session.host)
+    #expect(try RelayCryptography.open(frame, key: session.device) == payload)
 }
 
-@Test func wrongDeviceCannotDecryptPayload() throws {
-    let host = RelayCryptography.makeKeyPair()
-    let device = RelayCryptography.makeKeyPair()
-    let otherDevice = RelayCryptography.makeKeyPair()
-    let frame = try RelayCryptography.seal(
-        RemoteSessionPayload(kind: .syncIndex),
-        hostID: HostID("host-test-000001"),
-        deviceID: DeviceID("device-test-0001"),
-        sequence: 1,
-        privateKey: host.privateKey,
-        peerPublicKey: device.publicKey
+@Test func theHandshakeKeyBelongsToOnePairing() throws {
+    let channel = PairedChannel()
+    let opening = RemoteSessionPayload(
+        kind: .syncIndex,
+        generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+        requestID: RequestID("open-1"),
+        ephemeralKey: try RelayEphemeralKey().publicKey
     )
+    let frame = try RelayCryptography.seal(
+        opening, hostID: channel.hostID, deviceID: channel.deviceID, sequence: 1, kind: .request,
+        key: channel.deviceHandshakeKey
+    )
+    // Both ends derive it from their own private key and the other's public key.
+    #expect(try RelayCryptography.open(frame, key: channel.hostHandshakeKey) == opening)
 
-    #expect(throws: (any Error).self) {
-        try RelayCryptography.open(
-            frame,
-            privateKey: otherDevice.privateKey,
-            peerPublicKey: host.publicKey
-        )
-    }
+    // Another iPhone paired with the same Mac — or the same keys under
+    // another channel's IDs — arrives at a different key.
+    let otherDevice = RelayCryptography.makeKeyPair()
+    let othersKey = try RelayCryptography.handshakeKey(
+        privateKey: channel.host.privateKey, peerPublicKey: otherDevice.publicKey,
+        hostID: channel.hostID, deviceID: channel.deviceID
+    )
+    #expect(throws: (any Error).self) { try RelayCryptography.open(frame, key: othersKey) }
+    let otherChannelsKey = try RelayCryptography.handshakeKey(
+        privateKey: channel.host.privateKey, peerPublicKey: channel.device.publicKey,
+        hostID: channel.hostID, deviceID: DeviceID("device-test-0002")
+    )
+    let relabelled = RelayRoutingFrame(
+        hostID: channel.hostID, deviceID: DeviceID("device-test-0002"), sequence: 1, kind: .request,
+        nonce: frame.nonce, ciphertext: frame.ciphertext
+    )
+    #expect(throws: (any Error).self) { try RelayCryptography.open(relabelled, key: otherChannelsKey) }
 }
 
 @Test func requestPayloadsRoundTripThroughASealedRequestFrame() throws {
-    let host = RelayCryptography.makeKeyPair()
-    let device = RelayCryptography.makeKeyPair()
+    let channel = PairedChannel()
+    let session = try channel.openSession()
     let request = RemoteSessionPayload(
         kind: .fetchTimelineSince,
         generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -129,47 +160,76 @@ import Testing
     )
     let frame = try RelayCryptography.seal(
         request,
-        hostID: HostID("host-test-000001"),
-        deviceID: DeviceID("device-test-0001"),
+        hostID: channel.hostID,
+        deviceID: channel.deviceID,
         sequence: 3,
         kind: .request,
-        privateKey: device.privateKey,
-        peerPublicKey: host.publicKey
+        key: session.device
     )
     #expect(frame.kind == .request)
-    let opened = try RelayCryptography.open(frame, privateKey: host.privateKey, peerPublicKey: device.publicKey)
-    #expect(opened == request)
+    #expect(try RelayCryptography.open(frame, key: session.host) == request)
 }
 
 @Test func routingHeaderIsAuthenticated() throws {
-    let host = RelayCryptography.makeKeyPair()
-    let device = RelayCryptography.makeKeyPair()
-    let hostID = HostID("host-test-000001")
-    let deviceID = DeviceID("device-test-0001")
+    let channel = PairedChannel()
+    let session = try channel.openSession()
     let frame = try RelayCryptography.seal(
         RemoteSessionPayload(kind: .health, generatedAt: Date(timeIntervalSince1970: 1_700_000_000)),
-        hostID: hostID, deviceID: deviceID, sequence: 5,
-        privateKey: host.privateKey, peerPublicKey: device.publicKey
+        hostID: channel.hostID, deviceID: channel.deviceID, sequence: 5,
+        key: session.host
     )
     #expect(throws: Never.self) {
-        try RelayCryptography.open(frame, privateKey: device.privateKey, peerPublicKey: host.publicKey)
+        try RelayCryptography.open(frame, key: session.device)
     }
     // A relay that re-stamps the sequence (replay under a fresh number) or
     // flips the direction cannot keep the tag valid.
     let resequenced = RelayRoutingFrame(
-        hostID: hostID, deviceID: deviceID, sequence: 6, kind: frame.kind,
+        hostID: channel.hostID, deviceID: channel.deviceID, sequence: 6, kind: frame.kind,
         nonce: frame.nonce, ciphertext: frame.ciphertext
     )
     #expect(throws: (any Error).self) {
-        try RelayCryptography.open(resequenced, privateKey: device.privateKey, peerPublicKey: host.publicKey)
+        try RelayCryptography.open(resequenced, key: session.device)
     }
     let redirected = RelayRoutingFrame(
-        hostID: hostID, deviceID: deviceID, sequence: 5, kind: .request,
+        hostID: channel.hostID, deviceID: channel.deviceID, sequence: 5, kind: .request,
         nonce: frame.nonce, ciphertext: frame.ciphertext
     )
     #expect(throws: (any Error).self) {
-        try RelayCryptography.open(redirected, privateKey: device.privateKey, peerPublicKey: host.publicKey)
+        try RelayCryptography.open(redirected, key: session.host)
     }
+}
+
+@Test func everyChannelSessionHasItsOwnKey() throws {
+    let channel = PairedChannel()
+    let first = try channel.openSession()
+    let second = try channel.openSession()
+    let payload = RemoteSessionPayload(kind: .health, generatedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    let frame = try RelayCryptography.seal(payload, hostID: channel.hostID, deviceID: channel.deviceID, sequence: 1, key: first.host)
+    #expect(try RelayCryptography.open(frame, key: first.device) == payload)
+
+    // A frame kept from one session does not open in the next, and the
+    // long-term keys alone — all the handshake key is made of — open none:
+    // once a session's one-time keys are gone, so is the way into it.
+    #expect(throws: (any Error).self) { try RelayCryptography.open(frame, key: second.device) }
+    #expect(throws: (any Error).self) { try RelayCryptography.open(frame, key: channel.deviceHandshakeKey) }
+
+    // Both long-term keys are part of the session key: an end holding the
+    // right one-time keys but someone else's long-term key derives another.
+    let stranger = RelayCryptography.makeKeyPair()
+    let hostEphemeral = RelayEphemeralKey()
+    let deviceEphemeral = RelayEphemeralKey()
+    let hostKey = try RelayCryptography.sessionKey(
+        as: .host, ephemeral: hostEphemeral, peerEphemeralPublicKey: try deviceEphemeral.publicKey,
+        privateKey: channel.host.privateKey, peerPublicKey: channel.device.publicKey,
+        hostID: channel.hostID, deviceID: channel.deviceID
+    )
+    let strangersKey = try RelayCryptography.sessionKey(
+        as: .device, ephemeral: deviceEphemeral, peerEphemeralPublicKey: try hostEphemeral.publicKey,
+        privateKey: stranger.privateKey, peerPublicKey: channel.host.publicKey,
+        hostID: channel.hostID, deviceID: channel.deviceID
+    )
+    let sealed = try RelayCryptography.seal(payload, hostID: channel.hostID, deviceID: channel.deviceID, sequence: 2, key: hostKey)
+    #expect(throws: (any Error).self) { try RelayCryptography.open(sealed, key: strangersKey) }
 }
 
 @Test func pairingCommitmentAndSASMatchTheGoldenVectors() {

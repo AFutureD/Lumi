@@ -5,9 +5,10 @@ import Foundation
 import Testing
 @testable import IOSFeature
 
-/// A daemon stand-in on the host end of an in-memory relay: answers the
-/// device's requests from its own repository the way `RelayHostService` does,
-/// and can push events / summaries / removals.
+/// A daemon stand-in on the host end of an in-memory relay: opens channel
+/// sessions and answers the device's requests from its own repository the
+/// way `RelayHostService` does — a request counts only inside the current
+/// session and in rising order — and can push events / summaries / removals.
 private actor FakeHost {
     let link: RelayInMemoryLink
     let repository = InMemorySessionRepository()
@@ -18,7 +19,14 @@ private actor FakeHost {
     private var transport: (any RelayFrameTransport)?
     private var sequence: UInt64 = 0
     private var loop: Task<Void, Never>?
+    /// The channel session the device opened last, and its request cursor.
+    private var sessionKey: RelayChannelKey?
+    private var lastRequestSequence: UInt64 = 0
+    /// Every request that counted, openings (`sync_index`) included.
     private(set) var requests: [RemoteSessionPayload] = []
+    /// Requests that opened in the session but not past its cursor: the
+    /// daemon drops those, so a correct iPhone never sends one.
+    private(set) var outOfOrderRequests = 0
     private(set) var reviewed: [SessionID] = []
     /// What `fetch_usage` answers with; `nil` = the daemon could not build it.
     var usageReport: UsageReport?
@@ -53,18 +61,55 @@ private actor FakeHost {
         transport = nil
     }
 
+    private var handshakeKey: RelayChannelKey {
+        get throws {
+            try RelayCryptography.handshakeKey(privateKey: keys.privateKey, peerPublicKey: devicePublicKey, hostID: hostID, deviceID: deviceID)
+        }
+    }
+
     private func handle(_ message: RelayIncomingMessage) async {
         guard case let .frame(frame) = message, frame.kind == .request else { return }
-        guard let payload = try? RelayCryptography.open(frame, privateKey: keys.privateKey, peerPublicKey: devicePublicKey) else { return }
-        requests.append(payload)
+        if let sessionKey, let payload = try? RelayCryptography.open(frame, key: sessionKey) {
+            guard frame.sequence > lastRequestSequence else {
+                outOfOrderRequests += 1
+                return
+            }
+            lastRequestSequence = frame.sequence
+            requests.append(payload)
+            await answer(payload)
+            return
+        }
+        // Outside the session: only a `sync_index` sealed with the handshake
+        // key, which opens the next one.
+        guard let handshakeKey = try? handshakeKey,
+              let opening = try? RelayCryptography.open(frame, key: handshakeKey),
+              opening.kind == .syncIndex, let requestID = opening.requestID, let deviceEphemeralKey = opening.ephemeralKey else { return }
+        requests.append(opening)
+        do {
+            let ephemeral = RelayEphemeralKey()
+            sessionKey = try RelayCryptography.sessionKey(
+                as: .host, ephemeral: ephemeral, peerEphemeralPublicKey: deviceEphemeralKey,
+                privateKey: keys.privateKey, peerPublicKey: devicePublicKey, hostID: hostID, deviceID: deviceID
+            )
+            lastRequestSequence = frame.sequence
+            let opened = try RelayCryptography.prepare(RemoteSessionPayload(
+                kind: .channelOpened, requestID: requestID, ephemeralKey: try ephemeral.publicKey
+            ))
+            try await send([opened], key: handshakeKey)
+            let now = Date()
+            let entries = try await repository.sessionIndex(limit: 10_000)
+            try await send(RelayPayloadBatcher.indexParts(entries, requestID: requestID, generatedAt: now).map(\.prepared))
+            let health = DaemonHealth(daemonVersion: "fake", executableHash: nil, uptimeSeconds: 1, activeSessionCount: entries.count, retainedSessionCount: entries.count, socketPath: "/s", relayConnected: true)
+            try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))])
+        } catch {
+            Issue.record("fake host failed to open a channel session: \(error)")
+        }
+    }
+
+    private func answer(_ payload: RemoteSessionPayload) async {
         let now = Date()
         do {
             switch payload.kind {
-            case .syncIndex:
-                let entries = try await repository.sessionIndex(limit: 10_000)
-                try await send(RelayPayloadBatcher.indexParts(entries, requestID: payload.requestID, generatedAt: now).map(\.prepared))
-                let health = DaemonHealth(daemonVersion: "fake", executableHash: nil, uptimeSeconds: 1, activeSessionCount: entries.count, retainedSessionCount: entries.count, socketPath: "/s", relayConnected: true)
-                try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))])
             case .fetchSession:
                 for id in payload.sessionIDs ?? [] {
                     if let detail = try await repository.sessionDetail(id: id, cursor: nil, limit: 500) {
@@ -105,18 +150,35 @@ private actor FakeHost {
         try await send(RelayPayloadBatcher.summaryBatches(summaries, generatedAt: Date()).map(\.prepared))
     }
 
+    /// A summary-only change the repository keeps too, so a later index agrees.
+    func update(summary: SessionSummary) async throws {
+        try await repository.updateSummary(summary)
+        try await push(summaries: [summary])
+    }
+
+    /// A frame of the current session that never goes out: a summary change
+    /// sealed `ahead` sequences past the last one sent, for a Relay to keep
+    /// and deliver whenever it likes.
+    func sealWithoutSending(summary: SessionSummary, ahead: UInt64) throws -> RelayRoutingFrame {
+        let key = try #require(sessionKey)
+        let prepared = try #require(RelayPayloadBatcher.summaryBatches([summary], generatedAt: Date()).first?.prepared)
+        return try RelayCryptography.seal(prepared, hostID: hostID, deviceID: deviceID, sequence: sequence + ahead, kind: .data, key: key)
+    }
+
     func pushRemoved(_ ids: [SessionID]) async throws {
         for id in ids { _ = try await repository.deleteSession(id: id) }
         try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .sessionRemoved, generatedAt: Date(), sessionIDs: ids))])
     }
 
-    private func send(_ prepared: [RelayPreparedPayload]) async throws {
-        guard let transport else { return }
+    /// Seals with the open session's key unless another is given
+    /// (`channel_opened` goes out under the handshake key).
+    private func send(_ prepared: [RelayPreparedPayload], key: RelayChannelKey? = nil) async throws {
+        guard let transport, let key = key ?? sessionKey else { return }
         for payload in prepared {
             sequence += 1
             let frame = try RelayCryptography.seal(
                 payload, hostID: hostID, deviceID: deviceID, sequence: sequence, kind: .data,
-                privateKey: keys.privateKey, peerPublicKey: devicePublicKey
+                key: key
             )
             try await transport.send(frame)
         }
@@ -673,5 +735,123 @@ private actor ScriptedPairingAPI: RelayPairingAPI {
     #expect(harness.state?.usage?.report == report && harness.state?.usage?.preset == .thisWeek)
     #expect(harness.state?.usage?.error == "The Mac could not build the report.")
     #expect(await harness.host.requests.filter { $0.kind == .fetchUsage }.map(\.usageRange) == [.thisWeek, .today])
+    await harness.host.stop()
+}
+
+// MARK: - The Relay as an adversary
+
+// A frame counts once, in the channel session it was sealed for, and only
+// moving forward — whatever the Relay repeats, keeps, or says about presence.
+@Test @MainActor func framesTheRelayRepeatsOrKeepsFromAnEarlierSessionChangeNothing() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 1, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    try await harness.host.update(summary: detail("A", items: 1, at: base, phase: .idle).summary)
+    await harness.waitUntil { harness.session("A")?.summary.phase == .idle }
+    let idleFrame = try #require(await harness.link.hostSent.last)
+    try await harness.host.update(summary: detail("A", items: 1, at: base, phase: .executing).summary)
+    await harness.waitUntil { harness.session("A")?.summary.phase == .executing }
+
+    // The same frame again, inside its own session: behind the cursor.
+    await harness.link.deliver(idleFrame, to: harness.deviceID)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(harness.session("A")?.summary.phase == .executing)
+
+    // A frame of this session the Relay keeps for later, sealed far ahead
+    // of anything sent so far — so no cursor will ever be in its way.
+    let kept = try await harness.host.sealWithoutSending(summary: detail("A", items: 1, at: base, phase: .idle).summary, ahead: 100_000)
+
+    // The Relay claims the Mac went away and came back. The iPhone opens a
+    // new session; what stands in the way of the old session's frames now
+    // is its key.
+    let openings = await harness.host.requests.count(where: { $0.kind == .syncIndex })
+    await harness.link.sendPresence(online: false, to: harness.deviceID)
+    await harness.link.sendPresence(online: true, to: harness.deviceID)
+    for _ in 0..<300 where await harness.host.requests.count(where: { $0.kind == .syncIndex }) == openings {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+    #expect(harness.session("A")?.summary.phase == .executing)
+    await harness.link.deliver(kept, to: harness.deviceID)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(harness.session("A")?.summary.phase == .executing)
+
+    // The new session carries on.
+    try await harness.host.update(summary: detail("A", items: 1, at: base, phase: .idle).summary)
+    await harness.waitUntil { harness.session("A")?.summary.phase == .idle }
+    #expect(harness.session("A")?.summary.phase == .idle)
+    await harness.host.stop()
+}
+
+@Test @MainActor func aFrameThatDoesNotAuthenticateMovesNoCursor() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 1, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    // Far ahead of the session's sequences, sealed with nothing the iPhone knows.
+    let genuine = try #require(await harness.link.hostSent.last)
+    await harness.link.deliver(RelayRoutingFrame(
+        hostID: harness.hostID, deviceID: harness.deviceID, sequence: genuine.sequence + 1_000_000, kind: .data,
+        nonce: genuine.nonce, ciphertext: genuine.ciphertext
+    ), to: harness.deviceID)
+    try await Task.sleep(for: .milliseconds(100))
+
+    // The daemon's next frame, on its real sequence, still lands — and is
+    // not mistaken for the far side of a gap.
+    let openings = await harness.host.requests.count(where: { $0.kind == .syncIndex })
+    try await harness.host.update(summary: detail("A", items: 1, at: base, phase: .idle).summary)
+    await harness.waitUntil { harness.session("A")?.summary.phase == .idle }
+    #expect(harness.session("A")?.summary.phase == .idle)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == openings)
+    await harness.host.stop()
+}
+
+@Test @MainActor func requestsMadeWhileASessionOpensWaitForItAndArriveInOrder() async throws {
+    let now = Date(timeIntervalSince1970: 1_788_616_800)
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    let report = UsageReport(
+        since: UsageDay(year: 2026, month: 8, day: 31), until: UsageDay(year: 2026, month: 9, day: 5), generatedAt: now,
+        totals: UsageSlice(tokens: UsageTokens(input: 10), costUSD: 1.5, calls: 1, sessions: 1, turns: 1),
+        byAgent: [], byProject: [], byModel: [],
+        pricing: UsagePricingStatus(source: .builtin, modelCount: 1),
+        scan: UsageScanStatus(scannedFiles: 1, pendingFiles: 0, isScanning: false)
+    )
+    await harness.host.setUsageReport(report)
+    let needsReview = detail("A", items: 2, at: base)
+    try await harness.host.repository.replaceSession(SessionDetail(
+        summary: needsReview.summary.withReviewState(needsAttention: true, needsReview: true),
+        turns: needsReview.turns, timeline: needsReview.timeline
+    ))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    // Back in the foreground: a new session starts opening, and the person
+    // is already tapping — a Session, the Usage tab.
+    let openings = await harness.host.requests.count(where: { $0.kind == .syncIndex })
+    harness.controller.refreshAll()
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    harness.controller.markReviewed(hostID: harness.hostID, id: SessionID("A"))
+    harness.controller.requestUsage(.thisWeek)
+
+    await harness.waitUntil { harness.state?.usage?.report != nil && harness.session("A")?.timeline.count == 2 }
+    #expect(harness.state?.usage?.report == report)
+    #expect(harness.session("A")?.timeline.count == 2)
+    for _ in 0..<300 where await harness.host.reviewed.isEmpty {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.host.reviewed == [SessionID("A")])
+    // One new opening, and nothing arrived out of order or outside a session.
+    #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == openings + 1)
+    #expect(await harness.host.outOfOrderRequests == 0)
     await harness.host.stop()
 }

@@ -61,7 +61,8 @@ See their current state in Lumi for Mac or the Notch, and check a paired iPhone 
 
 - **Read-only.** Lumi observes Agent Sessions; it does not control them. Lumi for iPhone cannot approve actions, stop work, or send input to an Agent.
 - **No account.** Pairing starts with a QR code or short-lived 6-digit code. You confirm the same numbers on both devices before access is granted.
-- **Session privacy.** Content is encrypted separately for each paired iPhone. The Relay forwards encrypted Session data without storing or reading it.
+- **Session privacy.** Content is encrypted separately for each paired iPhone, with fresh keys for every sync that are never stored. The Relay forwards encrypted Session data without storing or reading it.
+- **Revocation.** Revoking an iPhone takes effect on the Mac itself, right away. Only pairing again restores access.
 - **Notification privacy.** Visible notification text contains only the Session title and status—not Session content, Activity, or tool output. This text passes through the Relay in plaintext for delivery and is not stored there.
 
 ## FAQ
@@ -82,6 +83,12 @@ See their current state in Lumi for Mac or the Notch, and check a paired iPhone 
 **A Mac is `Offline` on the iPhone**
 
 Cached Sessions remain readable. Restore the Mac's daemon and network connection; synchronization resumes automatically.
+
+**A Mac is `Online` on the iPhone but Sessions stop updating**
+
+1. On the Mac's `iPhone` page, check this iPhone under `Paired iPhones`.
+2. If it shows `Unverified`, pair it again.
+3. If it shows `Active`, update Lumi on both the Mac and the iPhone. Version 0.2.0 or earlier cannot sync with later versions.
 
 For detailed behavior and recovery paths, read the [feature guide](docs/FEAT.md).
 

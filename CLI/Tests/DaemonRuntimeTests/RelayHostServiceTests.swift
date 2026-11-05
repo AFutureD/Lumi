@@ -5,10 +5,10 @@ import Transport
 import Foundation
 import Testing
 
-/// Drives `RelayHostService` through an in-memory relay: a device end sends
-/// sealed requests and reads the sealed answers, the hub publishes events.
-/// The host runs as a held task; `stop()` is cancellation, like the daemon's
-/// ServiceGroup shutdown.
+/// Drives `RelayHostService` through an in-memory relay: a device end opens
+/// channel sessions, sends sealed requests and reads the sealed answers, the
+/// hub publishes events. The host runs as a held task; `stop()` is
+/// cancellation, like the daemon's ServiceGroup shutdown.
 private final class RelayHarness {
     private var runTask: Task<Void, Never>?
 
@@ -34,13 +34,17 @@ private final class RelayHarness {
     let hub = DaemonSubscriptionHub()
     let link = RelayInMemoryLink()
     let rest: InMemoryRelayHostREST
-    let credentialStore = InMemoryRelayHostCredentialStore()
+    let credentialStore: InMemoryRelayHostCredentialStore
     let statePath: String
     let service: RelayHostService
     let deviceID = DeviceID("device-test-0001")
-    let deviceKeys = RelayCryptography.makeKeyPair()
+    let deviceKeys: RelayKeyPair
     let relayURL = URL(string: "https://relay.example.test")!
     let connections = ConnectionLog()
+    /// The harness device's end of the channel: the key of the session it
+    /// opened last, and its request sequence on this connection.
+    private(set) var sessionKey: RelayChannelKey?
+    private var requestSequence: UInt64 = 0
 
     init(
         healthProvider: @escaping RelayHostService.HealthProvider = { nil },
@@ -49,17 +53,29 @@ private final class RelayHarness {
         preregisterDevice: Bool = true,
         pinDeviceKey: Bool = true,
         pairingCodeLifetime: Duration = .seconds(5 * 60),
-        pairingDecisionTimeout: Duration = .seconds(60)
+        pairingDecisionTimeout: Duration = .seconds(60),
+        restarting previous: RelayHarness? = nil
     ) {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        statePath = directory.appendingPathComponent("relay-host-state.json").path
-        rest = InMemoryRelayHostREST(devices: preregisterDevice ? [
-            PairedDevice(id: deviceID, name: "Test iPhone", publicKey: deviceKeys.publicKey, pairedAt: Date()),
-        ] : [])
-        if preregisterDevice, pinDeviceKey {
-            // A device this daemon verified in an earlier life: its key is pinned.
-            var state = RelayHostStateStore(path: statePath)
-            try? state.setVerifiedKey(deviceKeys.publicKey, for: deviceID)
+        if let previous {
+            // The daemon came back: same Relay, same Keychain, same state file.
+            statePath = previous.statePath
+            rest = previous.rest
+            credentialStore = previous.credentialStore
+            deviceKeys = previous.deviceKeys
+        } else {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            statePath = directory.appendingPathComponent("relay-host-state.json").path
+            credentialStore = InMemoryRelayHostCredentialStore()
+            let keys = RelayCryptography.makeKeyPair()
+            deviceKeys = keys
+            rest = InMemoryRelayHostREST(devices: preregisterDevice ? [
+                PairedDevice(id: deviceID, name: "Test iPhone", publicKey: keys.publicKey, pairedAt: Date()),
+            ] : [])
+            if preregisterDevice, pinDeviceKey {
+                // A device this daemon verified in an earlier life: its key is pinned.
+                var state = RelayHostStateStore(path: statePath)
+                try? state.setVerifiedKey(keys.publicKey, for: deviceID)
+            }
         }
         let connections = connections
         service = RelayHostService(
@@ -120,33 +136,111 @@ private final class RelayHarness {
         return device
     }
 
-    func request(_ payload: RemoteSessionPayload, via device: any RelayFrameTransport, sequence: UInt64 = 1) async throws {
-        let frame = try RelayCryptography.seal(
+    var handshakeKey: RelayChannelKey {
+        get throws {
+            try RelayCryptography.handshakeKey(
+                privateKey: deviceKeys.privateKey,
+                peerPublicKey: try hostCredentials.keyPair.publicKey,
+                hostID: try hostCredentials.hostID,
+                deviceID: deviceID
+            )
+        }
+    }
+
+    /// Sends a `sync_index` opening — sealed with the handshake key, on the
+    /// next request sequence — and returns the one-time key it carried.
+    @discardableResult
+    func sendOpening(via device: any RelayFrameTransport, requestID: RequestID = RequestID()) async throws -> RelayEphemeralKey {
+        let ephemeral = RelayEphemeralKey()
+        requestSequence += 1
+        try await device.send(try RelayCryptography.seal(
+            RemoteSessionPayload(kind: .syncIndex, requestID: requestID, ephemeralKey: try ephemeral.publicKey),
+            hostID: try hostCredentials.hostID,
+            deviceID: deviceID,
+            sequence: requestSequence,
+            kind: .request,
+            key: try handshakeKey
+        ))
+        return ephemeral
+    }
+
+    /// Opens a channel session the way the iPhone does: `sync_index` out,
+    /// `channel_opened` in. The index follows on the device end.
+    func sync(via device: any RelayFrameTransport, requestID: RequestID = RequestID()) async throws {
+        let ephemeral = try await sendOpening(via: device, requestID: requestID)
+        try await finishOpening(ephemeral, requestID: requestID, via: device)
+    }
+
+    /// Reads up to the `channel_opened` that answers `requestID` and derives
+    /// the session key from it.
+    func finishOpening(_ ephemeral: RelayEphemeralKey, requestID: RequestID, via device: any RelayFrameTransport) async throws {
+        let handshakeKey = try handshakeKey
+        for _ in 0..<200 {
+            let message = try await withTimeout(seconds: 5) { try await device.next() }
+            guard case let .frame(frame) = message,
+                  let payload = try? RelayCryptography.open(frame, key: handshakeKey),
+                  payload.kind == .channelOpened, payload.requestID == requestID,
+                  let hostEphemeralKey = payload.ephemeralKey else { continue }
+            sessionKey = try RelayCryptography.sessionKey(
+                as: .device,
+                ephemeral: ephemeral,
+                peerEphemeralPublicKey: hostEphemeralKey,
+                privateKey: deviceKeys.privateKey,
+                peerPublicKey: try hostCredentials.keyPair.publicKey,
+                hostID: try hostCredentials.hostID,
+                deviceID: deviceID
+            )
+            return
+        }
+        Issue.record("the channel session never opened")
+    }
+
+    /// Starts the host, opens the device end and a channel session, and
+    /// reads past the index that comes with it.
+    func connectAndSync() async throws -> any RelayFrameTransport {
+        let device = try await connect()
+        try await sync(via: device)
+        _ = try await collect(from: device) { $0.kind == .sessionIndex }
+        return device
+    }
+
+    /// Seals a request inside the open channel session, on the next request
+    /// sequence unless one is given.
+    func seal(_ payload: RemoteSessionPayload, sequence: UInt64? = nil) throws -> RelayRoutingFrame {
+        if sequence == nil { requestSequence += 1 }
+        return try RelayCryptography.seal(
             payload,
             hostID: try hostCredentials.hostID,
             deviceID: deviceID,
-            sequence: sequence,
+            sequence: sequence ?? requestSequence,
             kind: .request,
-            privateKey: deviceKeys.privateKey,
-            peerPublicKey: try hostCredentials.keyPair.publicKey
+            key: try #require(sessionKey)
         )
-        try await device.send(frame)
     }
 
-    /// Reads sealed `data` frames until `predicate` accepts one; returns every payload seen.
+    func request(_ payload: RemoteSessionPayload, via device: any RelayFrameTransport) async throws {
+        try await device.send(try seal(payload))
+    }
+
+    /// Reads sealed `data` frames until `predicate` accepts one; returns
+    /// every payload seen. Frames open with the session key; a
+    /// `channel_opened` (the daemon opening the session again) with the
+    /// handshake key.
     func collect(
         from device: any RelayFrameTransport,
         until predicate: (RemoteSessionPayload) -> Bool
     ) async throws -> [(frame: RelayRoutingFrame, payload: RemoteSessionPayload)] {
         var seen: [(RelayRoutingFrame, RemoteSessionPayload)] = []
+        let sessionKey = try #require(sessionKey)
+        let handshakeKey = try handshakeKey
         for _ in 0..<200 {
             let message = try await withTimeout(seconds: 5) { try await device.next() }
             guard case let .frame(frame) = message else { continue }
-            let payload = try RelayCryptography.open(
-                frame,
-                privateKey: deviceKeys.privateKey,
-                peerPublicKey: try hostCredentials.keyPair.publicKey
-            )
+            guard let payload = (try? RelayCryptography.open(frame, key: sessionKey))
+                ?? (try? RelayCryptography.open(frame, key: handshakeKey)) else {
+                Issue.record("frame \(frame.sequence) opens with neither key")
+                continue
+            }
             seen.append((frame, payload))
             if predicate(payload) { return seen }
         }
@@ -217,7 +311,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(await harness.rest.registered[credentials.hostID] == credentials.hostSecret)
     #expect(await harness.service.status().connected)
 
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("r1")), via: device)
+    try await harness.sync(via: device, requestID: RequestID("r1"))
     let seen = try await harness.collect(from: device) { $0.kind == .health }
     let indexParts = seen.map(\.payload).filter { $0.kind == .sessionIndex }
     #expect(indexParts.count == 1)
@@ -229,10 +323,11 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(entries[0].lastItemAt == base.addingTimeInterval(2))
     #expect(entries[1].timelineItemCount == 0)
     #expect(seen.last?.payload.health == health)
-    // Sequences are per device, start at 1, and are persisted before send.
-    #expect(seen.map(\.frame.sequence) == [1, 2])
+    // Sequences are per device, start at 1 (`channel_opened`), and are
+    // persisted before send.
+    #expect(seen.map(\.frame.sequence) == [2, 3])
     let persisted = RelayHostStateStore(path: harness.statePath)
-    #expect(persisted.current(for: harness.deviceID) == 2)
+    #expect(persisted.current(for: harness.deviceID) == 3)
     await harness.stop()
 }
 
@@ -240,7 +335,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     let base = Date(timeIntervalSince1970: 1_000)
     let harness = RelayHarness()
     try await harness.repository.replaceSession(sampleDetail("a", items: 5, at: base))
-    let device = try await harness.connect()
+    let device = try await harness.connectAndSync()
 
     try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: [SessionID("a"), SessionID("ghost")]), via: device)
     let seen = try await harness.collect(from: device) { $0.kind == .sessionRemoved }
@@ -256,7 +351,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.request(RemoteSessionPayload(
         kind: .fetchTimelineSince, requestID: RequestID("t"),
         sessionIDs: [SessionID("a")], since: base.addingTimeInterval(3)
-    ), via: device, sequence: 2)
+    ), via: device)
     let tail = try await harness.collect(from: device) { $0.kind == .sessionTimeline }
     let detail = try #require(RelayFrameReduction.assemble(parts: tail.map(\.payload)))
     #expect(detail.timeline.map(\.id) == [TimelineItemID("a-item-3"), TimelineItemID("a-item-4")])
@@ -277,7 +372,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await Task.sleep(for: .milliseconds(100))
     #expect(await harness.link.hostSent.isEmpty)
 
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
+    try await harness.sync(via: device)
     _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
 
     let first = AgentIngressEvent(eventID: EventID("e1"), sessionID: SessionID("a"), agent: .codex, occurredAt: base.addingTimeInterval(10), phase: .thinking)
@@ -300,24 +395,23 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.stop()
 }
 
-@Test func hostHealsASequenceCursorTheRelayReportsAsBehind() async throws {
+@Test func hostOpensTheChannelSessionAgainPastASequenceTheRelayRejected() async throws {
     let harness = RelayHarness()
     let device = try await harness.connect()
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
+    try await harness.sync(via: device, requestID: RequestID("r1"))
     let first = try await harness.collect(from: device) { $0.kind == .sessionIndex }
-    #expect(first.last?.frame.sequence == 1)
+    #expect(first.last?.frame.sequence == 2)
 
-    await harness.link.sendErrorToHost(RelayErrorMessage(code: "non_monotonic_sequence", sequence: 1, lastSequence: 40, deviceID: harness.deviceID))
-    try await Task.sleep(for: .milliseconds(50))
-    // The device is no longer "active" until it re-indexes…
-    let event = AgentIngressEvent(eventID: EventID("e"), sessionID: SessionID("x"), agent: .codex, occurredAt: Date(), phase: .thinking)
-    harness.hub.publish(event)
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(await harness.link.hostSent.count == 1)
-    // …and the next answer continues past the relay's cursor.
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device, sequence: 2)
-    let second = try await harness.collect(from: device) { $0.kind == .sessionIndex }
-    #expect(second.last?.frame.sequence == 41)
+    // The Relay tells only the host, and the rejected frame may have been
+    // `channel_opened` itself. The host heals its cursor and opens the same
+    // session again past the hole: an iPhone still waiting gets its key and
+    // index, one that had them sees the sequence gap and indexes again.
+    await harness.link.sendErrorToHost(RelayErrorMessage(code: "non_monotonic_sequence", sequence: 2, lastSequence: 40, deviceID: harness.deviceID))
+    let again = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    #expect(again.map(\.payload.kind) == [.channelOpened, .sessionIndex])
+    #expect(again.map(\.payload.requestID) == [RequestID("r1"), RequestID("r1")])
+    #expect(again.map(\.frame.sequence) == [41, 42])
+    #expect(RelayHostStateStore(path: harness.statePath).current(for: harness.deviceID) == 42)
     await harness.stop()
 }
 
@@ -334,11 +428,9 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
         if case let .summary(summary) = message { streamed.append(summary) }
     }
     defer { harness.hub.unsubscribe(subscription) }
-    let device = try await harness.connect()
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
-    _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    let device = try await harness.connectAndSync()
 
-    try await harness.request(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [SessionID("a")]), via: device, sequence: 2)
+    try await harness.request(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [SessionID("a")]), via: device)
     // Other iPhones get `session_info`; the Mac window and the Notch get the
     // same summary on the daemon's local stream.
     let info = try await harness.collect(from: device) { $0.kind == .sessionInfo }
@@ -348,22 +440,6 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     }
     #expect(streamed.snapshot.map(\.id) == [SessionID("a")])
     #expect(streamed.snapshot.first?.needsReview == false)
-    await harness.stop()
-}
-
-@Test func hostNudgesADeviceAfterTheRelayRejectsItsSequence() async throws {
-    let health = DaemonHealth(daemonVersion: "t", executableHash: "h", uptimeSeconds: 1, activeSessionCount: 0, retainedSessionCount: 0, socketPath: "/s", relayConnected: true)
-    let harness = RelayHarness(healthProvider: { health })
-    let device = try await harness.connect()
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
-    _ = try await harness.collect(from: device) { $0.kind == .health }
-
-    // The Relay tells only the host; the device would never notice on its
-    // own. The host heals its cursor and sends one frame past the hole so the
-    // device sees a gap and re-indexes.
-    await harness.link.sendErrorToHost(RelayErrorMessage(code: "non_monotonic_sequence", sequence: 2, lastSequence: 40, deviceID: harness.deviceID))
-    let nudge = try await harness.collect(from: device) { $0.kind == .health }
-    #expect(nudge.last?.frame.sequence == 41)
     await harness.stop()
 }
 
@@ -414,7 +490,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(await harness.rest.latestSession?.state == .approved)
     #expect(await harness.service.status().devices.map(\.keyVerified) == [true])
     #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == harness.deviceKeys.publicKey)
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("first")), via: device)
+    try await harness.sync(via: device, requestID: RequestID("first"))
     let seen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
     #expect(seen.last?.payload.requestID == RequestID("first"))
     await harness.stop()
@@ -438,11 +514,11 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await #expect(throws: RelayPairingError.self) { try await harness.service.decidePairing(approved: true) }
 
     // A device the Relay lists that this Mac never approved (or whose key the
-    // Relay swapped) stays unverified: its request goes unanswered.
+    // Relay swapped) stays unverified: it cannot open a channel session.
     await harness.rest.pair(harness.pairedDevice)
     await harness.service.refreshDevices()
     #expect(await harness.service.status().devices.map(\.keyVerified) == [false])
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("untrusted")), via: device)
+    try await harness.sendOpening(via: device, requestID: RequestID("untrusted"))
     try await Task.sleep(for: .milliseconds(200))
     #expect(await harness.link.hostSent.isEmpty)
 
@@ -536,9 +612,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
 
 @Test func hostReconnectsAfterTheRelayDropsItAndForgetsActiveDevices() async throws {
     let harness = RelayHarness()
-    let device = try await harness.connect()
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex), via: device)
-    _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    let device = try await harness.connectAndSync()
 
     await harness.link.dropHost()
     guard case .presence(online: false) = try await withTimeout(seconds: 5, { try await device.next() }) else {
@@ -555,7 +629,8 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(harness.connections.snapshot == [true, false, true])
-    // A push after reconnect goes nowhere until the device re-indexes.
+    // The reconnect ended every channel session: a push goes nowhere until
+    // the device opens one again.
     let sent = await harness.link.hostSent.count
     harness.hub.publish(AgentIngressEvent(eventID: EventID("e"), sessionID: SessionID("x"), agent: .codex, occurredAt: Date(), phase: .thinking))
     try await Task.sleep(for: .milliseconds(100))
@@ -570,10 +645,12 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.service.revoke(deviceID: harness.deviceID)
     let status = await harness.service.status()
     #expect(status.devices.first?.revokedAt != nil)
-    // Remove deletes the record and forgets the pinned key.
+    #expect(status.devices.first?.keyVerified == false)
+    // Remove deletes the record and forgets the pinned key and the revocation.
     try await harness.service.remove(deviceID: harness.deviceID)
     #expect(await harness.service.status().devices.isEmpty)
     #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
+    #expect(RelayHostStateStore(path: harness.statePath).revokedAt(for: harness.deviceID) == nil)
     await harness.stop()
 }
 
@@ -687,7 +764,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     let device = try await harness.connect()
 
     // Index: only the visible session.
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("r1")), via: device)
+    try await harness.sync(via: device, requestID: RequestID("r1"))
     let indexSeen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
     let entries = try #require(RelayFrameReduction.assembleIndex(parts: indexSeen.map(\.payload).filter { $0.kind == .sessionIndex }))
     #expect(entries.map(\.summary.id) == [SessionID("a")])
@@ -696,7 +773,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.request(RemoteSessionPayload(
         kind: .fetchSession, requestID: RequestID("f"),
         sessionIDs: [SessionID("a"), SessionID("ghost"), SessionID("ghost-child")]
-    ), via: device, sequence: 2)
+    ), via: device)
     let fetched = try await harness.collect(from: device) { $0.kind == .sessionRemoved && $0.sessionIDs == [SessionID("ghost-child")] }
     #expect(fetched.map(\.payload).filter { $0.kind == .sessionFull }.count == 1)
     let removedIDs = fetched.map(\.payload).filter { $0.kind == .sessionRemoved }.compactMap(\.sessionIDs)
@@ -706,7 +783,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     try await harness.request(RemoteSessionPayload(
         kind: .fetchTimelineSince, requestID: RequestID("t"),
         sessionIDs: [SessionID("ghost")], since: base
-    ), via: device, sequence: 3)
+    ), via: device)
     let tail = try await harness.collect(from: device) { $0.kind == .sessionRemoved }
     #expect(tail.last?.payload.sessionIDs == [SessionID("ghost")])
 
@@ -746,7 +823,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
         },
         planUsageProvider: { (state, settings) }
     )
-    let device = try await harness.connect()
+    let device = try await harness.connectAndSync()
 
     try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u1"), usageRange: .thisWeek), via: device)
     var seen = try await harness.collect(from: device) { $0.kind == .usageReport }
@@ -755,13 +832,13 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     #expect(presets.snapshot == [.thisWeek])
 
     // The daemon could not build the report: the answer still comes, empty.
-    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u2"), usageRange: .thisMonth), via: device, sequence: 2)
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u2"), usageRange: .thisMonth), via: device)
     seen = try await harness.collect(from: device) { $0.kind == .usageReport }
     #expect(seen.last?.payload.requestID == RequestID("u2") && seen.last?.payload.usage == nil)
 
     // A request without a preset is dropped, the next one still answered.
-    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u3")), via: device, sequence: 3)
-    try await harness.request(RemoteSessionPayload(kind: .fetchPlanUsage, requestID: RequestID("p1")), via: device, sequence: 4)
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u3")), via: device)
+    try await harness.request(RemoteSessionPayload(kind: .fetchPlanUsage, requestID: RequestID("p1")), via: device)
     seen = try await harness.collect(from: device) { $0.kind == .planUsage }
     #expect(!seen.contains { $0.payload.requestID == RequestID("u3") })
     #expect(seen.last?.payload.planUsage == state && seen.last?.payload.settings == settings)
@@ -789,14 +866,12 @@ private final class PresetLog: @unchecked Sendable {
     for id in ["a", "b", "c", "d"] {
         try await harness.repository.replaceSession(sampleDetail(id, items: 40, at: base))
     }
-    let device = try await harness.connect()
-    try await harness.request(RemoteSessionPayload(kind: .syncIndex, requestID: RequestID("i")), via: device)
-    _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    let device = try await harness.connectAndSync()
 
     // Four whole sessions queued, then a Usage ask right behind them: the
     // answer must not wait for the last session.
-    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: ["a", "b", "c", "d"].map(SessionID.init)), via: device, sequence: 2)
-    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u"), usageRange: .today), via: device, sequence: 3)
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: ["a", "b", "c", "d"].map(SessionID.init)), via: device)
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u"), usageRange: .today), via: device)
     let seen = try await harness.collect(from: device) { payload in
         payload.kind == .sessionFull && payload.session?.summary.id == SessionID("d")
     }
@@ -806,4 +881,443 @@ private final class PresetLog: @unchecked Sendable {
     #expect(usageAt < lastSessionAt)
     #expect(kinds.filter { $0 == .sessionFull }.count == 4)
     await harness.stop()
+}
+
+// MARK: - The Relay as an adversary
+
+// The nonce counts as disclosed the moment the reveal is attempted: a Relay
+// that takes it and answers with an error must not get the session back in
+// the state where it still takes a device.
+@Test func aFailedRevealEndsThePairingSessionForGood() async throws {
+    let harness = RelayHarness(preregisterDevice: false)
+    await harness.start()
+    await harness.rest.refuseReveals(true)
+
+    let started = try await harness.service.startPairing()
+    await harness.rest.submit(sessionID: started.sessionID, device: harness.pairedDevice)
+    await harness.link.sendPairingDeviceToHost(RelayPairingDeviceNotice(
+        sessionID: started.sessionID, deviceID: harness.deviceID, deviceName: "Test iPhone", devicePublicKey: harness.deviceKeys.publicKey
+    ))
+    for _ in 0..<300 where await harness.service.pairingSession() != nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    // The Relay read the nonce; the session is gone, cancelled at the Relay,
+    // and never showed an SAS.
+    #expect(await harness.rest.disclosedNonces[started.sessionID] != nil)
+    #expect(await harness.service.pairingSession() == nil)
+    #expect(await harness.rest.cancelRequests == [started.sessionID])
+
+    // Another identity for the same session — now that the nonce is known —
+    // finds nothing to bind to.
+    let other = RelayCryptography.makeKeyPair()
+    await harness.link.sendPairingDeviceToHost(RelayPairingDeviceNotice(
+        sessionID: started.sessionID, deviceID: DeviceID("device-other-0002"), deviceName: "Other iPhone", devicePublicKey: other.publicKey
+    ))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await harness.service.pairingSession() == nil)
+    await #expect(throws: RelayPairingError.self) { try await harness.service.decidePairing(approved: true) }
+    let persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == nil)
+    #expect(persisted.verifiedKey(for: DeviceID("device-other-0002")) == nil)
+
+    // The next code is a new session with a new nonce.
+    await harness.rest.refuseReveals(false)
+    let next = try await harness.service.startPairing()
+    #expect(next.sessionID != started.sessionID)
+    try await harness.submitDevice()
+    let nonce = try #require(await harness.rest.disclosedNonces[next.sessionID])
+    #expect(nonce != (await harness.rest.disclosedNonces[started.sessionID]))
+    await harness.stop()
+}
+
+@Test func aPairingSessionTakesOneDeviceOnly() async throws {
+    let harness = RelayHarness(preregisterDevice: false)
+    await harness.start()
+    let started = try await harness.service.startPairing()
+    try await harness.submitDevice()
+    let pending = try #require(await harness.service.pairingSession()?.pending)
+
+    // A second `pairing_device` for the session whose nonce is out changes
+    // nothing: same iPhone, same digits, and Match pins the first key.
+    let other = RelayCryptography.makeKeyPair()
+    await harness.link.sendPairingDeviceToHost(RelayPairingDeviceNotice(
+        sessionID: started.sessionID, deviceID: DeviceID("device-other-0002"), deviceName: "Other iPhone", devicePublicKey: other.publicKey
+    ))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await harness.service.pairingSession()?.pending == pending)
+    _ = try await harness.service.decidePairing(approved: true)
+    let persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == harness.deviceKeys.publicKey)
+    #expect(persisted.verifiedKey(for: DeviceID("device-other-0002")) == nil)
+    await harness.stop()
+}
+
+// Revocation is this Mac's own record: it holds whatever the Relay lists
+// afterwards, and across a daemon restart.
+@Test func aRevocationHoldsAgainstTheRelayAndAcrossARestart() async throws {
+    let harness = RelayHarness()
+    let base = Date()
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    let device = try await harness.connectAndSync()
+
+    try await harness.service.revoke(deviceID: harness.deviceID)
+    #expect(await harness.rest.revokeRequests == [harness.deviceID])
+    var persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == nil)
+    #expect(persisted.revokedAt(for: harness.deviceID) != nil)
+
+    // The Relay lists the device as active again, with the key it always had.
+    await harness.rest.pair(harness.pairedDevice)
+    await harness.service.refreshDevices()
+    let listed = try #require(await harness.service.status().devices.first)
+    #expect(listed.revokedAt != nil)
+    #expect(!listed.keyVerified)
+    // …and is told to revoke it again.
+    #expect(await harness.rest.revokeRequests == [harness.deviceID, harness.deviceID])
+    #expect(await harness.rest.pairedDevices.first?.revokedAt != nil)
+
+    // The revoked iPhone cannot open a session, hears no push, gets no alert.
+    await harness.rest.pair(harness.pairedDevice)
+    let sent = await harness.link.hostSent.count
+    try await harness.sendOpening(via: device)
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: [SessionID("a")]), via: device)
+    let event = AgentIngressEvent(
+        eventID: EventID("turn-end"), sessionID: SessionID("a"), agent: .codex, occurredAt: Date(),
+        timelineItem: TimelineItem(
+            id: TimelineItemID("a-end"), sessionID: SessionID("a"), occurredAt: Date(),
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "Shipped."))
+        )
+    )
+    _ = try await harness.repository.apply(event)
+    harness.hub.publish(event)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(await harness.link.hostSent.count == sent)
+    #expect(await harness.rest.sentNotifications.isEmpty)
+    await harness.stop()
+
+    // The daemon restarts while the Relay still lists the device as active.
+    await harness.rest.pair(harness.pairedDevice)
+    let restarted = RelayHarness(restarting: harness)
+    let again = try await restarted.connect()
+    let relisted = try #require(await restarted.service.status().devices.first)
+    #expect(relisted.revokedAt != nil)
+    #expect(!relisted.keyVerified)
+    try await restarted.sendOpening(via: again)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(await restarted.link.hostSent.isEmpty)
+    persisted = RelayHostStateStore(path: restarted.statePath)
+    #expect(persisted.verifiedKey(for: restarted.deviceID) == nil)
+    await restarted.stop()
+}
+
+@Test func aRevocationTheRelayRefusesStillHoldsOnThisMac() async throws {
+    let harness = RelayHarness()
+    _ = try await harness.connectAndSync()
+    await harness.rest.refuseRevocations(true)
+
+    // The Relay answers the revoke with an error: the Mac's own revocation
+    // stands, the row says Revoked, and the failure is on the status.
+    try await harness.service.revoke(deviceID: harness.deviceID)
+    var status = await harness.service.status()
+    #expect(status.devices.first?.revokedAt != nil)
+    #expect(status.devices.first?.keyVerified == false)
+    #expect(status.lastError?.contains("revocation") == true)
+    #expect(await harness.rest.pairedDevices.first?.revokedAt == nil)
+    #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == nil)
+
+    // Once the Relay takes it, the next refresh delivers it.
+    await harness.rest.refuseRevocations(false)
+    await harness.service.refreshDevices()
+    status = await harness.service.status()
+    #expect(status.lastError == nil)
+    #expect(await harness.rest.pairedDevices.first?.revokedAt != nil)
+    await harness.stop()
+}
+
+@Test func aRevocationTheRelayReportsBecomesThisMacsOwn() async throws {
+    let harness = RelayHarness()
+    _ = try await harness.connectAndSync()
+
+    // A device revoked before this Mac recorded revocations: the Relay says
+    // so, for the very key the Mac pinned. The Mac adopts it…
+    try await harness.rest.revoke(hostID: try harness.hostCredentials.hostID, deviceID: harness.deviceID, hostSecret: "")
+    await harness.service.refreshDevices()
+    let persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == nil)
+    #expect(persisted.revokedAt(for: harness.deviceID) != nil)
+
+    // …so the Relay taking it back later changes nothing.
+    await harness.rest.pair(harness.pairedDevice)
+    await harness.service.refreshDevices()
+    #expect(await harness.service.status().devices.first?.revokedAt != nil)
+    await harness.stop()
+}
+
+@Test func onlyPairingAgainLiftsARevocation() async throws {
+    let harness = RelayHarness()
+    let device = try await harness.connectAndSync()
+    try await harness.service.revoke(deviceID: harness.deviceID)
+    #expect(RelayHostStateStore(path: harness.statePath).revokedAt(for: harness.deviceID) != nil)
+
+    // Mac shows a code, the same iPhone submits itself, the Mac presses Match.
+    _ = try await harness.service.startPairing()
+    try await harness.submitDevice()
+    _ = try await harness.service.decidePairing(approved: true)
+    let persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == harness.deviceKeys.publicKey)
+    #expect(persisted.revokedAt(for: harness.deviceID) == nil)
+    let listed = try #require(await harness.service.status().devices.first)
+    #expect(listed.revokedAt == nil)
+    #expect(listed.keyVerified)
+    // The refresh after Match did not send the old revocation again.
+    #expect(await harness.rest.revokeRequests == [harness.deviceID])
+
+    try await harness.sync(via: device, requestID: RequestID("back"))
+    let seen = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    #expect(seen.last?.payload.requestID == RequestID("back"))
+    await harness.stop()
+}
+
+@Test func aMatchTheRelayRefusesLeavesTrustAsItWas() async throws {
+    let harness = RelayHarness()
+    _ = try await harness.connectAndSync()
+    try await harness.service.revoke(deviceID: harness.deviceID)
+    let revokedAt = try #require(RelayHostStateStore(path: harness.statePath).revokedAt(for: harness.deviceID))
+
+    _ = try await harness.service.startPairing()
+    try await harness.submitDevice()
+    // The Relay drops the session before the decision arrives.
+    let sessionID = try #require(await harness.rest.latestSession?.sessionID)
+    try await harness.rest.cancelPairing(hostID: try harness.hostCredentials.hostID, sessionID: sessionID, hostSecret: "")
+    await #expect(throws: RelayClientError.self) { try await harness.service.decidePairing(approved: true) }
+
+    let persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == nil)
+    #expect(persisted.revokedAt(for: harness.deviceID) == revokedAt)
+    await harness.stop()
+}
+
+// A request counts once, in the session it was sealed for, and only moving
+// forward: the Relay repeating or reordering frames changes nothing.
+@Test func repeatedAndOutOfOrderRequestsAreDropped() async throws {
+    let presets = PresetLog()
+    let harness = RelayHarness(usageProvider: { preset in
+        presets.append(preset)
+        throw DaemonServiceError.unavailable("usage")
+    })
+    let device = try await harness.connectAndSync()
+
+    let first = try harness.seal(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u1"), usageRange: .today))
+    let second = try harness.seal(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u2"), usageRange: .thisWeek))
+    // The later one arrives first: the earlier one is then behind the cursor.
+    try await device.send(second)
+    _ = try await harness.collect(from: device) { $0.kind == .usageReport && $0.requestID == RequestID("u2") }
+    try await device.send(first)
+    // The same frame again.
+    try await device.send(second)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(presets.snapshot == [.thisWeek])
+
+    // The session goes on from there.
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u3"), usageRange: .thisMonth), via: device)
+    _ = try await harness.collect(from: device) { $0.kind == .usageReport && $0.requestID == RequestID("u3") }
+    #expect(presets.snapshot == [.thisWeek, .thisMonth])
+    await harness.stop()
+}
+
+@Test func aRequestOpensOnlyInTheChannelSessionItWasSealedFor() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    let needsReview = sampleDetail("a", items: 1, at: base)
+    try await harness.repository.replaceSession(SessionDetail(
+        summary: needsReview.summary.withReviewState(needsAttention: true, needsReview: true),
+        turns: needsReview.turns, timeline: needsReview.timeline
+    ))
+    let device = try await harness.connectAndSync()
+
+    // Kept from the first session, never delivered: a review of `a`.
+    let kept = try harness.seal(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [SessionID("a")]), sequence: 1_000)
+    // The same request sealed with the handshake key instead of a session's.
+    let outside = try RelayCryptography.seal(
+        RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [SessionID("a")]),
+        hostID: try harness.hostCredentials.hostID, deviceID: harness.deviceID, sequence: 2_000, kind: .request,
+        key: try harness.handshakeKey
+    )
+
+    // The iPhone opens its next session; both frames arrive in it.
+    try await harness.sync(via: device)
+    _ = try await harness.collect(from: device) { $0.kind == .sessionIndex }
+    try await device.send(kept)
+    try await device.send(outside)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(try await harness.repository.sessionSummary(id: SessionID("a"))?.needsReview == true)
+
+    // The session itself still works.
+    try await harness.request(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [SessionID("a")]), via: device)
+    for _ in 0..<300 where try await harness.repository.sessionSummary(id: SessionID("a"))?.needsReview == true {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await harness.repository.sessionSummary(id: SessionID("a"))?.needsReview == false)
+    await harness.stop()
+}
+
+@Test func aRevocationMadeWhileTheRelayAnswersAMatchStands() async throws {
+    let harness = RelayHarness()
+    _ = try await harness.connectAndSync()
+
+    // The trusted iPhone pairs again with a new key; the Mac presses Match
+    // and the Relay sits on the decision.
+    let started = try await harness.service.startPairing()
+    let newKeys = RelayCryptography.makeKeyPair()
+    await harness.rest.submit(sessionID: started.sessionID, device: PairedDevice(
+        id: harness.deviceID, name: "Test iPhone", publicKey: newKeys.publicKey, pairedAt: Date()
+    ))
+    await harness.link.sendPairingDeviceToHost(RelayPairingDeviceNotice(
+        sessionID: started.sessionID, deviceID: harness.deviceID, deviceName: "Test iPhone", devicePublicKey: newKeys.publicKey
+    ))
+    for _ in 0..<300 where await harness.service.pairingSession()?.pending == nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    await harness.rest.holdDecisions(true)
+    let service = harness.service
+    let decision = Task { try await service.decidePairing(approved: true) }
+    for _ in 0..<300 where await !harness.rest.isHoldingDecision {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(RelayHostStateStore(path: harness.statePath).verifiedKey(for: harness.deviceID) == newKeys.publicKey)
+
+    // Meanwhile the Mac revokes the iPhone — and then the Relay refuses the
+    // decision. Undoing the Match must not undo the revocation.
+    try await harness.service.revoke(deviceID: harness.deviceID)
+    await harness.rest.releaseDecision(refusing: true)
+    await #expect(throws: RelayClientError.self) { _ = try await decision.value }
+    let persisted = RelayHostStateStore(path: harness.statePath)
+    #expect(persisted.verifiedKey(for: harness.deviceID) == nil)
+    #expect(persisted.revokedAt(for: harness.deviceID) != nil)
+    await harness.stop()
+}
+
+// What happens after the index was read still reaches an iPhone whose
+// session is only just opening: the push waits behind the index.
+@Test func pushesMadeWhileASessionOpensFollowItsIndex() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness(usageProvider: { _ in
+        try await Task.sleep(for: .milliseconds(300))
+        throw DaemonServiceError.unavailable("usage")
+    })
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    let device = try await harness.connectAndSync()
+
+    // The send loop is busy with a slow answer when the iPhone opens its
+    // next session; an event lands before that session's index goes out.
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("slow"), usageRange: .today), via: device)
+    try await Task.sleep(for: .milliseconds(50))
+    let ephemeral = try await harness.sendOpening(via: device, requestID: RequestID("again"))
+    try await Task.sleep(for: .milliseconds(50))
+    let event = AgentIngressEvent(eventID: EventID("e1"), sessionID: SessionID("a"), agent: .codex, occurredAt: base.addingTimeInterval(10), phase: .executing)
+    harness.hub.publish(event)
+
+    try await harness.finishOpening(ephemeral, requestID: RequestID("again"), via: device)
+    let seen = try await harness.collect(from: device) { $0.kind == .sessionMessage }
+    #expect(seen.map(\.payload.kind) == [.sessionIndex, .sessionMessage])
+    #expect(seen.last?.payload.events?.map(\.eventID) == [EventID("e1")])
+    await harness.stop()
+}
+
+@Test func theOpeningOfTheCurrentSessionSeenAgainChangesNothing() async throws {
+    let presets = PresetLog()
+    let harness = RelayHarness(usageProvider: { preset in
+        presets.append(preset)
+        throw DaemonServiceError.unavailable("usage")
+    })
+    let device = try await harness.connectAndSync()
+    let opening = try #require(await harness.link.deviceSent.last)
+    let sent = await harness.link.hostSent.count
+
+    // The Relay delivers the same `sync_index` once more.
+    try await device.send(opening)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(await harness.link.hostSent.count == sent)
+
+    // The session it opened is still the one in use.
+    try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u"), usageRange: .today), via: device)
+    _ = try await harness.collect(from: device) { $0.kind == .usageReport }
+    #expect(presets.snapshot == [.today])
+    await harness.stop()
+}
+
+// A cursor the Relay could not hold must not be followed: doing so would
+// use up the channel's sequences, and the next reservation would overflow.
+@Test func aSequenceTheRelayCouldNotHoldIsRefused() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    try await harness.repository.replaceSession(sampleDetail("a", items: 1, at: base))
+    let device = try await harness.connectAndSync()
+    let cursor = RelayHostStateStore(path: harness.statePath).current(for: harness.deviceID)
+
+    await harness.link.sendErrorToHost(RelayErrorMessage(code: "non_monotonic_sequence", sequence: 2, lastSequence: .max, deviceID: harness.deviceID))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(RelayHostStateStore(path: harness.statePath).current(for: harness.deviceID) == cursor)
+
+    // The channel carries on from its own cursor.
+    let event = AgentIngressEvent(eventID: EventID("e1"), sessionID: SessionID("a"), agent: .codex, occurredAt: base.addingTimeInterval(10), phase: .executing)
+    harness.hub.publish(event)
+    let seen = try await harness.collect(from: device) { $0.kind == .sessionMessage }
+    #expect(seen.last?.frame.sequence == cursor + 1)
+    await harness.stop()
+}
+
+@Test func sequencesStayWithinWhatTheRelayCanCount() throws {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        .appendingPathComponent("relay-host-state.json").path
+    let device = DeviceID("device-test-0001")
+    var store = RelayHostStateStore(path: path)
+
+    #expect(throws: RelayHostStateError.self) { try store.advance(device, past: .max) }
+    #expect(store.current(for: device) == 0)
+
+    // The last sequences of the range are handed out, then no more.
+    try store.advance(device, past: RelayHostStateStore.highestSequence - 1)
+    #expect(throws: RelayHostStateError.self) { _ = try store.reserve(for: device, count: 2) }
+    #expect(try store.reserve(for: device, count: 1) == RelayHostStateStore.highestSequence)
+    #expect(throws: RelayHostStateError.self) { _ = try store.reserve(for: device, count: 1) }
+    #expect(RelayHostStateStore(path: path).current(for: device) == RelayHostStateStore.highestSequence)
+}
+
+@Test func revocationsAndPinsSurviveAsOneRecord() throws {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        .appendingPathComponent("relay-host-state.json").path
+    let device = DeviceID("device-test-0001")
+    let key = Data(repeating: 7, count: 32)
+    let revokedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+    var store = RelayHostStateStore(path: path)
+    try store.setVerifiedKey(key, for: device)
+    #expect(store.verifiedDeviceIDs == [device])
+    try store.revoke(device, at: revokedAt)
+    // Revoking again keeps the first date; the pin is gone either way.
+    try store.revoke(device, at: revokedAt.addingTimeInterval(60))
+    var reread = RelayHostStateStore(path: path)
+    #expect(reread.verifiedKey(for: device) == nil)
+    #expect(reread.verifiedDeviceIDs.isEmpty)
+    #expect(reread.revokedAt(for: device) == revokedAt)
+
+    // A Match pins again and lifts the mark; Remove forgets both.
+    try reread.setVerifiedKey(key, for: device)
+    #expect(RelayHostStateStore(path: path).revokedAt(for: device) == nil)
+    #expect(RelayHostStateStore(path: path).verifiedKey(for: device) == key)
+    try reread.revoke(device, at: revokedAt)
+    try reread.forget(device)
+    #expect(RelayHostStateStore(path: path).revokedAt(for: device) == nil)
+    #expect(RelayHostStateStore(path: path).verifiedKey(for: device) == nil)
+
+    // A state file from before revocations were recorded keeps its pins and sequences.
+    let legacy = #"{"channelSequences":{"device-test-0001":12},"verifiedDeviceKeys":{"device-test-0001":"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="}}"#
+    try Data(legacy.utf8).write(to: URL(fileURLWithPath: path))
+    let upgraded = RelayHostStateStore(path: path)
+    #expect(upgraded.current(for: device) == 12)
+    #expect(upgraded.verifiedKey(for: device) == key)
+    #expect(upgraded.revokedAt(for: device) == nil)
 }

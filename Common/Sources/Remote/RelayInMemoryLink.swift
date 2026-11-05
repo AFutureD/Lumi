@@ -90,6 +90,18 @@ public actor RelayInMemoryLink {
     public func dropHost() async {
         await detach(.host)
     }
+
+    /// The worker handing a device a frame of its own choosing — one it kept
+    /// from earlier, out of order, or made up — to test what an iPhone accepts.
+    public func deliver(_ frame: RelayRoutingFrame, to deviceID: DeviceID) async {
+        await deviceEnds[deviceID]?.deliver(.frame(frame))
+    }
+
+    /// The worker telling a device the host went away or came back, whether
+    /// or not it did.
+    public func sendPresence(online: Bool, to deviceID: DeviceID) async {
+        await deviceEnds[deviceID]?.deliver(.presence(online: online))
+    }
 }
 
 /// The link doubles as the host-side transport factory for tests.
