@@ -7,35 +7,55 @@ import Foundation
 /// hot path the Keychain is not meant for:
 /// - per-device host → device send sequences, persisted before anything hits
 ///   the wire: a crash mid-publish leaves a legal gap, never a fatal reuse;
-/// - the device public keys the daemon pinned when the Mac pressed Match (the
-///   key the Numeric Comparison covered): the Relay's device list is only
-///   believed where it matches one of these.
+/// - which iPhones this Mac trusts. A device is trusted exactly while its
+///   public key is pinned here: Match pins the key the Numeric Comparison
+///   covered, Revoke drops it. This is the only place trust is read from —
+///   nothing the Relay lists or answers can make a device trusted (again);
+/// - when this Mac revoked a device. The mark keeps the row "Revoked" and
+///   keeps the daemon re-sending the revocation until the Relay applies it.
+///
+/// Every change is written before it takes effect: a write that fails
+/// throws and leaves both the file and this value as they were, so what the
+/// daemon acts on is always what a restart would read back.
 public struct RelayHostStateStore: Sendable {
-    private struct State: Codable {
-        var channelSequences: [String: UInt64]
-        var verifiedDeviceKeys: [String: Data]
+    /// The highest sequence a channel may reach: the largest integer the
+    /// Relay itself can count exactly. Nothing — a cursor the Relay reports
+    /// least of all — moves a channel past it.
+    public static let highestSequence: UInt64 = 1 << 53
+
+    private struct State: Codable, Equatable {
+        var channelSequences: [String: UInt64] = [:]
+        var verifiedDeviceKeys: [String: Data] = [:]
+        var revokedDevices: [String: Date] = [:]
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            channelSequences = try container.decode([String: UInt64].self, forKey: .channelSequences)
+            verifiedDeviceKeys = try container.decode([String: Data].self, forKey: .verifiedDeviceKeys)
+            // A file written before revocations were recorded here has none.
+            revokedDevices = try container.decodeIfPresent([String: Date].self, forKey: .revokedDevices) ?? [:]
+        }
     }
 
     public let path: String
-    private var sequences: [String: UInt64]
-    private var verifiedKeys: [String: Data]
+    private var state: State
 
     public init(path: String) {
         self.path = path
         if let data = FileManager.default.contents(atPath: path),
            let state = try? JSONDecoder().decode(State.self, from: data) {
-            sequences = state.channelSequences
-            verifiedKeys = state.verifiedDeviceKeys
+            self.state = state
         } else {
-            sequences = [:]
-            verifiedKeys = [:]
+            state = State()
         }
     }
 
     // MARK: - Sequences
 
     public func current(for device: DeviceID) -> UInt64 {
-        sequences[device.rawValue] ?? 0
+        state.channelSequences[device.rawValue] ?? 0
     }
 
     /// Reserves `count` sequences for the device and persists the new high
@@ -43,41 +63,89 @@ public struct RelayHostStateStore: Sendable {
     public mutating func reserve(for device: DeviceID, count: Int) throws -> UInt64 {
         precondition(count > 0)
         let previous = current(for: device)
-        sequences[device.rawValue] = previous + UInt64(count)
-        try persist()
+        guard previous <= Self.highestSequence, UInt64(count) <= Self.highestSequence - previous else {
+            throw RelayHostStateError.sequenceOutOfRange
+        }
+        try commit { $0.channelSequences[device.rawValue] = previous + UInt64(count) }
         return previous + 1
     }
 
     /// The relay reported the channel is already past `sequence` (state file
-    /// lost, or another daemon instance published): jump ahead of it.
+    /// lost, or another daemon instance published): jump ahead of it. A
+    /// cursor beyond `highestSequence` is not one the Relay could hold, so
+    /// it is refused rather than left to exhaust the channel.
     public mutating func advance(_ device: DeviceID, past sequence: UInt64) throws {
         guard sequence >= current(for: device) else { return }
-        sequences[device.rawValue] = sequence
-        try persist()
+        guard sequence < Self.highestSequence else { throw RelayHostStateError.sequenceOutOfRange }
+        try commit { $0.channelSequences[device.rawValue] = sequence }
     }
 
-    // MARK: - Device keys
+    // MARK: - Device trust
 
-    /// The public key this daemon pinned for the device, if any.
+    /// The public key this daemon pinned for the device; `nil` for a device
+    /// this Mac never approved or has revoked. A pinned key is what makes a
+    /// device trusted, and the only key the daemon derives channel keys from.
     public func verifiedKey(for device: DeviceID) -> Data? {
-        verifiedKeys[device.rawValue]
+        state.verifiedDeviceKeys[device.rawValue]
     }
 
-    /// Pins the device's public key (the Mac approved it after comparing the SAS).
+    /// Every device this Mac trusts right now.
+    public var verifiedDeviceIDs: [DeviceID] {
+        state.verifiedDeviceKeys.keys.sorted().map { DeviceID($0) }
+    }
+
+    /// When this Mac revoked the device, if it did and has not paired it again since.
+    public func revokedAt(for device: DeviceID) -> Date? {
+        state.revokedDevices[device.rawValue]
+    }
+
+    /// Pins the device's public key (the Mac approved it after comparing the
+    /// SAS) and lifts an earlier revocation: a Match is the only thing that
+    /// trusts a device again.
     public mutating func setVerifiedKey(_ key: Data, for device: DeviceID) throws {
-        guard verifiedKeys[device.rawValue] != key else { return }
-        verifiedKeys[device.rawValue] = key
-        try persist()
+        try commit {
+            $0.verifiedDeviceKeys[device.rawValue] = key
+            $0.revokedDevices[device.rawValue] = nil
+        }
     }
 
-    /// Forgets a removed device's pin (a re-pair pins a fresh key anyway).
-    public mutating func clearVerifiedKey(for device: DeviceID) throws {
-        guard verifiedKeys.removeValue(forKey: device.rawValue) != nil else { return }
-        try persist()
+    /// Revokes the device on this Mac: its pinned key is dropped and the
+    /// revocation is kept until the device is paired again or removed.
+    /// Repeating it keeps the first date.
+    public mutating func revoke(_ device: DeviceID, at date: Date) throws {
+        try commit {
+            $0.verifiedDeviceKeys[device.rawValue] = nil
+            $0.revokedDevices[device.rawValue] = $0.revokedDevices[device.rawValue] ?? date
+        }
     }
 
-    private func persist() throws {
-        let state = State(channelSequences: sequences, verifiedDeviceKeys: verifiedKeys)
+    /// Forgets a removed device: its pin and its revocation mark.
+    public mutating func forget(_ device: DeviceID) throws {
+        try commit {
+            $0.verifiedDeviceKeys[device.rawValue] = nil
+            $0.revokedDevices[device.rawValue] = nil
+        }
+    }
+
+    /// Puts the device's pin and revocation mark back to what `earlier` held
+    /// (a Match the Relay then refused).
+    public mutating func restoreTrust(of device: DeviceID, from earlier: RelayHostStateStore) throws {
+        try commit {
+            $0.verifiedDeviceKeys[device.rawValue] = earlier.state.verifiedDeviceKeys[device.rawValue]
+            $0.revokedDevices[device.rawValue] = earlier.state.revokedDevices[device.rawValue]
+        }
+    }
+
+    /// Applies `change` to a copy, writes it, and only then adopts it.
+    private mutating func commit(_ change: (inout State) -> Void) throws {
+        var next = state
+        change(&next)
+        guard next != state else { return }
+        try persist(next)
+        state = next
+    }
+
+    private func persist(_ state: State) throws {
         let data = try JSONEncoder().encode(state)
         let url = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(
@@ -91,4 +159,9 @@ public struct RelayHostStateStore: Sendable {
         _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
+}
+
+public enum RelayHostStateError: Error, Sendable {
+    /// A channel's sequence would leave the range the Relay can count.
+    case sequenceOutOfRange
 }

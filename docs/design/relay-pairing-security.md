@@ -1,6 +1,14 @@
 # Relay、配对与安全设计
 
-Relay 使用 TypeScript Cloudflare Worker 和 Durable Objects。每个 `HostID` 映射到一个 `HostRelay` Durable Object；另有一个全局的 `PairingDirectory` 对象，只回答“这个配对码属于哪台 Mac”。业务 payload 在 Mac 的 daemon 加密、iPhone 解密（设备请求反向同理），Relay 只理解路由头。威胁模型按“Relay 可能作恶”设计：两端的公钥都不由 Relay 担保——daemon 先对自己的公钥做承诺，等 iPhone 的公钥到了才揭示 nonce，两端各自算出同一组 6 位数字（SAS），人在 Mac 上比对后点 Match，Device token 才签发、设备公钥才被钉住。Relay 换钥匙只有一次 10⁻⁶ 的盲猜机会，失败在两块屏幕上可见。
+Relay 使用 TypeScript Cloudflare Worker 和 Durable Objects。每个 `HostID` 映射到一个 `HostRelay` Durable Object；另有一个全局的 `PairingDirectory` 对象，只回答“这个配对码属于哪台 Mac”。业务 payload 在 Mac 的 daemon 加密、iPhone 解密（设备请求反向同理），Relay 只理解路由头。
+
+威胁模型按“Relay 可能作恶”设计：Relay 只搬运，不裁决。三件事都由两端自己决定。
+
+| 问题 | 谁决定 | 怎么决定 |
+| --- | --- | --- |
+| 这把钥匙是谁的 | 人，在 Mac 上 | daemon 先对自己的公钥做承诺，iPhone 的公钥到了才揭示 nonce，两端各算出同一组 6 位数字（SAS），比对后点 Match。Relay 换钥匙只有一次 10⁻⁶ 的盲猜机会，失败在两块屏幕上可见 |
+| 信任哪台 iPhone | daemon 的状态文件 | Match 钉住公钥，Revoke 去掉。Relay 的设备列表只用于显示，它回什么都不能让一台设备（重新）被信任 |
+| 哪一帧算数 | 收帧的那一端 | 每次同步两端各出一把一次性钥匙，派生出只在内存里的会话密钥。一帧只在当前会话里验证通过、且序号向前时才生效 |
 
 ## 选择 Durable Objects 的原因
 
@@ -64,7 +72,7 @@ Host WSS 多两种控制帧（与 `presence` / `error` 同一通道）：
 
 ## 配对流程
 
-会话状态单向：`offered → claimed → submitted → revealed → approved | rejected | cancelled | expired`。claimed = 码已被花掉；submitted = 设备信息已进来；revealed = daemon 已揭示 nonce。
+Relay 侧会话状态单向：`offered → claimed → submitted → revealed → approved | rejected | cancelled | expired`。claimed = 码已被花掉；submitted = 设备信息已进来；revealed = daemon 已揭示 nonce。
 
 ```mermaid
 sequenceDiagram
@@ -83,15 +91,15 @@ sequenceDiagram
     I->>R: POST /v1/pairing/claim {code}
     R->>R: Directory: SHA-256(code) 命中 → consumed；HostRelay: offered → claimed
     R-->>I: {sessionID, hostID, hostName, commit}
-    I->>I: 生成 / 复用 deviceID 与设备密钥对
+    I->>I: 生成 / 复用 deviceID，生成新的设备密钥对
     I->>R: POST …/:s/device {deviceID, deviceName, devicePublicKey}   [sessionID]
     R->>R: claimed → submitted（Host 不在线则 409 host_offline）
     R-->>D: Host WSS {type:"pairing_device", …}
 
-    D->>D: SAS = f(hostID, deviceID, hostPub, devicePub, nonceH)
-    D-->>A: relay_pairing_state → pending {deviceName, sas}；60 秒倒计时
+    D->>D: 把这台设备绑到会话上（此后不再接受别的设备） SAS = f(hostID, deviceID, hostPub, devicePub, nonceH)
     D->>R: POST …/:s/reveal {hostNonce}   [Host secret]
     R->>R: submitted → revealed
+    D-->>A: relay_pairing_state → pending {deviceName, sas}；60 秒倒计时
 
     loop 1 秒轮询
         I->>R: GET …/:s   [sessionID]
@@ -102,12 +110,32 @@ sequenceDiagram
 
     Note over A,I: 人比对两边的 6 位数字
     A->>D: IPC relay_pairing_decide {approved: true}（Match）
+    D->>D: 钉住 devicePub（状态文件，先于通知 Relay）
     D->>R: POST …/:s/decision {approved: true}   [Host secret]
     R->>R: 写 / 覆盖 devices 行；签发 deviceToken；revealed → approved
-    D->>D: 钉住 devicePub（状态文件）；refreshDevices
     R-->>I: GET → {state: approved, deviceToken, pairedAt}
     I->>I: Keychain 存通道；开 Device WSS；sync_index
 ```
+
+### daemon 的会话阶段
+
+daemon 自己的配对会话只往前走：
+
+| 阶段 | 含义 | 能做什么 |
+| --- | --- | --- |
+| `offered` | 码在屏幕上，nonce 还是秘密 | 唯一接受 `pairing_device` 的阶段 |
+| `revealing` | 设备已绑定，nonce 正在发给 Relay | 什么都不显示，不能 Match |
+| `comparing` | Relay 收下了 nonce，SAS 在屏幕上 | Match / Don't match，60 秒 |
+| `decided` | Paired 或 Pairing declined | 等 Mac 显示完结果后开新码 |
+| `expired` | 码到期 | 停在 Expired，等 New code |
+
+没有任何路径回到 `offered`。三条规则由此而来：
+
+- **一个会话只绑一台设备。** 第一条 `pairing_device` 把设备身份和公钥绑死；同一会话后来的 `pairing_device` 一律忽略（`pairing_device_ignored`）。
+- **nonce 一旦尝试发出就算已披露。** reveal 请求失败不代表 Relay 没收到 nonce。所以 reveal 无论因何失败，daemon 都丢弃整个会话（尽力通知 Relay 取消），Mac 回到一个新码、新 nonce；iPhone 看到会话被取消，回输码屏。会话绝不退回“还能换设备”的状态。
+- **揭示不阻塞同步。** reveal 作为独立任务执行，Relay 慢或不应答时不会卡住其他 iPhone 的帧。
+
+### 其余规则
 
 - **配对码**：6 位 Crockford Base32（`0-9 A-Z` 去 I L O U，30 bit），由 `PairingDirectory` 生成并保证与活跃码不撞；5 分钟；单次；输入归一化（大写、去空格 / 连字符、`O→0`、`I→1`、`L→1`、`U→V`）。码不参与任何密钥。
 - **状态机在 daemon**：Mac App 退出不影响进行中的配对；daemon 重启 = 内存会话丢失，Relay 侧会话到期自然作废，重开配对页即可。
@@ -119,29 +147,71 @@ sequenceDiagram
 
 ### 钥匙为什么不信 Relay
 
-- **承诺先行**：`commit` 在会话创建时就交给 Relay（iPhone claim 时拿到），nonce 只在 daemon 收到 `pairing_device` 之后才揭示。Relay 想换钥匙，必须在没见过 devicePub 时伪造 `commit'`，又在不知道 nonceH 时伪造 `devicePub'`——两边的 SAS 在它能“适应”之前已被钉死，碰巧相等的概率 10⁻⁶。没有承诺的 6 位 SAS 可以离线枚举约 1000 对假钥匙凑出来，所以 reveal 必须等 devicePub 到了之后。
-- **iPhone**：`revealed` 时校验 `commit`，不符即中止（界面“校验失败”，红色）、不存任何凭据、DELETE 会话。Host 公钥以校验通过的那把为准。
-- **Mac**：Match 时 daemon 把 `pairing_device` 里的设备公钥写进状态文件（钉住）。之后 `GET devices` 列出的公钥只在与钉住值相同时才被相信；其余——这台 Mac 没批准过的行，或 Relay 换掉的钥匙——是 Unverified：不发任何帧、请求一律丢弃、Mac 配对页显示 `Key not verified · pair this iPhone again`。
-- **Device token**：只在 Mac `decision{approved:true}` 后签发，绑定 Mac 看到的那把 devicePub；Relay 拿着 token 冒充 iPhone 也解不开帧、SAS 也对不上。
+- **承诺先行**：`commit` 在会话创建时就交给 Relay（iPhone claim 时拿到），nonce 只在 daemon 收到 `pairing_device` 之后才揭示。Relay 想换钥匙，必须在没见过 devicePub 时伪造 `commit'`，又在不知道 nonceH 时伪造 `devicePub'`——两边的 SAS 在它能“适应”之前已被钉死，碰巧相等的概率 10⁻⁶。没有承诺的 6 位 SAS 可以离线枚举凑出来，所以 reveal 必须等 devicePub 到了之后，而且 devicePub 定了就不能再换（见上面的会话阶段）。
+- **iPhone**：每次配对尝试生成新的设备密钥对，Relay 无法预知。`revealed` 时校验 `commit`，不符即中止（界面“校验失败”，红色）、不存任何凭据、DELETE 会话。Host 公钥以校验通过的那把为准。
+- **Mac**：Match 时 daemon 先把 `pairing_device` 里的设备公钥写进状态文件（钉住），再把决定告诉 Relay；写不进去就不告诉 Relay，Relay 拒绝决定就把记录恢复原样——但等 Relay 应答期间做出的撤销不会被这次恢复撤回。此后 daemon 只用钉住的这把公钥派生通道密钥，Relay 列表里的公钥从不参与。
+- **Device token**：只在 Mac `decision{approved:true}` 后签发；Relay 拿着 token 冒充 iPhone 也解不开帧、SAS 也对不上。
 - 升级前配对的设备在状态文件里没有钉住值 → Unverified，重新配对即可（deviceID 复用）。
 
 ## 密钥与加密
 
-每个端点生成 Curve25519 Key Agreement 密钥对：
+一条 Mac—iPhone 通道有三层钥匙，寿命从长到短：
 
-1. Mac private key + iPhone public key 计算 shared secret。
-2. iPhone private key + Mac public key 得到同一 shared secret。
-3. HKDF-SHA256 派生 32-byte symmetric key。
-4. salt 为 `Lumi Relay/v1`。
-5. shared info 包含 `HostID` 和 `DeviceID`，隔离不同设备通道。
-6. `RemoteSessionPayload` 使用 ChaChaPoly 加密和认证，路由头（`HostID`、`DeviceID`、`sequence`、`kind`）作为 additional authenticated data 一起认证。
+| 钥匙 | 从哪来 | 活多久 | 封什么 |
+| --- | --- | --- | --- |
+| 长期密钥对 | 每端各一对 Curve25519 Key Agreement；公钥在配对时经承诺 + SAS 交换 | 这次配对存续期间；重新配对换新 | 不直接封帧 |
+| 握手密钥 | 两把长期密钥做 X25519 → HKDF-SHA256 | 同上 | 只封打开通道会话的两帧：`sync_index` 和 `channel_opened`，里面没有 Session 内容 |
+| 会话密钥 | 两把长期密钥 + 两把一次性密钥，四个 X25519 结果 → HKDF-SHA256 | 一个通道会话，只在两端内存里 | 其余所有帧 |
 
-配对派生（`RelayCryptography`，Swift 与 Relay 的 TS 各算一遍、黄金向量相等）：
+### 通道会话
+
+每次 `sync_index` 打开一个新的通道会话。帧格式不变，Relay 不参与也察觉不到：
+
+1. iPhone 生成一次性密钥对，把公钥 `E_d` 和随机 `requestID` 放进 `sync_index`，用握手密钥封好发出。
+2. daemon 生成自己的一次性密钥对，算出会话密钥，回一帧用握手密钥封的 `channel_opened{requestID, E_h}`，紧接着是用会话密钥封的 index。
+3. iPhone 核对 `requestID` 是自己这次发的，算出同一把会话密钥。之后两个方向的帧都用它封。
+
+会话在这些时候结束，钥匙随之丢弃：任一端重连、Mac 离线、iPhone 发出下一次 `sync_index`、设备不再被信任。
+
+### 派生公式
+
+`RelayCryptography`，两端同一份实现：
+
+- **握手密钥**：`HKDF-SHA256(ikm = X25519(长期, 长期), salt = "Lumi Relay/v2/handshake", info = hostID "/" deviceID)`，64 字节。
+- **会话密钥**：`HKDF-SHA256(ikm = DH1 ‖ DH2 ‖ DH3 ‖ DH4, salt = "Lumi Relay/v2/session", info = hostID "/" deviceID ‖ 0x00 ‖ E_d ‖ E_h)`，64 字节。
+
+  | | Mac 一侧 | iPhone 一侧 |
+  | --- | --- | --- |
+  | DH1 | 长期 | 长期 |
+  | DH2 | 长期 | 一次性 |
+  | DH3 | 一次性 | 长期 |
+  | DH4 | 一次性 | 一次性 |
+
+- **分方向**：64 字节前一半封 `data`（daemon → iPhone），后一半封 `request`（iPhone → daemon）。
+- **封帧**：`RemoteSessionPayload` 明文先 zlib 压缩，再用 ChaChaPoly 加密和认证（随机 96 bit nonce），路由头（`HostID`、`DeviceID`、`sequence`、`kind`）作为 additional authenticated data 一起认证。
+
+配对派生（Swift 与 Relay 的 TS 各算一遍、黄金向量相等）：
 
 - `nonceH`：32 字节随机。
 - `commit = SHA256("Lumi Relay/pair-commit/v1" ‖ hostPub ‖ nonceH)`。
 - `SAS = SHA256("Lumi Relay/pair-sas/v1" ‖ hostID ‖ deviceID ‖ hostPub ‖ devicePub ‖ nonceH)` 取前 4 字节 big-endian `mod 1 000 000`，补零 6 位，显示 `482 913`。
 - SAS 不混入 Relay URL（攻击者本来就控制 Relay），也不混入 Device token（那时还不存在）。
+
+### 保证什么
+
+- **只有配对的两端算得出会话密钥。** 两把长期密钥都参与派生（DH1–DH3），握手帧本身也只有它们封得出来。
+- **前向保密。** 会话结束、两把一次性私钥丢弃后，哪一端的长期私钥日后泄露都还原不出这个会话的密钥（DH4 需要一次性私钥）。握手帧里的一次性公钥届时能被读到，但公钥推不出 DH4。
+- **只拿到一端的长期私钥，冒充不了另一端。** 冒充 Mac 需要 DH2，冒充 iPhone 需要 DH3，各自要用到对方没泄露的那把私钥。
+- **跨会话的帧互不相通。** 每个会话的钥匙不同，留着以前会话的帧，在后来的会话里解不开。
+- **Relay 改不了帧。** 改 `sequence`、改 `kind`（换方向）或改 ID，接收端都验证失败；两个方向还各用一把钥匙。
+
+### 不保证什么
+
+- **会话存活期间的内存。** 会话密钥在两端内存里；一端在会话期间被完全控制，这个会话的内容对它是明的。
+- **长连接不主动换钥匙。** 钥匙随 `sync_index` 换（连上、Mac 重新上线、回到前台、下拉刷新、序号断档）；一条连接一直不断、其间又没有这些事件，就一直用同一把。
+- **升级前的流量。** 通道会话上线之前的帧是用长期密钥直接派生的钥匙封的，被录下的旧流量仍随长期私钥泄露而暴露。重新配对才换长期密钥。
+- **两把长期私钥同时泄露。** 等同于攻击者就是两端；之后的会话可以被冒充，之前已结束的会话仍然安全。
+- **版本不一致。** 两端必须都支持通道会话。只更新了一端时两边互相解不开，不会降级成旧协议：daemon 记 `request_open_failed`；iPhone 的 index 请求超时重试，Macs 页仍显示 Online、Session 不再更新，界面上没有提示。
 
 每个 routing frame 包含：
 
@@ -153,7 +223,7 @@ sequenceDiagram
 - nonce
 - ciphertext + authentication tag
 
-Relay 能看到 routing header、帧大小、连接时间和流量模式；看不到 `RemoteSessionPayload` 的任何字段（kind、index、events…）。路由头是 AAD：Relay 改 `sequence`（把旧帧套上新序号重放）、改 `kind`（换方向）或改 ID，接收端都解不开。
+Relay 能看到 routing header、帧大小、连接时间和流量模式；看不到 `RemoteSessionPayload` 的任何字段（kind、index、events…），也分不出握手帧和会话帧。
 
 ## 凭据保存
 
@@ -169,9 +239,12 @@ Keychain 项由 daemon 进程自己创建，因此 daemon 在该项 ACL 内，�
 ### daemon 状态文件（`relay-host-state.json`，0600）
 
 - 每个 Device ID 的发送 sequence（发送前先落盘）
-- Match 时钉住的设备公钥（Device ID → 公钥）
+- 被信任的设备：Device ID → Match 时钉住的公钥。有这一条就是被信任，没有就不是；daemon 决定“收不收、发不发”只读这里
+- 本机的撤销记录：Device ID → 撤销时间。只用来把这一行显示成 Revoked，以及在 Relay 还没照办时继续补发撤销
 
-配对会话本身（sessionID、code、nonceH、pending 设备）只在 daemon 内存。
+每次改动先写盘、再生效：写不进去就报错，文件和内存都保持原样，所以 daemon 当下依据的状态就是重启后会读到的状态。升级前的文件没有撤销记录，按“没有撤销过”读入。
+
+配对会话本身（sessionID、code、nonceH、pending 设备）只在 daemon 内存；通道会话的钥匙和一次性私钥只在两端内存。
 
 ### iOS Keychain（account `device-channels-v4`）
 
@@ -198,40 +271,83 @@ Keychain 项由 daemon 进程自己创建，因此 daemon 在该项 ACL 内，�
 
 Relay 不持久化帧 nonce、ciphertext、Session、Timeline 或用户消息。配对过程中它额外看到 hostName、设备名、两把公钥、承诺和揭示后的 nonce；拿不到任何一端的私钥，算不出通道密钥，Host secret 只有 hash。
 
-推送通知是唯一的明文例外：daemon 把一条短通知（Session 标题 + 状态词，各有长度上限）以明文交给 Relay 转发 APNs。它只存在于该请求的内存里——不写存储，日志只记设备、结果、环境和文本长度，从不记文本本身。接受这个例外是产品决策：通知要在锁屏上可读，就必须让 APNs（也因此让 Relay）看到这几十个字；Session 的完整内容仍然只走端到端加密通道。
+### 推送通知：明文例外与设备端解密
 
-## 序号与重连
+推送通知是唯一的明文例外：daemon 把一条短通知（Session 标题 + 状态词，各有长度上限）连同 Session ID 以明文交给 Relay 转发 APNs。它只存在于该请求的内存里——不写存储，日志只记设备、结果、环境和文本长度，从不记文本本身。Session 的完整内容仍然只走端到端加密通道。
 
-- daemon 对每台未撤销且已钉住公钥的 iPhone 独立递增 sequence，区间先写入状态文件再发送。
-- Durable Object 拒绝同一设备通道非单调 Host sequence，并把该通道当前序号回给 daemon（`non_monotonic_sequence{deviceID, lastSequence}`）；daemon 据此抬序号、把该设备移出“已同步”集合，并向它补发一帧 health（序号已越过空洞）——Relay 不会替 daemon 通知设备，设备只能靠这帧的序号断档发现并重新 `sync_index`。
-- Host 重连时 Relay 向设备再次广播 `online`（之前可能没有 `offline`）；设备收到任一 `online` 都重新 `sync_index`，因为 daemon 重连后忘记了谁同步过。
-- daemon 收到未知设备或解不开的 `request` 时先按需刷新设备列表（最多 2 秒一次），再决定丢弃。
-- iOS 在一条连接内只接受单调递增的 frame sequence（重复或更早的帧丢弃）；看到空洞就处理完本帧后重新 `sync_index`。
+明文是产品取舍，不是技术限制。iOS 可以让通知在设备端解密后再显示（Apple：[Modifying content in newly delivered notifications](https://developer.apple.com/documentation/usernotifications/modifying-content-in-newly-delivered-notifications)，“解密”是文档列出的第一个用途）：
+
+| 环节 | 现在（明文） | 设备端解密 |
+| --- | --- | --- |
+| daemon | 把标题、状态词明文交给 Relay | 用这条通道的钥匙封好标题、状态词，交给 Relay 的是密文 |
+| Relay / APNs | 看得到标题和状态词 | 只看得到密文和一句不含内容的占位文案 |
+| iPhone | 系统直接显示 | 通知带 `mutable-content`；系统在显示前交给 App 内的 Notification Service Extension，扩展解开后写回标题和状态词 |
+
+要落地还需要：
+
+- **扩展拿得到钥匙。** 扩展是独立进程，通道钥匙要放进它与 App 共享的 Keychain 访问组。
+- **解不开时的回退。** 扩展大约有 30 秒；超时、读不到钥匙（例如重启后首次解锁之前）、钥匙已因重新配对换掉时，显示占位文案（如 `A session needs your attention`）。
+- **接受两条限制。** 扩展只处理会显示 alert 的远程通知，用户关掉提醒就不经过它；通知是单向的、没有握手，只能用长期密钥派生的钥匙封，拿不到通道会话那样的前向保密。
+- **元数据仍然可见。** 即使内容加密，Relay 和 APNs 仍知道通知发给哪台设备、什么时候、多长，以及用于折叠的 Session ID（除非一并换成不可关联的标识）。
+
+当前没有实现设备端解密：Relay 与 APNs 能读到 Session 标题和状态词，这两项不在“Relay 读不到正文”的保证范围内。
+
+## 序号、重放与重连
+
+两个方向都由收帧的一端自己防重放，不依赖 Relay 记的序号。规则只有一条：**一帧先验证、后生效，序号只在验证通过后推进。**
+
+| 方向 | 序号从哪来 | 接收端怎么判 |
+| --- | --- | --- |
+| daemon → iPhone（`data`） | daemon 对每台被信任的 iPhone 独立递增，区间先写入状态文件再发送 | iPhone 只接受能用当前会话密钥解开、且序号大于本会话已验证最大值的帧 |
+| iPhone → daemon（`request`） | iPhone 每条连接从 1 递增，按封帧顺序逐条发出 | daemon 只接受能用该设备当前会话密钥解开、且序号大于本会话已接受最大值的请求；重复或更早的丢弃（`request_replayed`） |
+
+由此：
+
+- **重放同一会话里的帧**：序号不向前，丢弃。
+- **重放以前会话的帧**：钥匙不同，解不开，什么都不变。重连、Mac 上下线都不会让旧帧重新生效——挡住它们的是钥匙，不是一个可以被清零的游标。
+- **伪造的高序号帧**：验证不过，游标不动，之后的正常帧照常接受。
+- **会话外的请求**：用握手密钥封的帧只有 `sync_index` 被接受（它打开新会话）；其余一律丢弃（`request_outside_channel_session`）。
+- **重放 `sync_index`**：当前会话的那条开场帧再来一次，daemon 不理会（`channel_opening_repeated`）。更早的开场帧被重放时，daemon 会为它开一个没人能用的会话、替掉现有会话，直到 iPhone 下一次 `sync_index`。只影响可用性——Relay 本来就能丢帧——不改变任何数据，重放者也拿不到会话密钥。
+
+重连与补齐：
+
+- Durable Object 拒绝同一设备通道非单调的 Host sequence，并把该通道当前序号回给 daemon（`non_monotonic_sequence{deviceID, lastSequence}`）。被拒的可能正是 `channel_opened`，而 Relay 不会替 daemon 通知设备，所以 daemon 抬高序号后把这个会话重新打开一遍（`channel_opened` + index）：还在等的 iPhone 拿到钥匙和 index，已经有钥匙的 iPhone 看到序号断档、重新 `sync_index`。
+- 通道序号的上限是 2⁵³——Relay 自己能精确计数的最大值。Relay 回报的序号达到或超过它时 daemon 不采信（`sequence_heal_refused`），沿用自己的序号：否则一条消息就能把这条通道的序号耗尽。
+- 会话正在打开时发生的变化不会丢：推送照常入队，排在这个会话的 index 之后发出。
+- iPhone 看到序号空洞，处理完本帧后重新 `sync_index`。
+- iPhone 开新会话时，还没等到应答的请求（整取、补尾、usage）带进新会话重发；会话正在打开期间发起的请求排队，会话一开按顺序发出。
 - 没有 ACK，没有 hello：iPhone 有本地缓存，恢复路径永远是“再要一次 index，按差异补”。
-- 设备 → daemon 的 `request` 帧序号只是连接内自增的诊断值，Relay 不校验。
-
-Relay 不保留重放缓冲：离线设备错过的帧由下一次 index 对账补齐。
+- Relay 不保留重放缓冲：离线设备错过的帧由下一次 index 对账补齐。
 
 ## 在线状态
 
 - Host WSS 建立：Relay 向所有 Device sockets 广播 `presence: online`。
 - 最后一个 Host WSS 关闭：广播 `presence: offline`。
 - Device WSS 建立：立即收到当前 Host 是否在线。
-- iOS 收到 offline 后把该 Mac 标为 Offline，继续显示缓存；收到 online 立即重新 `sync_index`。
+- iOS 收到 offline 后把该 Mac 标为 Offline、结束当前通道会话，继续显示缓存；收到 online 立即重新 `sync_index`（daemon 重连后不再持有任何会话）。
+
+presence 是 Relay 的一面之词，没有认证：它只决定 iPhone 什么时候去问，不决定 iPhone 接受什么。谎报在线状态最多让 iPhone 多开一次会话。
 
 Host WSS 属于 daemon：Mac App 退出不影响在线状态；daemon 被 launchd 重启时 presence 短暂翻转，iPhone 自动重新对账。
 
 ## 撤销
 
-Mac 使用 Host secret 撤销一个 Device ID：
+撤销先在这台 Mac 上生效，再同步给 Relay；Relay 配合与否都不影响结果。
 
-1. Durable Object 写入 `revoked_at`，同时清空该设备的 APNs token——撤销即断推送。
-2. 关闭该设备所有 WSS，close code `4003`。
-3. 后续 Device token 鉴权失败（WSS 握手 401）。
-4. 其他设备授权和连接保持不变。
-5. iPhone 把握手 401 / 403 和 close code `4003` 识别为“凭据被拒”：该通道进入 Revoked 态并停止重连（不再 2 秒一轮），Macs 页显示 `Revoked · <relay host>`，缓存保留可读。
+1. daemon 把撤销写进状态文件：去掉钉住的公钥，记下撤销时间。写不进去就报错、什么都不变。
+2. 该设备的通道会话立即结束；之后它的请求被丢弃（`request_from_untrusted_device`），帧和推送提醒都不再发给它。正在发送途中的一批帧就地停下（`send_stopped_device_untrusted`），不会发完。
+3. daemon 通知 Relay：Durable Object 写入 `revoked_at`、清空该设备的 APNs token、以 close code `4003` 关闭它的所有 WSS，后续 Device token 鉴权失败（握手 401）。
+4. iPhone 把握手 401 / 403 和 close code `4003` 识别为“凭据被拒”：该通道进入 Revoked 态并停止重连，Macs 页显示 `Revoked · <relay host>`，缓存保留可读。
+5. 其他设备的授权和连接不变。
 
-重新配对同一台 Mac 复用原 Device ID：approve 时 Relay 覆盖同一条 `devices` 行（新公钥、新 token、撤销标记清除，不会出现第二台 Active），daemon 在 Match 时钉住新公钥替换旧值。
+Relay 不能让撤销失效：
+
+- **Relay 没收到或不照办**（连不上、报错、继续把设备列为有效）：这一行在 Mac 上仍是 Revoked，daemon 每次刷新设备列表都会补发撤销（`device_revocation_unapplied`），直到 Relay 照办。
+- **Relay 之后改口**：列表里出现“未撤销 + 原公钥”不恢复信任——钉住的公钥已经没了。
+- **daemon 重启**：撤销在状态文件里，重启后依旧。
+- **升级前撤销的设备**：Relay 列为已撤销、公钥又正是本机钉住的那把时，daemon 把这次撤销记成自己的（`device_revocation_adopted`）。Relay 只能这样收回信任，不能给出信任。
+
+恢复访问只有一条路：重新配对并在 Mac 上点 Match。重新配对同一台 Mac 复用原 Device ID——Match 时 daemon 钉住新公钥并解除撤销记录，Relay 覆盖同一条 `devices` 行（新公钥、新 token、撤销标记清除，不会出现第二台 Active）。Mac 在 Revoked 行点 Remove 则删除 Relay 的记录，daemon 同时忘掉这台设备的公钥和撤销记录。
 
 iPhone 本地“Remove”只删除自己的 Keychain 通道、SQLite 缓存文件和 WSS；不会替 Mac 撤销 Relay 设备记录。
 
@@ -257,17 +373,20 @@ iPhone 本地“Remove”只删除自己的 Keychain 通道、SQLite 缓存文�
 | 路人猜码 | 30 bit、5 分钟、单次、claim 限流（全局 600/分钟 → ≤ 3000 次 / 窗口 → ≈ 3×10⁻⁶）；猜中仍要过 Mac 的 Match | 可忽略 |
 | 占满全局 claim 限流锁死配对 | 每来源按 IPv6 /64 聚合 + 全局 600/分钟 | 仍需 ≥ 120 个不同地址 / /64 持续打满；手里有 /48 的攻击者做得到，代价是一场可观测的 429 风暴（`pairing_claim_rate_limited`） |
 | 偷看屏幕抄到码 | 能走到提交设备，但 Mac 弹“陌生 iPhone wants to pair”且默认焦点在 Don't match | 用户误点 Match |
-| Relay 换钥匙（MITM） | 承诺 + SAS：一次盲猜 10⁻⁶，失败可见；Mac 钉住 Match 时看到的设备公钥，Relay 之后换钥匙 = Unverified | 用户不比对数字直接点 Match |
+| Relay 换钥匙（MITM） | 承诺 + SAS：一次盲猜 10⁻⁶，失败可见；一个配对会话只绑一台设备，reveal 失败即整个作废，nonce 披露后无法再换设备；daemon 只用 Match 时钉住的公钥，Relay 列表里的公钥不参与 | 用户不比对数字直接点 Match |
 | Relay 冒充 iPhone 取 token | token 只在 Mac `decision{approved}` 后签发、绑定 Mac 看到的 devicePub；Relay 换 devicePub 则通道密钥和 SAS 都对不上 | — |
 | 恶意 QR / 链接指向攻击者 Relay | 攻击者 Relay 没有真 Mac 的 code / Host secret，只能扮演“假 Mac”推假数据；iPhone 泄露的只有设备名、设备公钥和 `session_reviewed` 的 session ID；每个界面显示 Relay host | 用户被假数据误导 |
 | 凭据泄露 | Host secret 只存 hash；端点凭据在 Keychain；配对会话在 daemon 内存；approved 行的明文 Device token 随会话到期被 alarm 删除 | 到期前 sessionID 持有者可读 token（token 本身解不开任何帧，拿它只能开一个只收密文的 device socket） |
 | 明文 http | Worker 拒绝非 https（loopback 除外）；两端客户端只生成 https 地址 | — |
 | Host ID 被抢注 | 首次 `PUT` 即占、之后只认同一 secret；ID 122 bit 随机不可枚举 | 只有 Relay 存储被重置（删 DO class / 换 namespace）后，知道 ID 的人（如已撤销的旧 iPhone）才可能抢先；生产不要做这种迁移。撞上时 daemon 记 `relay_host_identity_rejected` 并停止重连 |
-| 重放 / 路由头篡改 | 路由头为 AEAD AAD；per-device 单调 sequence（Relay 拒绝复用，设备丢弃重复帧） | 设备 → daemon 方向没有序号校验（请求幂等，最坏多发一次 index） |
-| 设备被撤销 | 持久 revoked_at + 主动关闭 socket；iPhone 识别 401 / 4003 进入 Revoked 态并停止重连 | 需重新配对才能恢复（复用 Device ID） |
+| 重放 / 乱序 / 路由头篡改 | 路由头为 AEAD AAD；每个通道会话一把钥匙；两个方向都由接收端校验序号，先验证、后推进；presence 不影响接收状态 | 重放旧的 `sync_index` 能让 daemon 白开一个会话，只影响可用性（Relay 本来就能丢帧） |
+| 设备被撤销 | daemon 先在状态文件里撤销（去掉钉住的公钥），不受 Relay 的回答和 daemon 重启影响，Relay 不照办就持续补发；Relay 侧 revoked_at + 关闭 socket；iPhone 识别 401 / 4003 进入 Revoked 态并停止重连 | 需重新配对才能恢复（复用 Device ID）；Relay 不照办时旧设备的 socket 可能还开着，但收不到任何新帧、请求被丢弃 |
+| 长期私钥日后泄露 | 会话密钥有一次性密钥参与，会话结束即丢弃：已结束会话的内容还原不出来 | 通道会话上线之前录下的流量；通知文本；一条连接不断时不主动换钥匙 |
+| 一端长期私钥泄露后冒充另一端 | 会话密钥混入“长期 × 一次性”的两个 DH，只有一把长期私钥算不全 | 两把长期私钥都泄露时无保护 |
+| 两端版本不一致 | 不降级：解不开就不同步 | 只更新了一端时同步停住，直到两端都更新；iPhone 仍显示 Online，界面没有提示，只有 daemon 日志里的 `request_open_failed` |
 | 大 Session | 2 MiB message 上限 | 载荷按单 Session 发送、明文 zlib 压缩、超预算按 timeline 分片；超大单条 item 只在 Relay 副本中省略 |
 | 资源滥用 | 边缘按地址限流（300/分钟，IPv6 按 /64）先于任何 DO；注册 / 建会话 / claim 限流；一 Host 一活会话；ID 正则；body / 消息上限 | 单个地址仍可在限额内用随机 HostID 实例化空 DO（≤ 300/分钟）；大规模分布式洪水交给 Cloudflare DDoS 防护 / 仪表盘里的 WAF 规则；`GET session` 轮询只受边缘限流 |
-| 手机后台更新 | APNs 只做提醒（alert push） | 没有静默唤醒 / 后台同步；通知文本对 Relay 明文可见（见上文“明文例外”），daemon 离线时没有提醒来源 |
+| 手机后台更新 | APNs 只做提醒（alert push） | 没有静默唤醒 / 后台同步；通知文本对 Relay 和 APNs 明文可见，设备端解密尚未实现（见上文“推送通知：明文例外与设备端解密”），daemon 离线时没有提醒来源 |
 
 ## 相关文档
 

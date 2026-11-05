@@ -58,7 +58,7 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 
 - **用户相关数据**：设备名称、配对时间、当前授权状态（Active / Unverified / Revoked）；iPhone 侧还有每台 Mac 的 Relay 地址。
 - **创建来源**：iPhone 用 Mac“iPhone”页显示的 6 位配对码（手输或扫码）提交自己，两端各显示一组 6 位数字，Mac 上点 Match 才生效。
-- **更新入口**：Mac 撤销某台 iPhone；iPhone 移除某台 Mac；iPhone 重新配对（Unverified 或 Revoked 变回 Active）。
+- **更新入口**：Mac 撤销某台 iPhone（由这台 Mac 记住，立即生效，重新配对前一直有效）；iPhone 移除某台 Mac；iPhone 重新配对（Unverified 或 Revoked 变回 Active）。
 - **主要用途**：确定哪台 iPhone 可以接收哪台 Mac 的加密更新和推送提醒——同一条信任边界（[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
 - **删除影响**：只关闭目标通道，不影响其他设备。
 

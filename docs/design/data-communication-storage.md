@@ -34,7 +34,7 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 | Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Lumi/Storage/cache.sqlite` |
 | iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session 与 Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
 | daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `app.huanan.lumi.daemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
-| daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、Mac 点 Match 时钉住的设备公钥 | `~/Library/Application Support/Lumi/Lumen/relay-host-state.json`（0600） |
+| daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、被信任设备的公钥（Match 时钉住、Revoke 时去掉，daemon 判断信任只读这里）、本机撤销记录；先写盘后生效 | `~/Library/Application Support/Lumi/Lumen/relay-host-state.json`（0600） |
 | iOS Keychain | 通道身份 | 每台 Mac 各自的 Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `app.huanan.lumi.ios.relay`（account `device-channels-v4`） |
 | Durable Object SQLite（`HostRelay`） | 运维元数据 | Host token hash、设备（公钥、token hash、配对 / 撤销时间）、配对会话（state、承诺、双方公钥与名称、揭示后的 nonce、签发的 Device token）、限流、每设备 Host 序号 | 每个 HostID 一个对象 |
 | Durable Object SQLite（`PairingDirectory`） | 配对码目录 | SHA-256(配对码) → Host / 会话、到期与消费时间、claim 限流 | 全局一个对象 |
@@ -173,11 +173,14 @@ sequenceDiagram
     participant IDB as iOS SQLite 缓存
 
     I->>IDB: 启动先读缓存并显示
-    I->>R: request(sync_index)
+    I->>R: request(sync_index{requestID, 一次性公钥})，握手密钥封
     R-->>H: 原样转发
+    H->>H: 生成一次性密钥，派生会话密钥
     H->>D: sessionIndex()
-    H-->>R: data(session_index ×N 片) + data(health)
+    H-->>R: data(channel_opened{requestID, 一次性公钥})，握手密钥封
+    H-->>R: data(session_index ×N 片) + data(health)，会话密钥封
     R-->>I: 不透明转发
+    I->>I: 核对 requestID，派生同一把会话密钥；之后的帧都用它
     I->>IDB: sessionIndex() 与 SyncReconcilePlan 比较
     I->>IDB: prune / updateSummary
     I->>R: request(fetch_session{ids}) / request(fetch_timeline_since{id, since})
@@ -206,13 +209,14 @@ sequenceDiagram
 
 | 方向 | kind | 内容 |
 | --- | --- | --- |
-| 设备 → daemon（`request` 帧） | `sync_index` | 给我 index |
+| 设备 → daemon（`request` 帧） | `sync_index` | 打开一个通道会话并给我 index：`requestID` + `ephemeralKey`（iPhone 这次会话的一次性公钥）。唯一用握手密钥封的请求 |
 | | `fetch_session` | `sessionIDs`：整 Session（缺失 / 差异很大 / 用户在详情点 Refresh session） |
 | | `fetch_timeline_since` | `sessionIDs[0]` + `since`：该 Session `occurredAt ≥ since` 的 timeline（本地 `lastItemAt − 60s`） |
 | | `session_reviewed` | `sessionIDs`：iPhone 打开了这些 Session |
 | | `fetch_usage` | `usageRange`（`today` / `thisWeek` / `thisMonth`）：给我这个档位的 Usage 报表，daemon 用自己的本地日历展开 |
 | | `fetch_plan_usage` | 给我套餐用量快照和它跟随的设置 |
-| daemon → 设备（`data` 帧） | `session_index` | `index: [SessionIndexEntry{summary, timelineItemCount, lastItemAt}]`，按 600 KB 压缩分 `part / partCount` |
+| daemon → 设备（`data` 帧） | `channel_opened` | 通道会话已打开：回显 `requestID` + `ephemeralKey`（daemon 的一次性公钥）。唯一用握手密钥封的应答，后面的帧都用会话密钥 |
+| | `session_index` | `index: [SessionIndexEntry{summary, timelineItemCount, lastItemAt}]`，按 600 KB 压缩分 `part / partCount` |
 | | `session_info` | `summaries`：不经事件的 summary 变化（已查看、Notch 归档） |
 | | `session_full` | 一个 Session 的一个分片（part 0 带 turns，末片 `session.nextCursor == nil`），回显 `requestID` |
 | | `session_timeline` | 同上形态，只含 `since` 之后的 timeline 尾 |
@@ -224,10 +228,11 @@ sequenceDiagram
 
 iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）是惰性的：调用方给出 `materialized`（本机已持有时间线、或详情正打开的 Session）。本地有 index 无 → `pruneSessions`（不写墓碑）；index 有本地无 → 插入 summary-only 行（`insert`，不取时间线）；不在 `materialized` 里的 → 只在 summary 不等时 `updateSummary`；在 `materialized` 里的才按时间线事实判断：本地 0 行、本地行数多于远端、或差 200 行以上 → `fetch_session`，行数 / 最新行时间不等 → `fetch_timeline_since`。点开详情才对那一个 Session 做整取 / 补尾。`session_message` 里未知 Session 的事件由摘要归约器建一条 summary-only 行，不触发整取。
 
-- payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用不同公钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环、两条道：小项（索引、`session_info` / `session_removed` / 事件推送、health、usage / plan usage 应答）与大块（整 Session、时间线尾，一个 Session 一项）交替出队，道内 FIFO——一台设备补一天的历史不会挡住另一台设备的索引或 Usage 应答；同一设备重复的索引 / usage / plan usage 请求只答最新的一条（旧的已被 iPhone 放弃）。
-- 推送（events / info / removed / health）只发给本连接内请求过 index 的设备；Relay 对离线设备丢帧，设备重连、Host 上线或重连（Relay 再次广播 `online`，daemon 已忘记谁同步过）、回到前台、序号断档、下拉刷新时都重新 `sync_index`。
+- payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用各自通道会话的密钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环、两条道：小项（索引、`session_info` / `session_removed` / 事件推送、health、usage / plan usage 应答）与大块（整 Session、时间线尾，一个 Session 一项）交替出队，道内 FIFO——一台设备补一天的历史不会挡住另一台设备的索引或 Usage 应答；同一设备重复的索引 / usage / plan usage 请求只答最新的一条（旧的已被 iPhone 放弃）。
+- 每次 `sync_index` 打开一个新的通道会话（两端各出一把一次性钥匙，会话密钥只在内存里，见 [Relay、配对与安全设计](relay-pairing-security.md#通道会话)）。应答和推送（events / info / removed / health）只发给会话已打开、index 已发出的设备，会话打开期间产生的推送排在 index 之后发出；Relay 对离线设备丢帧，设备重连、Host 上线或重连（Relay 再次广播 `online`，daemon 不再持有任何会话）、回到前台、序号断档、下拉刷新时都重新 `sync_index`。iPhone 开新会话时把还没等到应答的请求带过去重发。
+- 两个方向都由接收端防重放：一帧要能用当前会话密钥解开、序号还要大于本会话已接受的最大值才算数，序号只在验证通过后推进。
 - 离线设备的缺口由 APNs 提醒补：回合结束 / 失败 / 中断时 daemon 经 Relay 的明文通知接口（REST，独立于帧序）向已注册 token 的 iPhone 发一条 alert；通知只提示、不带数据，iPhone 下次进前台照常对账。
-- daemon 收到未知设备、或用缓存公钥解不开的 `request` 时，先按需刷新一次设备列表（最多 2 秒一次）再处理：刚配对或刚换钥匙重配的 iPhone 的第一个请求不会被丢弃。刷新时只承认与本机在 Match 时钉住的公钥相同的设备；其余（Mac 没批准过的行、Relay 换过的钥匙）Unverified，不发帧、请求丢弃（见 [Relay、配对与安全设计](relay-pairing-security.md)）。
+- daemon 判断一台设备可不可信只读自己的状态文件：Match 时钉住了公钥的设备才收它的请求、给它发帧，通道密钥也只从钉住的公钥派生，所以刚配对的 iPhone 的第一个请求立刻有效。Relay 的设备列表只用于 Mac 上的显示：列表里的公钥与钉住的不同（Mac 没批准过的行、Relay 换过的钥匙）显示 Unverified；本机撤销过的设备显示 Revoked，无论 Relay 怎么列（见 [Relay、配对与安全设计](relay-pairing-security.md#撤销)）。
 - 一条 Host WSS 发送所有设备的定向帧并接收设备请求；每个 iOS Mac 通道维护自己的 Device WSS 和 SQLite 缓存。
 
 ## 一致性规则
@@ -287,7 +292,7 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 | daemon 不可用 | Mac 保留 SQLite 供本地查看；Host WSS 随 daemon 下线，iPhone 收到 presence offline 在 Macs 页把该 Mac 标为 Offline，但继续显示缓存 | daemon 恢复（launchd 拉起）后 iPhone 收到 presence online 自动 `sync_index` |
 | Mac App 退出 | 不影响 iPhone：Relay Host 在 daemon 里 | — |
 | iOS WSS 断开 | 继续显示缓存，2 秒后重连 | 重连后 Host 在线即 `sync_index` 对账 |
-| Relay 对象重启 | 授权/序号元数据保留 | 设备重连 `sync_index`；daemon 序号落后时 Worker 回 `non_monotonic_sequence{lastSequence}`，daemon 抬序号并向该设备补发一帧 health，设备据序号断档重新 index |
+| Relay 对象重启 | 授权/序号元数据保留 | 设备重连 `sync_index`；daemon 序号落后时 Worker 回 `non_monotonic_sequence{lastSequence}`，daemon 抬序号并把该设备的通道会话重新打开一遍（`channel_opened` + index）：还在等的设备拿到钥匙和 index，已有钥匙的设备据序号断档重新 index |
 | SQLite 写失败 | UI/控制器记录可见错误，不把内存状态当作持久成功 | 修复磁盘/权限后重新同步 |
 
 ## 当前容量边界

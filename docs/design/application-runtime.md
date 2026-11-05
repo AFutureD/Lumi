@@ -102,7 +102,7 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 
 ### 同步与展示
 
-- 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`，收齐后用 `SyncReconcilePlan` **惰性**对账（`materialized` = 本机已持有时间线或详情正打开的 Session）：裁剪、改 summary、未知的插入 summary-only 行（`replaceSession` 空时间线）；整取 / 补尾只对 materialized 的 Session 发；pending 到齐写 lastSync。
+- 启动：先显示缓存，再连 Relay；Host 在线即发 `sync_index`——它同时打开一个通道会话：两端各出一把一次性钥匙，之后的帧都用只在内存里的会话密钥封。会话打开前发起的请求排队，打开后按序发出；重开会话时还没等到应答的请求带过去重发。一帧只在当前会话里验证通过、序号向前时才生效。index 收齐后用 `SyncReconcilePlan` **惰性**对账（`materialized` = 本机已持有时间线或详情正打开的 Session）：裁剪、改 summary、未知的插入 summary-only 行（`replaceSession` 空时间线）；整取 / 补尾只对 materialized 的 Session 发；pending 到齐写 lastSync。
 - 点开详情（`openSession`）：本机没有时间线就 `fetch_session` 整取，有但落后于最近一次索引就 `fetch_timeline_since` 补尾（同一 `SyncReconcilePlan` 规则算单个 Session）；详情页在第一次内容到达前显示 `Loading session…`；关闭详情（`closeSession`）后它仍算已持有，之后的对账继续补差异。
 - 之后：`session_message` 事件对已持有的 Session 通过与 daemon 相同的 `apply` 归约进缓存与内存（经同一写队列，和整 Session 替换保持顺序）；对只有摘要的 Session 只走 `SessionReduction.summary`，时间线不落地；未知 Session 的事件用摘要归约器建一条 summary-only 行，不整取。`session_info` / `session_removed` 直接落地。
 - 请求超时（index 20s / fetch 30s）重发一次，再失败 10s 后整体重新 index；序号断档、任一 presence `online`（含 Host 重连）、回到前台、下拉刷新都重新 index；详情页 `···` > Refresh session 单独整取一个 Session。
@@ -131,7 +131,7 @@ Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复
 | rollout watcher | actor（Service）：`run()` 轮询循环，文件尺寸缓存是 actor 状态 |
 | Mac/iOS controllers | `@MainActor` |
 | Mac event apply | 主 Actor 管理的 Task，50ms 合并 |
-| Relay host | daemon 内 `RelayHostService` actor（Service）：`run()` 下结构化子循环——连接循环、单串行发送循环、事件 1s 合并、独立推送队列、定时 job 通道；每设备序号先落盘 |
+| Relay host | daemon 内 `RelayHostService` actor（Service）：`run()` 下结构化子循环——连接循环、单串行发送循环、事件 1s 合并、独立推送队列、定时 job 通道；每设备序号先落盘。信任哪台 iPhone 只读状态文件（Match 钉住的公钥、本机撤销记录），Relay 的设备列表只用于显示；每台设备一个内存里的通道会话，请求只在当前会话内、序号向前时才处理 |
 | WebSocket client | Swift actor 包装 `URLSessionWebSocketTask` |
 | Durable Object | Cloudflare 单对象串行事件模型 |
 

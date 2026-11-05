@@ -31,6 +31,63 @@ public struct RelayPreparedPayload: Sendable {
     public var byteCount: Int { plaintext.count }
 }
 
+/// The keys a channel's frames are sealed with, one per direction. A channel
+/// has two kinds:
+/// - the handshake key, derived from the two long-term keys fixed at
+///   pairing. It seals only the two payloads that open a channel session
+///   (`sync_index` and `channel_opened`), which carry no session content;
+/// - a channel session's key, derived from those long-term keys and two
+///   one-time keys. It seals everything else and exists only in memory.
+public struct RelayChannelKey: Sendable {
+    /// Seals `data` frames (host → device).
+    fileprivate let toDevice: SymmetricKey
+    /// Seals `request` frames (device → host).
+    fileprivate let toHost: SymmetricKey
+
+    /// 64 bytes of key material: the host → device key, then the device → host key.
+    fileprivate init(material: SymmetricKey) {
+        let bytes = material.withUnsafeBytes { Data($0) }
+        toDevice = SymmetricKey(data: bytes.prefix(32))
+        toHost = SymmetricKey(data: bytes.suffix(32))
+    }
+
+    fileprivate func key(for kind: RelayFrameKind) -> SymmetricKey {
+        kind == .request ? toHost : toDevice
+    }
+}
+
+/// One end's one-time X25519 key for a channel session. It lives in memory
+/// until the session's key is derived, then is dropped — which is what keeps
+/// a session's frames sealed after a long-term key leaks.
+public struct RelayEphemeralKey: Sendable {
+    fileprivate let privateKey: Data
+
+    public init() {
+        privateKey = Curve25519.KeyAgreement.PrivateKey().rawRepresentation
+    }
+
+    /// Tests: a fixed key for golden vectors.
+    public init(privateKey: Data) {
+        self.privateKey = privateKey
+    }
+
+    public var publicKey: Data {
+        get throws {
+            do {
+                return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey).publicKey.rawRepresentation
+            } catch {
+                throw RelayCryptographyError.invalidPrivateKey
+            }
+        }
+    }
+}
+
+/// Which end of the channel is deriving a session key.
+public enum RelayChannelEnd: Sendable {
+    case host
+    case device
+}
+
 public enum RelayCryptography {
     public static func makeKeyPair() -> RelayKeyPair {
         let key = Curve25519.KeyAgreement.PrivateKey()
@@ -46,8 +103,7 @@ public enum RelayCryptography {
         deviceID: DeviceID,
         sequence: UInt64,
         kind: RelayFrameKind = .data,
-        privateKey: Data,
-        peerPublicKey: Data
+        key: RelayChannelKey
     ) throws -> RelayRoutingFrame {
         try seal(
             prepare(payload),
@@ -55,8 +111,7 @@ public enum RelayCryptography {
             deviceID: deviceID,
             sequence: sequence,
             kind: kind,
-            privateKey: privateKey,
-            peerPublicKey: peerPublicKey
+            key: key
         )
     }
 
@@ -77,18 +132,11 @@ public enum RelayCryptography {
         deviceID: DeviceID,
         sequence: UInt64,
         kind: RelayFrameKind = .data,
-        privateKey: Data,
-        peerPublicKey: Data
+        key: RelayChannelKey
     ) throws -> RelayRoutingFrame {
-        let key = try symmetricKey(
-            privateKey: privateKey,
-            peerPublicKey: peerPublicKey,
-            hostID: hostID,
-            deviceID: deviceID
-        )
         let sealed = try ChaChaPoly.seal(
             payload.plaintext,
-            using: key,
+            using: key.key(for: kind),
             authenticating: routingHeader(hostID: hostID, deviceID: deviceID, sequence: sequence, kind: kind)
         )
         var ciphertext = sealed.ciphertext
@@ -103,10 +151,12 @@ public enum RelayCryptography {
         )
     }
 
+    /// Authenticates and opens a frame. A frame that was not sealed with
+    /// `key` for exactly this routing header throws — callers treat that as
+    /// "not ours" and change no state.
     public static func open(
         _ frame: RelayRoutingFrame,
-        privateKey: Data,
-        peerPublicKey: Data
+        key: RelayChannelKey
     ) throws -> RemoteSessionPayload {
         guard let deviceID = frame.deviceID,
               let nonceData = frame.nonce,
@@ -116,12 +166,6 @@ public enum RelayCryptography {
         guard combinedCiphertext.count >= 16 else {
             throw RelayCryptographyError.invalidSealedPayload
         }
-        let key = try symmetricKey(
-            privateKey: privateKey,
-            peerPublicKey: peerPublicKey,
-            hostID: frame.hostID,
-            deviceID: deviceID
-        )
         let nonce = try ChaChaPoly.Nonce(data: nonceData)
         let ciphertext = combinedCiphertext.dropLast(16)
         let tag = combinedCiphertext.suffix(16)
@@ -132,7 +176,7 @@ public enum RelayCryptography {
         )
         let plaintext = try ChaChaPoly.open(
             box,
-            using: key,
+            using: key.key(for: frame.kind),
             authenticating: routingHeader(hostID: frame.hostID, deviceID: deviceID, sequence: frame.sequence, kind: frame.kind)
         )
         let inflated = try (plaintext as NSData).decompressed(using: .zlib)
@@ -142,7 +186,8 @@ public enum RelayCryptography {
     /// The routing header as additional authenticated data: the Relay (or
     /// anyone on the path) can still read these fields, but cannot change
     /// them, swap a frame's direction, or replay a sealed body under another
-    /// sequence without the tag failing.
+    /// sequence without the tag failing. Each direction also has its own
+    /// key, so a frame cannot be turned around either.
     static func routingHeader(hostID: HostID, deviceID: DeviceID, sequence: UInt64, kind: RelayFrameKind) -> Data {
         Data("Lumi Relay/v1/frame/\(hostID.rawValue)/\(deviceID.rawValue)/\(sequence)/\(kind.rawValue)".utf8)
     }
@@ -199,12 +244,84 @@ public enum RelayCryptography {
         return String(format: "%06d", Int(value % 1_000_000))
     }
 
-    private static func symmetricKey(
+    // MARK: - Channel keys
+
+    /// The handshake key of one Mac ↔ iPhone channel: X25519 between the two
+    /// long-term keys fixed at pairing, through HKDF-SHA256 with the
+    /// channel's IDs as context. Both ends derive the same key; it never
+    /// changes while the pairing stands, so it seals nothing but the
+    /// opening of channel sessions.
+    public static func handshakeKey(
         privateKey: Data,
         peerPublicKey: Data,
         hostID: HostID,
         deviceID: DeviceID
-    ) throws -> SymmetricKey {
+    ) throws -> RelayChannelKey {
+        let secret = try sharedSecret(privateKey: privateKey, publicKey: peerPublicKey)
+        return RelayChannelKey(material: secret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("Lumi Relay/v2/handshake".utf8),
+            sharedInfo: Data("\(hostID.rawValue)/\(deviceID.rawValue)".utf8),
+            outputByteCount: 64
+        ))
+    }
+
+    /// The key of one channel session, from four X25519 results — both
+    /// long-term keys with each other, each end's long-term key with the
+    /// other's one-time key, and the two one-time keys with each other —
+    /// through one HKDF-SHA256 bound to the channel's IDs and both one-time
+    /// public keys (iPhone's first).
+    ///
+    /// The long-term keys are what authenticate the session: only the two
+    /// paired ends arrive at the same key, and a leaked long-term key of one
+    /// end is not enough to pose as the other. The one-time keys are what
+    /// make it fresh: a frame recorded in any other session does not open,
+    /// and once both one-time private keys are gone, no long-term key
+    /// recovers this one.
+    public static func sessionKey(
+        as end: RelayChannelEnd,
+        ephemeral: RelayEphemeralKey,
+        peerEphemeralPublicKey: Data,
+        privateKey: Data,
+        peerPublicKey: Data,
+        hostID: HostID,
+        deviceID: DeviceID
+    ) throws -> RelayChannelKey {
+        let longTerm = try sharedSecret(privateKey: privateKey, publicKey: peerPublicKey)
+        let ownLongTermWithPeerOneTime = try sharedSecret(privateKey: privateKey, publicKey: peerEphemeralPublicKey)
+        let ownOneTimeWithPeerLongTerm = try sharedSecret(privateKey: ephemeral.privateKey, publicKey: peerPublicKey)
+        let oneTime = try sharedSecret(privateKey: ephemeral.privateKey, publicKey: peerEphemeralPublicKey)
+        let ownEphemeralPublicKey = try ephemeral.publicKey
+
+        // Both ends must feed the same bytes in the same order: the mixed
+        // results go host-long-term first, and the one-time public keys
+        // iPhone first.
+        var material = Data()
+        var context = Data("\(hostID.rawValue)/\(deviceID.rawValue)".utf8)
+        context.append(0)
+        material.append(bytes(of: longTerm))
+        switch end {
+        case .host:
+            material.append(bytes(of: ownLongTermWithPeerOneTime))
+            material.append(bytes(of: ownOneTimeWithPeerLongTerm))
+            context.append(peerEphemeralPublicKey)
+            context.append(ownEphemeralPublicKey)
+        case .device:
+            material.append(bytes(of: ownOneTimeWithPeerLongTerm))
+            material.append(bytes(of: ownLongTermWithPeerOneTime))
+            context.append(ownEphemeralPublicKey)
+            context.append(peerEphemeralPublicKey)
+        }
+        material.append(bytes(of: oneTime))
+        return RelayChannelKey(material: HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: material),
+            salt: Data("Lumi Relay/v2/session".utf8),
+            info: context,
+            outputByteCount: 64
+        ))
+    }
+
+    private static func sharedSecret(privateKey: Data, publicKey: Data) throws -> SharedSecret {
         let local: Curve25519.KeyAgreement.PrivateKey
         let peer: Curve25519.KeyAgreement.PublicKey
         do {
@@ -213,17 +330,14 @@ public enum RelayCryptography {
             throw RelayCryptographyError.invalidPrivateKey
         }
         do {
-            peer = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: peerPublicKey)
+            peer = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey)
         } catch {
             throw RelayCryptographyError.invalidPublicKey
         }
-        let secret = try local.sharedSecretFromKeyAgreement(with: peer)
-        let context = Data("Lumi Relay/v1/\(hostID.rawValue)/\(deviceID.rawValue)".utf8)
-        return secret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("Lumi Relay/v1".utf8),
-            sharedInfo: context,
-            outputByteCount: 32
-        )
+        return try local.sharedSecretFromKeyAgreement(with: peer)
+    }
+
+    private static func bytes(of secret: SharedSecret) -> Data {
+        secret.withUnsafeBytes { Data($0) }
     }
 }

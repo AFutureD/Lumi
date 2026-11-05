@@ -98,10 +98,10 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ### IOS-R-004 撤销按设备生效
 
-- 条件：用户在 Mac 上撤销某台 iPhone。
-- 行为：该设备授权失效，现有连接关闭；这台 iPhone 识别出凭据被拒后停止重连，Macs 页该 Mac 显示 `Revoked · <Relay 地址>`，Sessions 没有内容时提示 Access revoked。
-- 结果：目标 iPhone 无法继续接收数据，已缓存的内容仍可翻看，其他设备不受影响。
-- 限制或例外：恢复访问需要重新配对（Mac 出码 → iPhone 输码 → 对数字 → Match）；重新配对同一台 Mac 沿用原来的设备身份，Mac 的 Paired iPhones 里不会多出第二条记录。
+- 条件：用户在 Mac 的“iPhone”页对某台 iPhone 点 Revoke 并确认，且 Mac 上的 daemon 在运行。
+- 行为：撤销由这台 Mac 自己记下并立即生效——这一行马上变成 Revoked，Mac 不再向这台 iPhone 发送 Session 内容和推送提醒。这台 iPhone 的连接随后被关闭，Macs 页该 Mac 显示 `Revoked · <Relay 地址>`，Sessions 没有内容时提示 Access revoked。
+- 结果：目标 iPhone 无法继续接收数据，已缓存的内容仍可翻看，其他设备不受影响。重启 Mac 或 Lumi 不会让撤销失效。
+- 限制或例外：Mac 连不上 Relay（页面显示 Relay unavailable，daemon 仍在运行）时也可以撤销，Mac 这边同样立即生效；iPhone 上的 `Revoked` 要等 Mac 重新连上 Relay 之后才出现，在那之前 iPhone 只是收不到新内容。daemon 没在运行时撤销不了，这一行保持原状。恢复访问只有重新配对一条路（Mac 出码 → iPhone 输码 → 对数字 → Match）；重新配对同一台 Mac 沿用原来的设备身份，Mac 的 Paired iPhones 里不会多出第二条记录。
 
 ### IOS-R-005 Relay 不持久化 Session 历史
 
@@ -194,6 +194,13 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 结果：数字与 Mac 上 Settings › Usage、Usage 页一致；「已用 / 剩余」跟每台 Mac 自己的设置走。
 - 限制或例外：只在内存里——退出 App 再进必是加载态，Mac 离线时保留这次运行里最后一份并写明是多久前的；iPhone 上不能改开关、Percent，也没有 Detail 表。详见 [iPhone 用量](iphone-usage.md)。
 
+### IOS-R-018 Mac 与 iPhone 都更新后才同步
+
+- 条件：Lumi for Mac 与 Lumi for iPhone 一端还停在 0.2.0 或更早的版本，另一端已更新到之后的版本。
+- 行为：两端连得上，但同步不了 Session。
+- 结果：iPhone 的 Macs 页该 Mac 仍显示 Online，Mac 的 Paired iPhones 里这台 iPhone 仍是 Active；iPhone 上的 Session 不再更新（没有缓存时 Sessions 一直停在 `Syncing…`），Usage Tab 取不到这台 Mac 的数据（`Can't reach … · timed out`）。界面不会说明原因是版本。已缓存的内容照常可看，推送提醒照常到达。
+- 限制或例外：两端都更新后自动恢复同步，不需要重新配对。恢复步骤见[用户摩擦点](../friction-points.md#iphone-显示-online-但-session-不更新)。
+
 ## 空状态与故障
 
 - **No Macs paired**：去 Macs Tab 点 `+` > Add Device 输码，或直接扫 Mac 上的二维码。
@@ -203,7 +210,8 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - **Mac 不在线**：码有效，但这台 Mac 没连上 Relay；确认 Mac 上 Lumi 在运行后 Try again（接着这一次继续）或 Cancel。
 - **Mac 拒绝了这次配对**：Mac 点了 Don't match 或 60 秒没点；Start over，在 Mac 上换个新码再来（[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
 - **校验失败**（红色）：Relay 返回的数据不一致，可能有人在中间换钥匙；已中止、没保存任何凭据；Try again（换个网络）或 Cancel，反复出现见[用户摩擦点](../friction-points.md#配对失败)。
-- **Mac 上显示 Unverified**：这台 Mac 在 iPhone 上显示 Online 但 Session 不更新；重新配对。
+- **Revoked**：这台 Mac 撤销了这台 iPhone；缓存可看，重新配对才恢复（[IOS-R-004](#ios-r-004-撤销按设备生效)）。
+- **Online 但 Session 不更新**（没有缓存时停在 `Syncing…`）：先看 Mac 的 Paired iPhones 里这台 iPhone 的状态——Unverified 就重新配对；Active 就把 Mac 和 iPhone 的 Lumi 都更新（[IOS-R-018](#ios-r-018-mac-与-iphone-都更新后才同步)）。
 
 更多恢复步骤见[用户摩擦点](../friction-points.md)。
 

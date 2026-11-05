@@ -9,7 +9,7 @@
 1. [整体架构设计](system-architecture.md)：进程、Target、Package、设备关系和权威边界。
 2. [数据、通信与保存设计](data-communication-storage.md)：Session 模型、本地 IPC、远程同步、SQLite 和删除语义。
 3. [Agent Hook 设计](agent-hook.md)：Hook 安装、helper、rollout watcher、事件归一化和敏感数据边界。
-4. [Relay、配对与安全设计](relay-pairing-security.md)：Cloudflare Durable Object、配对、E2EE、序号和撤销。
+4. [Relay、配对与安全设计](relay-pairing-security.md)：Cloudflare Durable Object、配对、E2EE 与通道会话（前向保密、双向防重放）、本机撤销，以及各项保证的边界。
 5. [App 与运行时设计](application-runtime.md)：macOS、Notch、iOS、缓存、刷新和并发边界。
 6. [构建、发布与测试设计](build-release-testing.md)：SwiftPM、Xcode、Relay 部署和 CI。
 7. [日志设计](logging.md)：三端共用的分级 / 分类 / 结构化字段，文件位置、错误汇总、Relay 的 JSON 行，以及什么永远不进日志。

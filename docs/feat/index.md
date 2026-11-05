@@ -90,7 +90,7 @@ Relay 不保存 Session 正文或可浏览的历史；推送提醒的标题和�
 
 ## 遇到卡点
 
-按“daemon 不可用”“Codex 未信任 Hook”“Relay unavailable”“配对失败”“Mac unavailable”或“Check for Updates… 显示错误”等可见症状查看[恢复路径](friction-points.md)。说不清原因时，先看 `~/Library/Logs/Lumi/errors.log`（“Settings > Daemon > Logs > Show in Finder”）——日志不含 Session 正文和凭据。
+按“daemon 不可用”“Codex 未信任 Hook”“Relay unavailable”“配对失败”“iPhone 显示 Online 但 Session 不更新”“Mac unavailable”或“Check for Updates… 显示错误”等可见症状查看[恢复路径](friction-points.md)。说不清原因时，先看 `~/Library/Logs/Lumi/errors.log`（“Settings > Daemon > Logs > Show in Finder”）——日志不含 Session 正文和凭据。
 
 ## 当前边界
 

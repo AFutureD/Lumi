@@ -90,6 +90,9 @@ public struct LiveRelayHostREST: RelayHostREST {
 /// Tests: a directory of pairing sessions and paired devices the service can
 /// drive and list. `submit` plays the iPhone (what the Relay would do before
 /// pushing `pairing_device` to the host); an approved decision lists it.
+/// `refuseReveals` / `refuseRevocations` play a Relay that takes a request
+/// and answers it with an error; `holdDecisions` one that sits on a decision
+/// until the test lets it answer.
 public actor InMemoryRelayHostREST: RelayHostREST {
     public struct Session: Hashable, Sendable {
         public let sessionID: String
@@ -134,6 +137,40 @@ public actor InMemoryRelayHostREST: RelayHostREST {
     /// already ended (expired, decided) must not get one.
     public private(set) var cancelRequests: [String] = []
 
+    private var refusesReveals = false
+    private var refusesRevocations = false
+    /// Sessions whose nonce reached the Relay, answered or refused.
+    public private(set) var disclosedNonces: [String: Data] = [:]
+    /// Every `revoke` the daemon sent, in order, answered or refused.
+    public private(set) var revokeRequests: [DeviceID] = []
+
+    /// The Relay reads each reveal's nonce and then answers with an error.
+    public func refuseReveals(_ refuse: Bool) {
+        refusesReveals = refuse
+    }
+
+    /// The Relay answers every revoke with an error and keeps the device listed as it was.
+    public func refuseRevocations(_ refuse: Bool) {
+        refusesRevocations = refuse
+    }
+
+    private var holdsDecisions = false
+    private var heldDecision: CheckedContinuation<Bool, Never>?
+
+    /// The Relay takes each decision and does not answer until `releaseDecision`.
+    public func holdDecisions(_ hold: Bool) {
+        holdsDecisions = hold
+    }
+
+    /// A decision is waiting for `releaseDecision`.
+    public var isHoldingDecision: Bool { heldDecision != nil }
+
+    /// Lets the held decision go on, or answers it with an error.
+    public func releaseDecision(refusing: Bool) {
+        heldDecision?.resume(returning: refusing)
+        heldDecision = nil
+    }
+
     public func registerHost(hostID: HostID, hostSecret: String) async throws {
         registered[hostID] = hostSecret
     }
@@ -161,6 +198,8 @@ public actor InMemoryRelayHostREST: RelayHostREST {
     }
 
     public func revealPairing(hostID: HostID, sessionID: String, hostNonce: Data, hostSecret: String) async throws {
+        disclosedNonces[sessionID] = hostNonce
+        if refusesReveals { throw RelayClientError.server(status: 503, message: "reveal refused") }
         guard var session = sessions[sessionID], session.state == .submitted else {
             throw RelayClientError.relay(status: 409, code: "invalid_state")
         }
@@ -170,6 +209,10 @@ public actor InMemoryRelayHostREST: RelayHostREST {
     }
 
     public func decidePairing(hostID: HostID, sessionID: String, approved: Bool, hostSecret: String) async throws {
+        if holdsDecisions {
+            let refused = await withCheckedContinuation { heldDecision = $0 }
+            if refused { throw RelayClientError.server(status: 503, message: "decision refused") }
+        }
         guard var session = sessions[sessionID] else { throw RelayClientError.relay(status: 404, code: "not_found") }
         if approved {
             guard session.state == .revealed, let device = session.device else {
@@ -198,6 +241,8 @@ public actor InMemoryRelayHostREST: RelayHostREST {
     }
 
     public func revoke(hostID: HostID, deviceID: DeviceID, hostSecret: String) async throws {
+        revokeRequests.append(deviceID)
+        if refusesRevocations { throw RelayClientError.server(status: 503, message: "revoke refused") }
         pairedDevices = pairedDevices.map { device in
             guard device.id == deviceID else { return device }
             return PairedDevice(id: device.id, name: device.name, publicKey: device.publicKey, pairedAt: device.pairedAt, revokedAt: Date())

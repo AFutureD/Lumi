@@ -108,7 +108,7 @@
 | Mac 拒绝了这次配对 | Mac 点了 Don't match，或 60 秒没点 | 如果只是没来得及点，Start over 重来；数字确实不一样就别配 |
 | 校验失败（红色） | Relay 返回的数据不一致——可能有人在中间换钥匙 | 换个网络 Try again；仍失败停止配对，检查这台 Mac 用的 Relay |
 
-Mac 上的码在中途换掉或过期，也按第一种处理——回到输码屏重输。配对全程要停在 Mac 的“iPhone”页：离开页面或退出 Mac App 会取消这次配对。任何一种失败都没有保存凭据（[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
+Mac 上的码在中途换掉或过期，也按第一种处理——回到输码屏重输。码会中途换掉的情况：有人点了 New code；离开了 Mac 的“iPhone”页或退出了 Mac App（这会取消进行中的配对）；daemon 重启；或者 iPhone 提交后 Mac 没能和 Relay 完成下一步。最后一种情况下 Mac 不显示数字、这个码作废：Relay 还连得上时 Mac 随即换出新码，iPhone 回到输码屏；连不上时 iPhone 停在“等 Mac 亮出数字…”，最迟到这个码 5 分钟到期后回到输码屏。任何一种失败都没有保存凭据（[IOS-R-014](modules/iphone-live-view.md#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。
 
 **恢复步骤**：
 
@@ -131,6 +131,23 @@ Mac 上的码在中途换掉或过期，也按第一种处理——回到输码�
 
 **完成信号**：Mac 上该记录变为 Active，iPhone 上该 Mac 开始同步。
 
+## iPhone 显示 Online 但 Session 不更新
+
+**用户会看到**：iPhone 的 Macs 页这台 Mac 显示 `Online · <Relay 地址>`，Sessions 里却停在旧内容，新的 Session 和状态变化都不出现（没有缓存时一直停在 `Syncing…`）；Usage Tab 取不到这台 Mac 的数据（`Can't reach … · timed out`）。界面不会说明原因。
+
+**先分清是哪一种**：看 Mac“iPhone”页 Paired iPhones 里这台 iPhone 的状态。
+
+- 显示 Unverified：按[上一节](#iphone-在-mac-上显示-unverified)重新配对。
+- 显示 Active：Mac 和 iPhone 的 Lumi 一新一旧——一端还停在 0.2.0 或更早的版本，另一端已更新到之后的版本（[IOS-R-018](modules/iphone-live-view.md#ios-r-018-mac-与-iphone-都更新后才同步)）。这种情况下推送提醒照常到达。
+
+**恢复步骤**（显示 Active 时）：
+
+1. 在 Mac 上从 Lumi App 菜单点 “Check for Updates…”，更新到最新版本（[软件更新](modules/software-updates.md)）。
+2. 在 iPhone 的 TestFlight 里把 Lumi 更新到最新版本。
+3. 打开 iPhone 上的 Lumi，在 Sessions 下拉刷新。
+
+**完成信号**：iPhone 上的 Session 开始更新。不需要重新配对，缓存保留。
+
 ## Mac unavailable
 
 **用户会看到**：iPhone Macs 里某台 Mac 显示 `Offline · <多久前> · <Relay 地址>`；Sessions 里仍能翻看它上次同步的内容（本机没有缓存时才显示 Mac unavailable）。
@@ -146,9 +163,13 @@ Mac 上的码在中途换掉或过期，也按第一种处理——回到输码�
 
 ## 设备被撤销
 
-**用户会看到**：目标 iPhone 的 Macs 页这台 Mac 显示 `Revoked · <Relay 地址>`，Sessions 没有内容时提示 Access revoked；推送提醒立即停止；缓存仍可翻看；其他设备正常。
+**用户会看到**：Mac“iPhone”页 Paired iPhones 里这台 iPhone 显示 Revoked。目标 iPhone 的 Macs 页这台 Mac 显示 `Revoked · <Relay 地址>`，Sessions 没有内容时提示 Access revoked；推送提醒立即停止；缓存仍可翻看；其他设备正常。
 
-**恢复步骤**：
+**触发条件**：有人在这台 Mac 上对这台 iPhone 点了 Revoke。撤销由 Mac 自己记住，重启 Mac 或 Lumi 都不会恢复（[IOS-R-004](modules/iphone-live-view.md#ios-r-004-撤销按设备生效)）。
+
+**iPhone 还没显示 Revoked**：撤销时 Mac 连不上 Relay（页面显示 Relay unavailable）的话，只要 Mac 上这一行已经变成 Revoked，撤销就已生效、这台 iPhone 已经收不到新内容；它要等 Mac 重新连上 Relay 后才显示 `Revoked`。不需要再点一次。点了 Revoke 而这一行没有变，说明 daemon 没在运行——先按 [daemon 不可用](#daemon-不可用)恢复，再撤销。
+
+**恢复步骤**（想让这台 iPhone 重新能看）：
 
 1. 在 Mac“iPhone”页看当前的 6 位码。
 2. 在目标 iPhone 点 `+` > “Add Device” 重新配对，两边对数字，在 Mac 上点 Match。
