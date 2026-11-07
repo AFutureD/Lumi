@@ -12,3 +12,5 @@ Relay/.dev.vars
 *.xcuserstate
 *.profraw
 .claude/worktrees/
+
+ACTIVITIES.md

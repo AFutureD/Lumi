@@ -16,7 +16,7 @@ let package = Package(
         .package(name: "Transport", path: "../../../Common/Transport"),
         .package(
             url: "https://github.com/AFutureD/opennook.git",
-            revision: "b2a49eaa5b6a274e757c90353cc906a655f64cd7"
+            revision: "41653b06493d75364b12e07270e6fdc3eb46eef9"
         ),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
         .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "swift-6.2.4-RELEASE"),

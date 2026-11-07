@@ -469,6 +469,11 @@ final class HaloModel: ObservableObject {
     /// Parent sessions in the list — the footer text and the compact badge.
     @Published private(set) var listedSessionCount = 0
     @Published private(set) var daemonAvailable = false
+    /// What the expanded panel is showing. A collapsed panel shows nothing,
+    /// so the controller reports every collapse (`panelDidCollapse`) and the
+    /// route returns to the list: the next open starts there, a turn card is
+    /// never blocked by a detail nobody is looking at, and a session is only
+    /// marked reviewed while its detail is really on screen.
     @Published var route: HaloRoute = .list
     /// Per-row subagent group disclosure (lifecycle default + user toggles).
     @Published private(set) var subagentDisclosure = HaloSubagentDisclosure()
@@ -523,6 +528,15 @@ final class HaloModel: ObservableObject {
         route = .list
     }
 
+    /// The panel collapsed (hover exit, Escape, a card handing the surface
+    /// back): whatever it was showing is over.
+    func panelDidCollapse() {
+        cardDismissTask?.cancel()
+        guard route != .list else { return }
+        log.debug("notch_route_reset", metadata: .fields(["reason": "collapsed", "from": "\(route)"]))
+        route = .list
+    }
+
     func showDetail(_ id: SessionID) {
         cardDismissTask?.cancel()
         route = .detail(id)
@@ -536,16 +550,36 @@ final class HaloModel: ObservableObject {
         }
     }
 
-    /// Turn cards replace the list briefly and fall back to it.
-    func showTurnCard(_ route: HaloRoute, dwell: Duration = .seconds(6)) {
-        if case .detail = self.route { return }   // never interrupt an open detail
+    /// Turn cards replace the list. A card's lifetime belongs to whoever
+    /// presents it: the controller's surface claim when the Notch expanded
+    /// for the card (the collapse that ends the claim returns the route to
+    /// the list through `panelDidCollapse`, and the controller dismisses it
+    /// explicitly when the panel stays open), or the dismissal scheduled with
+    /// `scheduleTurnCardDismissal` when the card only shows inside a panel the
+    /// user already had open. Returns false when a detail is on screen: an
+    /// open detail is never interrupted.
+    @discardableResult
+    func showTurnCard(_ route: HaloRoute) -> Bool {
+        if case .detail = self.route { return false }
         cardDismissTask?.cancel()
         self.route = route
+        return true
+    }
+
+    /// Falls back to the list after `dwell` unless the route moved on.
+    func scheduleTurnCardDismissal(_ route: HaloRoute, after dwell: Duration) {
+        cardDismissTask?.cancel()
         cardDismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: dwell)
-            guard let self, !Task.isCancelled, self.route == route else { return }
-            self.route = .list
+            guard let self, !Task.isCancelled else { return }
+            self.dismissTurnCard(route)
         }
+    }
+
+    /// Back to the list if `route` is still the card on screen.
+    func dismissTurnCard(_ route: HaloRoute) {
+        guard self.route == route else { return }
+        self.route = .list
     }
 
     // MARK: - Actions

@@ -1441,6 +1441,19 @@ private func macPromptEvent(_ id: String, event: String, at: TimeInterval) -> Ag
     )
 }
 
+private func macTurnEndEvent(_ id: String, event: String, turn: String, at: Date) -> AgentIngressEvent {
+    let sessionID = SessionID(id)
+    return AgentIngressEvent(
+        eventID: EventID(event), sessionID: sessionID, turnID: TurnID(turn), agent: .claude,
+        occurredAt: at, lifecycle: .completed, phase: .idle,
+        timelineItem: TimelineItem(
+            id: TimelineItemID(event), sessionID: sessionID, turnID: TurnID(turn),
+            occurredAt: at,
+            payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed))
+        )
+    )
+}
+
 @Test @MainActor
 func macStoreHidesProvisionalSessionsUntilTheirFirstTurn() async throws {
     let (store, directory) = try macStoreFixture()
@@ -1726,6 +1739,99 @@ func nookOpeningAnIdleSessionDetailLoadsItsRows() async throws {
     let opened = try #require(model.session(sessionID))
     #expect(opened.recentRows.map(\.id).isEmpty == false)
     #expect(opened.currentTurn?.id == TurnID("turn-idle-p1"))
+    model.stop()
+}
+
+@Test @MainActor
+func nookCollapsingThePanelEndsTheDetailRoute() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let sessionID = SessionID("viewed")
+    let base = Date().addingTimeInterval(-600)
+    store.enqueueAgentEvent(macStartEvent("viewed", event: "viewed-start", at: base.timeIntervalSince1970))
+    store.enqueueAgentEvent(macPromptEvent("viewed", event: "viewed-p1", at: base.timeIntervalSince1970 + 1))
+    store.enqueueAgentEvent(macTurnEndEvent("viewed", event: "viewed-end1", turn: "turn-viewed-p1", at: base.addingTimeInterval(2)))
+    await store.flushPendingEventsForTesting()
+
+    let model = HaloModel(store: store)
+    model.start()
+    await waitUntilNotch { model.session(sessionID) != nil }
+
+    // Opening the detail marks the session reviewed and, while the detail
+    // is on screen, keeps turn cards from replacing it.
+    model.showDetail(sessionID)
+    #expect(model.route == .detail(sessionID))
+    #expect(store.sessions.first { $0.id == sessionID }?.needsReview == false)
+    model.showTurnCard(.turnEnded(sessionID))
+    #expect(model.route == .detail(sessionID))
+
+    // The panel collapsed: the detail is over and cards go through again.
+    model.panelDidCollapse()
+    #expect(model.route == .list)
+    model.showTurnCard(.turnEnded(sessionID))
+    #expect(model.route == .turnEnded(sessionID))
+    model.showList()
+
+    // A turn ending after the collapse is unseen: nobody is looking at the
+    // detail any more, so the model must leave it needing review.
+    store.enqueueAgentEvent(macPromptEvent("viewed", event: "viewed-p2", at: base.timeIntervalSince1970 + 300))
+    store.enqueueAgentEvent(macTurnEndEvent("viewed", event: "viewed-end2", turn: "turn-viewed-p2", at: base.addingTimeInterval(301)))
+    await store.flushPendingEventsForTesting()
+    for _ in 0..<500 where model.session(sessionID)?.needsReview != true {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(model.session(sessionID)?.needsReview == true)
+    #expect(store.sessions.first { $0.id == sessionID }?.needsReview == true)
+    model.stop()
+}
+
+@Test @MainActor
+func nookTurnCardLifetimeBelongsToItsPresenter() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let alpha = SessionID("alpha")
+    let base = Date().addingTimeInterval(-600)
+    store.enqueueAgentEvent(macStartEvent("alpha", event: "alpha-start", at: base.timeIntervalSince1970))
+    store.enqueueAgentEvent(macPromptEvent("alpha", event: "alpha-p1", at: base.timeIntervalSince1970 + 1))
+    store.enqueueAgentEvent(macTurnEndEvent("alpha", event: "alpha-end1", turn: "turn-alpha-p1", at: base.addingTimeInterval(2)))
+    await store.flushPendingEventsForTesting()
+    let model = HaloModel(store: store)
+    model.start()
+    await waitUntilNotch { model.session(alpha) != nil }
+    let card = HaloRoute.turnEnded(alpha)
+    let otherCard = HaloRoute.turnEnded(SessionID("bravo"))
+
+    // Showing a card never starts a timer of its own: the presenter that
+    // expanded the panel decides when it ends.
+    #expect(model.showTurnCard(card) == true)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(model.route == card)
+
+    // Dismissal only touches the card it was asked about.
+    model.dismissTurnCard(otherCard)
+    #expect(model.route == card)
+    model.dismissTurnCard(card)
+    #expect(model.route == .list)
+
+    // A denied surface claim falls back to the list on its own.
+    model.showTurnCard(card)
+    model.scheduleTurnCardDismissal(card, after: .milliseconds(50))
+    await waitUntilNotch { model.route == .list }
+    #expect(model.route == .list)
+
+    // A collapse cancels a pending fallback, so a detail opened right after
+    // the collapse is not yanked back to the list by the old timer.
+    model.showTurnCard(card)
+    model.scheduleTurnCardDismissal(card, after: .milliseconds(50))
+    model.panelDidCollapse()
+    #expect(model.route == .list)
+    model.showDetail(alpha)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(model.route == .detail(alpha))
+
+    // An open detail refuses the card.
+    #expect(model.showTurnCard(card) == false)
+    #expect(model.route == .detail(alpha))
     model.stop()
 }
 

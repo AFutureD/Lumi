@@ -71,13 +71,20 @@ OpenNook 配置：
 - 紧凑 trailing：符合条件的 Session 总数。
 - 展开内容：最近 7 天内可展示的 Session 列表；只有正在工作、等待或刚结束的少数 Session 带最近活动行，其余只显示 Summary。
 - 每行：标题、lifecycle + phase、当前 Turn 最近 User message。
-- 完成、失败、审批和内容变化可以进入短暂 ActivityNook 卡片。
 - 设置按钮打开主 App 的 `Settings > Notch`。
 - Theme 在 Lumi 中固定为 Dark，Layout 固定为 Notch；第三栏的 Appearance section 不显示这两个控件，启动时会纠正旧的可变偏好。
 - 屏幕可选内建屏幕、主屏幕或以稳定 UUID 记录的一台已连接屏幕；断开时按内建屏幕、主屏幕、首个可用屏幕的顺序回退。
 - 紧凑 Notch gap、展开内容宽度和展开动画时长通过 OpenNook 偏好保存并实时投射到 surface；三项设置均可恢复默认值，滑块使用无刻度外观；物理刘海宽度仍是紧凑 gap 的下限。
 
-Notch 模型观察 `dataRevision`，不会因普通 health observer 通知重复查询详情；每次刷新最多取 6 个 Session 的完整详情（刚停止、Turn End 尚未被注意到的 Session 不计入上限），取过的留在 store 的内存集合里，下一次刷新折叠事件而不再读库。
+展开与收起：
+
+- 展开只来自两处。指针悬停在可见刘海形状上时框架直接展开，不经仲裁；新增的 L3 行里，TURN END 经仲裁器的 transient claim 展开并显示约 6 秒完成卡片，FAILED / ABORTED 经 ActivityQueue 的高优先级 toast 展开约 2.8 秒。USER（回合开始）不改变面板。
+- 仲裁器在用户占用面板时拒绝 claim：悬停、手动打开（Show Notch）、布局宽限都算占用；被拒的卡片仍按 route 显示在已打开的面板里。claim 归还时面板回到 claim 前的状态，用户仍占用则不动。
+- 收起来自指针移出可见形状（保持展开或 0.6 秒布局宽限期间除外）、Esc，以及 claim 归还。
+- 关掉的入口：`NookChromeBehavior.registersGlobalHotkey = false`，不注册框架默认的 Option-Command-; 全局快捷键；不配置 `onFileDrop`，OpenNook 对文件拖拽不响应（不展开、不接收）。
+- `HaloModel.route` 只描述打开着的面板。控制器订阅 OpenNook 的可见性镜像，面板收起时 route 回到列表：详情页不跨越一次收起，不会挡住之后的完成卡片，也不会在无人查看时把 Session 标为已查看。
+- 完成卡片的生命周期只有一个拥有者。claim 获准时由控制器的 claim 决定：6 秒后释放 claim，面板收起即把 route 复位；面板因用户占用没有收起时，控制器显式把卡片换回列表。claim 被拒（用户正占用面板）时，卡片只显示在已打开的面板里，由 route 自己在同样的 6 秒后回到列表。
+- 归还由框架负责：OpenNook 的仲裁器在最后一个 claim 结束时把面板恢复到 claim 前的状态，只让「有人在」的占用（悬停、用户自己打开、presentation pin）拦下；0.6 秒布局宽限只拦新 claim，不拦归还（opennook 33077df，2026-11-08 合入 main）。App 侧不复制这条策略。
 
 ### daemon 与 Hook 管理
 

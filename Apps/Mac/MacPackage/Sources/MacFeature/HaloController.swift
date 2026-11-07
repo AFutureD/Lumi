@@ -2,9 +2,13 @@ import Core
 import DesignSystem
 import Transport
 import AppKit
+import Combine
+import Logging
 import NookApp
 import NookComponents
 import SwiftUI
+
+private let log = Logger(label: "ui")
 
 enum HaloAdjustmentDefaults {
     static let compactWidth: CGFloat = DesignSystem.Notch.compactWidth
@@ -39,11 +43,15 @@ final class HaloController {
     private var turnCardSurfaceGeneration = 0
     private var turnCardSurfaceTask: Task<Void, Never>?
 
-    /// Matches the turn card's route dwell in `HaloModel.showTurnCard`.
-    private static let turnCardSurfaceDwell: Duration = .seconds(6)
+    /// How long a turn card stays on screen. The one constant for both
+    /// owners of a card's lifetime: the surface claim when the Notch expanded
+    /// for the card, the route's own fallback when the card only shows inside
+    /// a panel the user already had open.
+    private static let turnCardDwell: Duration = .seconds(6)
 
     /// Non-nil only when launched with `-LumiNotchStateLog <path>`.
     private var stateLogger: DebugNotchStateLogger?
+    private var cancellables: Set<AnyCancellable> = []
 
     init(store: MacSessionStore, actions: HaloActions, planUsage: PlanUsageModel) {
         let model = HaloModel(store: store)
@@ -95,9 +103,13 @@ final class HaloController {
             hostName: "Lumi",
             hostTagline: "Live Agent Sessions"
         )
+        // No global shortcut: the Notch opens on hover and for its own turn cards,
+        // and a framework-wide Option-Command-; would collide with other apps. File
+        // drags are ignored because no `onFileDrop` is configured.
         configuration.chromeBehavior = NookChromeBehavior(
             hoverBehavior: [.keepVisible],
-            showsLaunchShimmer: false
+            showsLaunchShimmer: false,
+            registersGlobalHotkey: false
         )
         configuration.onReady = { coordinator in
             activityQueue.bind(to: coordinator)
@@ -113,6 +125,25 @@ final class HaloController {
             guard let self, self.activityNotificationsEnabled, !initial else { return }
             self.handleTurnEvents(previous: previous, current: current)
         }
+
+        // A collapsed panel shows nothing, so the route it was on is over:
+        // hover exit, Escape and a card handing the surface back all land
+        // here, and the next open starts at the list. OpenNook mirrors the
+        // surface state onto `isNookVisible` once per flip, already on the
+        // main run loop, so no `receive(on:)` — another hop would widen the
+        // window in which a turn end still sees the stale route. `dropFirst`
+        // skips the replay of the current value on subscription.
+        appState.$isNookVisible
+            .removeDuplicates()
+            .dropFirst()
+            .filter { !$0 }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let from = self.model.route
+                self.model.panelDidCollapse()
+                if from != .list { self.stateLogger?.log("route=list reason=collapsed from=\(Self.describe(from))") }
+            }
+            .store(in: &cancellables)
     }
 
     static func normalizedAppearancePreferences(
@@ -175,14 +206,18 @@ final class HaloController {
     func debugShowTurnEndedCardOfFirstSession() -> Bool {
         guard let first = model.sessions.first else { return false }
         model.showList()
-        model.showTurnCard(.turnEnded(first.id), dwell: .seconds(30))
+        let route = HaloRoute.turnEnded(first.id)
+        model.showTurnCard(route)
+        model.scheduleTurnCardDismissal(route, after: .seconds(30))
         return true
     }
 
     func debugShowTurnStartedCardOfFirstSession() -> Bool {
         guard let first = model.sessions.first else { return false }
         model.showList()
-        model.showTurnCard(.turnStarted(first.id), dwell: .seconds(30))
+        let route = HaloRoute.turnStarted(first.id)
+        model.showTurnCard(route)
+        model.scheduleTurnCardDismissal(route, after: .seconds(30))
         return true
     }
 
@@ -204,9 +239,15 @@ final class HaloController {
                 stateLogger?.log("event=started session=\(session.id.rawValue) (no-op)")
             case .ended:
                 stateLogger?.log("event=ended session=\(session.id.rawValue)")
-                model.showTurnCard(.turnEnded(session.id))
-                presentTurnCardSurface()
                 notified = true
+                let route = HaloRoute.turnEnded(session.id)
+                // An open detail is being looked at; its rows show the turn
+                // end on their own, so there is no card and nothing to expand.
+                guard model.showTurnCard(route) else {
+                    stateLogger?.log("card=skipped session=\(session.id.rawValue) reason=detail_open")
+                    continue
+                }
+                presentTurnCardSurface(for: route)
             case .failed:
                 stateLogger?.log("event=failed session=\(session.id.rawValue)")
                 activityQueue.enqueue(NookActivity(
@@ -228,11 +269,15 @@ final class HaloController {
     /// Expands the Notch for the turn-ended card through the arbiter's
     /// transient channel: claim, dwell, release — so the surface settles back
     /// to compact on its own instead of staying open (`showHome()` would mark
-    /// the open user-initiated and never collapse). The arbiter denies the
-    /// claim while the user owns the surface (hovering, opened it themselves,
-    /// pinned); the card is still routed and visible whenever the panel is
-    /// open. A FAILED toast (`.urgent`) can preempt this claim (`.normal`).
-    private func presentTurnCardSurface() {
+    /// the open user-initiated and never collapse). The claim owns the card's
+    /// lifetime: its release collapses the panel, which returns the route to
+    /// the list; when the panel stays open (the user is engaging it) the card
+    /// is dismissed explicitly. The arbiter denies the claim while the user
+    /// owns the surface (hovering, opened it themselves, pinned); the card is
+    /// then still routed inside the open panel and falls back to the list on
+    /// its own after the same dwell. A FAILED toast (`.urgent`) can preempt
+    /// this claim (`.normal`).
+    private func presentTurnCardSurface(for route: HaloRoute) {
         turnCardSurfaceGeneration &+= 1
         let generation = turnCardSurfaceGeneration
         turnCardSurfaceTask?.cancel()
@@ -257,14 +302,40 @@ final class HaloController {
                     moduleID: self.coordinator.activeModuleID,
                     priority: .normal
                 )
-                guard let token = await self.coordinator.beginTransientPresentation(claim) else { return }
+                guard let token = await self.coordinator.beginTransientPresentation(claim) else {
+                    // The user owns the surface. The card shows inside the
+                    // panel they have open and falls back to the list itself.
+                    self.stateLogger?.log("card=\(Self.describe(route)) surface=denied")
+                    log.debug("notch_turn_card", metadata: .fields(["surface": "denied"]))
+                    self.model.scheduleTurnCardDismissal(route, after: Self.turnCardDwell)
+                    return
+                }
                 self.turnCardSurfaceToken = token
+                self.stateLogger?.log("card=\(Self.describe(route)) surface=granted")
+                log.debug("notch_turn_card", metadata: .fields(["surface": "granted"]))
             }
-            try? await Task.sleep(for: Self.turnCardSurfaceDwell)
+            try? await Task.sleep(for: Self.turnCardDwell)
             guard !Task.isCancelled, generation == self.turnCardSurfaceGeneration,
                   let token = self.turnCardSurfaceToken else { return }
             self.turnCardSurfaceToken = nil
+            // The arbiter restores the panel to what it was before the claim
+            // unless the user is holding it (hovering, opened it, pinned). A
+            // collapse resets the route on its own; when the panel stays open
+            // the card still has to make way for the list.
             await self.coordinator.endTransientPresentation(token)
+            // A newer presentation took over while the claim was ending; the
+            // route is its card now (possibly the same session's).
+            guard generation == self.turnCardSurfaceGeneration else { return }
+            self.model.dismissTurnCard(route)
+        }
+    }
+
+    private static func describe(_ route: HaloRoute) -> String {
+        switch route {
+        case .list: "list"
+        case let .detail(id): "detail(\(id.rawValue))"
+        case let .turnStarted(id): "turnStarted(\(id.rawValue))"
+        case let .turnEnded(id): "turnEnded(\(id.rawValue))"
         }
     }
 
