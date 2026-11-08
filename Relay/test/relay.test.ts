@@ -4,11 +4,13 @@ import {
   authHeaders,
   collectMessages,
   deviceID,
+  freshHost,
   hostID,
   hostSecret,
   openSocket,
   pairDevice,
   registerHost,
+  requestFrame,
   routingFrame,
 } from "./helpers";
 
@@ -71,37 +73,27 @@ describe("relay authorization and forwarding", () => {
 
     // A sealed device request (sync index, fetch session, session reviewed…)
     // is forwarded verbatim; the relay cannot read it.
-    device.send(JSON.stringify({
-      version: { major: 1, minor: 2 },
-      hostID,
-      deviceID,
-      sequence: 1,
-      kind: "request",
-      nonce: "bm9uY2U=",
-      ciphertext: "Y2lwaGVydGV4dA==",
-    }));
+    device.send(requestFrame(1));
     expect(await hostMessages.nextFrame("request")).toEqual(
-      expect.objectContaining({ deviceID, sequence: 1, kind: "request" }),
+      expect.objectContaining({ deviceID, sequence: 1, kind: "request", bodyBytes: 24 }),
     );
 
     // A request without a sealed body is rejected as an invalid frame, not forwarded.
-    device.send(JSON.stringify({ version: { major: 1, minor: 2 }, hostID, deviceID, sequence: 2, kind: "request" }));
+    device.send(routingFrame(2, hostID, deviceID, { kind: "request" }, new Uint8Array()));
     const deviceMessages = collectMessages(device);
     expect(await deviceMessages.nextFrame("error")).toEqual(expect.objectContaining({ code: "invalid_frame" }));
+
+    // Text on a routing socket is not a frame: the socket closes.
+    const textSocket = await openSocket("device", deviceToken, deviceID);
+    const textClosed = new Promise<number>((resolve) => textSocket.addEventListener("close", (event) => resolve(event.code)));
+    textSocket.send(JSON.stringify({ version: { major: 1, minor: 4 }, hostID, deviceID, sequence: 3, kind: "request" }));
+    expect(await textClosed).toBe(4004);
 
     // Devices cannot publish data frames (or the retired hello/ack/attention kinds).
     for (const kind of ["data", "hello", "ack", "attention"]) {
       const socket = await openSocket("device", deviceToken, deviceID);
       const closed = new Promise<number>((resolve) => socket.addEventListener("close", (event) => resolve(event.code)));
-      socket.send(JSON.stringify({
-        version: { major: 1, minor: 2 },
-        hostID,
-        deviceID,
-        sequence: 3,
-        kind,
-        nonce: "bm9uY2U=",
-        ciphertext: "Y2lwaGVydGV4dA==",
-      }));
+      socket.send(routingFrame(3, hostID, deviceID, { kind }));
       expect(await closed).toBe(1008);
     }
     host.close();
@@ -120,7 +112,7 @@ describe("relay authorization and forwarding", () => {
     host.send(routingFrame(1));
     host.send(routingFrame(2));
     host.send(routingFrame(3));
-    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 1 }));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 1, bodyBytes: 24 }));
     expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 2 }));
     expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 3 }));
 
@@ -174,6 +166,55 @@ describe("relay authorization and forwarding", () => {
     expect(await messages.nextFrame("presence")).toEqual(expect.objectContaining({ online: true }));
     host.close(1000, "test complete");
     expect(await messages.nextFrame("presence")).toEqual(expect.objectContaining({ online: false }));
+    device.close();
+  });
+});
+
+describe("relay host notices and sequence floors", () => {
+  it("tells the host when a device row changes", async () => {
+    const { id, secret } = await freshHost("notice");
+    const noticeDeviceID = "device-notice-0001";
+    // Pairing runs with the helper's own host socket; this host connects after.
+    const deviceToken = await pairDevice(id, secret, noticeDeviceID);
+    const host = await openSocket("host", secret, undefined, id);
+    const hostMessages = collectMessages(host);
+
+    const tokenResponse = await SELF.fetch(`https://example.com/v1/hosts/${id}/devices/${noticeDeviceID}/push-token`, {
+      method: "PUT",
+      headers: authHeaders(deviceToken),
+      body: JSON.stringify({ token: "a".repeat(64), environment: "development" }),
+    });
+    expect(tokenResponse.status).toBe(204);
+    expect(await hostMessages.nextFrame("devices_changed")).toEqual(expect.objectContaining({ reason: "push_token" }));
+
+    const revoked = await SELF.fetch(`https://example.com/v1/hosts/${id}/devices/${noticeDeviceID}`, {
+      method: "DELETE",
+      headers: authHeaders(secret),
+    });
+    expect(revoked.status).toBe(204);
+    expect(await hostMessages.nextFrame("devices_changed")).toEqual(expect.objectContaining({ reason: "revoked" }));
+    host.close();
+  });
+
+  it("takes the first frame of a channel as the floor and refuses only reuse after it", async () => {
+    const { id, secret } = await freshHost("floor");
+    const floorDeviceID = "device-floor-0001";
+    const deviceToken = await pairDevice(id, secret, floorDeviceID);
+    const host = await openSocket("host", secret, undefined, id);
+    const hostMessages = collectMessages(host);
+    const device = await openSocket("device", deviceToken, floorDeviceID, id);
+    const deviceMessages = collectMessages(device);
+
+    // A channel whose cursor this object never saw starts wherever the host is.
+    host.send(routingFrame(900, id, floorDeviceID));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 900 }));
+    host.send(routingFrame(900, id, floorDeviceID));
+    expect(await hostMessages.nextFrame("error")).toEqual(
+      expect.objectContaining({ code: "non_monotonic_sequence", sequence: 900, lastSequence: 900, deviceID: floorDeviceID }),
+    );
+    host.send(routingFrame(901, id, floorDeviceID));
+    expect(await deviceMessages.nextFrame("data")).toEqual(expect.objectContaining({ sequence: 901 }));
+    host.close();
     device.close();
   });
 });

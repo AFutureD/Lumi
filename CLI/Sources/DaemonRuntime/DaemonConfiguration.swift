@@ -40,6 +40,10 @@ public struct DaemonConfiguration: Hashable, Sendable {
     /// keeps the daemon off the network (tests, smoke runs).
     public let relayURL: URL
     public let relayEnabled: Bool
+    /// Advertise this Mac on the local network (Bonjour) and answer paired
+    /// iPhones there directly. `LUMI_DIRECT=0` keeps the daemon off the
+    /// local network (isolated runs, tests).
+    public let directEnabled: Bool
     /// Per-device send sequences and pinned device keys (`relay-host-state.json`, 0600).
     public let relayStatePath: String
     /// Keychain service of the daemon's Relay host credentials. Override with
@@ -75,6 +79,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
         planUsagePollIntervalSeconds: Double = 5 * 60,
         relayURL: URL = DaemonConfiguration.defaultRelayURL,
         relayEnabled: Bool = true,
+        directEnabled: Bool = true,
         relayStatePath: String? = nil,
         relayCredentialService: String = KeychainRelayHostCredentialStore.defaultService,
         wakeService: String? = nil
@@ -108,6 +113,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
         self.planUsagePollIntervalSeconds = planUsagePollIntervalSeconds
         self.relayURL = relayURL
         self.relayEnabled = relayEnabled
+        self.directEnabled = directEnabled
         self.relayStatePath = relayStatePath ?? daemonDirectory.appendingPathComponent("relay-host-state.json").path
         self.relayCredentialService = relayCredentialService
         self.wakeService = wakeService
@@ -152,6 +158,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
             planUsageFetchEnabled: !isDisabled(environment["LUMI_PLAN_USAGE"]),
             relayURL: environment["LUMI_RELAY_URL"].flatMap(URL.init(string:)) ?? defaultRelayURL,
             relayEnabled: !isDisabled(environment["LUMI_RELAY"]),
+            directEnabled: !isDisabled(environment["LUMI_DIRECT"]),
             relayStatePath: environment["LUMI_RELAY_STATE"],
             relayCredentialService: environment["LUMI_RELAY_KEYCHAIN_SERVICE"].flatMap { $0.isEmpty ? nil : $0 }
                 ?? KeychainRelayHostCredentialStore.defaultService,

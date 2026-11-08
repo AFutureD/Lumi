@@ -4,6 +4,13 @@ import Remote
 import Transport
 import Foundation
 
+/// Which link a Mac's channel session runs on right now.
+enum MacConnectionPath: Sendable, Equatable {
+    case relay
+    /// The same network: frames go straight to the Mac, nothing through the Relay.
+    case direct
+}
+
 /// What one paired Mac looks like to the UI.
 struct MacChannelState: Sendable {
     let hostID: HostID
@@ -13,6 +20,8 @@ struct MacChannelState: Sendable {
     let pairedAt: Date
     let isConnected: Bool
     let isHostOnline: Bool
+    /// The link the current channel session uses; `nil` before one opened.
+    var connectionPath: MacConnectionPath? = nil
     /// The Relay refused this iPhone's credentials (the Mac revoked it):
     /// reconnecting stopped; the cache stays readable; pair again to resume.
     let accessRevoked: Bool
@@ -48,6 +57,10 @@ struct RelayDeviceDependencies: Sendable {
     /// Mac remembers its own.
     var defaultRelayURL: URL
     var transportFactory: any RelayFrameTransportFactory
+    /// The local network: which paired Macs are reachable, and how to dial
+    /// them. `nil` keeps every channel on the Relay (tests, or disabled).
+    var directDiscovery: (any DirectPeerDiscovery)? = nil
+    var directTransportFactory: (any DirectTransportFactory)? = nil
     var pairingAPI: any RelayPairingAPI = LiveRelayPairingAPI()
     /// How often a pairing attempt asks the Relay where the session is.
     var pairingPollInterval: Duration = .seconds(1)
@@ -65,9 +78,12 @@ struct RelayDeviceDependencies: Sendable {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Lumi", isDirectory: true)
             .appendingPathComponent("Channels", isDirectory: true)
+        let browser = BonjourPeerBrowser()
         return RelayDeviceDependencies(
             defaultRelayURL: defaultRelayURL,
             transportFactory: RelayWebSocketTransportFactory(),
+            directDiscovery: browser,
+            directTransportFactory: BonjourDirectTransportFactory(browser: browser),
             makeRepository: { hostID in
                 try SQLiteSessionRepository(path: directory.appendingPathComponent("\(hostID.rawValue).sqlite3").path)
             },
@@ -106,6 +122,10 @@ final class RelayDeviceController {
     private var observers: [UUID: () -> Void] = [:]
     /// Developer preview (`-LumiPreviewData`): fixed states instead of Relay.
     private var previewStates: [MacChannelState]?
+    /// The paired Macs the local network shows right now, kept so a channel
+    /// added later learns about its Mac without waiting for the next change.
+    private var directEndpoints: [HostID: DirectEndpoint] = [:]
+    private var discoveryTask: Task<Void, Never>?
 
     init(settings: LocalSettings = .shared, dependencies: RelayDeviceDependencies = .live(), loadStoredCredentials: Bool = true) {
         self.settings = settings
@@ -159,6 +179,20 @@ final class RelayDeviceController {
     func start() {
         for channel in channels.values { channel.start() }
         reportPushToken()
+        startDiscovery()
+    }
+
+    /// Watches the local network for paired Macs and hands each channel its
+    /// Mac's endpoint (or its disappearance).
+    private func startDiscovery() {
+        guard discoveryTask == nil, let discovery = dependencies.directDiscovery, dependencies.directTransportFactory != nil else { return }
+        discoveryTask = Task { [weak self] in
+            for await endpoints in discovery.endpoints() {
+                guard let self else { return }
+                self.directEndpoints = endpoints
+                for (hostID, channel) in self.channels { channel.updateDirectEndpoint(endpoints[hostID]) }
+            }
+        }
     }
 
     // MARK: - Push token
@@ -240,6 +274,37 @@ final class RelayDeviceController {
     /// The session's content is on its way (the detail shows a loading row).
     func isFetchingSession(hostID: HostID, id: SessionID) -> Bool {
         channels[hostID]?.isFetching(id) ?? false
+    }
+
+    /// The detail screen reached the top of what it holds: one page of
+    /// older rows is taken.
+    func loadOlder(hostID: HostID, id: SessionID) {
+        channels[hostID]?.loadOlder(id)
+        notify()
+    }
+
+    /// The Mac holds rows older than the ones this iPhone shows.
+    func canLoadOlder(hostID: HostID, id: SessionID) -> Bool {
+        channels[hostID]?.canLoadOlder(id) ?? false
+    }
+
+    func isLoadingOlder(hostID: HostID, id: SessionID) -> Bool {
+        channels[hostID]?.isLoadingOlder(id) ?? false
+    }
+
+    /// The whole copies of rows the Relay carried trimmed.
+    func fetchTimelineItems(hostID: HostID, id: SessionID, itemIDs: [TimelineItemID]) {
+        channels[hostID]?.fetchItems(id, itemIDs: itemIDs)
+        notify()
+    }
+
+    func isFetchingTimelineItems(hostID: HostID, id: SessionID, itemIDs: [TimelineItemID]) -> Bool {
+        channels[hostID]?.isFetchingItems(id, itemIDs: itemIDs) ?? false
+    }
+
+    /// The app left the foreground: probes stop until `start()`.
+    func pause() {
+        for channel in channels.values { channel.pause() }
     }
 
     func usePreview(_ states: [MacChannelState]) {
@@ -380,16 +445,19 @@ final class RelayDeviceController {
 
     private func makeChannel(_ credentials: RelayDeviceCredentials) -> RelayDeviceChannel? {
         guard let cache = try? dependencies.makeRepository(credentials.hostID) else { return nil }
-        return RelayDeviceChannel(
+        let channel = RelayDeviceChannel(
             credentials: credentials,
             cache: cache,
             removeCache: dependencies.removeRepository,
             transportFactory: dependencies.transportFactory,
+            directFactory: dependencies.directTransportFactory,
             timeouts: dependencies.requestTimeouts,
             settings: settings
         ) { [weak self] in
             self?.notify()
         }
+        channel.updateDirectEndpoint(directEndpoints[credentials.hostID])
+        return channel
     }
 
     private func saveCredentials() throws {
@@ -414,6 +482,7 @@ extension MacChannelState {
             pairedAt: pairedAt,
             isConnected: isConnected,
             isHostOnline: isHostOnline,
+            connectionPath: connectionPath,
             accessRevoked: accessRevoked,
             hasCompleteSync: hasCompleteSync,
             sessions: sessions,
@@ -460,29 +529,44 @@ struct PlanUsageSnapshot: Equatable, Sendable {
 /// forward — so a frame the Relay repeats, reorders or keeps from an
 /// earlier session changes nothing, and neither does a presence flag.
 ///
-/// Sync is index-first and lazy: every connect (and pull-to-refresh, and
-/// any sequence gap) asks the daemon for `session_index`; `SyncReconcilePlan`
-/// turns the difference against `cache.sessionIndex()` into prunes and
-/// summary writes for every session, and whole-session / timeline-tail
-/// fetches only for the sessions whose timeline this iPhone already holds
-/// (opened once, or being looked at). A session's content is first taken
-/// when the person opens it (`openSession`). Afterwards the daemon's event
-/// stream (`session_message`) is applied through the same
-/// `SessionRepository.apply` reducer the daemon and the Mac run for held
-/// sessions, and through the summary reducer alone for the rest.
+/// Sync is index-first and lazy, and a session's rows are read from the
+/// newest end. Every connect (and pull-to-refresh, and any sequence gap)
+/// asks the daemon for `session_index`; `SyncReconcilePlan.lazy` turns the
+/// difference against the cache and the per-session `SessionSyncMark` into
+/// prunes, summary writes, since-tails for held sessions that grew and
+/// rebuilds for held sessions the daemon changed underneath. Opening a
+/// session takes its tail (`fetch_session`, the newest rows) and shows each
+/// part as it lands; scrolling back pages older rows (`fetch_session_before`);
+/// a trimmed row is completed on demand (`fetch_timeline_items`). Nothing a
+/// part carries ever erases rows — erasing is this end's own decision
+/// (rebuild, `Refresh session`) and happens before the tail is asked for.
+///
+/// A request that gets no part for `Timeouts.fetch` is asked once more (the
+/// daemon drops the earlier answer); a second miss drops that request alone
+/// and tells the daemon so (`cancel_request`). Leaving a detail screen
+/// cancels its page and row requests. The socket is probed every
+/// `heartbeat.interval`; a probe unanswered for `heartbeat.timeout` is a
+/// lost connection, and reconnects back off from 2 s to 30 s.
 @MainActor
 final class RelayDeviceChannel {
     /// As many sessions as the daemon's `list_sessions` serves.
     static let indexLimit = 10_000
+    /// Rows a tail or an older page asks for.
+    static let pageLimit = 80
 
     struct Timeouts: Sendable {
         var index: Duration = .seconds(20)
+        /// Measured from the last part received, not from the ask.
         var fetch: Duration = .seconds(30)
         /// `fetch_usage` / `fetch_plan_usage`: one try, then the tab shows
         /// the failure and the next poll asks again.
         var usage: Duration = .seconds(20)
         var tick: Duration = .seconds(1)
         var retryDelay: Duration = .seconds(10)
+        var heartbeat = RelayHeartbeat()
+        var backoff = RelayBackoff()
+        /// Screens are told about a change at most this often while parts land.
+        var changeCoalesce: Duration = .milliseconds(80)
     }
 
     /// A Usage-tab request in flight. Kept apart from `pending`: those gate
@@ -492,17 +576,52 @@ final class RelayDeviceChannel {
         case planUsage
     }
 
-    private enum PendingKind {
+    private enum PendingKind: Hashable {
         case index
-        case fetchSession(remaining: Set<SessionID>)
-        case fetchTimeline(SessionID)
+        /// The newest rows of one session (`erase`: wipe the loaded rows
+        /// before the first part lands — a rebuild or `Refresh session`).
+        case tail(SessionID, erase: Bool)
+        /// Rows from the mark's `lastItemAt` on.
+        case since(SessionID)
+        /// One page older than the loaded window.
+        case history(SessionID)
+        /// Whole copies of trimmed rows.
+        case items(SessionID)
+
+        var sessionID: SessionID? {
+            switch self {
+            case .index: nil
+            case let .tail(id, _), let .since(id), let .history(id), let .items(id): id
+            }
+        }
+
+        /// The content the detail screen waits for before it has anything to show.
+        var loadsContent: Bool {
+            switch self {
+            case .tail, .since: true
+            case .index, .history, .items: false
+            }
+        }
     }
 
     private struct PendingRequest {
         var kind: PendingKind
         var payload: RemoteSessionPayload
         var sentAt: Date
+        /// When the last part of the answer landed; the timeout runs from here.
+        var lastProgressAt: Date
         var attempts: Int
+        var partsReceived: Set<Int> = []
+        /// The first part has landed (the erase, if any, is done).
+        var started = false
+    }
+
+    /// The two links a channel can run on. A channel session belongs to the
+    /// link its `sync_index` went out on; its frames travel nowhere else.
+    /// Moving to the other link is a new session.
+    private enum LinkPath: Equatable {
+        case relay
+        case direct
     }
 
     private let onChange: () -> Void
@@ -510,20 +629,39 @@ final class RelayDeviceChannel {
     private let cache: any SessionRepository
     private let removeCache: @Sendable (HostID) throws -> Void
     private let transportFactory: any RelayFrameTransportFactory
+    private let directFactory: (any DirectTransportFactory)?
     private let timeouts: Timeouts
     private var transport: (any RelayFrameTransport)?
+    /// The Mac as the local network last showed it; `nil` = not on this network.
+    private var directEndpoint: DirectEndpoint?
+    private var directTransport: (any RelayFrameTransport)?
+    private var directConnectTask: Task<Void, Never>?
+    private var directReceiveTask: Task<Void, Never>?
+    private var directHeartbeatTask: Task<Void, Never>?
+    private var directBackoff: RelayBackoff
+    private var isDirectConnected = false
     private var startTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
+    private var changeTask: Task<Void, Never>?
+    private var marksWriteTask: Task<Void, Never>?
+    private var backoff: RelayBackoff
 
     private(set) var credentials: RelayDeviceCredentials
     /// Latest activity first, mirroring `cache.listSessions`.
     private var sessions: [SessionDetail] = []
     private var cacheLoaded = false
-    private var isHostOnline = false
+    /// The Relay's word on the daemon; a live direct link is the other.
+    private var relayHostOnline = false
+    private var isHostOnline: Bool { relayHostOnline || isDirectConnected }
+    /// The Relay socket is up. Requests do not need it while the direct
+    /// link carries the session: see `isLinked`.
     private var isConnected = false
+    /// Some link to the Mac is up — the Relay socket or the direct connection.
+    private var isLinked: Bool { isConnected || isDirectConnected }
     private var accessRevoked = false
     private var hasCompleteSync = false
     private var lastError: String?
@@ -547,8 +685,9 @@ final class RelayDeviceChannel {
     /// `nil` until the Usage tab first asks — the UI's "never loaded" state.
     private var usage: UsageSnapshot?
     private var planUsage: PlanUsageSnapshot?
+    /// The index is the one answer that is applied whole: reconciling against
+    /// half of it would prune what the other half lists.
     private var indexParts: [RequestID: [RemoteSessionPayload]] = [:]
-    private var partBuffers: [SessionID: [RemoteSessionPayload]] = [:]
     /// `generatedAt` of the index whose fetches are still landing.
     private var indexGeneratedAt: Date?
     /// Sessions a detail screen is showing: their timeline is kept current
@@ -557,13 +696,19 @@ final class RelayDeviceChannel {
     /// The daemon's timeline facts from the latest index, so opening a
     /// session held from an earlier run knows whether its copy is behind.
     private var remoteFacts: [SessionID: SessionIndexEntry] = [:]
+    /// What this iPhone holds of each session: the daemon's facts at the
+    /// last completed sync and the loaded window. Persisted (`LocalSettings`)
+    /// so a relaunch knows what it has without taking every tail again.
+    private var marks: [SessionID: SessionSyncMark] {
+        didSet { scheduleMarksWrite() }
+    }
     /// Sessions hidden on this iPhone (`Delete`), kept out of `sessions` but
     /// still in the cache and still fed by the daemon; one rule on every
     /// path — event, summary, whole session, index — shows a hidden session
     /// again: its `lastActivityAt` moved past the moment it was hidden
     /// (real agent activity, not a metadata touch).
     private var hidden: [SessionID: HiddenSession] = [:]
-    /// Serialises cache writes against each other (applies, replaces, prunes).
+    /// Serialises cache writes against each other (applies, merges, prunes).
     private var applyQueue: Task<Void, Never>?
 
     private struct HiddenSession {
@@ -573,6 +718,8 @@ final class RelayDeviceChannel {
 
     private struct ChannelSession {
         let key: RelayChannelKey
+        /// The link this session runs on.
+        let path: LinkPath
         /// Highest frame sequence that authenticated in this session: the
         /// replay floor and the gap detector.
         var lastReceivedSequence: UInt64
@@ -582,6 +729,7 @@ final class RelayDeviceChannel {
         /// The `sync_index` that asked; `channel_opened` must echo it.
         let requestID: RequestID
         let ephemeral: RelayEphemeralKey
+        let path: LinkPath
     }
 
     init(
@@ -589,6 +737,7 @@ final class RelayDeviceChannel {
         cache: any SessionRepository,
         removeCache: @escaping @Sendable (HostID) throws -> Void,
         transportFactory: any RelayFrameTransportFactory,
+        directFactory: (any DirectTransportFactory)? = nil,
         timeouts: Timeouts,
         settings: LocalSettings,
         onChange: @escaping () -> Void
@@ -597,9 +746,22 @@ final class RelayDeviceChannel {
         self.cache = cache
         self.removeCache = removeCache
         self.transportFactory = transportFactory
+        self.directFactory = directFactory
         self.timeouts = timeouts
         self.settings = settings
         self.onChange = onChange
+        backoff = timeouts.backoff
+        directBackoff = timeouts.backoff
+        marks = settings.syncMarks(for: credentials.hostID)
+    }
+
+    /// The link the current (or opening) session runs on, for the Macs row.
+    private var connectionPath: MacConnectionPath? {
+        switch channelSession?.path ?? channelOpening?.path {
+        case .direct?: .direct
+        case .relay?: .relay
+        case nil: nil
+        }
     }
 
     var state: MacChannelState {
@@ -608,8 +770,9 @@ final class RelayDeviceChannel {
             displayName: credentials.displayName,
             relayURL: credentials.relayURL,
             pairedAt: credentials.pairedAt,
-            isConnected: isConnected,
+            isConnected: isLinked,
             isHostOnline: isHostOnline,
+            connectionPath: connectionPath,
             accessRevoked: accessRevoked,
             hasCompleteSync: hasCompleteSync,
             sessions: sessions,
@@ -624,12 +787,17 @@ final class RelayDeviceChannel {
 
     // MARK: - Lifecycle
 
-    /// Loads the cache (first run only), then connects. Idempotent.
+    /// Loads the cache (first run only), then connects. Idempotent. Called
+    /// again when the app comes to the foreground.
     func start() {
         guard startTask == nil else { return }
         if isConnected {
             // Foreground again: the socket may have been suspended; ask for
-            // the index so whatever was dropped meanwhile is healed.
+            // the index so whatever was dropped meanwhile is healed, and
+            // probe the links now instead of at the next heartbeat.
+            startHeartbeat()
+            if isDirectConnected { startDirectHeartbeat() }
+            startTicker()
             requestIndex()
             return
         }
@@ -641,62 +809,229 @@ final class RelayDeviceChannel {
         }
     }
 
+    /// The app left the foreground: the socket will be suspended with it, so
+    /// the probes stop (a probe that cannot run is not a lost link).
+    func pause() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        directHeartbeatTask?.cancel()
+        directHeartbeatTask = nil
+        tickTask?.cancel()
+        tickTask = nil
+    }
+
+    // MARK: - Direct link
+
+    /// The local network showed (or stopped showing) this Mac. A Mac that
+    /// appears is dialled; one that vanishes from the advertisement keeps a
+    /// live connection — Bonjour flickers, TCP tells the truth.
+    func updateDirectEndpoint(_ endpoint: DirectEndpoint?) {
+        guard directFactory != nil else { return }
+        let appeared = endpoint != nil && directEndpoint == nil
+        directEndpoint = endpoint
+        if endpoint == nil {
+            directConnectTask?.cancel()
+            directConnectTask = nil
+        } else if appeared || (!isDirectConnected && directConnectTask == nil) {
+            connectDirect()
+        }
+    }
+
+    private func connectDirect() {
+        guard let directFactory, let endpoint = directEndpoint, !isDirectConnected, directConnectTask == nil, cacheLoaded else { return }
+        directConnectTask = Task { [weak self] in
+            guard let self else { return }
+            let transport = directFactory.makeTransport(to: endpoint)
+            do {
+                try await transport.connect(hostID: credentials.hostID, role: .device(credentials.deviceID), token: credentials.deviceToken)
+            } catch {
+                self.directConnectTask = nil
+                guard !Task.isCancelled, self.directEndpoint != nil else { return }
+                // Still advertised but not answering: try again later.
+                let delay = self.directBackoff.next()
+                self.directConnectTask = Task { [weak self] in
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled, let self else { return }
+                    self.directConnectTask = nil
+                    self.connectDirect()
+                }
+                return
+            }
+            guard !Task.isCancelled else { await transport.disconnect(); return }
+            self.directTransport = transport
+            self.isDirectConnected = true
+            self.directBackoff.reset()
+            self.directConnectTask = nil
+            self.directReceiveTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do {
+                        let message = try await transport.next()
+                        await self?.handle(message, from: .direct)
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        self?.directLinkLost()
+                        return
+                    }
+                }
+            }
+            self.startDirectHeartbeat()
+            // Move the channel session onto the direct link: the Relay
+            // carries nothing for this Mac until the link goes.
+            self.requestIndex(superseding: true, path: .direct)
+            self.onChange()
+        }
+    }
+
+    private func startDirectHeartbeat() {
+        directHeartbeatTask?.cancel()
+        guard let transport = directTransport else { return }
+        directHeartbeatTask = Task { [weak self, timeouts] in
+            await timeouts.heartbeat.run(on: transport)
+            guard !Task.isCancelled, let self, self.directTransport === transport else { return }
+            await transport.disconnect()
+            self.directLinkLost()
+        }
+    }
+
+    /// The direct connection ended: the session on it is over, and the Relay
+    /// (if the daemon is online there) takes the channel back with a new
+    /// opening. Dialling resumes while the Mac stays on the network.
+    private func directLinkLost() {
+        guard isDirectConnected else { return }
+        isDirectConnected = false
+        directReceiveTask?.cancel()
+        directReceiveTask = nil
+        directHeartbeatTask?.cancel()
+        directHeartbeatTask = nil
+        let transport = directTransport
+        directTransport = nil
+        Task { await transport?.disconnect() }
+        if channelSession?.path == .direct || channelOpening?.path == .direct {
+            channelSession = nil
+            channelOpening = nil
+            indexParts = [:]
+            if isConnected, relayHostOnline {
+                requestIndex(superseding: true, path: .relay)
+            } else {
+                for (id, request) in pending where request.kind == .index { pending[id] = nil }
+            }
+        }
+        onChange()
+        if directEndpoint != nil { connectDirect() }
+    }
+
+    private func disconnectDirect() async {
+        directConnectTask?.cancel()
+        directConnectTask = nil
+        directReceiveTask?.cancel()
+        directReceiveTask = nil
+        directHeartbeatTask?.cancel()
+        directHeartbeatTask = nil
+        let transport = directTransport
+        directTransport = nil
+        isDirectConnected = false
+        await transport?.disconnect()
+    }
+
     /// Connected: ask for the index. Otherwise: connect (which asks).
     func refresh() {
-        if isConnected {
+        if isLinked {
             requestIndex()
         } else {
             start()
         }
     }
 
+    /// `Refresh session`: the loaded rows are wiped and the tail taken again.
     func refreshSession(_ id: SessionID) {
-        guard isConnected else { return }
-        send(kind: .fetchSession(remaining: [id]), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: [id]))
+        guard isLinked, isHostOnline else { return }
+        cancelRequests(for: id) { _ in true }
+        requestTail(id, erase: true)
     }
 
-    /// A detail screen opened the session: take its content now — whole
-    /// when nothing is held, the tail when the held copy is behind the
-    /// daemon's index — and keep it current while the screen is up.
+    /// A detail screen opened the session: take its newest rows now — or,
+    /// when a loaded copy is held, whatever the daemon's index says it lacks
+    /// — and keep it current while the screen is up.
     func openSession(_ id: SessionID) {
         openSessions.insert(id)
-        guard isConnected, isHostOnline, !isFetching(id) else { return }
-        guard let local = detail(id) else { return }
-        let localEntry = SessionIndexEntry(summary: local.summary, timelineItemCount: local.timeline.count, lastItemAt: local.timeline.last?.occurredAt)
-        let remoteEntry = remoteFacts[id] ?? localEntry
-        let plan = SyncReconcilePlan.make(local: [localEntry], remote: [remoteEntry])
-        if local.timeline.isEmpty || plan.fetchFull.contains(id) {
-            send(kind: .fetchSession(remaining: [id]), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: [id]))
-        } else if let since = plan.fetchSince.first(where: { $0.sessionID == id }) {
-            send(kind: .fetchTimeline(id), payload: RemoteSessionPayload(kind: .fetchTimelineSince, sessionIDs: [id], since: since.since))
+        guard isLinked, isHostOnline, !isFetching(id), detail(id) != nil else { return }
+        guard let mark = marks[id], mark.isLoaded else {
+            requestTail(id, erase: false)
+            return
+        }
+        guard let remote = remoteFacts[id] else { return }
+        switch SyncReconcilePlan.classify(remote: remote, mark: mark) {
+        case .rebuild:
+            requestTail(id, erase: true)
+        case let .fetchSince(since):
+            send(kind: .since(id), payload: RemoteSessionPayload(kind: .fetchTimelineSince, sessionIDs: [id], since: since, limit: Self.pageLimit))
+        case .upToDate:
+            break
         }
     }
 
+    /// The detail screen left: its page and row requests are cancelled on
+    /// both ends; a tail or since-tail still in flight lands in the cache.
     func closeSession(_ id: SessionID) {
         openSessions.remove(id)
+        cancelRequests(for: id) { kind in
+            if case .history = kind { return true }
+            if case .items = kind { return true }
+            return false
+        }
     }
 
-    /// A whole-session or tail fetch for the session is in flight.
-    func isFetching(_ id: SessionID) -> Bool {
-        pending.values.contains { request in
-            switch request.kind {
-            case let .fetchSession(remaining): remaining.contains(id)
-            case let .fetchTimeline(target): target == id
-            case .index: false
-            }
+    /// One page of rows older than the loaded window.
+    func loadOlder(_ id: SessionID) {
+        guard isLinked, isHostOnline, canLoadOlder(id), !isLoadingOlder(id),
+              let mark = marks[id], let oldest = mark.oldest else { return }
+        send(kind: .history(id), payload: RemoteSessionPayload(kind: .fetchSessionBefore, sessionIDs: [id], limit: Self.pageLimit, before: oldest))
+    }
+
+    /// Rows older than the loaded window exist on the Mac.
+    func canLoadOlder(_ id: SessionID) -> Bool {
+        guard let mark = marks[id], mark.isLoaded else { return false }
+        return mark.hasOlder
+    }
+
+    func isLoadingOlder(_ id: SessionID) -> Bool {
+        pending.values.contains { if case .history(id) = $0.kind { true } else { false } }
+    }
+
+    /// The whole copies of trimmed rows (`TimelineItem.truncated`).
+    func fetchItems(_ id: SessionID, itemIDs: [TimelineItemID]) {
+        guard isLinked, isHostOnline, !itemIDs.isEmpty else { return }
+        let wanted = Set(itemIDs)
+        let alreadyAsked = pending.values.contains { request in
+            guard case .items(id) = request.kind else { return false }
+            return Set(request.payload.itemIDs ?? []) == wanted
         }
+        guard !alreadyAsked else { return }
+        send(kind: .items(id), payload: RemoteSessionPayload(kind: .fetchTimelineItems, sessionIDs: [id], itemIDs: itemIDs))
+    }
+
+    func isFetchingItems(_ id: SessionID, itemIDs: [TimelineItemID]) -> Bool {
+        let wanted = Set(itemIDs)
+        return pending.values.contains { request in
+            guard case .items(id) = request.kind else { return false }
+            return !wanted.isDisjoint(with: request.payload.itemIDs ?? [])
+        }
+    }
+
+    /// The session's rows are on their way (the detail shows a loading row).
+    func isFetching(_ id: SessionID) -> Bool {
+        pending.values.contains { $0.kind.loadsContent && $0.kind.sessionID == id }
     }
 
     private func detail(_ id: SessionID) -> SessionDetail? {
         sessions.first { $0.summary.id == id } ?? hidden[id]?.detail
     }
 
-    /// Sessions whose timeline this iPhone holds or shows: the only ones
-    /// the index reconcile is allowed to fetch for.
-    private var materializedIDs: Set<SessionID> {
+    /// Sessions whose rows this iPhone holds (a loaded window) or shows: the
+    /// ones live events are applied to in full.
+    private var heldIDs: Set<SessionID> {
         var ids = openSessions
-        for detail in sessions where !detail.timeline.isEmpty { ids.insert(detail.summary.id) }
-        for (id, entry) in hidden where !entry.detail.timeline.isEmpty { ids.insert(id) }
+        for (id, mark) in marks where mark.isLoaded { ids.insert(id) }
         return ids
     }
 
@@ -705,7 +1040,7 @@ final class RelayDeviceChannel {
     func requestUsage(_ preset: UsageRangePreset) {
         var snapshot = usage ?? UsageSnapshot()
         defer { usage = snapshot }
-        guard isConnected, isHostOnline else {
+        guard isLinked, isHostOnline else {
             snapshot.isLoading = false
             snapshot.error = "offline"
             return
@@ -724,7 +1059,7 @@ final class RelayDeviceChannel {
     func requestPlanUsage() {
         var snapshot = planUsage ?? PlanUsageSnapshot()
         defer { planUsage = snapshot }
-        guard isConnected, isHostOnline else {
+        guard isLinked, isHostOnline else {
             snapshot.isLoading = false
             snapshot.error = "offline"
             return
@@ -739,17 +1074,18 @@ final class RelayDeviceChannel {
 
     func stop(removeLocalData: Bool) async {
         cancelTasks()
+        await disconnectDirect()
         let transport = self.transport
         self.transport = nil
         await transport?.disconnect()
         isConnected = false
-        isHostOnline = false
+        relayHostOnline = false
         endChannelSession()
         pending = [:]
         indexParts = [:]
-        partBuffers = [:]
         if removeLocalData {
             sessions = []
+            marks = [:]
             try? removeCache(credentials.hostID)
         }
         onChange()
@@ -758,14 +1094,24 @@ final class RelayDeviceChannel {
     func cancelTasks() {
         startTask?.cancel()
         receiveTask?.cancel()
+        heartbeatTask?.cancel()
         reconnectTask?.cancel()
         tickTask?.cancel()
         retryTask?.cancel()
+        changeTask?.cancel()
+        directConnectTask?.cancel()
+        directReceiveTask?.cancel()
+        directHeartbeatTask?.cancel()
         startTask = nil
         receiveTask = nil
+        heartbeatTask = nil
         reconnectTask = nil
         tickTask = nil
         retryTask = nil
+        changeTask = nil
+        directConnectTask = nil
+        directReceiveTask = nil
+        directHeartbeatTask = nil
     }
 
     /// Clears the review flag locally and tells the daemon. Returns false
@@ -776,7 +1122,7 @@ final class RelayDeviceChannel {
         let detail = sessions[index]
         sessions[index] = SessionDetail(summary: detail.summary.reviewed, turns: detail.turns, timeline: detail.timeline)
         enqueueCacheWrite { [cache] in try await cache.markSessionReviewed(id) }
-        if isConnected {
+        if isLinked {
             sendRequest(RemoteSessionPayload(kind: .sessionReviewed, sessionIDs: [id]))
         }
         return true
@@ -786,17 +1132,16 @@ final class RelayDeviceChannel {
         guard let detail = sessions.first(where: { $0.summary.id == id }) else { return }
         hidden[id] = HiddenSession(hiddenAt: detail.summary.lastActivityAt, detail: detail)
         sessions.removeAll { $0.summary.id == id }
-        partBuffers[id] = nil
     }
 
     /// Empties the cache (no tombstones, no dedupe reset) and re-indexes.
     func clear() {
         sessions = []
         hidden = [:]
-        partBuffers = [:]
+        marks = [:]
         hasCompleteSync = false
         enqueueCacheWrite { [cache] in _ = try await cache.pruneSessions(keeping: []) }
-        if isConnected { requestIndex() }
+        if isLinked { requestIndex() }
         onChange()
     }
 
@@ -811,11 +1156,16 @@ final class RelayDeviceChannel {
                 }
             }
             sessions = loaded
+            // A mark for a session the cache no longer has is stale.
+            let cached = Set(loaded.map(\.summary.id))
+            marks = marks.filter { cached.contains($0.key) }
             cacheLoaded = true
         } catch {
             lastError = "Unable to read the session cache: \(error)"
         }
         onChange()
+        // A Mac seen on the network before the cache was ready can be dialled now.
+        connectDirect()
     }
 
     private static func loadFullDetail(_ cache: any SessionRepository, id: SessionID) async throws -> SessionDetail? {
@@ -859,24 +1209,48 @@ final class RelayDeviceChannel {
         return try await task.value
     }
 
+    /// Marks go to disk a moment after they changed, once per burst.
+    private func scheduleMarksWrite() {
+        guard marksWriteTask == nil else { return }
+        marksWriteTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self else { return }
+            self.marksWriteTask = nil
+            self.settings.setSyncMarks(self.marks, for: self.credentials.hostID)
+        }
+    }
+
+    /// Screens hear about a burst of parts once, not per part.
+    private func scheduleChange() {
+        guard changeTask == nil else { return }
+        changeTask = Task { [weak self, timeouts] in
+            try? await Task.sleep(for: timeouts.changeCoalesce)
+            guard let self else { return }
+            self.changeTask = nil
+            self.onChange()
+        }
+    }
+
     // MARK: - Connection
 
     private func connect() async {
         reconnectTask?.cancel()
         reconnectTask = nil
         receiveTask?.cancel()
+        heartbeatTask?.cancel()
         await transport?.disconnect()
         let transport = transportFactory.makeTransport(baseURL: credentials.relayURL)
         self.transport = transport
         isConnected = false
-        isHostOnline = false
+        relayHostOnline = false
         hasCompleteSync = false
-        endChannelSession()
+        if channelSession?.path != .direct && channelOpening?.path != .direct {
+            endChannelSession()
+            pending = [:]
+            indexParts = [:]
+        }
         requestSequence = 0
         sendQueue = nil
-        pending = [:]
-        indexParts = [:]
-        partBuffers = [:]
         do {
             try await transport.connect(
                 hostID: credentials.hostID,
@@ -886,6 +1260,7 @@ final class RelayDeviceChannel {
             isConnected = true
             accessRevoked = false
             lastError = nil
+            backoff.reset()
             receiveTask = Task { [weak self] in
                 while !Task.isCancelled {
                     do {
@@ -898,6 +1273,7 @@ final class RelayDeviceChannel {
                     }
                 }
             }
+            startHeartbeat()
             startTicker()
             // The worker answers the connect with presence; the index request
             // goes out as soon as the host is known to be online (`handle`).
@@ -907,21 +1283,41 @@ final class RelayDeviceChannel {
         onChange()
     }
 
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        guard let transport else { return }
+        heartbeatTask = Task { [weak self, timeouts] in
+            await timeouts.heartbeat.run(on: transport)
+            guard !Task.isCancelled, let self, self.transport === transport else { return }
+            // The link stopped answering: tear it down so the receive loop
+            // ends, and reconnect like any other loss.
+            await transport.disconnect()
+            self.connectionFailed(RelayClientError.notConnected)
+        }
+    }
+
     private func connectionFailed(_ error: Error) {
+        guard isConnected || reconnectTask == nil else { return }
         isConnected = false
-        isHostOnline = false
+        relayHostOnline = false
         hasCompleteSync = false
-        endChannelSession()
-        pending = [:]
-        indexParts = [:]
-        partBuffers = [:]
+        // A session on the direct link outlives the Relay socket.
+        if channelSession?.path != .direct && channelOpening?.path != .direct {
+            endChannelSession()
+            pending = [:]
+            indexParts = [:]
+        }
         tickTask?.cancel()
         tickTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         if case RelayClientError.unauthorized = error {
             // The Mac revoked this iPhone (or the pairing record is gone):
             // no retry loop — the Macs screen says so and offers re-pairing.
             accessRevoked = true
             lastError = "This iPhone was revoked on the Mac. Pair again to reconnect."
+        } else if case RelayClientError.upgradeRequired = error {
+            lastError = "Update Lumi on this iPhone to keep syncing with this Mac."
         } else {
             lastError = String(describing: error)
         }
@@ -931,8 +1327,9 @@ final class RelayDeviceChannel {
 
     private func scheduleReconnect(after error: Error) {
         guard Self.shouldReconnect(after: error), reconnectTask == nil else { return }
+        let delay = backoff.next()
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
             await self.connect()
         }
@@ -941,7 +1338,7 @@ final class RelayDeviceChannel {
     private static func shouldReconnect(after error: Error) -> Bool {
         guard let relayError = error as? RelayClientError else { return true }
         switch relayError {
-        case .unauthorized:
+        case .unauthorized, .upgradeRequired:
             return false
         case let .server(status, _):
             return status != 401 && status != 403
@@ -960,8 +1357,12 @@ final class RelayDeviceChannel {
     ///
     /// One at a time, unless `superseding`: the daemon just (re)appeared
     /// behind the Relay and cannot know an opening sent before that.
-    private func requestIndex(superseding: Bool = false, attempts: Int = 1) {
-        guard isConnected, isHostOnline else { return }
+    private func requestIndex(superseding: Bool = false, attempts: Int = 1, path: LinkPath? = nil) {
+        let path = path ?? preferredPath
+        switch path {
+        case .relay: guard isConnected, relayHostOnline else { return }
+        case .direct: guard isDirectConnected else { return }
+        }
         guard superseding || !pending.values.contains(where: { if case .index = $0.kind { true } else { false } }) else { return }
         let ephemeral = RelayEphemeralKey()
         let requestID = RequestID()
@@ -978,9 +1379,20 @@ final class RelayDeviceChannel {
         // whatever is still unanswered is asked again once this one opens.
         // An earlier index is void — its answer belongs to its own session.
         requeueUnansweredRequests()
-        channelOpening = ChannelOpening(requestID: requestID, ephemeral: ephemeral)
-        pending[requestID] = PendingRequest(kind: .index, payload: opening, sentAt: Date(), attempts: attempts)
-        transmit(opening, key: handshakeKey)
+        channelOpening = ChannelOpening(requestID: requestID, ephemeral: ephemeral, path: path)
+        let now = Date()
+        pending[requestID] = PendingRequest(kind: .index, payload: opening, sentAt: now, lastProgressAt: now, attempts: attempts)
+        transmit(opening, key: handshakeKey, path: path)
+    }
+
+    /// Direct when the Mac is on this network and answering, the Relay otherwise.
+    private var preferredPath: LinkPath { isDirectConnected ? .direct : .relay }
+
+    private func link(for path: LinkPath) -> (any RelayFrameTransport)? {
+        switch path {
+        case .relay: transport
+        case .direct: directTransport
+        }
     }
 
     private func requeueUnansweredRequests() {
@@ -1020,17 +1432,35 @@ final class RelayDeviceChannel {
         outbox = []
     }
 
+    private func requestTail(_ id: SessionID, erase: Bool) {
+        send(kind: .tail(id, erase: erase), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: [id], limit: Self.pageLimit))
+    }
+
     private func send(kind: PendingKind, payload: RemoteSessionPayload, attempts: Int = 1) {
         let requestID = RequestID()
+        let now = Date()
         let stamped = RemoteSessionPayload(
             kind: payload.kind,
-            generatedAt: Date(),
+            generatedAt: now,
             requestID: requestID,
             sessionIDs: payload.sessionIDs,
-            since: payload.since
+            since: payload.since,
+            limit: payload.limit,
+            before: payload.before,
+            itemIDs: payload.itemIDs
         )
-        pending[requestID] = PendingRequest(kind: kind, payload: stamped, sentAt: Date(), attempts: attempts)
+        pending[requestID] = PendingRequest(kind: kind, payload: stamped, sentAt: now, lastProgressAt: now, attempts: attempts)
         sendRequest(stamped)
+    }
+
+    /// Drops the pending requests for `id` that `matching` selects and tells
+    /// the daemon to stop answering them.
+    private func cancelRequests(for id: SessionID, matching: (PendingKind) -> Bool) {
+        for (requestID, request) in pending where request.kind.sessionID == id && matching(request.kind) {
+            pending[requestID] = nil
+            outbox.removeAll { $0.requestID == requestID }
+            sendRequest(RemoteSessionPayload(kind: .cancelRequest, generatedAt: Date(), requestID: RequestID(), cancels: requestID))
+        }
     }
 
     /// Sends a request inside the open channel session. While a session is
@@ -1040,7 +1470,7 @@ final class RelayDeviceChannel {
         if channelOpening != nil {
             outbox.append(payload)
         } else if let session = channelSession {
-            transmit(payload, key: session.key)
+            transmit(payload, key: session.key, path: session.path)
         }
     }
 
@@ -1048,14 +1478,15 @@ final class RelayDeviceChannel {
         guard let session = channelSession else { return }
         let waiting = outbox
         outbox = []
-        for payload in waiting { transmit(payload, key: session.key) }
+        for payload in waiting { transmit(payload, key: session.key, path: session.path) }
     }
 
     /// Seals now, on the next request sequence, and sends behind every
     /// request sealed before it — the daemon drops a request whose sequence
-    /// is not past the previous one's.
-    private func transmit(_ payload: RemoteSessionPayload, key: RelayChannelKey) {
-        guard let transport else { return }
+    /// is not past the previous one's. Every request of a session travels
+    /// the session's own link.
+    private func transmit(_ payload: RemoteSessionPayload, key: RelayChannelKey, path: LinkPath) {
+        guard let transport = link(for: path) else { return }
         requestSequence += 1
         let frame: RelayRoutingFrame
         do {
@@ -1095,8 +1526,12 @@ final class RelayDeviceChannel {
         }
     }
 
-    /// A request that got no complete answer is re-sent once; a second
-    /// miss drops everything in flight and re-indexes after a pause.
+    /// A request whose answer made no progress for its timeout is asked once
+    /// more under a new id (the daemon drops the earlier answer for the same
+    /// session). A second miss gives that request up — alone: what else is
+    /// in flight keeps going, and whatever parts already landed stay — and
+    /// tells the daemon to stop. The index keeps its own rule: a second
+    /// miss pauses, then opens a fresh session.
     private func expirePendingRequests() {
         let now = Date()
         let lateUsage = usageRequests.filter { Duration.seconds(now.timeIntervalSince($0.value.sentAt)) > timeouts.usage }
@@ -1117,31 +1552,36 @@ final class RelayDeviceChannel {
         var expired: [(RequestID, PendingRequest)] = []
         for (id, request) in pending {
             let limit: Duration = if case .index = request.kind { timeouts.index } else { timeouts.fetch }
-            if Duration.seconds(now.timeIntervalSince(request.sentAt)) > limit { expired.append((id, request)) }
+            if Duration.seconds(now.timeIntervalSince(request.lastProgressAt)) > limit { expired.append((id, request)) }
         }
         guard !expired.isEmpty else { return }
-        var giveUp = false
+        var indexGaveUp = false
         for (id, request) in expired {
             pending[id] = nil
             indexParts[id] = nil
             outbox.removeAll { $0.requestID == id }
-            if request.attempts >= 2 {
-                giveUp = true
-            } else if case .index = request.kind {
-                // Never the same opening twice: a fresh one-time key.
-                requestIndex(superseding: true, attempts: request.attempts + 1)
+            if case .index = request.kind {
+                if request.attempts >= 2 {
+                    indexGaveUp = true
+                } else {
+                    // Never the same opening twice: a fresh one-time key.
+                    requestIndex(superseding: true, attempts: request.attempts + 1)
+                }
+            } else if request.attempts >= 2 {
+                sendRequest(RemoteSessionPayload(kind: .cancelRequest, generatedAt: now, requestID: RequestID(), cancels: id))
+                lastError = "The Mac did not answer; try again."
             } else {
-                send(kind: request.kind, payload: request.payload, attempts: request.attempts + 1)
+                // A tail that was to erase first already did on its first part.
+                var kind = request.kind
+                if case let .tail(sessionID, erase) = kind, erase, request.started { kind = .tail(sessionID, erase: false) }
+                send(kind: kind, payload: request.payload, attempts: request.attempts + 1)
             }
         }
-        if giveUp {
-            pending = [:]
-            indexParts = [:]
-            partBuffers = [:]
+        onChange()
+        if indexGaveUp {
             channelOpening = nil
             outbox = []
             lastError = "The Mac did not answer; retrying."
-            onChange()
             retryTask?.cancel()
             retryTask = Task { [weak self, timeouts] in
                 try? await Task.sleep(for: timeouts.retryDelay)
@@ -1153,34 +1593,42 @@ final class RelayDeviceChannel {
 
     // MARK: - Inbound
 
-    private func handle(_ message: RelayIncomingMessage) async {
+    private func handle(_ message: RelayIncomingMessage, from path: LinkPath = .relay) async {
         switch message {
         case let .presence(online):
+            if path == .direct {
+                // The direct link says what it is: up. Its loss comes as an error.
+                return
+            }
             // Presence is the Relay's word, not the daemon's: it starts or
             // stops asking, and never touches what a session has received.
-            isHostOnline = online
+            relayHostOnline = online
+            if channelSession?.path == .direct || channelOpening?.path == .direct {
+                // The channel lives on the direct link; the Relay's view of
+                // the daemon changes nothing here.
+                break
+            }
             hasCompleteSync = false
             if online {
                 // First sight of the daemon — or the daemon reconnected behind
                 // the Relay (which repeats `online`) and forgot every session,
                 // so nothing reaches us until we open one again.
-                requestIndex(superseding: true)
+                requestIndex(superseding: true, path: .relay)
             } else {
                 endChannelSession()
                 pending = [:]
                 indexParts = [:]
-                partBuffers = [:]
                 failUsageRequests("offline")
             }
         case let .frame(frame):
             guard frame.hostID == credentials.hostID,
                   frame.deviceID == credentials.deviceID,
                   frame.kind == .data else { return }
-            if receiveOpening(frame) { break }
+            if receiveOpening(frame, from: path) { break }
             // Authenticate first: a frame that does not open under this
             // session's key is not the daemon's for this session and moves
-            // nothing.
-            guard let session = channelSession, frame.sequence > session.lastReceivedSequence else { return }
+            // nothing. A frame on the other link is not this session's either.
+            guard let session = channelSession, session.path == path, frame.sequence > session.lastReceivedSequence else { return }
             let payload: RemoteSessionPayload
             do {
                 payload = try RelayCryptography.open(frame, key: session.key)
@@ -1190,7 +1638,7 @@ final class RelayDeviceChannel {
             }
             let gap = frame.sequence > session.lastReceivedSequence + 1
             channelSession?.lastReceivedSequence = frame.sequence
-            isHostOnline = true
+            if path == .relay { relayHostOnline = true }
             await apply(payload)
             lastError = nil
             if gap {
@@ -1198,9 +1646,11 @@ final class RelayDeviceChannel {
                 hasCompleteSync = false
                 requestIndex()
             }
+            scheduleChange()
+            return
         case let .error(error):
             lastError = "Relay: \(error.code)"
-        case .pairingDevice, .pairingClosed:
+        case .pairingDevice, .pairingClosed, .devicesChanged:
             // Host-socket control messages; a device socket never gets them.
             return
         }
@@ -1213,8 +1663,8 @@ final class RelayDeviceChannel {
     /// ends derive takes over from the frame after it. Returns false for a
     /// frame that is not sealed with the handshake key (the current
     /// session's, usually).
-    private func receiveOpening(_ frame: RelayRoutingFrame) -> Bool {
-        guard let opening = channelOpening,
+    private func receiveOpening(_ frame: RelayRoutingFrame, from path: LinkPath) -> Bool {
+        guard let opening = channelOpening, opening.path == path,
               let handshakeKey = try? handshakeKey(),
               let payload = try? RelayCryptography.open(frame, key: handshakeKey) else { return false }
         // The answer to an opening this iPhone has since replaced is void.
@@ -1230,10 +1680,11 @@ final class RelayDeviceChannel {
                 hostID: credentials.hostID,
                 deviceID: credentials.deviceID
             )
-            channelSession = ChannelSession(key: key, lastReceivedSequence: frame.sequence)
+            channelSession = ChannelSession(key: key, path: opening.path, lastReceivedSequence: frame.sequence)
             channelOpening = nil
-            isHostOnline = true
+            if path == .relay { relayHostOnline = true }
             lastError = nil
+            pending[opening.requestID]?.lastProgressAt = Date()
             flushOutbox()
         } catch {
             lastError = "Unable to start syncing: \(error)"
@@ -1245,25 +1696,14 @@ final class RelayDeviceChannel {
         switch payload.kind {
         case .sessionIndex:
             guard let requestID = payload.requestID, pending[requestID] != nil else { return }
+            pending[requestID]?.lastProgressAt = Date()
             indexParts[requestID, default: []].append(payload)
             guard let entries = RelayFrameReduction.assembleIndex(parts: indexParts[requestID] ?? []) else { return }
             indexParts[requestID] = nil
             pending[requestID] = nil
             await reconcile(entries, generatedAt: payload.generatedAt)
-        case .sessionFull, .sessionTimeline:
-            guard let page = payload.session else { return }
-            let id = page.summary.id
-            if (payload.part ?? 0) == 0 { partBuffers[id] = [] }
-            partBuffers[id, default: []].append(payload)
-            guard page.nextCursor == nil,
-                  let detail = RelayFrameReduction.assemble(parts: partBuffers[id] ?? []) else { return }
-            partBuffers[id] = nil
-            if payload.kind == .sessionFull {
-                install(detail, replacing: true)
-            } else {
-                install(detail, replacing: false)
-            }
-            settle(requestID: payload.requestID, sessionID: id)
+        case .sessionTail, .sessionHistory, .sessionTimeline, .sessionItems:
+            await applySessionPart(payload)
         case .sessionMessage:
             await applyEvents(payload.events ?? [])
         case .sessionInfo:
@@ -1279,11 +1719,12 @@ final class RelayDeviceChannel {
             let ids = payload.sessionIDs ?? []
             for id in ids {
                 sessions.removeAll { $0.summary.id == id }
-                partBuffers[id] = nil
                 hidden[id] = nil
+                marks[id] = nil
                 enqueueCacheWrite { [cache] in _ = try await cache.deleteSession(id: id) }
-                settle(requestID: payload.requestID, sessionID: id)
+                if let requestID = payload.requestID { pending[requestID] = nil }
             }
+            completeSyncIfSettled()
         case .health:
             health = payload.health
         case .usageReport:
@@ -1314,7 +1755,8 @@ final class RelayDeviceChannel {
                 snapshot.error = "The Mac could not read its plan usage."
             }
             planUsage = snapshot
-        case .syncIndex, .fetchSession, .fetchTimelineSince, .sessionReviewed, .fetchUsage, .fetchPlanUsage:
+        case .syncIndex, .fetchSession, .fetchSessionBefore, .fetchTimelineSince, .fetchTimelineItems, .cancelRequest,
+             .sessionReviewed, .fetchUsage, .fetchPlanUsage:
             // Device → host only; never expected from the daemon.
             return
         case .channelOpened:
@@ -1322,6 +1764,92 @@ final class RelayDeviceChannel {
             // a session it means nothing.
             return
         }
+    }
+
+    /// One part of a session page. Each part is merged as it lands; the
+    /// request completes when its last part is in and no part is missing.
+    /// A part of a request this iPhone no longer waits for is ignored — the
+    /// one exception is a tail with no request id at all, the daemon's own
+    /// word that it rebuilt the session (`Refresh session` on the Mac).
+    private func applySessionPart(_ payload: RemoteSessionPayload) async {
+        guard let page = payload.session else { return }
+        let id = page.summary.id
+        let part = payload.part ?? 0
+        let isLast = page.nextCursor == nil
+
+        guard let requestID = payload.requestID else {
+            guard payload.kind == .sessionTail, heldIDs.contains(id) || detail(id) != nil else { return }
+            if part == 0 { eraseRows(of: id, summary: page.summary) }
+            install(page)
+            if isLast, heldIDs.contains(id) {
+                marks[id] = SessionSyncMark(
+                    timelineItemCount: remoteFacts[id]?.timelineItemCount,
+                    lastItemAt: page.timeline.last?.occurredAt ?? remoteFacts[id]?.lastItemAt,
+                    oldest: payload.oldest,
+                    hasOlder: payload.hasOlder ?? false
+                )
+            }
+            return
+        }
+        guard var request = pending[requestID], request.kind.sessionID == id else { return }
+
+        if !request.started {
+            request.started = true
+            switch request.kind {
+            case let .tail(_, erase) where erase:
+                eraseRows(of: id, summary: page.summary)
+            case .since where payload.kind == .sessionTail:
+                // More rows arrived than a since-tail could patch: the daemon
+                // sent a fresh tail, which replaces the loaded window.
+                eraseRows(of: id, summary: page.summary)
+            default:
+                break
+            }
+        }
+        request.lastProgressAt = Date()
+        request.partsReceived.insert(part)
+        pending[requestID] = request
+        install(page)
+
+        guard isLast, request.partsReceived.count == part + 1 else { return }
+        pending[requestID] = nil
+        let remote = remoteFacts[id]
+        switch request.kind {
+        case .tail, .since where payload.kind == .sessionTail:
+            marks[id] = SessionSyncMark(
+                timelineItemCount: remote?.timelineItemCount,
+                lastItemAt: remote?.lastItemAt ?? page.timeline.last?.occurredAt,
+                oldest: payload.oldest,
+                hasOlder: payload.hasOlder ?? false
+            )
+        case .since:
+            var mark = marks[id] ?? SessionSyncMark()
+            mark.timelineItemCount = remote?.timelineItemCount
+            mark.lastItemAt = remote?.lastItemAt ?? page.timeline.last?.occurredAt ?? mark.lastItemAt
+            marks[id] = mark
+        case .history:
+            var mark = marks[id] ?? SessionSyncMark()
+            if let oldest = payload.oldest { mark.oldest = oldest }
+            mark.hasOlder = payload.hasOlder ?? false
+            marks[id] = mark
+        case .items, .index:
+            break
+        }
+        completeSyncIfSettled()
+    }
+
+    /// Wipes the loaded rows of a session before a tail replaces them —
+    /// memory and cache — keeping the summary.
+    private func eraseRows(of id: SessionID, summary: SessionSummary) {
+        let empty = SessionDetail(summary: summary, turns: [], timeline: [])
+        enqueueCacheWrite { [cache] in try await cache.replaceSession(empty) }
+        if var entry = hidden[id] {
+            entry.detail = empty
+            hidden[id] = entry
+        } else if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
+            sessions[index] = empty
+        }
+        marks[id] = nil
     }
 
     /// Every Usage-tab ask in flight fails with one reason (offline, timed out).
@@ -1340,12 +1868,13 @@ final class RelayDeviceChannel {
     }
 
     private func applyEvents(_ events: [AgentIngressEvent]) async {
-        let held = materializedIDs
+        let held = heldIDs
         for event in events {
             let id = event.sessionID
             if event.disposition == .discard {
                 sessions.removeAll { $0.summary.id == id }
                 hidden[id] = nil
+                marks[id] = nil
                 enqueueCacheWrite { [cache] in _ = try await cache.apply(event) }
                 continue
             }
@@ -1359,8 +1888,8 @@ final class RelayDeviceChannel {
             if held.contains(id) {
                 let applied: Bool
                 do {
-                    // Through the write queue: a whole-session replace enqueued a
-                    // moment ago must land before this event, or it would erase it.
+                    // Through the write queue: a tail merged a moment ago
+                    // must land before this event, or it would erase it.
                     applied = try await cacheWrite { [cache] in try await cache.apply(event) }
                 } catch {
                     lastError = "Unable to apply an update: \(error)"
@@ -1373,6 +1902,13 @@ final class RelayDeviceChannel {
                     entry.detail = SessionDetailReduction.applying(event, to: entry.detail)
                     hidden[id] = entry
                     revealIfNewer(id)
+                }
+                // The copy moved on without an index: the mark follows the
+                // newest row and forgets the count until the next index.
+                if let item = event.timelineItem, var mark = marks[id], mark.isLoaded {
+                    mark.lastItemAt = max(mark.lastItemAt ?? .distantPast, item.occurredAt)
+                    mark.timelineItemCount = nil
+                    marks[id] = mark
                 }
             } else {
                 // Not held: the summary follows the event (status, phase,
@@ -1427,46 +1963,21 @@ final class RelayDeviceChannel {
         sessions.sort { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
     }
 
-    /// A session the daemon talks about but the cache does not hold: take it whole.
-    /// Writes a whole (`replacing`) or partial session into cache and memory.
-    private func install(_ detail: SessionDetail, replacing: Bool) {
-        let id = detail.summary.id
-        if replacing {
-            enqueueCacheWrite { [cache] in try await cache.replaceSession(detail) }
-        } else {
-            enqueueCacheWrite { [cache] in try await cache.mergeSession(detail) }
-        }
+    /// Merges one part — summary, turns when it carries them, rows — into
+    /// cache and memory. Nothing is erased here.
+    private func install(_ page: SessionDetail) {
+        let id = page.summary.id
+        enqueueCacheWrite { [cache] in try await cache.mergeSession(page) }
         if var entry = hidden[id] {
-            entry.detail = replacing ? detail : SessionDetailReduction.merging(detail, into: entry.detail)
+            entry.detail = SessionDetailReduction.merging(page, into: entry.detail)
             hidden[id] = entry
             revealIfNewer(id)
         } else if let index = sessions.firstIndex(where: { $0.summary.id == id }) {
-            sessions[index] = replacing ? detail : SessionDetailReduction.merging(detail, into: sessions[index])
+            sessions[index] = SessionDetailReduction.merging(page, into: sessions[index])
         } else {
-            sessions.append(detail)
+            sessions.append(page)
         }
         sortSessions()
-    }
-
-    /// Marks one session of a pending fetch as answered; completes the sync
-    /// when nothing is left in flight.
-    private func settle(requestID: RequestID?, sessionID: SessionID) {
-        guard let requestID, var request = pending[requestID] else { return }
-        switch request.kind {
-        case var .fetchSession(remaining):
-            remaining.remove(sessionID)
-            if remaining.isEmpty {
-                pending[requestID] = nil
-            } else {
-                request.kind = .fetchSession(remaining: remaining)
-                pending[requestID] = request
-            }
-        case .fetchTimeline:
-            pending[requestID] = nil
-        case .index:
-            break
-        }
-        completeSyncIfSettled()
     }
 
     private func completeSyncIfSettled() {
@@ -1489,11 +2000,12 @@ final class RelayDeviceChannel {
             return
         }
         remoteFacts = Dictionary(remote.map { ($0.summary.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let plan = SyncReconcilePlan.make(local: local, remote: remote, materialized: materializedIDs)
+        let plan = SyncReconcilePlan.lazy(local: local, remote: remote, marks: marks)
         let remoteIDs = Set(remote.map(\.summary.id))
         if !plan.prune.isEmpty {
             sessions.removeAll { plan.prune.contains($0.summary.id) }
             hidden = hidden.filter { !plan.prune.contains($0.key) }
+            marks = marks.filter { !plan.prune.contains($0.key) }
             enqueueCacheWrite { [cache] in _ = try await cache.pruneSessions(keeping: remoteIDs) }
         }
         for summary in plan.infoOnly {
@@ -1503,24 +2015,37 @@ final class RelayDeviceChannel {
         for summary in plan.insert {
             insertSummaryOnly(summary)
         }
+        // A held copy that is current again learns the daemon's count back.
+        for (id, mark) in marks where mark.isLoaded && mark.timelineItemCount == nil {
+            if let entry = remoteFacts[id], SyncReconcilePlan.classify(remote: entry, mark: mark) == .upToDate {
+                marks[id]?.timelineItemCount = entry.timelineItemCount
+            }
+        }
         sortSessions()
 
         indexGeneratedAt = generatedAt
-        // A hidden session is fetched whole only when the daemon's copy is
-        // newer (then `install` shows it); otherwise it stays as it is.
-        let fetchFull = plan.fetchFull.filter { id in
-            guard let entry = hidden[id], let remoteEntry = remote.first(where: { $0.summary.id == id }) else { return true }
-            return remoteEntry.summary.lastActivityAt > entry.hiddenAt
-        }
-        for chunk in stride(from: 0, to: fetchFull.count, by: 20).map({ Array(fetchFull[$0..<min($0 + 20, fetchFull.count)]) }) {
-            send(kind: .fetchSession(remaining: Set(chunk)), payload: RemoteSessionPayload(kind: .fetchSession, sessionIDs: chunk))
+        // A hidden session is rebuilt only when the daemon's copy is newer
+        // (then `install` shows it); otherwise it stays as it is.
+        for id in plan.rebuild {
+            if let entry = hidden[id], let remoteEntry = remoteFacts[id], remoteEntry.summary.lastActivityAt <= entry.hiddenAt { continue }
+            requestTail(id, erase: true)
         }
         for request in plan.fetchSince {
             send(
-                kind: .fetchTimeline(request.sessionID),
-                payload: RemoteSessionPayload(kind: .fetchTimelineSince, sessionIDs: [request.sessionID], since: request.since)
+                kind: .since(request.sessionID),
+                payload: RemoteSessionPayload(kind: .fetchTimelineSince, sessionIDs: [request.sessionID], since: request.since, limit: Self.pageLimit)
             )
         }
+        // A screen opened while no index had arrived yet: now it can ask.
+        for id in openSessions where !isFetching(id) && detail(id) != nil {
+            guard let mark = marks[id], mark.isLoaded else {
+                requestTail(id, erase: false)
+                continue
+            }
+        }
+        // "Synced" means the cache says so too: the summary writes above
+        // land before the sync is declared complete.
+        await applyQueue?.value
         completeSyncIfSettled()
     }
 }
@@ -1702,7 +2227,7 @@ final class RelayPairingAttempt {
             }
         case .unauthorized:
             return .badCode
-        case .server, .invalidResponse, .notConnected, .unsupportedMessage:
+        case .server, .invalidResponse, .notConnected, .unsupportedMessage, .upgradeRequired:
             return .hostOffline
         }
     }

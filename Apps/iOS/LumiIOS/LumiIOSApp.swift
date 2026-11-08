@@ -52,6 +52,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         LumiIOSApp.coordinator.resume()
     }
 
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        LumiIOSApp.coordinator.suspend()
+    }
+
     /// `lumi://pair?relay=…&code=…` from the system camera or a link.
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         for context in URLContexts {

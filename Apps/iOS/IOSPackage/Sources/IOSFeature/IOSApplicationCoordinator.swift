@@ -65,6 +65,12 @@ public final class IOSApplicationCoordinator: NSObject {
         Task { await notifications.refresh() }
     }
 
+    /// The scene left the foreground: the sockets will be suspended with
+    /// it, so liveness probes stop until `resume()`.
+    public func suspend() {
+        relay.pause()
+    }
+
     // MARK: - Push notifications
 
     /// The APNs token from the app delegate, hex-encoded, forwarded to every

@@ -37,13 +37,24 @@ public actor RelayHostService: Service {
     public typealias ConnectionObserver = @Sendable (Bool) async -> Void
 
     public static let indexLimit = 10_000
-    public static let detailPageSize = 500
+    /// Rows of a session a tail or an older page carries when the iPhone
+    /// names no `limit` (and the most it may ask for).
+    public static let defaultPageLimit = 80
+    public static let maxPageLimit = 500
 
     fileprivate enum WorkItem {
         /// Announce the channel session `requestID` opened, then its index.
         case index(device: DeviceID, requestID: RequestID)
-        case fetch(device: DeviceID, requestID: RequestID?, ids: [SessionID])
-        case timeline(device: DeviceID, requestID: RequestID?, id: SessionID, since: Date)
+        /// The newest `limit` rows of each session, with summary and turns
+        /// (`session_tail`; part 0 replaces the iPhone's copy).
+        case fetch(device: DeviceID, requestID: RequestID?, ids: [SessionID], limit: Int)
+        /// The `limit` rows just before `before` (`session_history`).
+        case history(device: DeviceID, requestID: RequestID?, id: SessionID, before: TimelineCursor, limit: Int)
+        /// Rows from `since` on — as `session_timeline` when the newest
+        /// `limit` rows reach back that far, otherwise as a fresh tail.
+        case timeline(device: DeviceID, requestID: RequestID?, id: SessionID, since: Date, limit: Int)
+        /// Whole rows an iPhone holds trimmed (`session_items`).
+        case items(device: DeviceID, requestID: RequestID?, id: SessionID, itemIDs: [TimelineItemID])
         case events([AgentIngressEvent])
         case summaries([SessionID])
         case removed([SessionID], requestID: RequestID?, device: DeviceID?)
@@ -64,13 +75,21 @@ public actor RelayHostService: Service {
     private var state: RelayHostStateStore
     private let transportFactory: any RelayFrameTransportFactory
     private let rest: any RelayHostREST
+    /// The local network path (Bonjour + TCP); `nil` when disabled. An
+    /// iPhone on the same network opens its channel session here and the
+    /// Relay carries nothing for it until that session ends.
+    private let directLink: (any DirectHostLink)?
+    private var directStarted = false
     private let hostName: @Sendable () -> String?
     private let healthProvider: HealthProvider
     private let usageProvider: UsageProvider
     private let planUsageProvider: PlanUsageProvider
     private let onConnectionChange: ConnectionObserver
     private let eventCoalesceInterval: Duration
-    private let reconnectDelay: Duration
+    /// Reconnect delays double from the base to the cap; a connection that
+    /// comes up resets them.
+    private var reconnectBackoff: RelayBackoff
+    private let heartbeat: RelayHeartbeat
     private let deviceRefreshInterval: Duration
     private let healthInterval: Duration
     /// How long a pairing code stays claimable.
@@ -99,11 +118,28 @@ public actor RelayHostService: Service {
         let key: RelayChannelKey
         /// The daemon's one-time public key, announced in `channel_opened`.
         let hostEphemeralKey: Data
+        /// The link the opening arrived on: every frame of this session
+        /// travels the same link. Switching links is a new session.
+        let path: DevicePath
         /// Highest request sequence that authenticated in this session.
         var lastRequestSequence: UInt64
         /// `channel_opened` and the index went out: the iPhone has the key,
         /// so answers and pushes may be sealed with it. Until then nothing is.
         var isOpen = false
+    }
+
+    /// Where a device's frames travel: through the Relay, or over one
+    /// connection of the local listener.
+    fileprivate enum DevicePath: Hashable {
+        case relay
+        case direct(DirectConnectionID)
+
+        var logName: String {
+            switch self {
+            case .relay: "relay"
+            case .direct: "direct"
+            }
+        }
     }
 
     /// Devices with an open channel session: pushes go only to them. A
@@ -126,6 +162,14 @@ public actor RelayHostService: Service {
     private var pendingPushEvents: [PushNotificationPolicy.NotableEvent] = []
     private var lastHealth: DaemonHealth?
     private var queue: [WorkItem] = []
+    /// Requests the iPhone gave up on (`cancel_request`): queued work for
+    /// them is dropped, and work in flight stops before its next part. The
+    /// newest few dozen are kept; an id older than that was long answered.
+    private var cancelledRequests: [RequestID] = []
+    private static let cancelledRequestMemory = 64
+    /// The item the send loop is on, so a repeat of the same ask can stop
+    /// it before its next part instead of letting both answers run.
+    private var inFlight: (key: String, requestID: RequestID)?
 
     // run()'s child loops feed on these; the producer sides are safe to call
     // before run() starts — yields buffer until the loop consumes them.
@@ -214,14 +258,16 @@ public actor RelayHostService: Service {
         statePath: String,
         transportFactory: any RelayFrameTransportFactory,
         rest: any RelayHostREST,
+        directLink: (any DirectHostLink)? = nil,
         hostName: @escaping @Sendable () -> String? = { Host.current().localizedName },
         healthProvider: @escaping HealthProvider,
         usageProvider: @escaping UsageProvider,
         planUsageProvider: @escaping PlanUsageProvider,
         onConnectionChange: @escaping ConnectionObserver,
         eventCoalesceInterval: Duration = .seconds(1),
-        reconnectDelay: Duration = .seconds(2),
-        deviceRefreshInterval: Duration = .seconds(10),
+        reconnectBackoff: RelayBackoff = RelayBackoff(),
+        heartbeat: RelayHeartbeat = RelayHeartbeat(),
+        deviceRefreshInterval: Duration = .seconds(60),
         healthInterval: Duration = .seconds(30),
         pairingCodeLifetime: Duration = .seconds(5 * 60),
         pairingDecisionTimeout: Duration = .seconds(60)
@@ -233,13 +279,15 @@ public actor RelayHostService: Service {
         state = RelayHostStateStore(path: statePath)
         self.transportFactory = transportFactory
         self.rest = rest
+        self.directLink = directLink
         self.hostName = hostName
         self.healthProvider = healthProvider
         self.usageProvider = usageProvider
         self.planUsageProvider = planUsageProvider
         self.onConnectionChange = onConnectionChange
         self.eventCoalesceInterval = eventCoalesceInterval
-        self.reconnectDelay = reconnectDelay
+        self.reconnectBackoff = reconnectBackoff
+        self.heartbeat = heartbeat
         self.deviceRefreshInterval = deviceRefreshInterval
         self.healthInterval = healthInterval
         self.pairingCodeLifetime = pairingCodeLifetime
@@ -266,6 +314,7 @@ public actor RelayHostService: Service {
                 group.addTask { await self.runSendLoop() }
                 group.addTask { await self.runPushLoop() }
                 group.addTask { await self.runJobs() }
+                group.addTask { await self.runDirectLink() }
                 // Returning early (a sticky 401/403) leaves the loops serving
                 // the local side; the service itself stays alive.
                 await self.runConnectionLoop()
@@ -274,6 +323,7 @@ public actor RelayHostService: Service {
         subscriptions.unsubscribe(subscriptionID)
         await cancelLivePairing(notifyRelay: false)
         await tearDownConnection()
+        await directLink?.stop()
         log.info("relay_host_stopped")
     }
 
@@ -681,7 +731,45 @@ public actor RelayHostService: Service {
         let devices = syncedDevices
         guard !ids.isEmpty, !devices.isEmpty else { return }
         for device in devices {
-            enqueue(.fetch(device: device, requestID: nil, ids: ids))
+            enqueue(.fetch(device: device, requestID: nil, ids: ids, limit: Self.defaultPageLimit))
+        }
+    }
+
+    // MARK: - Direct link (local network)
+
+    /// Advertises this Mac on the local network as soon as its identity is
+    /// known — the stored one, or the one the Relay registration creates —
+    /// and serves frames from local connections through the same `handle`
+    /// as Relay frames. Independent of the Relay: a Mac that cannot reach
+    /// the Relay still answers iPhones on its own network.
+    private func runDirectLink() async {
+        guard let directLink else { return }
+        if let stored = try? credentials ?? credentialStore.load(), stored.relayURL == relayURL {
+            await startDirectLink(hostID: stored.hostID)
+        }
+        for await event in directLink.events {
+            switch event {
+            case let .frame(connection, frame):
+                await handle(frame, from: .direct(connection))
+            case let .closed(connection):
+                let dropped = channelSessions.filter { $0.value.path == .direct(connection) }.map(\.key)
+                for device in dropped { channelSessions[device] = nil }
+                if !dropped.isEmpty {
+                    log.info("direct_sessions_dropped", metadata: .fields(["connection": connection.rawValue, "devices": dropped.count]))
+                }
+            }
+        }
+    }
+
+    private func startDirectLink(hostID: HostID) async {
+        guard let directLink, !directStarted else { return }
+        directStarted = true
+        do {
+            try await directLink.start(hostID: hostID)
+            log.info("direct_link_started", metadata: .fields(["host": hostID.rawValue]))
+        } catch {
+            directStarted = false
+            log.warning("direct_link_start_failed", metadata: .fields(["error": error]))
         }
     }
 
@@ -699,7 +787,8 @@ public actor RelayHostService: Service {
                 self.transport = transport
                 isConnected = true
                 lastError = nil
-                channelSessions = [:]
+                dropSessions(on: .relay)
+                reconnectBackoff.reset()
                 log.info("relay_connected", metadata: .fields(["relay": credentials.relayURL, "host": credentials.hostID.rawValue]))
                 await onConnectionChange(true)
                 await refreshDevices()
@@ -728,8 +817,9 @@ public actor RelayHostService: Service {
                 ]))
                 guard Self.shouldReconnect(after: error) else { return }
             }
-            log.debug("relay_reconnect_scheduled", metadata: .fields(["delay_ms": reconnectDelay.milliseconds]))
-            try? await Task.sleep(for: reconnectDelay)
+            let delay = reconnectBackoff.next()
+            log.info("relay_reconnect_scheduled", metadata: .fields(["delay_ms": delay.milliseconds]))
+            try? await Task.sleep(for: delay)
         }
     }
 
@@ -755,6 +845,17 @@ public actor RelayHostService: Service {
             }
             group.addTask {
                 await self.healthLoop()
+                return nil
+            }
+            group.addTask {
+                // A probe that goes unanswered for the heartbeat timeout
+                // ends the connection here: the Relay drops host sockets
+                // silently about once an hour, and nothing else would notice
+                // until the next frame failed to send.
+                await self.heartbeat.run(on: transport)
+                guard !Task.isCancelled else { return nil }
+                log.warning("relay_heartbeat_lost", metadata: .fields(["timeout_ms": self.heartbeat.timeout.milliseconds]))
+                await transport.disconnect()
                 return nil
             }
             var lost: (any Error)? = nil
@@ -808,6 +909,7 @@ public actor RelayHostService: Service {
         ]))
         credentials = current
         registeredThisProcess = true
+        await startDirectLink(hostID: current.hostID)
         return current
     }
 
@@ -842,7 +944,7 @@ public actor RelayHostService: Service {
     }
 
     private func tearDownConnection() async {
-        channelSessions = [:]
+        dropSessions(on: .relay)
         let transport = self.transport
         self.transport = nil
         isConnected = false
@@ -852,7 +954,7 @@ public actor RelayHostService: Service {
     private static func shouldReconnect(after error: Error) -> Bool {
         guard let relayError = error as? RelayClientError else { return true }
         switch relayError {
-        case .unauthorized:
+        case .unauthorized, .upgradeRequired:
             return false
         case let .server(status, _):
             return status != 401 && status != 403
@@ -866,13 +968,15 @@ public actor RelayHostService: Service {
     private func handle(_ message: RelayIncomingMessage) async {
         switch message {
         case let .frame(frame):
-            await handle(frame)
+            await handle(frame, from: .relay)
         case let .error(error):
             handleRelayError(error)
         case let .pairingDevice(notice):
             handlePairingDevice(notice)
         case let .pairingClosed(sessionID, reason):
             handlePairingClosed(sessionID: sessionID, reason: reason)
+        case .devicesChanged:
+            await refreshDevices()
         case .presence:
             break
         }
@@ -886,13 +990,13 @@ public actor RelayHostService: Service {
     /// - a `sync_index` sealed with the handshake key, which opens a new
     ///   session and replaces the old one.
     /// Nothing else changes state.
-    private func handle(_ frame: RelayRoutingFrame) async {
+    private func handle(_ frame: RelayRoutingFrame, from path: DevicePath) async {
         guard frame.kind == .request, let deviceID = frame.deviceID, let credentials else { return }
         guard let devicePublicKey = state.verifiedKey(for: deviceID) else {
             log.warning("request_from_untrusted_device", metadata: .fields(["device": deviceID.rawValue, "sequence": frame.sequence]))
             return
         }
-        if let session = channelSessions[deviceID], let payload = try? RelayCryptography.open(frame, key: session.key) {
+        if let session = channelSessions[deviceID], session.path == path, let payload = try? RelayCryptography.open(frame, key: session.key) {
             guard frame.sequence > session.lastRequestSequence else {
                 log.warning("request_replayed", metadata: .fields([
                     "device": deviceID.rawValue,
@@ -921,12 +1025,13 @@ public actor RelayHostService: Service {
             log.warning("request_open_failed", metadata: .fields([
                 "device": deviceID.rawValue,
                 "sequence": frame.sequence,
+                "path": path.logName,
                 "channel_session": channelSessions[deviceID] != nil,
                 "error": error,
             ]))
             return
         }
-        openChannelSession(opening, sequence: frame.sequence, deviceID: deviceID, devicePublicKey: devicePublicKey, credentials: credentials)
+        openChannelSession(opening, sequence: frame.sequence, deviceID: deviceID, devicePublicKey: devicePublicKey, credentials: credentials, path: path)
     }
 
     /// A `sync_index` sealed with the handshake key: the iPhone's one-time
@@ -938,7 +1043,8 @@ public actor RelayHostService: Service {
         sequence: UInt64,
         deviceID: DeviceID,
         devicePublicKey: Data,
-        credentials: RelayHostCredentials
+        credentials: RelayHostCredentials,
+        path: DevicePath
     ) {
         guard payload.kind == .syncIndex, let requestID = payload.requestID, let deviceEphemeralKey = payload.ephemeralKey else {
             log.warning("request_outside_channel_session", metadata: .fields([
@@ -971,11 +1077,13 @@ public actor RelayHostService: Service {
                     requestID: requestID,
                     key: key,
                     hostEphemeralKey: try ephemeral.publicKey,
+                    path: path,
                     lastRequestSequence: sequence
                 )
                 log.info("channel_session_accepted", metadata: .fields([
                     "device": deviceID.rawValue,
                     "sequence": sequence,
+                    "path": path.logName,
                     "replaced": replaced,
                 ]))
                 enqueue(.index(device: deviceID, requestID: requestID))
@@ -996,12 +1104,22 @@ public actor RelayHostService: Service {
                 "sequence": sequence,
             ]))
         }
+        let limit = Self.pageLimit(payload.limit)
         switch payload.kind {
         case .fetchSession:
-            enqueue(.fetch(device: deviceID, requestID: payload.requestID, ids: payload.sessionIDs ?? []))
+            enqueue(.fetch(device: deviceID, requestID: payload.requestID, ids: payload.sessionIDs ?? [], limit: limit))
+        case .fetchSessionBefore:
+            guard let id = payload.sessionIDs?.first, let before = payload.before else { return }
+            enqueue(.history(device: deviceID, requestID: payload.requestID, id: id, before: before, limit: limit))
         case .fetchTimelineSince:
             guard let id = payload.sessionIDs?.first, let since = payload.since else { return }
-            enqueue(.timeline(device: deviceID, requestID: payload.requestID, id: id, since: since))
+            enqueue(.timeline(device: deviceID, requestID: payload.requestID, id: id, since: since, limit: limit))
+        case .fetchTimelineItems:
+            guard let id = payload.sessionIDs?.first, let itemIDs = payload.itemIDs, !itemIDs.isEmpty else { return }
+            enqueue(.items(device: deviceID, requestID: payload.requestID, id: id, itemIDs: itemIDs))
+        case .cancelRequest:
+            guard let target = payload.cancels else { return }
+            cancel(target, device: deviceID)
         case .sessionReviewed:
             // An iPhone opened the session: the Mac window and the Notch turn
             // grey through the local stream, other iPhones through `session_info`.
@@ -1018,6 +1136,26 @@ public actor RelayHostService: Service {
             // `sync_index` included: it only ever opens a session.
             log.warning("request_kind_ignored", metadata: .fields(["device": deviceID.rawValue, "kind": payload.kind.rawValue]))
         }
+    }
+
+    private static func pageLimit(_ requested: Int?) -> Int {
+        min(max(requested ?? defaultPageLimit, 1), maxPageLimit)
+    }
+
+    /// The iPhone gave up on a request: whatever is still queued for it goes,
+    /// and an answer in flight stops at its next part. Said once per request
+    /// so a stuck device cannot flood the log.
+    private func cancel(_ requestID: RequestID, device: DeviceID) {
+        let before = queue.count
+        queue.removeAll { $0.requestID == requestID }
+        cancelledRequests.append(requestID)
+        if cancelledRequests.count > Self.cancelledRequestMemory { cancelledRequests.removeFirst() }
+        log.info("request_cancelled", metadata: .fields(["device": device.rawValue, "dropped": before - queue.count]))
+    }
+
+    private func isCancelled(_ requestID: RequestID?) -> Bool {
+        guard let requestID else { return false }
+        return cancelledRequests.contains(requestID)
     }
 
     /// Devices whose key this daemon pinned: the only devices frames or push
@@ -1205,12 +1343,19 @@ public actor RelayHostService: Service {
     /// usage) again has given up on its earlier ask, so the earlier queued
     /// answer is dropped and only the newest request id is answered.
     private func enqueue(_ item: WorkItem) {
-        if case let .fetch(device, requestID, ids) = item, ids.count > 1 {
-            for id in ids { queue.append(.fetch(device: device, requestID: requestID, ids: [id])) }
+        if case let .fetch(device, requestID, ids, limit) = item, ids.count > 1 {
+            for id in ids { enqueue(.fetch(device: device, requestID: requestID, ids: [id], limit: limit)) }
         } else {
             if let key = item.dedupeKey {
                 let dropped = queue.count
                 queue.removeAll { $0.dedupeKey == key }
+                // The same ask again while the earlier answer is still going
+                // out: the device gave up on that one, so it stops at its
+                // next part and only the new request id is answered.
+                if let inFlight, inFlight.key == key, inFlight.requestID != item.requestID {
+                    cancelledRequests.append(inFlight.requestID)
+                    if cancelledRequests.count > Self.cancelledRequestMemory { cancelledRequests.removeFirst() }
+                }
                 if queue.count < dropped {
                     log.debug("request_superseded", metadata: .fields(["item": item.logName, "dropped": dropped - queue.count]))
                 }
@@ -1242,6 +1387,8 @@ public actor RelayHostService: Service {
     private func runSendLoop() async {
         for await _ in sendSignals {
             while !Task.isCancelled, let item = dequeue() {
+                if let key = item.dedupeKey, let requestID = item.requestID { inFlight = (key, requestID) }
+                defer { inFlight = nil }
                 do {
                     try await process(item)
                 } catch {
@@ -1299,43 +1446,50 @@ public actor RelayHostService: Service {
                 let prepared = try RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))
                 try await send([prepared], to: [device])
             }
-        case let .fetch(device, requestID, ids):
+        case let .fetch(device, requestID, ids, limit):
             let hidden = try await filterHiddenIDs()
             for id in ids {
-                if !hidden.contains(id), let detail = try await fetchFullDetail(id) {
-                    let parts = try RelaySessionPartitioner.parts(for: detail, kind: .sessionFull, requestID: requestID, generatedAt: now)
-                    convertLog.info("session_prepared", metadata: .fields([
-                        "device": device.rawValue,
-                        "session": id.rawValue,
-                        "kind": "session_full",
-                        "timeline": detail.timeline.count,
-                        "parts": parts.count,
-                    ]))
-                    try await send(parts.map(\.prepared), to: [device])
+                guard !isCancelled(requestID) else { return }
+                if !hidden.contains(id), let page = try await repository.timelinePage(id: id, before: nil, limit: limit) {
+                    try await answer(page: page, kind: .sessionTail, order: .newestFirst, hasOlder: page.hasOlder, device: device, requestID: requestID, now: now)
                 } else {
-                    let prepared = try RelayCryptography.prepare(RemoteSessionPayload(
-                        kind: .sessionRemoved, generatedAt: now, requestID: requestID, sessionIDs: [id]
-                    ))
-                    try await send([prepared], to: [device])
+                    try await answerRemoved(id, device: device, requestID: requestID, now: now)
                 }
             }
-        case let .timeline(device, requestID, id, since):
-            if try await !filterHiddenIDs().contains(id), let detail = try await fetchTimelineSince(id, since: since) {
-                let parts = try RelaySessionPartitioner.parts(for: detail, kind: .sessionTimeline, requestID: requestID, generatedAt: now)
-                convertLog.info("session_prepared", metadata: .fields([
-                    "device": device.rawValue,
-                    "session": id.rawValue,
-                    "kind": "session_timeline",
-                    "timeline": detail.timeline.count,
-                    "parts": parts.count,
-                ]))
-                try await send(parts.map(\.prepared), to: [device])
+        case let .history(device, requestID, id, before, limit):
+            if try await !filterHiddenIDs().contains(id), let page = try await repository.timelinePage(id: id, before: before, limit: limit) {
+                try await answer(page: page, kind: .sessionHistory, order: .newestFirst, hasOlder: page.hasOlder, device: device, requestID: requestID, now: now)
             } else {
-                let prepared = try RelayCryptography.prepare(RemoteSessionPayload(
-                    kind: .sessionRemoved, generatedAt: now, requestID: requestID, sessionIDs: [id]
-                ))
-                try await send([prepared], to: [device])
+                try await answerRemoved(id, device: device, requestID: requestID, now: now)
             }
+        case let .timeline(device, requestID, id, since, limit):
+            guard try await !filterHiddenIDs().contains(id), let page = try await repository.timelinePage(id: id, before: nil, limit: limit) else {
+                try await answerRemoved(id, device: device, requestID: requestID, now: now)
+                return
+            }
+            // The newest rows reach back past `since`: send just the rows
+            // from there on, to be added to the iPhone's copy. They do not:
+            // more rows arrived than the iPhone's copy can be patched with,
+            // so it gets a fresh tail instead (part 0 replaces its copy).
+            if let oldest = page.timeline.first, oldest.occurredAt <= since || !page.hasOlder {
+                let tail = TimelinePage(summary: page.summary, turns: page.turns, timeline: page.timeline.filter { $0.occurredAt >= since }, hasOlder: page.hasOlder)
+                try await answer(page: tail, kind: .sessionTimeline, order: .oldestFirst, hasOlder: nil, device: device, requestID: requestID, now: now)
+            } else {
+                try await answer(page: page, kind: .sessionTail, order: .newestFirst, hasOlder: page.hasOlder, device: device, requestID: requestID, now: now)
+            }
+        case let .items(device, requestID, id, itemIDs):
+            guard try await !filterHiddenIDs().contains(id), let detail = try await repository.timelineItems(id: id, itemIDs: itemIDs) else {
+                try await answerRemoved(id, device: device, requestID: requestID, now: now)
+                return
+            }
+            // Whole rows by request: the one answer that skips the content
+            // budget. Each still has to fit a frame; a row that cannot is
+            // sent trimmed again, and the iPhone shows what it has.
+            let parts = try RelaySessionPartitioner.parts(
+                summary: detail.summary, turns: [], timeline: detail.timeline, hasOlder: nil,
+                kind: .sessionItems, order: .oldestFirst, requestID: requestID, generatedAt: now, trimming: false
+            )
+            try await deliver(parts, session: id, kind: .sessionItems, items: detail.timeline.count, device: device, requestID: requestID, prepareStarted: ContinuousClock.now)
         case let .events(events):
             let targets = syncedDevices
             guard !targets.isEmpty else { return }
@@ -1417,15 +1571,20 @@ public actor RelayHostService: Service {
     /// Seals the prepared payloads with each device's channel-session key
     /// and sends them. A device without an open session gets nothing: it
     /// could not read the frames, and its next `sync_index` starts over.
-    private func send(_ prepared: [RelayPreparedPayload], to targets: [DeviceID]) async throws {
-        guard !prepared.isEmpty else { return }
+    @discardableResult
+    private func send(_ prepared: [RelayPreparedPayload], to targets: [DeviceID], requestID: RequestID? = nil) async throws -> (parts: Int, bytes: Int) {
+        guard !prepared.isEmpty else { return (0, 0) }
+        var total = (parts: 0, bytes: 0)
         for deviceID in targets {
             guard let session = channelSessions[deviceID], session.isOpen else {
                 log.debug("send_skipped_no_channel_session", metadata: .fields(["device": deviceID.rawValue, "parts": prepared.count]))
                 continue
             }
-            try await sendFrames(prepared.map { ($0, session.key) }, to: deviceID)
+            let sent = try await sendFrames(prepared.map { ($0, session.key) }, to: deviceID, requestID: requestID)
+            total.parts += sent.parts
+            total.bytes += sent.bytes
         }
+        return total
     }
 
     /// Opens the session `requestID` asked for, in one run of sequences:
@@ -1448,7 +1607,7 @@ public actor RelayHostService: Service {
             requestID: requestID,
             ephemeralKey: session.hostEphemeralKey
         ))
-        try await sendFrames([(opened, handshakeKey)] + index.map { ($0, session.key) }, to: deviceID)
+        _ = try await sendFrames([(opened, handshakeKey)] + index.map { ($0, session.key) }, to: deviceID)
         // Replaced while the frames went out: the newer session's own item opens that one.
         guard channelSessions[deviceID]?.requestID == requestID else { return false }
         channelSessions[deviceID]?.isOpen = true
@@ -1457,16 +1616,29 @@ public actor RelayHostService: Service {
     }
 
     /// Reserves and persists the device's sequences BEFORE anything hits the
-    /// wire, then seals and sends each payload with its key.
-    private func sendFrames(_ frames: [(payload: RelayPreparedPayload, key: RelayChannelKey)], to deviceID: DeviceID) async throws {
-        guard !frames.isEmpty, let credentials, let transport else { return }
+    /// wire, then seals and sends each payload with its key. Returns how many
+    /// frames went out and their sealed size; fewer than asked when the
+    /// device lost trust or the iPhone cancelled the request meanwhile.
+    @discardableResult
+    private func sendFrames(
+        _ frames: [(payload: RelayPreparedPayload, key: RelayChannelKey)],
+        to deviceID: DeviceID,
+        requestID: RequestID? = nil
+    ) async throws -> (parts: Int, bytes: Int) {
+        guard !frames.isEmpty, let credentials, let path = channelSessions[deviceID]?.path else { return (0, 0) }
+        if case .relay = path, transport == nil { return (0, 0) }
         let first = try state.reserve(for: deviceID, count: frames.count)
         var bytes = 0
         for (offset, entry) in frames.enumerated() {
             // Revoked while the earlier frames went out: the rest stay here.
             guard state.verifiedKey(for: deviceID) != nil else {
                 log.info("send_stopped_device_untrusted", metadata: .fields(["device": deviceID.rawValue, "unsent": frames.count - offset]))
-                return
+                return (offset, bytes)
+            }
+            // The iPhone gave up on this request: the rest of its parts stay here.
+            guard !isCancelled(requestID) else {
+                log.info("send_stopped_request_cancelled", metadata: .fields(["device": deviceID.rawValue, "unsent": frames.count - offset]))
+                return (offset, bytes)
             }
             let frame = try RelayCryptography.seal(
                 entry.payload,
@@ -1477,53 +1649,91 @@ public actor RelayHostService: Service {
                 key: entry.key
             )
             bytes += frame.ciphertext?.count ?? 0
-            try await transport.send(frame)
+            switch path {
+            case .relay:
+                guard let transport else { return (offset, bytes) }
+                try await transport.send(frame)
+            case let .direct(connection):
+                do {
+                    try await directLink?.send(frame, to: connection)
+                } catch {
+                    // The local connection is gone: its session goes with it.
+                    // The iPhone notices on its side and opens a new session
+                    // on whatever link it still has.
+                    log.warning("direct_send_failed", metadata: .fields(["device": deviceID.rawValue, "unsent": frames.count - offset, "error": error]))
+                    channelSessions[deviceID] = nil
+                    return (offset, bytes)
+                }
+            }
         }
         log.debug("frames_sent", metadata: .fields([
             "device": deviceID.rawValue,
+            "path": path.logName,
             "parts": frames.count,
             "first_sequence": first,
             "last_sequence": first + UInt64(frames.count - 1),
             "ciphertext_bytes": bytes,
         ]))
+        return (frames.count, bytes)
     }
 
-    // MARK: - Repository reads
-
-    private func fetchFullDetail(_ id: SessionID) async throws -> SessionDetail? {
-        var cursor: PaginationCursor?
-        var turns: [TurnSummary] = []
-        var timeline: [TimelineItem] = []
-        var summary: SessionSummary?
-        repeat {
-            guard let page = try await repository.sessionDetail(id: id, cursor: cursor, limit: Self.detailPageSize) else {
-                return nil
-            }
-            summary = page.summary
-            if !page.turns.isEmpty { turns = page.turns }
-            timeline += page.timeline
-            cursor = page.nextCursor
-        } while cursor != nil
-        guard let summary else { return nil }
-        return SessionDetail(summary: summary, turns: turns, timeline: timeline)
+    private func dropSessions(on path: DevicePath) {
+        channelSessions = channelSessions.filter { $0.value.path != path }
     }
 
-    private func fetchTimelineSince(_ id: SessionID, since: Date) async throws -> SessionDetail? {
-        var cursor: PaginationCursor?
-        var turns: [TurnSummary] = []
-        var timeline: [TimelineItem] = []
-        var summary: SessionSummary?
-        repeat {
-            guard let page = try await repository.timelineSince(id: id, since: since, cursor: cursor, limit: Self.detailPageSize) else {
-                return nil
-            }
-            summary = page.summary
-            if !page.turns.isEmpty { turns = page.turns }
-            timeline += page.timeline
-            cursor = page.nextCursor
-        } while cursor != nil
-        guard let summary else { return nil }
-        return SessionDetail(summary: summary, turns: turns, timeline: timeline)
+    // MARK: - Answers
+
+    /// One page of one session: trimmed, packed into parts, sealed and sent;
+    /// then one line with what it cost.
+    private func answer(
+        page: TimelinePage,
+        kind: RemotePayloadKind,
+        order: RelaySessionPartitioner.Order,
+        hasOlder: Bool?,
+        device: DeviceID,
+        requestID: RequestID?,
+        now: Date
+    ) async throws {
+        let prepareStarted = ContinuousClock.now
+        let parts = try RelaySessionPartitioner.parts(
+            summary: page.summary, turns: page.turns, timeline: page.timeline, hasOlder: hasOlder,
+            kind: kind, order: order, requestID: requestID, generatedAt: now
+        )
+        try await deliver(parts, session: page.summary.id, kind: kind, items: page.timeline.count, device: device, requestID: requestID, prepareStarted: prepareStarted)
+    }
+
+    private func deliver(
+        _ parts: [RelaySessionPartitioner.Part],
+        session: SessionID,
+        kind: RemotePayloadKind,
+        items: Int,
+        device: DeviceID,
+        requestID: RequestID?,
+        prepareStarted: ContinuousClock.Instant
+    ) async throws {
+        let prepareMilliseconds = LogClock.milliseconds(since: prepareStarted)
+        let sendStarted = ContinuousClock.now
+        let sent = try await send(parts.map(\.prepared), to: [device], requestID: requestID)
+        convertLog.info("request_answered", metadata: .fields([
+            "device": device.rawValue,
+            "path": channelSessions[device]?.path.logName,
+            "session": session.rawValue,
+            "kind": kind.rawValue,
+            "items": items,
+            "parts": parts.count,
+            "parts_sent": sent.parts,
+            "ciphertext_bytes": sent.bytes,
+            "prepare_ms": prepareMilliseconds,
+            "send_ms": LogClock.milliseconds(since: sendStarted),
+            "cancelled": sent.parts < parts.count,
+        ]))
+    }
+
+    private func answerRemoved(_ id: SessionID, device: DeviceID, requestID: RequestID?, now: Date) async throws {
+        let prepared = try RelayCryptography.prepare(RemoteSessionPayload(
+            kind: .sessionRemoved, generatedAt: now, requestID: requestID, sessionIDs: [id]
+        ))
+        _ = try await send([prepared], to: [device], requestID: requestID)
     }
 
     private static func credential() -> String {
@@ -1546,29 +1756,46 @@ private extension RelayHostService.WorkItem {
         switch self {
         case let .index(_, requestID):
             requestID.rawValue
-        case let .fetch(_, requestID, _), let .timeline(_, requestID, _, _), let .removed(_, requestID, _),
-             let .usage(_, requestID, _), let .planUsage(_, requestID):
+        default:
             requestID?.rawValue
+        }
+    }
+
+    /// The iPhone's request this item answers; pushes have none.
+    var requestID: RequestID? {
+        switch self {
+        case let .index(_, requestID):
+            requestID
+        case let .fetch(_, requestID, _, _), let .history(_, requestID, _, _, _), let .timeline(_, requestID, _, _, _),
+             let .items(_, requestID, _, _), let .removed(_, requestID, _),
+             let .usage(_, requestID, _), let .planUsage(_, requestID):
+            requestID
         case .events, .summaries, .health, .reviewed:
             nil
         }
     }
 
     /// Requests a device repeats only after giving up on the earlier one:
-    /// the same key means the earlier queued answer can go.
+    /// the same key means the earlier queued answer can go. Session answers
+    /// key on the device and the session, so a repeat of a tail, a page or a
+    /// since-tail replaces the one still waiting instead of doubling it.
     var dedupeKey: String? {
         switch self {
         case let .index(device, _): "index:\(device.rawValue)"
         case let .usage(device, _, _): "usage:\(device.rawValue)"
         case let .planUsage(device, _): "plan_usage:\(device.rawValue)"
+        case let .fetch(device, _, ids, _) where ids.count == 1: "fetch:\(device.rawValue):\(ids[0].rawValue)"
+        case let .history(device, _, id, _, _): "history:\(device.rawValue):\(id.rawValue)"
+        case let .timeline(device, _, id, _, _): "timeline:\(device.rawValue):\(id.rawValue)"
+        case let .items(device, _, id, _): "items:\(device.rawValue):\(id.rawValue)"
         default: nil
         }
     }
 
-    /// Whole sessions and timeline tails: seconds each on a slow link.
+    /// Session pages: seconds each on a slow link.
     var isBulk: Bool {
         switch self {
-        case .fetch, .timeline: true
+        case .fetch, .history, .timeline, .items: true
         default: false
         }
     }
@@ -1577,7 +1804,9 @@ private extension RelayHostService.WorkItem {
         switch self {
         case .index: "index"
         case .fetch: "fetch"
+        case .history: "history"
         case .timeline: "timeline"
+        case .items: "items"
         case .events: "events"
         case .summaries: "summaries"
         case .removed: "removed"

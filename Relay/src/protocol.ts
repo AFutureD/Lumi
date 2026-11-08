@@ -1,7 +1,14 @@
 export const PROTOCOL_MAJOR = 1;
 export const MAX_HTTP_BODY_BYTES = 64 * 1024;
 export const MAX_WEBSOCKET_MESSAGE_BYTES = 2 * 1024 * 1024;
+/** The routing header of a binary frame is a few hundred bytes; past this it is not ours. */
+export const MAX_FRAME_HEADER_BYTES = 4 * 1024;
 
+/**
+ * The routing header of one frame — all the relay reads. On the wire a frame
+ * is one WebSocket binary message: `u32 BE header length ‖ header JSON ‖
+ * ciphertext`. The ciphertext is never parsed here; `bodyBytes` is its size.
+ */
 export interface RelayRoutingFrame {
   version: { major: number; minor: number };
   hostID: string;
@@ -9,7 +16,35 @@ export interface RelayRoutingFrame {
   sequence: number;
   kind: string;
   nonce?: string;
-  ciphertext?: string;
+  bodyBytes: number;
+}
+
+/** Splits a binary message into its header and the sealed body it carries. */
+export function parseBinaryFrame(message: ArrayBuffer): RelayRoutingFrame {
+  if (message.byteLength < 4) throw new RequestValidationError("Frame is shorter than its header length.");
+  const view = new DataView(message);
+  const headerLength = view.getUint32(0, false);
+  if (headerLength > MAX_FRAME_HEADER_BYTES) {
+    throw new RequestValidationError(`Frame header is too large: ${headerLength}.`);
+  }
+  if (message.byteLength < 4 + headerLength) throw new RequestValidationError("Frame header is truncated.");
+  let header: unknown;
+  try {
+    header = JSON.parse(new TextDecoder().decode(new Uint8Array(message, 4, headerLength))) as unknown;
+  } catch {
+    throw new RequestValidationError("Frame header is not valid JSON.");
+  }
+  return parseRelayRoutingFrame(header, message.byteLength - 4 - headerLength);
+}
+
+/** Builds the binary form; the relay uses it only in tests, the ends in production. */
+export function encodeBinaryFrame(header: Record<string, unknown>, body: Uint8Array): ArrayBuffer {
+  const headerBytes = new TextEncoder().encode(JSON.stringify(header));
+  const out = new Uint8Array(4 + headerBytes.byteLength + body.byteLength);
+  new DataView(out.buffer).setUint32(0, headerBytes.byteLength, false);
+  out.set(headerBytes, 4);
+  out.set(body, 4 + headerBytes.byteLength);
+  return out.buffer;
 }
 
 export interface PairingSessionCreate {
@@ -64,8 +99,8 @@ export function isValidIdentifier(value: string): boolean {
   return /^[A-Za-z0-9_-]{8,128}$/.test(value);
 }
 
-export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
-  if (!isRecord(value)) throw new RequestValidationError("Frame must be an object.");
+export function parseRelayRoutingFrame(value: unknown, bodyBytes: number): RelayRoutingFrame {
+  if (!isRecord(value)) throw new RequestValidationError("Frame header must be an object.");
   if (!isRecord(value.version)) throw new RequestValidationError("Missing protocol version.");
 
   const major = finiteInteger(value.version.major);
@@ -75,7 +110,6 @@ export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
   const sequence = finiteInteger(value.sequence);
   const kind = requiredString(value.kind, "kind");
   const nonce = optionalString(value.nonce, "nonce");
-  const ciphertext = optionalString(value.ciphertext, "ciphertext");
 
   if (major !== PROTOCOL_MAJOR) {
     throw new RequestValidationError(`Unsupported protocol major: ${major}.`);
@@ -89,8 +123,8 @@ export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
   }
   // Both payload-bearing kinds are sealed end to end: `data` (host → device)
   // and `request` (device → host).
-  if ((kind === "data" || kind === "request") && (!nonce || !ciphertext)) {
-    throw new RequestValidationError("Encrypted frames require nonce and ciphertext.");
+  if ((kind === "data" || kind === "request") && (!nonce || bodyBytes <= 0)) {
+    throw new RequestValidationError("Encrypted frames require a nonce and a sealed body.");
   }
 
   return {
@@ -100,7 +134,7 @@ export function parseRelayRoutingFrame(value: unknown): RelayRoutingFrame {
     sequence,
     kind,
     ...(nonce === undefined ? {} : { nonce }),
-    ...(ciphertext === undefined ? {} : { ciphertext }),
+    bodyBytes,
   };
 }
 

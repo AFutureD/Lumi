@@ -58,6 +58,9 @@ struct ActivityDetailPresentation: Equatable, Sendable {
     let title: String
     let sections: [ActivityDetailSection]
     let isFailed: Bool
+    /// Rows behind this activity the Relay carried trimmed; the whole copy
+    /// is on the Mac and can be asked for.
+    let truncatedItemIDs: [TimelineItemID]
 }
 
 enum ActivityDetailPresentationBuilder {
@@ -68,10 +71,14 @@ enum ActivityDetailPresentationBuilder {
         let title = TextShaping.firstLine(row.text)
         var sections: [ActivityDetailSection] = []
 
+        var truncated = row.items.filter(\.isTruncated).map(\.id)
         if let toolUseID = row.toolUseID {
             let paired = activities.map(\.row).filter { $0.toolUseID == toolUseID }
             let call = paired.first { $0.tag == .tool } ?? (row.tag == .tool ? row : nil)
             let result = paired.first { $0.tag == .result || $0.tag == .failed }
+            for other in [call, result].compactMap({ $0 }) where other.id != row.id {
+                truncated += other.items.filter(\.isTruncated).map(\.id)
+            }
             if let call {
                 sections.append(ActivityDetailSection(title: "Command", text: call.text, isMonospaced: true))
             }
@@ -106,7 +113,8 @@ enum ActivityDetailPresentationBuilder {
             label: row.label,
             title: title,
             sections: sections,
-            isFailed: activity.isFailed
+            isFailed: activity.isFailed,
+            truncatedItemIDs: truncated
         )
     }
 

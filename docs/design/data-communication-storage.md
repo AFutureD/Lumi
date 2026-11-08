@@ -162,43 +162,46 @@ Mac Session 内容只有三种外部刷新入口，全量同步只按单 Session
 
 ## 远程同步流程
 
-远程发布者是 daemon 内的 `RelayHostService`，不是 Mac App；Mac App 退出不影响 iPhone 同步。
+远程发布者是 daemon 内的 `RelayHostService`，不是 Mac App；Mac App 退出不影响 iPhone 同步。iPhone 从一个 Session 的最新一端读：点开先取尾页，往上翻再取更早的一页，裁剪过的条目按需取完整内容；每一片到了就用，不等整本。
 
 ```mermaid
 sequenceDiagram
     participant D as daemon SQLite
     participant H as RelayHostService
-    participant R as Durable Object
+    participant R as Durable Object / 局域网直连
     participant I as iOS Channel
     participant IDB as iOS SQLite 缓存
 
-    I->>IDB: 启动先读缓存并显示
+    I->>IDB: 启动先读缓存并显示（含每个已持有 Session 的同步水位）
     I->>R: request(sync_index{requestID, 一次性公钥})，握手密钥封
     R-->>H: 原样转发
-    H->>H: 生成一次性密钥，派生会话密钥
+    H->>H: 生成一次性密钥，派生会话密钥，记下这次会话走的是哪条链路
     H->>D: sessionIndex()
     H-->>R: data(channel_opened{requestID, 一次性公钥})，握手密钥封
     H-->>R: data(session_index ×N 片) + data(health)，会话密钥封
     R-->>I: 不透明转发
     I->>I: 核对 requestID，派生同一把会话密钥；之后的帧都用它
-    I->>IDB: sessionIndex() 与 SyncReconcilePlan 比较
-    I->>IDB: prune / updateSummary
-    I->>R: request(fetch_session{ids}) / request(fetch_timeline_since{id, since})
+    I->>IDB: 用 SyncReconcilePlan.lazy 比较 index 与缓存 + 水位
+    I->>IDB: prune / updateSummary / 重建（先擦掉已装载行）
+    I->>R: request(fetch_timeline_since{id, since, limit})（持有且长了的 Session）
+    Note over I: 点开一个 Session
+    I->>R: request(fetch_session{ids, limit})（尾页）
     R-->>H: 原样转发
-    H->>D: sessionDetail / timelineSince
-    H-->>R: data(session_full / session_timeline 分片, requestID)
+    H->>D: timelinePage(id, before: nil, limit)
+    H-->>R: data(session_tail 分片，最新在前；末片带 oldest / hasOlder)
     R-->>I: 不透明转发
-    I->>IDB: replaceSession / mergeSession
-    Note over I: 全部 pending 到齐 → lastSync = index.generatedAt
-    opt Usage Tab 可见
-        I->>R: request(fetch_usage{usageRange}) / request(fetch_plan_usage)
-        R-->>H: 原样转发
-        H->>D: 读 usage 桶 / settings，问 PlanUsageService
-        H-->>R: data(usage_report{usage}) / data(plan_usage{planUsage, settings})
-        R-->>I: 不透明转发（只进内存，不进 IDB）
+    I->>IDB: 每片 mergeSession；末片到齐后更新水位（装载窗口 = oldest）
+    Note over I: 往上翻 / 点开被裁剪的条目
+    I->>R: request(fetch_session_before{id, before, limit}) / request(fetch_timeline_items{id, itemIDs})
+    H-->>R: data(session_history 分片) / data(session_items)
+    R-->>I: 不透明转发
+    I->>IDB: mergeSession；窗口向更早扩展
+    opt 手机放弃或离开详情页
+        I->>R: request(cancel_request{cancels})
+        H->>H: 丢掉排队项，在途项在下一片前停下
     end
     loop 之后的每个 daemon 事件
-        H->>H: 1s 合并 → session_message{events}
+        H->>H: 1s 合并 → session_message{events}（每条 timeline 行经内容预算裁剪）
         H-->>R: data(session_message) 只发已同步设备
         R-->>I: 不透明转发
         I->>IDB: apply(event)（与 daemon 同一份 reducer）
@@ -210,30 +213,40 @@ sequenceDiagram
 | 方向 | kind | 内容 |
 | --- | --- | --- |
 | 设备 → daemon（`request` 帧） | `sync_index` | 打开一个通道会话并给我 index：`requestID` + `ephemeralKey`（iPhone 这次会话的一次性公钥）。唯一用握手密钥封的请求 |
-| | `fetch_session` | `sessionIDs`：整 Session（缺失 / 差异很大 / 用户在详情点 Refresh session） |
-| | `fetch_timeline_since` | `sessionIDs[0]` + `since`：该 Session `occurredAt ≥ since` 的 timeline（本地 `lastItemAt − 60s`） |
+| | `fetch_session` | `sessionIDs` + `limit`：每个 Session 最新的 `limit` 行（尾页），连同 summary 与 turns |
+| | `fetch_session_before` | `sessionIDs[0]` + `before`（本地最旧行的 `occurredAt` + `id`）+ `limit`：比游标更早的一页 |
+| | `fetch_timeline_since` | `sessionIDs[0]` + `since` + `limit`：`occurredAt ≥ since` 的行（水位 `lastItemAt − 60s`）。最新 `limit` 行够不着 `since` 时 daemon 改答一个新尾页 |
+| | `fetch_timeline_items` | `sessionIDs[0]` + `itemIDs`：被裁剪条目（`truncated`）的完整内容 |
+| | `cancel_request` | `cancels`：放弃某个请求；daemon 丢掉排队项，在途项在下一片前停下 |
 | | `session_reviewed` | `sessionIDs`：iPhone 打开了这些 Session |
 | | `fetch_usage` | `usageRange`（`today` / `thisWeek` / `thisMonth`）：给我这个档位的 Usage 报表，daemon 用自己的本地日历展开 |
 | | `fetch_plan_usage` | 给我套餐用量快照和它跟随的设置 |
 | daemon → 设备（`data` 帧） | `channel_opened` | 通道会话已打开：回显 `requestID` + `ephemeralKey`（daemon 的一次性公钥）。唯一用握手密钥封的应答，后面的帧都用会话密钥 |
-| | `session_index` | `index: [SessionIndexEntry{summary, timelineItemCount, lastItemAt}]`，按 600 KB 压缩分 `part / partCount` |
+| | `session_index` | `index: [SessionIndexEntry{summary, timelineItemCount, lastItemAt}]`，按编码后 1 MB 贪心装满分 `part / partCount`；唯一要收齐才用的应答 |
 | | `session_info` | `summaries`：不经事件的 summary 变化（已查看、Notch 归档） |
-| | `session_full` | 一个 Session 的一个分片（part 0 带 turns，末片 `session.nextCursor == nil`），回显 `requestID` |
-| | `session_timeline` | 同上形态，只含 `since` 之后的 timeline 尾 |
-| | `session_message` | `events: [AgentIngressEvent]`：daemon 事件流原样转发 |
-| | `session_removed` | `sessionIDs`：daemon 删除 / 清空 / 应答 fetch 时不存在 |
+| | `session_tail` | 尾页的一片：part 0 带 summary + turns，之后只带行；最新在前；末片 `session.nextCursor == nil`，带 `oldest`（这一页最旧的行）与 `hasOlder`。每片都是合并，不擦除；没有 `requestID` 的尾页是 daemon 重建了该 Session（Mac 上 Refresh session），iPhone 先擦再合并 |
+| | `session_history` | 更早一页的一片，形态同上，末片带 `oldest` / `hasOlder` |
+| | `session_timeline` | `since` 之后的行，最旧在前，逐片合并 |
+| | `session_items` | `fetch_timeline_items` 的应答：完整的行，合并（完整副本覆盖裁剪副本，反之不覆盖） |
+| | `session_message` | `events: [AgentIngressEvent]`：daemon 事件流原样转发，timeline 行经内容预算 |
+| | `session_removed` | `sessionIDs`：daemon 删除 / 清空 / 应答时不存在 |
 | | `health` | `DaemonHealth` |
 | | `usage_report` | `usage: UsageReport`（daemon 建不出来时缺失）+ `requestID`；只在 iPhone 内存里，不进缓存 |
 | | `plan_usage` | `planUsage: PlanUsageState` + `settings: DaemonSettings` + `requestID`；同上 |
 
-iPhone 对账规则（`SyncReconcilePlan`，纯函数，Common 共享）是惰性的：调用方给出 `materialized`（本机已持有时间线、或详情正打开的 Session）。本地有 index 无 → `pruneSessions`（不写墓碑）；index 有本地无 → 插入 summary-only 行（`insert`，不取时间线）；不在 `materialized` 里的 → 只在 summary 不等时 `updateSummary`；在 `materialized` 里的才按时间线事实判断：本地 0 行、本地行数多于远端、或差 200 行以上 → `fetch_session`，行数 / 最新行时间不等 → `fetch_timeline_since`。点开详情才对那一个 Session 做整取 / 补尾。`session_message` 里未知 Session 的事件由摘要归约器建一条 summary-only 行，不触发整取。
+**对账**（`SyncReconcilePlan.lazy`，纯函数，Common 共享）比的是**同步水位**而不是本地行数：iPhone 为每个持有行的 Session 持久化一份 `SessionSyncMark`——上次完成同步时 daemon 报的 `timelineItemCount` / `lastItemAt`，以及装载窗口（最旧行游标 `oldest` + `hasOlder`）。本地有 index 无 → `pruneSessions`（不写墓碑）；index 有本地无 → 插入 summary-only 行；没有已装载水位的 → 只在 summary 不等时 `updateSummary`；有水位的按 `classify` 判：远端 `lastItemAt` 更新 → `fetch_timeline_since`；更旧、变空、或 `lastItemAt` 相同而行数不同（daemon 重建）→ 擦掉已装载行再取尾页；相同 → 只比 summary。`openSession` 用同一条规则：没有水位就取尾页。实时事件应用到已持有 Session 时水位的 `lastItemAt` 跟着最新行走、行数置为未知，下一次 index 判为一致时再补回。
 
-- payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用各自通道会话的密钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环、两条道：小项（索引、`session_info` / `session_removed` / 事件推送、health、usage / plan usage 应答）与大块（整 Session、时间线尾，一个 Session 一项）交替出队，道内 FIFO——一台设备补一天的历史不会挡住另一台设备的索引或 Usage 应答；同一设备重复的索引 / usage / plan usage 请求只答最新的一条（旧的已被 iPhone 放弃）。
-- 每次 `sync_index` 打开一个新的通道会话（两端各出一把一次性钥匙，会话密钥只在内存里，见 [Relay、配对与安全设计](relay-pairing-security.md#通道会话)）。应答和推送（events / info / removed / health）只发给会话已打开、index 已发出的设备，会话打开期间产生的推送排在 index 之后发出；Relay 对离线设备丢帧，设备重连、Host 上线或重连（Relay 再次广播 `online`，daemon 不再持有任何会话）、回到前台、序号断档、下拉刷新时都重新 `sync_index`。iPhone 开新会话时把还没等到应答的请求带过去重发。
+**请求生命周期**：iPhone 每个请求记录最近一片到达的时间，30 秒无进展才算超时；第一次超时换新 `requestID` 重发（daemon 按「设备 + kind + Session」去重，排队的旧项被顶掉、在途的旧项在下一片前停下），第二次只放弃这一个请求并发 `cancel_request`，其他在途请求与已收到的片都保留。离开详情页自动取消该 Session 的翻页与取条目请求。index 请求保持原规则：第二次超时后暂停 10 秒再开新会话。iPhone 丢弃不在 pending 里的 `requestID` 的分片。
+
+**内容预算**：daemon 发往 Relay 的每条 timeline 行有 64 KB 编码预算（`RelayContentBudget`）：工具 / 上下文 / 配置的 `content` 置空，消息 / 推理 / 错误文本截断，标 `truncated: true`；daemon 与 Mac 自己的行不变。iPhone 在详情里按需 `fetch_timeline_items` 取完整行；镜像端的 upsert 规则是「裁剪副本不覆盖完整副本」（SQL 与 `SessionDetailReduction.merge` 同一条）。
+
+- payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用各自通道会话的密钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环、两条道：小项（索引、`session_info` / `session_removed` / 事件推送、health、usage / plan usage 应答）与大块（尾页、更早页、补尾、取条目，一个 Session 一项）交替出队，道内 FIFO。每个应答记一条 `request_answered`（kind、session、items、parts、ciphertext_bytes、prepare_ms、send_ms、path、cancelled）。
+- 每次 `sync_index` 打开一个新的通道会话（两端各出一把一次性钥匙，会话密钥只在内存里，见 [Relay、配对与安全设计](relay-pairing-security.md#通道会话)），**并绑定它走的链路**（Relay 或局域网直连）：这个会话的每一帧只走这条链路，换链路就是新会话。应答和推送（events / info / removed / health）只发给会话已打开、index 已发出的设备；Relay 对离线设备丢帧，设备重连、Host 上线或重连、回到前台、序号断档、下拉刷新时都重新 `sync_index`。iPhone 开新会话时把还没等到应答的请求带过去重发。
 - 两个方向都由接收端防重放：一帧要能用当前会话密钥解开、序号还要大于本会话已接受的最大值才算数，序号只在验证通过后推进。
+- 活性：两端对各自的 WebSocket 每 10 秒发协议级 ping，30 秒无 pong 视为断线（Relay 的运行时自动应答，不唤醒 Durable Object）；重连按 2 → 4 → 8 → 16 → 30 秒退避，连上即重置；iPhone 进后台停止探测。daemon 的设备列表由 Relay 在设备行变化时推送 `devices_changed`，60 秒轮询只作兜底。
 - 离线设备的缺口由 APNs 提醒补：回合结束 / 失败 / 中断时 daemon 经 Relay 的明文通知接口（REST，独立于帧序）向已注册 token 的 iPhone 发一条 alert；通知只提示、不带数据，iPhone 下次进前台照常对账。
-- daemon 判断一台设备可不可信只读自己的状态文件：Match 时钉住了公钥的设备才收它的请求、给它发帧，通道密钥也只从钉住的公钥派生，所以刚配对的 iPhone 的第一个请求立刻有效。Relay 的设备列表只用于 Mac 上的显示：列表里的公钥与钉住的不同（Mac 没批准过的行、Relay 换过的钥匙）显示 Unverified；本机撤销过的设备显示 Revoked，无论 Relay 怎么列（见 [Relay、配对与安全设计](relay-pairing-security.md#撤销)）。
-- 一条 Host WSS 发送所有设备的定向帧并接收设备请求；每个 iOS Mac 通道维护自己的 Device WSS 和 SQLite 缓存。
+- daemon 判断一台设备可不可信只读自己的状态文件：Match 时钉住了公钥的设备才收它的请求、给它发帧，通道密钥也只从钉住的公钥派生，所以刚配对的 iPhone 的第一个请求立刻有效。Relay 的设备列表只用于 Mac 上的显示（见 [Relay、配对与安全设计](relay-pairing-security.md#撤销)）。
+- 一条 Host WSS 发送所有设备的定向帧并接收设备请求；每个 iOS Mac 通道维护自己的 Device WSS 和 SQLite 缓存。同一局域网时另有一条直连 TCP（Bonjour `_lumi-relay._tcp` 发现），见 [连接拓扑](relay-pairing-security.md#连接拓扑)。
 
 ## 一致性规则
 
@@ -299,11 +312,12 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 
 - 本地 frame：8 MiB；daemon 发送侧超限改发 `response_too_large`，客户端降低分页重试。
 - Relay HTTP body：64 KiB。
-- Relay WebSocket 外层 JSON message：2 MiB。所有远程载荷先 zlib 压缩，压缩后超过 600 KB 再切分（index 按条目、事件按批、整 Session 按 timeline），单个 sealed frame 保持在 ~1 MiB 以下。
+- Relay WebSocket 消息：二进制，`u32 BE 头长度 ‖ 路由头 JSON ‖ 原始密文`，Worker 只解析头；单条上限 2 MiB，超限 Worker 回 `{type:"error",code:"frame_too_large"}` 而不断线；文本路由帧（1.3 及更早的客户端）以 4004 关闭，客户端据此停止重连并提示更新。
+- 远程载荷按**编码后** 1 MB 贪心装满分片（index 按条目、事件按批、Session 按行），压缩后仍超过 1.4 MB 的片再对半切；单条 timeline 行在 Relay 副本里有 64 KB 内容预算，超出的裁剪并标 `truncated`，完整内容按需取（`session_items` 的单条硬上限 1 MB，仍超的照常裁剪）。
+- 尾页 / 更早页默认 80 行，上限 500。
 - Session list 请求上限：10,000。
 - Timeline 单页上限：500（IPC）；Mac 对账默认 200。
-- 远程 frame 当前为 JSON text，`Data` 字段会以 Base64 表达。
-- 超过 1.5 MB（压缩后）的单条 timeline item 只会从 Relay 副本中省略；Mac 与 daemon 不受影响。
+- 局域网直连：每条记录 `u32 BE 长度 ‖ 二进制帧`，上限 2 MiB；daemon 最多 16 条连接，90 秒无帧的连接关闭。
 
 ## 相关文档
 

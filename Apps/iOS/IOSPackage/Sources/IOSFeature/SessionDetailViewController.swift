@@ -45,6 +45,7 @@ final class SessionDetailViewController: UIViewController {
             image: UIImage(systemName: "ellipsis.circle"),
             menu: UIMenu(children: [
                 UIAction(title: "Refresh session", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in
+                    // The loaded rows are wiped and the newest taken again.
                     guard let self else { return }
                     relay.refreshSession(hostID: hostID, id: sessionID)
                 },
@@ -81,6 +82,18 @@ final class SessionDetailViewController: UIViewController {
         }
         header.segments.addTarget(self, action: #selector(segmentChanged), for: .valueChanged)
         header.laneStrip.onSelect = { [weak self] index in self?.activity.scroll(toActivityAt: index) }
+        activity.onLoadOlder = { [weak self] in
+            guard let self else { return }
+            relay.loadOlder(hostID: hostID, id: sessionID)
+        }
+        activity.onLoadFullContent = { [weak self] itemIDs in
+            guard let self else { return }
+            relay.fetchTimelineItems(hostID: hostID, id: sessionID, itemIDs: itemIDs)
+        }
+        activity.isLoadingFullContent = { [weak self] itemIDs in
+            guard let self else { return false }
+            return relay.isFetchingTimelineItems(hostID: hostID, id: sessionID, itemIDs: itemIDs)
+        }
         // Strip and list scroll in step: the list's top row leads the strip,
         // a pan on the strip leads the list. A guard stops the echo.
         activity.onTopVisibleChange = { [weak self] index in
@@ -133,6 +146,13 @@ final class SessionDetailViewController: UIViewController {
             return
         }
         loading.isHidden = !(detail.timeline.isEmpty && relay.isFetchingSession(hostID: hostID, id: sessionID))
+        activity.loadOlder = if relay.isLoadingOlder(hostID: hostID, id: sessionID) {
+            .loading
+        } else if relay.canLoadOlder(hostID: hostID, id: sessionID) {
+            .available
+        } else {
+            .hidden
+        }
         let next = SessionDetailPresentationBuilder.make(detail: detail)
         guard next != presentation else { return }
         presentation = next

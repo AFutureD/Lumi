@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 配对与同步
+
+- [Lumi for iPhone] - 点开 Session 先看到最近的活动：第一次点开只取最新的一页（约 80 条），每到一片就显示；列表顶上出现 Load earlier 时点它再取更早的一页。此前要等整本时间线传完才显示，长会话要等几分钟。
+- [Lumi for iPhone] - 超大的工具输出和上下文在手机上先只带摘要，活动详情页底部出现 Load full content，点一下从 Mac 取完整内容。
+- [Lumi for iPhone] - 等不到 Mac 答复时不再整份重发、也不再把已收到的内容扔掉：30 秒没有新进展才重问一次，再等不到只放弃这一个请求；离开详情页时取消它的翻页请求。Mac 这边认出同一个 Session 的重复请求只答最新一份。
+- [Lumi for iPhone] - 手机和 Mac 在同一个局域网时直接连接，不经 Relay；Macs 页显示 `Online · Direct`。直连断开后自动回到 Relay。第一次需要允许 Lumi 访问本地网络。
+- Mac 与 iPhone 之间的连接有了心跳：断线 30 秒内发现，重连间隔 2 秒起逐次拉长到 30 秒。Relay 在设备配对、撤销或推送 token 变化时主动通知 Mac，Mac 不再每 10 秒轮询设备列表。
+- 升级提示：Lumi for Mac、Lumi for iPhone 和 Relay 要一起更新到这一版。旧版 iPhone 连上新版 Relay 会收到提示更新并停止重试；Relay 的消息改为二进制，不再 Base64 放大。
+- daemon 每次答复 iPhone 记一条 `request_answered`（片数、字节、准备与发送耗时、走的链路），Relay 对每帧转发记录大小。远程协议 1.3 → 1.4。
+
 ## [0.3.0] - 2026-11-08
 
 ### Daemon

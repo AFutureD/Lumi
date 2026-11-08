@@ -86,6 +86,11 @@ public actor RelayInMemoryLink {
         await hostEnd?.deliver(.pairingClosed(sessionID: sessionID, reason: reason))
     }
 
+    /// The worker telling the host a device row changed (`devices_changed`).
+    public func sendDevicesChangedToHost() async {
+        await hostEnd?.deliver(.devicesChanged)
+    }
+
     /// Drops the host socket from the relay side (as a worker restart would).
     public func dropHost() async {
         await detach(.host)
@@ -156,6 +161,12 @@ public actor RelayInMemoryTransport: RelayFrameTransport {
             throw RelayClientError.notConnected
         }
         return message
+    }
+
+    /// The in-memory link is either up or finished: a probe on a finished
+    /// end fails like a dead socket would.
+    public func ping() async throws {
+        guard connected, !closed else { throw RelayClientError.notConnected }
     }
 
     public func disconnect() async {

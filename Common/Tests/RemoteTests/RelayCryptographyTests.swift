@@ -46,7 +46,7 @@ private struct PairedChannel {
     let session = try channel.openSession()
     let date = Date(timeIntervalSince1970: 1_700_000_000)
     let payload = RemoteSessionPayload(
-        kind: .sessionFull,
+        kind: .sessionTail,
         generatedAt: date,
         requestID: RequestID("req-1"),
         part: 0,
@@ -91,7 +91,7 @@ private struct PairedChannel {
         )
     }
     let payload = RemoteSessionPayload(
-        kind: .sessionFull,
+        kind: .sessionTail,
         generatedAt: date,
         requestID: RequestID("req-1"),
         part: 0,

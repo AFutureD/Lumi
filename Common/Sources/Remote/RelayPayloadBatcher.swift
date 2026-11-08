@@ -1,14 +1,24 @@
 import Transport
 import Foundation
 
-/// Cuts host → device payloads into pieces that each stay inside the relay's
-/// message budget after compression. Shared by every multi-item payload
-/// (index parts, event batches, summary batches); `RelaySessionPartitioner`
-/// does the same for one session's timeline.
+/// Cuts host → device payloads into parts that each stay inside the Relay's
+/// message budget. Shared by every multi-item payload (index parts, event
+/// batches, summary batches); `RelaySessionPartitioner` does the same for a
+/// page of one session's timeline.
+///
+/// Parts are filled greedily in item order by encoded size — each part takes
+/// items until the next one would push it past the budget — so a page comes
+/// out as few, evenly filled parts instead of the halving that used to leave
+/// a trail of near-empty ones next to oversized ones.
 public enum RelayPayloadBatcher {
-    /// Compressed-plaintext budget per payload: sealed (+16B tag) and Base64
-    /// (+33%) this stays well under the worker's 2 MiB message cap.
-    public static let maxCompressedBytes = 600_000
+    /// Encoded-plaintext budget per part. Deflate never grows JSON by more
+    /// than a fraction of a percent and the sealed frame adds a header, a
+    /// nonce and a 16-byte tag, so a part this size stays well under the
+    /// Relay's 2 MiB message cap even when its content does not compress.
+    public static let maxEncodedBytes = 1_000_000
+    /// A part whose *compressed* size still exceeds this is split again:
+    /// the hard ceiling under the Relay's message cap.
+    public static let maxCompressedBytes = 1_400_000
 
     public struct Batch: Sendable {
         public let payload: RemoteSessionPayload
@@ -22,7 +32,7 @@ public enum RelayPayloadBatcher {
         requestID: RequestID?,
         generatedAt: Date
     ) throws -> [Batch] {
-        let chunks = try split(entries, oversizedSingle: { _ in nil }) { chunk in
+        let chunks = try pack(entries, size: { try encodedSize($0) }) { chunk in
             RemoteSessionPayload(kind: .sessionIndex, generatedAt: generatedAt, requestID: requestID, index: chunk, part: 0, partCount: 1)
         }
         let normalized = chunks.isEmpty ? [[]] : chunks
@@ -39,19 +49,19 @@ public enum RelayPayloadBatcher {
         }
     }
 
-    /// Live events in arrival order. An event that alone overflows the budget
-    /// goes out without its timeline item (its lifecycle / phase / turn still
-    /// land); the mirror heals the missing row on its next index reconcile.
+    /// Live events in arrival order, each timeline row trimmed to the Relay
+    /// content budget (`RelayContentBudget`).
     public static func eventBatches(
         _ events: [AgentIngressEvent],
         generatedAt: Date
     ) throws -> [Batch] {
-        let chunks = try split(events, oversizedSingle: { event in
-            guard event.timelineItem != nil else { return nil }
-            var stripped = event
-            stripped.timelineItem = nil
-            return stripped
-        }) { chunk in
+        let trimmed = events.map { event -> AgentIngressEvent in
+            guard let item = event.timelineItem else { return event }
+            var copy = event
+            copy.timelineItem = RelayContentBudget.trimmed(item)
+            return copy
+        }
+        let chunks = try pack(trimmed, size: { try encodedSize($0) }) { chunk in
             RemoteSessionPayload(kind: .sessionMessage, generatedAt: generatedAt, events: chunk)
         }
         return try chunks.map { chunk in
@@ -65,7 +75,7 @@ public enum RelayPayloadBatcher {
         _ summaries: [SessionSummary],
         generatedAt: Date
     ) throws -> [Batch] {
-        let chunks = try split(summaries, oversizedSingle: { _ in nil }) { chunk in
+        let chunks = try pack(summaries, size: { try encodedSize($0) }) { chunk in
             RemoteSessionPayload(kind: .sessionInfo, generatedAt: generatedAt, summaries: chunk)
         }
         return try chunks.map { chunk in
@@ -74,40 +84,53 @@ public enum RelayPayloadBatcher {
         }
     }
 
-    /// Halves `items` until every chunk's payload fits. A single item that
-    /// still overflows is replaced by `oversizedSingle` (or dropped when that
-    /// returns `nil` or the replacement overflows too).
-    static func split<Item>(
+    /// Greedy fill by encoded size, then a compressed-size check of each
+    /// part. A single item over the budget still travels alone — callers
+    /// trim rows first (`RelayContentBudget`), so this is the exception.
+    static func pack<Item>(
         _ items: [Item],
-        oversizedSingle: (Item) -> Item?,
+        size: (Item) throws -> Int,
         make: ([Item]) -> RemoteSessionPayload
     ) throws -> [[Item]] {
         guard !items.isEmpty else { return [] }
         var chunks: [[Item]] = []
-        var pending: [[Item]] = [items]
-        while let candidate = pending.first {
-            pending.removeFirst()
-            if try fits(make(candidate)) {
-                chunks.append(candidate)
-                continue
+        var current: [Item] = []
+        var currentBytes = 0
+        for item in items {
+            let bytes = try size(item) + 1 // the separator
+            if !current.isEmpty, currentBytes + bytes > maxEncodedBytes {
+                chunks.append(current)
+                current = []
+                currentBytes = 0
             }
-            if candidate.count <= 1 {
-                if let item = candidate.first,
-                   let replacement = oversizedSingle(item),
-                   try fits(make([replacement])) {
-                    chunks.append([replacement])
-                }
-                continue
-            }
-            let middle = candidate.count / 2
-            pending.insert(Array(candidate[middle...]), at: 0)
-            pending.insert(Array(candidate[..<middle]), at: 0)
+            current.append(item)
+            currentBytes += bytes
         }
-        return chunks
+        if !current.isEmpty { chunks.append(current) }
+        // The compressed ceiling: a chunk that still overflows is halved
+        // until it fits or is a single item.
+        var checked: [[Item]] = []
+        var pending = chunks
+        while !pending.isEmpty {
+            let chunk = pending.removeFirst()
+            let withinCeiling = try chunk.count <= 1 || fits(make(chunk))
+            if withinCeiling {
+                checked.append(chunk)
+            } else {
+                let middle = chunk.count / 2
+                pending.insert(Array(chunk[middle...]), at: 0)
+                pending.insert(Array(chunk[..<middle]), at: 0)
+            }
+        }
+        return checked
     }
 
-    /// Whether one payload ships as a single frame under the worker's cap.
+    /// Whether one payload ships as a single frame under the Relay's cap.
     public static func fits(_ payload: RemoteSessionPayload) throws -> Bool {
         try RelayCryptography.prepare(payload).byteCount <= maxCompressedBytes
+    }
+
+    static func encodedSize<Item: Encodable>(_ item: Item) throws -> Int {
+        try TransportCoding.makeEncoder().encode(item).count
     }
 }

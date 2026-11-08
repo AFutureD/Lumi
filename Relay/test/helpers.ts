@@ -1,5 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { expect } from "vitest";
+import { encodeBinaryFrame, parseBinaryFrame } from "../src/protocol";
 
 export const hostID = "host-test-000001";
 export const hostSecret = "host-secret-that-is-long-enough-for-testing-000001";
@@ -166,26 +167,53 @@ export async function openSocket(
   return socket;
 }
 
-export function routingFrame(sequence: number, frameHostID = hostID, frameDeviceID = deviceID): string {
-  return JSON.stringify({
-    version: { major: 1, minor: 2 },
+/** One binary routing frame: `u32 BE header length ‖ header JSON ‖ body`. */
+export function routingFrame(
+  sequence: number,
+  frameHostID = hostID,
+  frameDeviceID = deviceID,
+  overrides: Record<string, unknown> = {},
+  body: Uint8Array = new TextEncoder().encode("opaque-encrypted-payload"),
+): ArrayBuffer {
+  return encodeBinaryFrame({
+    version: { major: 1, minor: 4 },
     hostID: frameHostID,
     deviceID: frameDeviceID,
     sequence,
     kind: "data",
     nonce: "AAECAwQFBgcICQoL",
-    ciphertext: "opaque-encrypted-payload",
-  });
+    ...overrides,
+  }, body);
 }
 
+/** A device's sealed request, same framing, `kind: "request"`. */
+export function requestFrame(sequence: number, overrides: Record<string, unknown> = {}): ArrayBuffer {
+  return routingFrame(sequence, hostID, deviceID, { kind: "request", ...overrides });
+}
+
+/**
+ * Queues everything a socket receives: JSON text as parsed, binary frames as
+ * their decoded header plus `bytes` (the whole message) and `bodyBytes`.
+ */
 export function collectMessages(socket: WebSocket): { nextFrame: (kind: string) => Promise<Record<string, unknown>> } {
   const queue: Array<Record<string, unknown>> = [];
   const waiters: Array<(value: Record<string, unknown>) => void> = [];
+  // Binary arrives as a Blob on the client end; decoding it is async, so
+  // messages are handed over through one chain to keep their order.
+  let chain: Promise<void> = Promise.resolve();
   socket.addEventListener("message", (event) => {
-    if (typeof event.data !== "string") return;
-    const value = JSON.parse(event.data) as Record<string, unknown>;
-    const waiter = waiters.shift();
-    if (waiter) waiter(value); else queue.push(value);
+    const data: unknown = event.data;
+    chain = chain.then(async () => {
+      let value: Record<string, unknown>;
+      if (typeof data === "string") {
+        value = JSON.parse(data) as Record<string, unknown>;
+      } else {
+        const buffer = await toArrayBuffer(data);
+        value = { ...parseBinaryFrame(buffer), bytes: buffer.byteLength };
+      }
+      const waiter = waiters.shift();
+      if (waiter) waiter(value); else queue.push(value);
+    });
   });
   return {
     async nextFrame(kind: string): Promise<Record<string, unknown>> {
@@ -195,4 +223,15 @@ export function collectMessages(socket: WebSocket): { nextFrame: (kind: string) 
       }
     },
   };
+}
+
+async function toArrayBuffer(data: unknown): Promise<ArrayBuffer> {
+  if (data instanceof Blob) return data.arrayBuffer();
+  if (ArrayBuffer.isView(data)) {
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  }
+  if (typeof data === "object" && data !== null && "byteLength" in data) {
+    return data as ArrayBuffer;
+  }
+  throw new Error(`Unexpected message type: ${typeof data}`);
 }

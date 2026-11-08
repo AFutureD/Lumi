@@ -118,6 +118,9 @@ enum LumenMain {
                 statePath: configuration.relayStatePath,
                 transportFactory: RelayWebSocketTransportFactory(),
                 rest: LiveRelayHostREST(baseURL: configuration.relayURL),
+                // Same network, no Relay in between: the listener advertises
+                // this Mac over Bonjour and takes iPhones' frames directly.
+                directLink: configuration.directEnabled ? BonjourHostListener() : nil,
                 healthProvider: { await service.currentHealth() },
                 usageProvider: { preset in try await service.usageReport(preset: preset) },
                 planUsageProvider: { try await service.planUsageSnapshot() },
@@ -204,6 +207,7 @@ enum LumenMain {
             "wake": wakeListener == nil ? "off" : configuration.wakeService,
             "database": configuration.databasePath,
             "relay": relay == nil ? "off" : configuration.relayURL.absoluteString,
+            "direct": relay != nil && configuration.directEnabled ? "on" : "off",
             "plan_usage": configuration.planUsageFetchEnabled ? "on" : "off",
             "log_level": logConfiguration.minimumLevel.label.lowercased(),
             "log_directory": logConfiguration.directory,

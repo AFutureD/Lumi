@@ -1,12 +1,19 @@
 import DesignSystem
+import Transport
 import UIKit
 
 /// Activity detail: a medium-detent sheet with the row's tag + title, then
 /// its sections (Command / Output for tools, the text otherwise). Failed
-/// rows open expanded so the output is in view.
+/// rows open expanded so the output is in view. A row the Relay carried
+/// trimmed ends with `Load full content`; the whole copy is fetched from the
+/// Mac and the sheet redraws when it lands.
 @MainActor
 final class ActivityDetailSheetViewController: UIViewController {
-    private let presentation: ActivityDetailPresentation
+    private var presentation: ActivityDetailPresentation
+    private var isLoadingFullContent = false
+    private let body = UIStackView()
+    /// The list asks the Mac for the whole copies of these rows.
+    var onLoadFullContent: (([TimelineItemID]) -> Void)?
 
     init(presentation: ActivityDetailPresentation) {
         self.presentation = presentation
@@ -55,13 +62,10 @@ final class ActivityDetailSheetViewController: UIViewController {
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.alwaysBounceVertical = true
-        let body = UIStackView()
         body.axis = .vertical
         body.spacing = s.sectionGap
         body.translatesAutoresizingMaskIntoConstraints = false
-        for section in presentation.sections {
-            body.addArrangedSubview(makeSection(section))
-        }
+        rebuildBody()
         scroll.addSubview(body)
 
         view.addSubview(titleRow)
@@ -84,6 +88,49 @@ final class ActivityDetailSheetViewController: UIViewController {
             body.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -s.sectionGap),
             body.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -IOSDS.Layout.sideInset * 2),
         ])
+    }
+
+    /// A newer view of the same activity (a trimmed row completed, a tool
+    /// result landed): the sections redraw in place.
+    func update(_ presentation: ActivityDetailPresentation, isLoadingFullContent: Bool) {
+        guard presentation != self.presentation || isLoadingFullContent != self.isLoadingFullContent else { return }
+        self.presentation = presentation
+        self.isLoadingFullContent = isLoadingFullContent
+        guard isViewLoaded else { return }
+        rebuildBody()
+    }
+
+    private func rebuildBody() {
+        for view in body.arrangedSubviews { view.removeFromSuperview() }
+        for section in presentation.sections {
+            body.addArrangedSubview(makeSection(section))
+        }
+        if !presentation.truncatedItemIDs.isEmpty {
+            body.addArrangedSubview(makeLoadFullContentRow())
+        }
+    }
+
+    /// `Full content is on the Mac` + `Load full content` (a spinner while it is on its way).
+    private func makeLoadFullContentRow() -> UIView {
+        let note = UILabel()
+        note.setText("Full content is on the Mac.", style: IOSDS.Typography.captionMedium, color: .inkTertiary)
+        note.numberOfLines = 0
+        let button = UIButton(type: .system)
+        button.setTitle("Load full content", for: .normal)
+        button.titleLabel?.font = .design(IOSDS.Typography.action)
+        button.isEnabled = !isLoadingFullContent
+        let itemIDs = presentation.truncatedItemIDs
+        button.addAction(UIAction { [weak self] _ in
+            self?.onLoadFullContent?(itemIDs)
+        }, for: .touchUpInside)
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.hidesWhenStopped = true
+        if isLoadingFullContent { spinner.startAnimating() }
+        let row = UIStackView(arrangedSubviews: [note, UIView(), spinner, button])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 8
+        return row
     }
 
     private func makeSection(_ section: ActivityDetailSection) -> UIView {

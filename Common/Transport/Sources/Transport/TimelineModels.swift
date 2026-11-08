@@ -416,20 +416,30 @@ public struct TimelineItem: Codable, Hashable, Sendable {
     public let turnID: TurnID?
     public let occurredAt: Date
     public let payload: TimelinePayload
+    /// The Relay copy of this item carries only a slice of its content: the
+    /// daemon trimmed large tool output / context / message text to the
+    /// per-item budget before sending. The daemon and the Mac hold the
+    /// whole item; an iPhone asks for it with `fetch_timeline_items`.
+    /// Absent (`nil`) everywhere but on a trimmed Relay copy.
+    public let truncated: Bool?
 
     public init(
         id: TimelineItemID,
         sessionID: SessionID,
         turnID: TurnID? = nil,
         occurredAt: Date,
-        payload: TimelinePayload
+        payload: TimelinePayload,
+        truncated: Bool? = nil
     ) {
         self.id = id
         self.sessionID = sessionID
         self.turnID = turnID
         self.occurredAt = occurredAt
         self.payload = payload
+        self.truncated = truncated
     }
+
+    public var isTruncated: Bool { truncated == true }
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -437,5 +447,51 @@ public struct TimelineItem: Codable, Hashable, Sendable {
         case turnID
         case occurredAt
         case payload
+        case truncated
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(TimelineItemID.self, forKey: .id)
+        sessionID = try c.decode(SessionID.self, forKey: .sessionID)
+        turnID = try c.decodeIfPresent(TurnID.self, forKey: .turnID)
+        occurredAt = try c.decode(Date.self, forKey: .occurredAt)
+        payload = try c.decode(TimelinePayload.self, forKey: .payload)
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(sessionID, forKey: .sessionID)
+        try c.encodeIfPresent(turnID, forKey: .turnID)
+        try c.encode(occurredAt, forKey: .occurredAt)
+        try c.encode(payload, forKey: .payload)
+        // Only a trimmed Relay copy says so; local rows stay byte-identical
+        // to what they were before the flag existed.
+        if truncated == true { try c.encode(true, forKey: .truncated) }
+    }
+}
+
+/// A position in one session's timeline: the row's `occurredAt` and `id`,
+/// the same two keys the timeline is ordered by. A lazy mirror pages older
+/// history from the oldest row it holds (`fetch_session_before`).
+public struct TimelineCursor: Codable, Hashable, Sendable {
+    public let occurredAt: Date
+    public let id: TimelineItemID
+
+    public init(occurredAt: Date, id: TimelineItemID) {
+        self.occurredAt = occurredAt
+        self.id = id
+    }
+
+    public init(_ item: TimelineItem) {
+        occurredAt = item.occurredAt
+        id = item.id
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case occurredAt
+        case id
     }
 }

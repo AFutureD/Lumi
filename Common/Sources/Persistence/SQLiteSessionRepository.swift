@@ -408,6 +408,8 @@ public actor SQLiteSessionRepository: SessionRepository {
                             occurred_at = excluded.occurred_at,
                             item = excluded.item
                         WHERE excluded.occurred_at >= timeline.occurred_at
+                          AND NOT (json_extract(CAST(excluded.item AS TEXT), '$.truncated') IS 1
+                                   AND json_extract(CAST(timeline.item AS TEXT), '$.truncated') IS NULL)
                         """,
                     arguments: [
                         item.id.rawValue,
@@ -784,6 +786,8 @@ public actor SQLiteSessionRepository: SessionRepository {
                             occurred_at = excluded.occurred_at,
                             item = excluded.item
                         WHERE excluded.occurred_at >= timeline.occurred_at
+                          AND NOT (json_extract(CAST(excluded.item AS TEXT), '$.truncated') IS 1
+                                   AND json_extract(CAST(timeline.item AS TEXT), '$.truncated') IS NULL)
                         """,
                     arguments: [
                         item.id.rawValue,
@@ -793,6 +797,80 @@ public actor SQLiteSessionRepository: SessionRepository {
                     ]
                 )
             }
+        }
+    }
+
+    public func timelinePage(id: SessionID, before: TimelineCursor?, limit: Int) async throws -> TimelinePage? {
+        let decoder = decoder
+        let cachedTurns = turnsCache[id]
+        let pageSize = max(1, min(limit, 500))
+        let page = try await database.read { db -> TimelinePage? in
+            guard let summaryData = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [id.rawValue]
+            ) else { return nil }
+            let summary = try decoder.decode(SessionSummary.self, from: summaryData)
+            // Newest end first, one row past the page to learn whether older
+            // rows remain; `timeline_session_time` answers both the position
+            // test and the order without touching other sessions' rows.
+            let data: [Data]
+            if let before {
+                data = try Data.fetchAll(
+                    db,
+                    sql: """
+                        SELECT item FROM timeline
+                        WHERE session_id = ?
+                          AND (occurred_at < ? OR (occurred_at = ? AND id < ?))
+                        ORDER BY occurred_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                    arguments: [id.rawValue, before.occurredAt.timeIntervalSince1970, before.occurredAt.timeIntervalSince1970, before.id.rawValue, pageSize + 1]
+                )
+            } else {
+                data = try Data.fetchAll(
+                    db,
+                    sql: """
+                        SELECT item FROM timeline
+                        WHERE session_id = ?
+                        ORDER BY occurred_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                    arguments: [id.rawValue, pageSize + 1]
+                )
+            }
+            let newestFirst = try data.map { try decoder.decode(TimelineItem.self, from: $0) }
+            return TimelinePage(
+                summary: summary,
+                turns: try cachedTurns ?? Self.projectedTurns(db, sessionID: id, decoder: decoder),
+                timeline: Array(newestFirst.prefix(pageSize)).reversed(),
+                hasOlder: newestFirst.count > pageSize
+            )
+        }
+        if cachedTurns == nil, let page { turnsCache[id] = page.turns }
+        return page
+    }
+
+    public func timelineItems(id: SessionID, itemIDs: [TimelineItemID]) async throws -> SessionDetail? {
+        let decoder = decoder
+        return try await database.read { db -> SessionDetail? in
+            guard let summaryData = try Data.fetchOne(
+                db,
+                sql: "SELECT summary FROM sessions WHERE id = ?",
+                arguments: [id.rawValue]
+            ) else { return nil }
+            let summary = try decoder.decode(SessionSummary.self, from: summaryData)
+            var items: [TimelineItem] = []
+            for itemID in itemIDs {
+                if let data = try Data.fetchOne(
+                    db,
+                    sql: "SELECT item FROM timeline WHERE session_id = ? AND id = ?",
+                    arguments: [id.rawValue, itemID.rawValue]
+                ) {
+                    items.append(try decoder.decode(TimelineItem.self, from: data))
+                }
+            }
+            return SessionDetail(summary: summary, turns: [], timeline: items)
         }
     }
 

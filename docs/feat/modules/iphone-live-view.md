@@ -25,7 +25,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 4. 切到 Sessions Tab。
    - 系统反馈：该 Mac 在线并完成一轮对账后，它的 Session 出现在合并列表里（这一步只传摘要，几秒即成），状态点颜色与 Mac、Notch 一致（[IOS-R-009](#ios-r-009-session-状态颜色与-mac-一致)）；之后每个 Session 的状态实时跟着 Mac 变。
 5. 点一行 Session。
-   - 系统反馈：进入详情，第一次点开先显示 `Loading session…`，Mac 把这个 Session 的时间线传过来后换成 Activity Tab；再次点开直接显示，只补新增的部分（[IOS-R-007](#ios-r-007-在线只读并按-mac-增量同步)）。Info Tab 显示指标和 Session 信息。
+   - 系统反馈：进入详情，第一次点开先显示 `Loading session…`，几秒内换成 Activity Tab，里面是这个 Session 最近的活动（约 80 条）；往上翻到顶，列表上方出现 `Load earlier`，点一下再取更早的一页。再次点开直接显示，只补新增的部分（[IOS-R-007](#ios-r-007-在线只读并按-mac-增量同步)）。Info Tab 显示指标和 Session 信息。
    - 数据结果：不向 Agent 发送任何命令（[IOS-R-007](#ios-r-007-在线只读并按-mac-增量同步)）；绿色「已结束未查看」的 Session 打开即算已查看，列表、Mac 和 Notch 一起变灰（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)）。
 
 完成信号：Macs 里该 Mac 显示 Online，Sessions 里能打开它的 Session 时间线。
@@ -49,7 +49,8 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 - 头部下方是三泳道条（User / Model / Exec，与 Mac 同名同序）：列表每一行一格，按所属泳道着色；泳道与下方列表联动滚动——列表滚到哪，泳道跟到对应格子；拖泳道，列表跳到对应行；点格子也跳。
 - 列表按时间顺序显示每条活动：类别标签、时间和内容；停在列表底部附近时新活动自动跟到底，翻看历史时保持当前位置。模型每次思考占一行 REASONING，Claude 没有正文的思考显示为 `Empty`（与 Mac 一致）。
-- 点一行弹出半高详情：工具调用显示 Command 与 Output（调用和结果自动配对，结果还没回来时 Output 显示 Still running…）；其他类别显示完整内容。失败项直接展开到全高。
+- 列表只装着最近的活动。Mac 上还有更早的时，列表最上方是一行 `Load earlier`：点它取更早的一页（约 80 条），取回来后你正在看的那一行留在原地；全部取完这一行消失。
+- 点一行弹出半高详情：工具调用显示 Command 与 Output（调用和结果自动配对，结果还没回来时 Output 显示 Still running…）；其他类别显示完整内容。失败项直接展开到全高。超大的工具输出、上下文或消息在手机上先只带摘要，详情页底部写着 `Full content is on the Mac.`，点 `Load full content` 从 Mac 取完整内容，取回后原地显示。
 
 **Info**
 
@@ -58,14 +59,14 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 **右上 `···`**
 
-- Refresh session：把这个 Session 从 Mac 整个重新取一遍（修复本机缓存与 Mac 不一致）。
+- Refresh session：丢掉本机已取到的活动，从 Mac 重新取最近一页（修复本机缓存与 Mac 不一致）。
 - Delete：确认后只在这台 iPhone 上隐藏该 Session，本次运行有效；Mac 不受影响，重启 App 后它会回来（[IOS-R-012](#ios-r-012-删除只影响这台-iphone)）。
 
 正在查看的 Session 被 Mac 删除时，详情自动退回列表。
 
 ## Macs
 
-- 每行：Mac 名称、状态 + 这台 Mac 的 Relay 地址（`Online · afuture.workers.dev`；离线为 `Offline · 2h ago · afuture.workers.dev`，从未同步过则没有时间；被撤销后为 `Revoked · afuture.workers.dev`）、在线绿点 / 离线灰点。离线时 Sessions 里仍显示这台 Mac 的缓存内容，这一行是判断新鲜度的地方。
+- 每行：Mac 名称、状态 + 这台 Mac 现在怎么连（`Online · Direct` 表示手机和 Mac 在同一个网络、直接连着，不经 Relay；`Online · afuture.workers.dev` 表示经这个 Relay；离线为 `Offline · 2h ago · afuture.workers.dev`，从未同步过则没有时间；被撤销后为 `Revoked · afuture.workers.dev`）、在线绿点 / 离线灰点。离线时 Sessions 里仍显示这台 Mac 的缓存内容，这一行是判断新鲜度的地方。第一次直连前 iOS 会问是否允许 Lumi 访问本地网络；不允许就一直走 Relay，功能不变。
 - 点一行：切到 Sessions Tab 并只显示这台 Mac（等价于在 `Macs` 过滤里只勾它，这个选择同样会被记住，去 `Macs` 过滤或 `Reset` 恢复）。
 - 左滑 > Remove：确认后移除这一条通道、凭据和本机缓存，其他 Mac 不受影响；Mac 侧的配对记录仍在，撤销访问要回到 Mac 操作。
 - `+` 菜单：Add Device —— 打开 “Add Mac” 页，输码、扫码、Advanced 里填 Relay URL 都在这一页；Rename this iPhone —— 改的是下次配对时 Mac 看到的名字，已配对的记录不变。
@@ -117,12 +118,12 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 结果：启动立即有内容；新鲜度由 Macs 页表达，而不是靠隐藏内容。
 - 限制或例外：本机没有缓存且 Mac 离线时，列表显示 Mac unavailable。
 
-### IOS-R-007 在线只读，列表同步摘要，内容点开才取
+### IOS-R-007 在线只读，列表同步摘要，内容点开才取、从最近一页取起
 
 - 条件：对应 Mac 在线。
-- 行为：iPhone 先用 Session 索引与本机缓存对账：每个 Session 的摘要（标题、状态、时间）都对齐，多余的删；时间线只给点开过的 Session 补差异。点开一个从未点开的 Session 时才把它整个取来，之后它的每条活动实时到达；没点开过的 Session 只跟着 Mac 更新状态。
-- 结果：列表几秒内就绪，不随 Mac 上的历史体量变慢；daemon、Mac 和该 iPhone 的可见数据一致；Mac App 是否打开不影响同步。
-- 限制或例外：iPhone 不提供审批、终止、输入或其他远程控制；没点开过的 Session 在列表里没有「最近活动」那一行；一个很长的 Session 第一次点开要等它整个传完。
+- 行为：iPhone 先用 Session 索引与本机缓存对账：每个 Session 的摘要（标题、状态、时间）都对齐，多余的删；时间线只给点开过的 Session 补差异。点开一个从未点开的 Session 时取它最近的一页活动，每到一片就显示，之后它的每条活动实时到达；往上翻到顶再取更早的一页；没点开过的 Session 只跟着 Mac 更新状态。Mac 上这个 Session 被重建（Mac 的 Refresh session）时，手机丢掉已取到的活动重新取最近一页。
+- 结果：列表几秒内就绪，点开任何长度的 Session 都在几秒内看到最近的活动，不随 Mac 上的历史体量变慢；daemon、Mac 和该 iPhone 的可见数据一致；Mac App 是否打开不影响同步。
+- 限制或例外：iPhone 不提供审批、终止、输入或其他远程控制；没点开过的 Session 在列表里没有「最近活动」那一行；超大的单条内容先只带摘要，点 Load full content 才取完整内容；等不到 Mac 答复时手机 30 秒无进展重问一次、再等不到只放弃这一个请求，已取到的内容保留。
 
 ### IOS-R-008 一台 iPhone 可连接多台 Mac
 
@@ -194,12 +195,19 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 结果：数字与 Mac 上 Settings › Usage、Usage 页一致；「已用 / 剩余」跟每台 Mac 自己的设置走。
 - 限制或例外：只在内存里——退出 App 再进必是加载态，Mac 离线时保留这次运行里最后一份并写明是多久前的；iPhone 上不能改开关、Percent，也没有 Detail 表。详见 [iPhone 用量](iphone-usage.md)。
 
-### IOS-R-018 Mac 与 iPhone 都更新后才同步
+### IOS-R-018 Mac、iPhone 与 Relay 都更新后才同步
 
-- 条件：Lumi for Mac 与 Lumi for iPhone 一端还停在 0.2.0 或更早的版本，另一端已更新到之后的版本。
-- 行为：两端连得上，但同步不了 Session。
-- 结果：iPhone 的 Macs 页该 Mac 仍显示 Online，Mac 的 Paired iPhones 里这台 iPhone 仍是 Active；iPhone 上的 Session 不再更新（没有缓存时 Sessions 一直停在 `Syncing…`），Usage Tab 取不到这台 Mac 的数据（`Can't reach … · timed out`）。界面不会说明原因是版本。已缓存的内容照常可看，推送提醒照常到达。
-- 限制或例外：两端都更新后自动恢复同步，不需要重新配对。恢复步骤见[用户摩擦点](../friction-points.md#iphone-显示-online-但-session-不更新)。
+- 条件：Lumi for Mac、Lumi for iPhone 与 Relay 中有一端还停在旧版本。
+- 行为：两端连得上，但同步不了 Session。停在 0.3.0 或更早的 iPhone 或 Mac 连上新版 Relay 时会被 Relay 断开并提示更新，不再反复重连。
+- 结果：iPhone 的 Macs 页该 Mac 仍显示 Online，Mac 的 Paired iPhones 里这台 iPhone 仍是 Active；iPhone 上的 Session 不再更新（没有缓存时 Sessions 一直停在 `Syncing…`），Usage Tab 取不到这台 Mac 的数据（`Can't reach … · timed out`）。已缓存的内容照常可看，推送提醒照常到达。
+- 限制或例外：都更新后自动恢复同步，不需要重新配对。恢复步骤见[用户摩擦点](../friction-points.md#iphone-显示-online-但-session-不更新)。
+
+### IOS-R-019 同一网络直连，Relay 兜底
+
+- 条件：iPhone 与已配对的 Mac 在同一个局域网，且允许了 Lumi 访问本地网络。
+- 行为：iPhone 发现这台 Mac 后直接连接，Session 内容不再经过 Relay；Macs 页显示 `Online · Direct`。直连断开（离开网络、Mac 休眠）时自动回到 Relay，回到同一网络时再次直连。
+- 结果：同一屋里打开 Session 更快；Relay 不可达时同一网络仍能同步。
+- 限制或例外：直连与经 Relay 的加密、信任规则完全相同，Relay 从来不是信任的一部分；不允许本地网络访问时一直走 Relay，功能不变；每次切换链路会重新对一次账。
 
 ## 空状态与故障
 
@@ -217,7 +225,7 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 
 ## 业务数据
 
-iPhone 为每台 Mac 维护一条通道和一个 SQLite 缓存；启动先显示缓存，在线后用索引对齐摘要（时间线只给点开过的补差异），再实时跟着 Agent 活动更新。Keychain 保存配对凭据（每台 Mac 连同自己的 Relay 地址）；本机还保存设备名、设备与状态过滤选择、每台 Mac 的上次同步时间和 Advanced 里上次填的 Relay URL（只作预填）。完整生命周期见[数据流](../data-flows.md)。
+iPhone 为每台 Mac 维护一条通道和一个 SQLite 缓存；启动先显示缓存，在线后用索引对齐摘要（时间线只给点开过的补差异），再实时跟着 Agent 活动更新。Keychain 保存配对凭据（每台 Mac 连同自己的 Relay 地址）；本机还保存设备名、设备与状态过滤选择、每台 Mac 的上次同步时间、每个点开过的 Session 同步到哪（Mac 当时的行数与最新一行时间、本机取到了多早）和 Advanced 里上次填的 Relay URL（只作预填）。完整生命周期见[数据流](../data-flows.md)。
 
 ## 相关文档
 

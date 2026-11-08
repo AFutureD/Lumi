@@ -1,111 +1,78 @@
 import Transport
 import Foundation
 
-/// Splits one session into `session_full` / `session_timeline` payloads that
-/// each stay inside the relay's message budget after compression. Part 0
-/// carries the turns; later parts append timeline only. The last part has
-/// `session.nextCursor == nil`.
+/// Splits one page of a session's timeline into `session_tail` /
+/// `session_history` / `session_timeline` / `session_items` parts that each
+/// stay inside the Relay's message budget. Every row is first trimmed to the
+/// Relay content budget; parts are then filled greedily by encoded size.
+///
+/// Part 0 carries the summary and the turns; later parts append rows only.
+/// Every part is added to the mirror's copy (nothing replaces), so the order
+/// of the rows across parts is only the order the person sees them land:
+/// `newestFirst` for a tail or an older page (the rows nearest the screen
+/// first), `oldestFirst` for a since-tail. The last part has
+/// `session.nextCursor == nil`, names the page's oldest row (`oldest`) and,
+/// for a tail or an older page, says whether older rows remain (`hasOlder`).
 public enum RelaySessionPartitioner {
-    public static let maxCompressedBytes = RelayPayloadBatcher.maxCompressedBytes
-    /// A single item bigger than this is dropped from the relay copy only;
-    /// the daemon and the Mac keep it.
-    public static let singleItemHardCap = 1_500_000
+    public enum Order: Sendable {
+        case newestFirst
+        case oldestFirst
+    }
 
     public struct Part: Sendable {
         public let payload: RemoteSessionPayload
         public let prepared: RelayPreparedPayload
     }
 
+    /// - Parameters:
+    ///   - timeline: the page's rows in timeline order (oldest first).
+    ///   - hasOlder: sent on the last part; `nil` for kinds that do not page.
+    ///   - trimming: apply the content budget (`false` only for `session_items`).
     public static func parts(
-        for detail: SessionDetail,
-        kind: RemotePayloadKind = .sessionFull,
+        summary: SessionSummary,
+        turns: [TurnSummary],
+        timeline: [TimelineItem],
+        hasOlder: Bool?,
+        kind: RemotePayloadKind,
+        order: Order,
         requestID: RequestID?,
-        generatedAt: Date
+        generatedAt: Date,
+        trimming: Bool = true
     ) throws -> [Part] {
-        // The common case: the whole session fits in one payload.
-        if let single = try prepared(
-            kind: kind,
-            requestID: requestID,
-            summary: detail.summary,
-            turns: detail.turns,
-            timeline: detail.timeline,
-            part: 0,
-            hasMore: false,
-            generatedAt: generatedAt
-        ) {
-            return [single]
+        // `session_items` answers a request for whole rows: they skip the
+        // content budget, but a row that cannot fit a frame even alone is
+        // trimmed after all rather than never arriving.
+        let trimmed = timeline.map { item in
+            trimming || RelayContentBudget.encodedSize(item) > RelayPayloadBatcher.maxEncodedBytes
+                ? RelayContentBudget.trimmed(item)
+                : item
         }
-
-        // Split the timeline; turns ride only on part 0. Chunks halve until
-        // they fit, single oversized items are dropped from the relay copy.
-        var chunks: [[TimelineItem]] = []
-        var pending: [[TimelineItem]] = [detail.timeline]
-        while let candidate = pending.first {
-            pending.removeFirst()
-            if try prepared(
-                kind: kind,
-                requestID: requestID,
-                summary: detail.summary,
-                turns: chunks.isEmpty ? detail.turns : [],
-                timeline: candidate,
-                part: 0,
-                hasMore: true,
-                generatedAt: generatedAt
-            ) != nil {
-                chunks.append(candidate)
-                continue
-            }
-            if candidate.count <= 1 {
-                // One item alone still overflows: keep it only if it clears
-                // the hard cap check below, otherwise omit it from the relay.
-                if let item = candidate.first,
-                   (try? TransportCoding.makeEncoder().encode(item).count) ?? .max <= singleItemHardCap {
-                    chunks.append(candidate)
-                }
-                continue
-            }
-            let middle = candidate.count / 2
-            pending.insert(Array(candidate[middle...]), at: 0)
-            pending.insert(Array(candidate[..<middle]), at: 0)
+        let ordered = order == .newestFirst ? Array(trimmed.reversed()) : trimmed
+        var chunks = try RelayPayloadBatcher.pack(ordered, size: RelayContentBudget.encodedSize) { chunk in
+            payload(kind: kind, requestID: requestID, summary: summary, turns: [], timeline: chunk, part: 0, hasMore: true, hasOlder: nil, oldest: nil, generatedAt: generatedAt)
         }
         if chunks.isEmpty { chunks = [[]] }
-
         var parts: [Part] = []
         parts.reserveCapacity(chunks.count)
         for (index, chunk) in chunks.enumerated() {
-            let hasMore = index < chunks.count - 1
-            guard let part = try prepared(
-                kind: kind,
-                requestID: requestID,
-                summary: detail.summary,
-                turns: index == 0 ? detail.turns : [],
-                timeline: chunk,
-                part: index,
-                hasMore: hasMore,
-                generatedAt: generatedAt
-            ) else {
-                // Turns alone overflowing the budget is pathological; drop
-                // them from the relay copy rather than fail the publish.
-                let fallback = try prepared(
-                    kind: kind,
-                    requestID: requestID,
-                    summary: detail.summary,
-                    turns: [],
-                    timeline: chunk,
-                    part: index,
-                    hasMore: hasMore,
-                    generatedAt: generatedAt,
-                    enforceBudget: false
-                )
-                if let fallback { parts.append(fallback) }
-                continue
+            let last = index == chunks.count - 1
+            // Each chunk is already within budget without the turns; turns on
+            // part 0 are the one addition, and a turn list that alone breaks
+            // the ceiling is pathological — the chunk then goes without it
+            // rather than failing the whole page.
+            let oldest = last ? trimmed.first.map(TimelineCursor.init) : nil
+            var payload = payload(kind: kind, requestID: requestID, summary: summary, turns: index == 0 ? turns : [], timeline: chunk, part: index, hasMore: !last, hasOlder: last ? hasOlder : nil, oldest: oldest, generatedAt: generatedAt)
+            var prepared = try RelayCryptography.prepare(payload)
+            if index == 0, !turns.isEmpty, prepared.byteCount > RelayPayloadBatcher.maxCompressedBytes {
+                payload = self.payload(kind: kind, requestID: requestID, summary: summary, turns: [], timeline: chunk, part: index, hasMore: !last, hasOlder: last ? hasOlder : nil, oldest: oldest, generatedAt: generatedAt)
+                prepared = try RelayCryptography.prepare(payload)
             }
-            parts.append(part)
+            parts.append(Part(payload: payload, prepared: prepared))
         }
         return parts
     }
 
-    private static func prepared(
+    private static func payload(
         kind: RemotePayloadKind,
         requestID: RequestID?,
         summary: SessionSummary,
@@ -113,14 +80,17 @@ public enum RelaySessionPartitioner {
         timeline: [TimelineItem],
         part: Int,
         hasMore: Bool,
-        generatedAt: Date,
-        enforceBudget: Bool = true
-    ) throws -> Part? {
-        let payload = RemoteSessionPayload(
+        hasOlder: Bool?,
+        oldest: TimelineCursor?,
+        generatedAt: Date
+    ) -> RemoteSessionPayload {
+        RemoteSessionPayload(
             kind: kind,
             generatedAt: generatedAt,
             requestID: requestID,
             part: part,
+            hasOlder: hasOlder,
+            oldest: oldest,
             session: SessionDetail(
                 summary: summary,
                 turns: turns,
@@ -128,8 +98,5 @@ public enum RelaySessionPartitioner {
                 nextCursor: hasMore ? PaginationCursor(value: String(part + 1)) : nil
             )
         )
-        let prepared = try RelayCryptography.prepare(payload)
-        if enforceBudget, prepared.byteCount > maxCompressedBytes { return nil }
-        return Part(payload: payload, prepared: prepared)
     }
 }

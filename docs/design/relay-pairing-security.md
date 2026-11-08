@@ -23,15 +23,17 @@ Relay 使用 TypeScript Cloudflare Worker 和 Durable Objects。每个 `HostID` 
 
 ```mermaid
 flowchart LR
-    Mac["Mac daemon<br/>1 Host WSS"] --> DO["HostID Durable Object"]
+    Mac["Mac daemon<br/>1 Host WSS + Bonjour TCP 监听"] --> DO["HostID Durable Object"]
     DO --> A["iPhone A<br/>Device WSS"]
     DO --> B["iPhone B<br/>Device WSS"]
-    DO --> C["iPhone C<br/>Device WSS"]
+    Mac -. "同一局域网：TCP 直连" .-> A
 ```
 
 - 一个 daemon 同时只保留一个 Host WSS；新 Host 连接会关闭旧 Host 连接。Mac App 不持有 Relay 凭据或连接，只经 IPC 驱动 daemon。
-- 一台 iPhone 对每台已配对 Mac 建立一个 Device WSS。
+- 一台 iPhone 对每台已配对 Mac 建立一个 Device WSS，并始终保持；同一局域网上看到这台 Mac 的 Bonjour 服务（`_lumi-relay._tcp`，TXT 带 hostID 与协议版本）时再建一条 TCP 直连。
 - 逻辑通道按 Mac—iPhone 设备对划分；Host WSS 可以多路复用全部通道。
+- **一个通道会话只走一条链路**：`sync_index` 从哪条链路发出，这个会话的每一帧就只走哪条。iPhone 直连建立后立即在直连上开新会话（Relay 从此不再为这台 Mac 承载任何内容），直连断开后在 Relay 上再开一次。daemon 记住每个会话的链路，直连连接关闭时丢掉绑在它上面的会话。
+- 直连是明文 TCP：帧本身用会话密钥 AEAD 密封并认证，握手帧用握手密钥，局域网上的任何人读不到、改不了、冒充不了；Bonjour 广播只是地址，不是信任，iPhone 只有收到合法的 `channel_opened` 后才把直连算作可用。daemon 对未认证的 TCP 对端只做资源保护：单条记录 2 MiB、最多 16 条连接、90 秒没有合法帧就关闭。
 - 所有 Session 复用通道，不建立 Session WSS。
 
 ## Relay 地址
@@ -311,17 +313,20 @@ Relay 不持久化帧 nonce、ciphertext、Session、Timeline 或用户消息。
 
 重连与补齐：
 
-- Durable Object 拒绝同一设备通道非单调的 Host sequence，并把该通道当前序号回给 daemon（`non_monotonic_sequence{deviceID, lastSequence}`）。被拒的可能正是 `channel_opened`，而 Relay 不会替 daemon 通知设备，所以 daemon 抬高序号后把这个会话重新打开一遍（`channel_opened` + index）：还在等的 iPhone 拿到钥匙和 index，已经有钥匙的 iPhone 看到序号断档、重新 `sync_index`。
+- Durable Object 拒绝同一设备通道非单调的 Host sequence，并把该通道当前序号回给 daemon（`non_monotonic_sequence{deviceID, lastSequence}`）。这个游标只在对象内存里：对象休眠或迁移后以收到的第一帧为新基线——它只是多一道告警，两端各自的会话密钥 + 会话内序号才是防重放的边界，而写存储会让每一帧都等一次持久化提交。被拒的可能正是 `channel_opened`，而 Relay 不会替 daemon 通知设备，所以 daemon 抬高序号后把这个会话重新打开一遍（`channel_opened` + index）：还在等的 iPhone 拿到钥匙和 index，已经有钥匙的 iPhone 看到序号断档、重新 `sync_index`。
 - 通道序号的上限是 2⁵³——Relay 自己能精确计数的最大值。Relay 回报的序号达到或超过它时 daemon 不采信（`sequence_heal_refused`），沿用自己的序号：否则一条消息就能把这条通道的序号耗尽。
 - 会话正在打开时发生的变化不会丢：推送照常入队，排在这个会话的 index 之后发出。
 - iPhone 看到序号空洞，处理完本帧后重新 `sync_index`。
-- iPhone 开新会话时，还没等到应答的请求（整取、补尾、usage）带进新会话重发；会话正在打开期间发起的请求排队，会话一开按顺序发出。
+- iPhone 开新会话时，还没等到应答的请求（尾页、翻页、补尾、取条目、usage）带进新会话重发；会话正在打开期间发起的请求排队，会话一开按顺序发出。
+- 活性不靠对方的帧：两端对各自的 WebSocket 每 10 秒发一次协议级 ping（Relay 的运行时自动应答，不唤醒 Durable Object），30 秒无 pong 即判断线并重连，重连间隔 2 → 4 → 8 → 16 → 30 秒。直连 TCP 没有 ping，靠系统 keepalive 与 daemon 侧的 90 秒空闲关闭。
+- 旧版客户端（文本路由帧）被 Relay 以 4004 关闭；新版客户端把 4004 当作不可重试，提示更新，不再每 2 秒重连。
 - 没有 ACK，没有 hello：iPhone 有本地缓存，恢复路径永远是“再要一次 index，按差异补”。
 - Relay 不保留重放缓冲：离线设备错过的帧由下一次 index 对账补齐。
 
 ## 在线状态
 
-- Host WSS 建立：Relay 向所有 Device sockets 广播 `presence: online`。
+- Host WSS 建立：Relay 向所有 Device sockets 广播 `presence: online`。设备行变化（配对批准、撤销、push token）时 Relay 另向 Host 推 `devices_changed`，daemon 据此刷新设备列表，不再每 10 秒轮询。
+- 直连上没有 presence：连接在就是在线，断了就是离线；会话绑在直连上时 Relay 的 presence 不改变任何东西。
 - 最后一个 Host WSS 关闭：广播 `presence: offline`。
 - Device WSS 建立：立即收到当前 Host 是否在线。
 - iOS 收到 offline 后把该 Mac 标为 Offline、结束当前通道会话，继续显示缓存；收到 online 立即重新 `sync_index`（daemon 重连后不再持有任何会话）。

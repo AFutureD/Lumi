@@ -181,16 +181,17 @@ final class MacsViewController: UIViewController, UICollectionViewDelegate {
         return dataSource
     }
 
+    /// `Online · Direct` (same network, nothing through the Relay) /
     /// `Online · relay.lumi.huanan.app` / `Offline · 2h ago · relay.lumi.huanan.app`
-    /// / `Revoked · relay.lumi.huanan.app`: the state, then which Relay this Mac
-    /// is reached through (each Mac remembers its own).
+    /// / `Revoked · relay.lumi.huanan.app`: the state, then the link this Mac
+    /// is reached through (each Mac remembers its own Relay).
     static func meta(for state: MacChannelState, now: Date) -> String {
         let relayHost = RelayURLValidation.displayHost(state.relayURL)
         if state.accessRevoked {
             return "Revoked · \(relayHost)"
         }
         if state.isOnline {
-            return "Online · \(relayHost)"
+            return state.connectionPath == .direct ? "Online · Direct" : "Online · \(relayHost)"
         }
         if let lastSync = state.lastSyncAt {
             return "Offline · \(SessionRelativeTimeFormatter.string(from: lastSync, now: now)) ago · \(relayHost)"

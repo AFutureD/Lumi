@@ -1,10 +1,13 @@
+import Core
 import Transport
 import Foundation
 import UIKit
 
 /// The few things the iPhone keeps outside the Keychain: the name it pairs
-/// under, which Macs the Sessions filter hides, and when each Mac last
-/// finished a sync. Session content itself is never written here.
+/// under, which Macs the Sessions filter hides, when each Mac last finished
+/// a sync, and per held session the sync mark (the daemon's timeline facts
+/// at the last sync and the loaded window). Session content itself is
+/// never written here.
 @MainActor
 final class LocalSettings {
     static let shared = LocalSettings()
@@ -16,6 +19,7 @@ final class LocalSettings {
         static let deselectedStatuses = "Lumi.deselectedStatuses"
         static let lastSyncByHost = "Lumi.lastSyncByHost"
         static let lastRelayURL = "Lumi.lastRelayURL"
+        static let syncMarksByHost = "Lumi.syncMarksByHost"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -62,5 +66,32 @@ final class LocalSettings {
         var marks = (defaults.dictionary(forKey: Key.lastSyncByHost) as? [String: Date]) ?? [:]
         marks[hostID.rawValue] = date
         defaults.set(marks, forKey: Key.lastSyncByHost)
+    }
+
+    // MARK: - Sync marks
+
+    /// The marks of every session this iPhone holds rows of, per Mac.
+    func syncMarks(for hostID: HostID) -> [SessionID: SessionSyncMark] {
+        guard let data = defaults.data(forKey: Key.syncMarksByHost),
+              let all = try? JSONDecoder().decode([String: [String: SessionSyncMark]].self, from: data),
+              let marks = all[hostID.rawValue] else { return [:] }
+        return Dictionary(uniqueKeysWithValues: marks.map { (SessionID($0.key), $0.value) })
+    }
+
+    /// Replaces the Mac's marks wholesale (the channel owns them in memory
+    /// and writes them through after each change).
+    func setSyncMarks(_ marks: [SessionID: SessionSyncMark], for hostID: HostID) {
+        var all = (defaults.data(forKey: Key.syncMarksByHost))
+            .flatMap { try? JSONDecoder().decode([String: [String: SessionSyncMark]].self, from: $0) } ?? [:]
+        if marks.isEmpty {
+            all[hostID.rawValue] = nil
+        } else {
+            all[hostID.rawValue] = Dictionary(uniqueKeysWithValues: marks.map { ($0.key.rawValue, $0.value) })
+        }
+        if all.isEmpty {
+            defaults.removeObject(forKey: Key.syncMarksByHost)
+        } else if let data = try? JSONEncoder().encode(all) {
+            defaults.set(data, forKey: Key.syncMarksByHost)
+        }
     }
 }

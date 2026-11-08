@@ -336,15 +336,30 @@ public struct RelayHostStatus: Codable, Hashable, Sendable {
 
 /// What a sealed payload is. Requests travel device → host in `request`
 /// frames; everything else travels host → device in `data` frames.
+///
+/// A lazy mirror (the iPhone) reads a session from its newest end: the tail
+/// on open, older pages as the person scrolls back, the whole content of a
+/// trimmed item on demand. Every multi-part answer is applied part by part
+/// as it arrives; nothing waits for the last part.
 public enum RemotePayloadKind: Hashable, Sendable {
     // MARK: device → host
     /// Open a channel session and send me the session index (`requestID`,
     /// `ephemeralKey`: the iPhone's key for this session).
     case syncIndex
-    /// Send me these sessions in full (`sessionIDs`).
+    /// Send me the newest `limit` rows of each of these sessions
+    /// (`sessionIDs`, `limit`) with their summary and turns — the tail.
     case fetchSession
+    /// Send me the `limit` rows of this session just before `before`
+    /// (`sessionIDs[0]`, `before`, `limit`) — one older page.
+    case fetchSessionBefore
     /// Send me this session's timeline from `since` on (`sessionIDs[0]`, `since`).
     case fetchTimelineSince
+    /// Send me these rows whole (`sessionIDs[0]`, `itemIDs`): the mirror
+    /// holds trimmed copies (`TimelineItem.truncated`).
+    case fetchTimelineItems
+    /// Stop answering the request named in `cancels`: drop what is queued
+    /// and send no further part of it.
+    case cancelRequest
     /// The human looked at the sessions in `sessionIDs` on the iPhone.
     case sessionReviewed
     /// Send me the token / cost report for a calendar preset (`usageRange`),
@@ -362,10 +377,21 @@ public enum RemotePayloadKind: Hashable, Sendable {
     case sessionIndex
     /// Summaries that changed without a timeline event (`summaries`).
     case sessionInfo
-    /// One part of one whole session (`session`, `part`, `requestID`).
-    case sessionFull
-    /// One part of a session's timeline tail (`session`, `part`, `requestID`).
+    /// One part of a session's tail (`session`, `part`, `requestID`): part 0
+    /// carries the summary and turns; every part adds rows to the mirror's
+    /// copy (nothing is erased — the mirror does that itself when it
+    /// decided the copy must be rebuilt); the last part
+    /// (`session.nextCursor == nil`) says where the page starts (`oldest`)
+    /// and whether older rows exist (`hasOlder`).
+    case sessionTail
+    /// One part of an older page (`session`, `part`, `requestID`); rows are
+    /// added to the mirror's copy; the last part carries `hasOlder`.
+    case sessionHistory
+    /// One part of a session's timeline tail from `since` (`session`,
+    /// `part`, `requestID`); rows are added to the mirror's copy.
     case sessionTimeline
+    /// Whole rows the mirror asked for (`session.timeline`, `requestID`).
+    case sessionItems
     /// Live events as the daemon applied them (`events`).
     case sessionMessage
     /// Sessions the daemon no longer retains (`sessionIDs`, `requestID?`).
@@ -382,13 +408,18 @@ public enum RemotePayloadKind: Hashable, Sendable {
         switch self {
         case .syncIndex: "sync_index"
         case .fetchSession: "fetch_session"
+        case .fetchSessionBefore: "fetch_session_before"
         case .fetchTimelineSince: "fetch_timeline_since"
+        case .fetchTimelineItems: "fetch_timeline_items"
+        case .cancelRequest: "cancel_request"
         case .sessionReviewed: "session_reviewed"
         case .channelOpened: "channel_opened"
         case .sessionIndex: "session_index"
         case .sessionInfo: "session_info"
-        case .sessionFull: "session_full"
+        case .sessionTail: "session_tail"
+        case .sessionHistory: "session_history"
         case .sessionTimeline: "session_timeline"
+        case .sessionItems: "session_items"
         case .sessionMessage: "session_message"
         case .sessionRemoved: "session_removed"
         case .health: "health"
@@ -396,6 +427,14 @@ public enum RemotePayloadKind: Hashable, Sendable {
         case .fetchPlanUsage: "fetch_plan_usage"
         case .usageReport: "usage_report"
         case .planUsage: "plan_usage"
+        }
+    }
+
+    /// Host → device kinds that carry one session's rows in parts.
+    public var isSessionPart: Bool {
+        switch self {
+        case .sessionTail, .sessionHistory, .sessionTimeline, .sessionItems: true
+        default: false
         }
     }
 }
@@ -407,13 +446,18 @@ extension RemotePayloadKind: Codable {
         self = switch value {
         case "sync_index": .syncIndex
         case "fetch_session": .fetchSession
+        case "fetch_session_before": .fetchSessionBefore
         case "fetch_timeline_since": .fetchTimelineSince
+        case "fetch_timeline_items": .fetchTimelineItems
+        case "cancel_request": .cancelRequest
         case "session_reviewed": .sessionReviewed
         case "channel_opened": .channelOpened
         case "session_index": .sessionIndex
         case "session_info": .sessionInfo
-        case "session_full": .sessionFull
+        case "session_tail": .sessionTail
+        case "session_history": .sessionHistory
         case "session_timeline": .sessionTimeline
+        case "session_items": .sessionItems
         case "session_message": .sessionMessage
         case "session_removed": .sessionRemoved
         case "health": .health
@@ -462,18 +506,34 @@ public struct SessionIndexEntry: Codable, Hashable, Sendable {
 
 /// The sealed application payload. Only `kind` and `generatedAt` are always
 /// present; the rest is per kind (see `RemotePayloadKind`). Multi-part
-/// payloads (`sessionIndex`, `sessionFull`, `sessionTimeline`) count `part`
-/// from 0; the index says `partCount`, sessions say `session.nextCursor`
-/// (`nil` on the last part). Responses echo the request's `requestID`.
+/// payloads count `part` from 0; the index says `partCount`, session parts
+/// say `session.nextCursor` (`nil` on the last part). Responses echo the
+/// request's `requestID`.
 public struct RemoteSessionPayload: Codable, Hashable, Sendable {
     public let kind: RemotePayloadKind
     public let generatedAt: Date
     public let requestID: RequestID?
     public let sessionIDs: [SessionID]?
     public let since: Date?
+    /// `fetch_session` / `fetch_session_before`: how many rows to send.
+    public let limit: Int?
+    /// `fetch_session_before`: the oldest row the mirror holds; rows strictly
+    /// before it are sent.
+    public let before: TimelineCursor?
+    /// `fetch_timeline_items`: the rows wanted whole.
+    public let itemIDs: [TimelineItemID]?
+    /// `cancel_request`: the request to stop answering.
+    public let cancels: RequestID?
     public let index: [SessionIndexEntry]?
     public let part: Int?
     public let partCount: Int?
+    /// Last part of `session_tail` / `session_history`: rows older than the
+    /// ones sent exist; `false` means the mirror now holds the oldest row.
+    public let hasOlder: Bool?
+    /// Last part of `session_tail` / `session_history` / `session_timeline`:
+    /// the oldest row of the whole page — where the mirror's loaded window
+    /// now starts (tail) or extends to (older page).
+    public let oldest: TimelineCursor?
     public let summaries: [SessionSummary]?
     public let session: SessionDetail?
     public let events: [AgentIngressEvent]?
@@ -496,9 +556,15 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         requestID: RequestID? = nil,
         sessionIDs: [SessionID]? = nil,
         since: Date? = nil,
+        limit: Int? = nil,
+        before: TimelineCursor? = nil,
+        itemIDs: [TimelineItemID]? = nil,
+        cancels: RequestID? = nil,
         index: [SessionIndexEntry]? = nil,
         part: Int? = nil,
         partCount: Int? = nil,
+        hasOlder: Bool? = nil,
+        oldest: TimelineCursor? = nil,
         summaries: [SessionSummary]? = nil,
         session: SessionDetail? = nil,
         events: [AgentIngressEvent]? = nil,
@@ -514,9 +580,15 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         self.requestID = requestID
         self.sessionIDs = sessionIDs
         self.since = since
+        self.limit = limit
+        self.before = before
+        self.itemIDs = itemIDs
+        self.cancels = cancels
         self.index = index
         self.part = part
         self.partCount = partCount
+        self.hasOlder = hasOlder
+        self.oldest = oldest
         self.summaries = summaries
         self.session = session
         self.events = events
@@ -534,9 +606,15 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         case requestID
         case sessionIDs
         case since
+        case limit
+        case before
+        case itemIDs
+        case cancels
         case index
         case part
         case partCount
+        case hasOlder
+        case oldest
         case summaries
         case session
         case events
@@ -555,9 +633,15 @@ public struct RemoteSessionPayload: Codable, Hashable, Sendable {
         requestID = try c.decodeIfPresent(RequestID.self, forKey: .requestID)
         sessionIDs = try c.decodeIfPresent([SessionID].self, forKey: .sessionIDs)
         since = try c.decodeIfPresent(Date.self, forKey: .since)
+        limit = try c.decodeIfPresent(Int.self, forKey: .limit)
+        before = try c.decodeIfPresent(TimelineCursor.self, forKey: .before)
+        itemIDs = try c.decodeIfPresent([TimelineItemID].self, forKey: .itemIDs)
+        cancels = try c.decodeIfPresent(RequestID.self, forKey: .cancels)
         index = try c.decodeIfPresent([SessionIndexEntry].self, forKey: .index)
         part = try c.decodeIfPresent(Int.self, forKey: .part)
         partCount = try c.decodeIfPresent(Int.self, forKey: .partCount)
+        hasOlder = try c.decodeIfPresent(Bool.self, forKey: .hasOlder)
+        oldest = try c.decodeIfPresent(TimelineCursor.self, forKey: .oldest)
         summaries = try c.decodeIfPresent([SessionSummary].self, forKey: .summaries)
         session = try c.decodeIfPresent(SessionDetail.self, forKey: .session)
         events = try c.decodeIfPresent([AgentIngressEvent].self, forKey: .events)

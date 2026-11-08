@@ -4,6 +4,12 @@
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Lumi connects to your Mac directly when both are on the same network, so sessions update faster than through the relay.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_lumi-relay._tcp</string>
+	</array>
 	<key>LumiRelayURL</key>
 	<string>$(LUMI_RELAY_URL)</string>
 	<key>CFBundleURLTypes</key>

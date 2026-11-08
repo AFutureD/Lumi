@@ -3,13 +3,19 @@ import Foundation
 
 /// Pure reduction over multi-part relay payloads.
 public enum RelayFrameReduction {
-    /// One session arrives as ordered `session_full` / `session_timeline`
-    /// parts; part 0 carries the summary and turns, later parts append
-    /// timeline. `nil` when the buffer is empty or carries no detail.
+    /// One page arrives as `session_tail` / `session_history` /
+    /// `session_timeline` parts; part 0 carries the summary and turns, every
+    /// part carries rows in whatever order they were sent. The rows come
+    /// back in timeline order. `nil` when the buffer is empty or carries no
+    /// detail. (Mirrors apply parts one by one; this is for tests and tools
+    /// that want the page whole.)
     public static func assemble(parts: [RemoteSessionPayload]) -> SessionDetail? {
         let ordered = parts.sorted { ($0.part ?? 0) < ($1.part ?? 0) }
         guard let first = ordered.first?.session else { return nil }
-        let timeline = ordered.compactMap(\.session).flatMap(\.timeline)
+        let timeline = ordered.compactMap(\.session).flatMap(\.timeline).sorted { lhs, rhs in
+            if lhs.occurredAt == rhs.occurredAt { return lhs.id.rawValue < rhs.id.rawValue }
+            return lhs.occurredAt < rhs.occurredAt
+        }
         return SessionDetail(summary: first.summary, turns: first.turns, timeline: timeline)
     }
 

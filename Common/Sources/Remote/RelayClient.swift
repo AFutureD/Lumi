@@ -14,6 +14,10 @@ public enum RelayClientError: Error, Sendable {
     case server(status: Int, message: String)
     case notConnected
     case unsupportedMessage
+    /// The Relay closed the socket because this end speaks an older wire
+    /// format than it accepts (close code 4004): retrying changes nothing,
+    /// the app has to be updated.
+    case upgradeRequired
 }
 
 public struct RelayDeviceRecord: Codable, Hashable, Sendable {
@@ -456,6 +460,9 @@ public enum RelayIncomingMessage: Sendable {
     case pairingDevice(RelayPairingDeviceNotice)
     /// Host socket only: the iPhone cancelled the live pairing session.
     case pairingClosed(sessionID: String, reason: String)
+    /// Host socket only: a device row changed at the Relay (paired, revoked,
+    /// push token) — read the list again instead of waiting for the poll.
+    case devicesChanged
 
     /// What a log line calls the message: frames by kind and sequence,
     /// control messages by type — never their payload.
@@ -466,6 +473,7 @@ public enum RelayIncomingMessage: Sendable {
         case let .error(error): "error:\(error.code)"
         case .pairingDevice: "pairing_device"
         case let .pairingClosed(_, reason): "pairing_closed:\(reason)"
+        case .devicesChanged: "devices_changed"
         }
     }
 }
@@ -509,12 +517,9 @@ public actor RelayWebSocketClient {
 
     public func send(_ frame: RelayRoutingFrame) async throws {
         guard let task else { throw RelayClientError.notConnected }
-        let encoded = try TransportCoding.makeEncoder().encode(frame)
-        guard let text = String(data: encoded, encoding: .utf8) else {
-            throw RelayClientError.invalidResponse
-        }
+        let encoded = try RelayFrameCodec.encode(frame)
         do {
-            try await task.send(.string(text))
+            try await task.send(.data(encoded))
         } catch {
             log.warning("relay_ws_send_failed", metadata: .fields([
                 "kind": frame.kind.rawValue,
@@ -531,6 +536,21 @@ public actor RelayWebSocketClient {
             "sequence": frame.sequence,
             "bytes": encoded.count,
         ]))
+    }
+
+    /// A protocol-level ping (RFC 6455); resolves when the pong arrives.
+    /// The Relay's runtime answers these without waking the host's object.
+    public func ping() async throws {
+        guard let task else { throw RelayClientError.notConnected }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            task.sendPing { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     public func next() async throws -> RelayIncomingMessage {
@@ -550,29 +570,43 @@ public actor RelayWebSocketClient {
                 "http_status": httpStatus,
                 "close_code": closeCode,
                 "credential_rejected": rejected,
+                "upgrade_required": closeCode == Self.upgradeRequiredCloseCode,
                 "error": error,
             ]))
             if rejected {
                 throw RelayClientError.unauthorized
             }
+            if closeCode == Self.upgradeRequiredCloseCode {
+                throw RelayClientError.upgradeRequired
+            }
             throw error
         }
-        let data: Data
+        // Routing frames are binary (`RelayFrameCodec`); everything the
+        // Relay itself says is JSON text.
+        let incoming: RelayIncomingMessage
+        let bytes: Int
         switch message {
-        case let .string(text): data = Data(text.utf8)
-        case let .data(value): data = value
+        case let .data(value):
+            incoming = .frame(try RelayFrameCodec.decode(value))
+            bytes = value.count
+        case let .string(text):
+            let data = Data(text.utf8)
+            incoming = try Self.decodeControl(data)
+            bytes = data.count
         @unknown default: throw RelayClientError.unsupportedMessage
         }
-        let incoming = try Self.decode(data)
         log.debug("relay_ws_received", metadata: .fields([
             "type": incoming.logName,
-            "bytes": data.count,
+            "bytes": bytes,
         ]))
         return incoming
     }
 
-    private static func decode(_ data: Data) throws -> RelayIncomingMessage {
-        if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
+    private static func decodeControl(_ data: Data) throws -> RelayIncomingMessage {
+        guard let control = try? JSONDecoder().decode(ControlMessage.self, from: data) else {
+            throw RelayClientError.unsupportedMessage
+        }
+        do {
             switch control.type {
             case "presence":
                 if let online = control.online { return .presence(online: online) }
@@ -598,11 +632,13 @@ public actor RelayWebSocketClient {
                 if let sessionID = control.sessionID {
                     return .pairingClosed(sessionID: sessionID, reason: control.reason ?? "cancelled")
                 }
+            case "devices_changed":
+                return .devicesChanged
             default:
                 break
             }
         }
-        return .frame(try TransportCoding.makeDecoder().decode(RelayRoutingFrame.self, from: data))
+        throw RelayClientError.unsupportedMessage
     }
 
     public func disconnect() {
@@ -622,6 +658,9 @@ public actor RelayWebSocketClient {
 
     /// The worker's close code for a device the Mac revoked (`host-relay.ts`).
     public static let deviceRevokedCloseCode = 4003
+    /// The worker's close code for a socket speaking an older wire format
+    /// (text routing frames): the end has to be updated (`host-relay.ts`).
+    public static let upgradeRequiredCloseCode = 4004
 
     /// True when the Relay refused the credentials: the upgrade came back
     /// 401/403, or the socket was closed with the revoked-device code.

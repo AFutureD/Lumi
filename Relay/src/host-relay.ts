@@ -6,14 +6,15 @@ import { sendPush, type APNSEnvironment } from "./apns";
 import {
   MAX_WEBSOCKET_MESSAGE_BYTES,
   RequestValidationError,
+  type RelayRoutingFrame,
   isRecord,
+  parseBinaryFrame,
   parseNotificationSend,
   parsePairingDecision,
   parsePairingDeviceSubmission,
   parsePairingReveal,
   parsePairingSessionCreate,
   parsePushTokenUpdate,
-  parseRelayRoutingFrame,
   readLimitedJSON,
 } from "./protocol";
 import { RATE_LIMITS_TABLE, RateLimitError, enforceRateLimit, sourceBucket } from "./rate-limit";
@@ -92,6 +93,16 @@ export class HostRelay extends DurableObject<Env> {
   private log: Logger;
   private wsLog: Logger;
   private pairingLog: Logger;
+  /**
+   * The highest host → device sequence seen per channel while this object
+   * instance is awake. Memory only: a reused sequence inside one life of the
+   * object is refused and reported, and after hibernation or eviction the
+   * first frame of each channel is the new floor. Both ends check sequences
+   * themselves under their session keys, so this layer costs no storage
+   * write on the hot path — the write used to gate every forwarded frame
+   * behind a durability commit.
+   */
+  private lastHostSequences = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -223,19 +234,23 @@ export class HostRelay extends DurableObject<Env> {
       ? new TextEncoder().encode(message).byteLength
       : message.byteLength;
     if (byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
+      // One frame too big is that frame's problem: the sender hears so and
+      // the socket — and every channel behind it — stays up.
       this.wsLog.warn("ws_message_too_large", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength });
-      ws.close(1009, "message too large");
+      ws.send(JSON.stringify({ type: "error", code: "frame_too_large", bytes: byteLength }));
       return;
     }
-    if (typeof message !== "string") {
-      this.wsLog.warn("ws_message_not_text", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength });
-      ws.close(1003, "routing frames must be JSON text");
+    // Routing frames are binary; text here is an end from before 1.4, and it
+    // must not sit in a reconnect loop: 4004 tells it to update.
+    if (typeof message === "string") {
+      this.wsLog.warn("ws_message_not_binary", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength });
+      ws.close(4004, "upgrade required: routing frames are binary");
       return;
     }
 
-    let frame: ReturnType<typeof parseRelayRoutingFrame>;
+    let frame: RelayRoutingFrame;
     try {
-      frame = parseRelayRoutingFrame(JSON.parse(message) as unknown);
+      frame = parseBinaryFrame(message);
     } catch (error) {
       ws.send(JSON.stringify({ type: "error", code: "invalid_frame" }));
       this.wsLog.warn("ws_frame_invalid", { role: attachment.role, deviceID: attachment.deviceID, bytes: byteLength, error });
@@ -257,7 +272,7 @@ export class HostRelay extends DurableObject<Env> {
   }
 
   /** Sends to one peer socket; a closed or failing socket is logged, not thrown. */
-  private forward(target: WebSocket, raw: string, role: "host" | "device"): boolean {
+  private forward(target: WebSocket, raw: string | ArrayBuffer, role: "host" | "device"): boolean {
     try {
       target.send(raw);
       return true;
@@ -509,6 +524,7 @@ export class HostRelay extends DurableObject<Env> {
       device_token: deviceToken,
     }, pairedAt);
     this.pairingLog.info("pairing_approved", { sessionID: shortID(sessionID), deviceID: session.device_id });
+    this.notifyDevicesChanged("paired");
     return json({ state: "approved", deviceID: session.device_id });
   }
 
@@ -606,6 +622,14 @@ export class HostRelay extends DurableObject<Env> {
     for (const socket of this.hostSockets()) this.forward(socket, raw, "host");
   }
 
+  /**
+   * A device row changed (paired, revoked, purged, push token): the host
+   * reads the list again now instead of on its next poll.
+   */
+  private notifyDevicesChanged(reason: string): void {
+    this.sendToHost({ type: "devices_changed", reason });
+  }
+
   // MARK: - Host, devices, sockets
 
   private async registerHost(request: Request): Promise<Response> {
@@ -663,6 +687,7 @@ export class HostRelay extends DurableObject<Env> {
       socket.close(4003, "device revoked");
     }
     this.log.info(purge ? "device_purged" : "device_revoked", { deviceID, rows, socketsClosed: sockets.length });
+    this.notifyDevicesChanged(purge ? "purged" : "revoked");
     return new Response(null, { status: 204 });
   }
 
@@ -678,6 +703,7 @@ export class HostRelay extends DurableObject<Env> {
       deviceID,
     );
     this.log.info("device_push_token_updated", { deviceID, environment: input.environment });
+    this.notifyDevicesChanged("push_token");
     return new Response(null, { status: 204 });
   }
 
@@ -823,12 +849,12 @@ export class HostRelay extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  private handleHostFrame(frame: ReturnType<typeof parseRelayRoutingFrame>, raw: string, bytes: number): void {
+  private handleHostFrame(frame: RelayRoutingFrame, raw: ArrayBuffer, bytes: number): void {
     // Sequences belong to a paired Mac/iOS channel. Two devices may both send
     // sequence 1; sessions inside either channel never influence this cursor.
-    const channelKey = `last_host_sequence:${frame.deviceID ?? "broadcast"}`;
-    const lastSequence = Number(this.metadata(channelKey) ?? "-1");
-    if (frame.sequence <= lastSequence) {
+    const channelKey = frame.deviceID ?? "broadcast";
+    const lastSequence = this.lastHostSequences.get(channelKey);
+    if (lastSequence !== undefined && frame.sequence <= lastSequence) {
       this.wsLog.warn("ws_sequence_rejected", {
         deviceID: frame.deviceID,
         kind: frame.kind,
@@ -848,7 +874,7 @@ export class HostRelay extends DurableObject<Env> {
       }
       return;
     }
-    this.setMetadata(channelKey, String(frame.sequence));
+    this.lastHostSequences.set(channelKey, frame.sequence);
 
     const targets = frame.deviceID
       ? this.ctx.getWebSockets(`device:${frame.deviceID}`)
@@ -857,9 +883,8 @@ export class HostRelay extends DurableObject<Env> {
     for (const target of targets) {
       if (this.forward(target, raw, "device")) delivered += 1;
     }
-    // A frame per line is only worth it while debugging a channel; the
-    // sequence on every line makes gaps visible without a decoder.
-    this.wsLog.debug("ws_host_frame_forwarded", {
+    // One line per frame, with its size: the record a slow sync is read from.
+    this.wsLog.info("ws_host_frame_forwarded", {
       deviceID: frame.deviceID,
       kind: frame.kind,
       sequence: frame.sequence,
@@ -874,8 +899,8 @@ export class HostRelay extends DurableObject<Env> {
 
   private handleDeviceFrame(
     attachment: SocketAttachment,
-    frame: ReturnType<typeof parseRelayRoutingFrame>,
-    raw: string,
+    frame: RelayRoutingFrame,
+    raw: ArrayBuffer,
     socket: WebSocket,
     bytes: number,
   ): void {
@@ -897,7 +922,7 @@ export class HostRelay extends DurableObject<Env> {
     for (const host of hosts) {
       if (this.forward(host, raw, "host")) delivered += 1;
     }
-    this.wsLog.debug("ws_device_frame_forwarded", {
+    this.wsLog.info("ws_device_frame_forwarded", {
       deviceID: attachment.deviceID,
       sequence: frame.sequence,
       bytes,

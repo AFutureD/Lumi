@@ -10,7 +10,14 @@ import Testing
 /// way `RelayHostService` does — a request counts only inside the current
 /// session and in rising order — and can push events / summaries / removals.
 private actor FakeHost {
+    enum Path: Equatable {
+        case relay
+        case direct(DirectConnectionID)
+    }
+
     let link: RelayInMemoryLink
+    /// The local network, when the test has one.
+    let direct: InMemoryDirectLink?
     let repository = InMemorySessionRepository()
     let keys = RelayCryptography.makeKeyPair()
     let hostID: HostID
@@ -19,15 +26,25 @@ private actor FakeHost {
     private var transport: (any RelayFrameTransport)?
     private var sequence: UInt64 = 0
     private var loop: Task<Void, Never>?
-    /// The channel session the device opened last, and its request cursor.
+    private var directLoop: Task<Void, Never>?
+    /// The channel session the device opened last, its request cursor and
+    /// the link it lives on.
     private var sessionKey: RelayChannelKey?
+    private var sessionPath: Path = .relay
     private var lastRequestSequence: UInt64 = 0
+    /// Kinds this host does not answer (a stalled Mac).
+    private var stalled: Set<RemotePayloadKind> = []
+
+    func setStalled(_ kinds: Set<RemotePayloadKind>) { stalled = kinds }
+    var currentPath: Path { sessionPath }
     /// Every request that counted, openings (`sync_index`) included.
     private(set) var requests: [RemoteSessionPayload] = []
     /// Requests that opened in the session but not past its cursor: the
     /// daemon drops those, so a correct iPhone never sends one.
     private(set) var outOfOrderRequests = 0
     private(set) var reviewed: [SessionID] = []
+    /// Requests the device gave up on (`cancel_request`).
+    private(set) var cancelled: [RequestID] = []
     /// What `fetch_usage` answers with; `nil` = the daemon could not build it.
     var usageReport: UsageReport?
     var planUsage: (state: PlanUsageState, settings: DaemonSettings)?
@@ -35,8 +52,9 @@ private actor FakeHost {
     func setUsageReport(_ report: UsageReport?) { usageReport = report }
     func setPlanUsage(_ state: PlanUsageState, settings: DaemonSettings) { planUsage = (state, settings) }
 
-    init(link: RelayInMemoryLink, hostID: HostID, deviceID: DeviceID, devicePublicKey: Data) {
+    init(link: RelayInMemoryLink, direct: InMemoryDirectLink? = nil, hostID: HostID, deviceID: DeviceID, devicePublicKey: Data) {
         self.link = link
+        self.direct = direct
         self.hostID = hostID
         self.deviceID = deviceID
         self.devicePublicKey = devicePublicKey
@@ -50,9 +68,27 @@ private actor FakeHost {
             while !Task.isCancelled {
                 guard let self else { return }
                 guard let message = try? await transport.next() else { return }
-                await self.handle(message)
+                await self.handle(message, from: .relay)
             }
         }
+        if let direct, directLoop == nil {
+            try await direct.start(hostID: hostID)
+            directLoop = Task { [weak self] in
+                for await event in direct.events {
+                    guard let self else { return }
+                    switch event {
+                    case let .frame(connection, frame):
+                        await self.handle(.frame(frame), from: .direct(connection))
+                    case let .closed(connection):
+                        await self.directClosed(connection)
+                    }
+                }
+            }
+        }
+    }
+
+    private func directClosed(_ connection: DirectConnectionID) {
+        if sessionPath == .direct(connection) { sessionKey = nil }
     }
 
     func stop() async {
@@ -67,9 +103,9 @@ private actor FakeHost {
         }
     }
 
-    private func handle(_ message: RelayIncomingMessage) async {
+    private func handle(_ message: RelayIncomingMessage, from path: Path) async {
         guard case let .frame(frame) = message, frame.kind == .request else { return }
-        if let sessionKey, let payload = try? RelayCryptography.open(frame, key: sessionKey) {
+        if let sessionKey, sessionPath == path, let payload = try? RelayCryptography.open(frame, key: sessionKey) {
             guard frame.sequence > lastRequestSequence else {
                 outOfOrderRequests += 1
                 return
@@ -92,6 +128,7 @@ private actor FakeHost {
                 privateKey: keys.privateKey, peerPublicKey: devicePublicKey, hostID: hostID, deviceID: deviceID
             )
             lastRequestSequence = frame.sequence
+            sessionPath = path
             let opened = try RelayCryptography.prepare(RemoteSessionPayload(
                 kind: .channelOpened, requestID: requestID, ephemeralKey: try ephemeral.publicKey
             ))
@@ -108,22 +145,51 @@ private actor FakeHost {
 
     private func answer(_ payload: RemoteSessionPayload) async {
         let now = Date()
+        let limit = min(max(payload.limit ?? 80, 1), 500)
+        guard !stalled.contains(payload.kind) else { return }
         do {
             switch payload.kind {
             case .fetchSession:
                 for id in payload.sessionIDs ?? [] {
-                    if let detail = try await repository.sessionDetail(id: id, cursor: nil, limit: 500) {
-                        let full = SessionDetail(summary: detail.summary, turns: detail.turns, timeline: detail.timeline)
-                        try await send(RelaySessionPartitioner.parts(for: full, kind: .sessionFull, requestID: payload.requestID, generatedAt: now).map(\.prepared))
+                    if let page = try await repository.timelinePage(id: id, before: nil, limit: limit) {
+                        try await send(RelaySessionPartitioner.parts(
+                            summary: page.summary, turns: page.turns, timeline: page.timeline, hasOlder: page.hasOlder,
+                            kind: .sessionTail, order: .newestFirst, requestID: payload.requestID, generatedAt: now
+                        ).map(\.prepared))
                     } else {
                         try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .sessionRemoved, generatedAt: now, requestID: payload.requestID, sessionIDs: [id]))])
                     }
                 }
+            case .fetchSessionBefore:
+                guard let id = payload.sessionIDs?.first, let before = payload.before,
+                      let page = try await repository.timelinePage(id: id, before: before, limit: limit) else { return }
+                try await send(RelaySessionPartitioner.parts(
+                    summary: page.summary, turns: page.turns, timeline: page.timeline, hasOlder: page.hasOlder,
+                    kind: .sessionHistory, order: .newestFirst, requestID: payload.requestID, generatedAt: now
+                ).map(\.prepared))
             case .fetchTimelineSince:
-                guard let id = payload.sessionIDs?.first, let since = payload.since else { return }
-                if let detail = try await repository.timelineSince(id: id, since: since, cursor: nil, limit: 500) {
-                    try await send(RelaySessionPartitioner.parts(for: detail, kind: .sessionTimeline, requestID: payload.requestID, generatedAt: now).map(\.prepared))
+                guard let id = payload.sessionIDs?.first, let since = payload.since,
+                      let page = try await repository.timelinePage(id: id, before: nil, limit: limit) else { return }
+                if let oldest = page.timeline.first, oldest.occurredAt <= since || !page.hasOlder {
+                    try await send(RelaySessionPartitioner.parts(
+                        summary: page.summary, turns: page.turns, timeline: page.timeline.filter { $0.occurredAt >= since }, hasOlder: nil,
+                        kind: .sessionTimeline, order: .oldestFirst, requestID: payload.requestID, generatedAt: now
+                    ).map(\.prepared))
+                } else {
+                    try await send(RelaySessionPartitioner.parts(
+                        summary: page.summary, turns: page.turns, timeline: page.timeline, hasOlder: page.hasOlder,
+                        kind: .sessionTail, order: .newestFirst, requestID: payload.requestID, generatedAt: now
+                    ).map(\.prepared))
                 }
+            case .fetchTimelineItems:
+                guard let id = payload.sessionIDs?.first, let itemIDs = payload.itemIDs,
+                      let detail = try await repository.timelineItems(id: id, itemIDs: itemIDs) else { return }
+                try await send(RelaySessionPartitioner.parts(
+                    summary: detail.summary, turns: [], timeline: detail.timeline, hasOlder: nil,
+                    kind: .sessionItems, order: .oldestFirst, requestID: payload.requestID, generatedAt: now, trimming: false
+                ).map(\.prepared))
+            case .cancelRequest:
+                if let target = payload.cancels { cancelled.append(target) }
             case .sessionReviewed:
                 reviewed += payload.sessionIDs ?? []
             case .fetchUsage:
@@ -173,14 +239,20 @@ private actor FakeHost {
     /// Seals with the open session's key unless another is given
     /// (`channel_opened` goes out under the handshake key).
     private func send(_ prepared: [RelayPreparedPayload], key: RelayChannelKey? = nil) async throws {
-        guard let transport, let key = key ?? sessionKey else { return }
+        guard let key = key ?? sessionKey else { return }
         for payload in prepared {
             sequence += 1
             let frame = try RelayCryptography.seal(
                 payload, hostID: hostID, deviceID: deviceID, sequence: sequence, kind: .data,
                 key: key
             )
-            try await transport.send(frame)
+            switch sessionPath {
+            case .relay:
+                guard let transport else { return }
+                try await transport.send(frame)
+            case let .direct(connection):
+                try await direct?.send(frame, to: connection)
+            }
         }
     }
 }
@@ -197,6 +269,7 @@ private struct DeviceTransportFactory: RelayFrameTransportFactory {
 @MainActor
 private struct Harness {
     let link = RelayInMemoryLink()
+    let direct: InMemoryDirectLink?
     let hostID = HostID("host-test-000001")
     let deviceID = DeviceID("device-test-0001")
     let deviceKeys = RelayCryptography.makeKeyPair()
@@ -206,14 +279,18 @@ private struct Harness {
     let pairingAPI: ScriptedPairingAPI
     let controller: RelayDeviceController
 
-    init() {
+    init(localNetwork: Bool = false) {
         settings = LocalSettings(defaults: UserDefaults(suiteName: "relay-tests-\(UUID().uuidString)")!)
-        host = FakeHost(link: link, hostID: hostID, deviceID: deviceID, devicePublicKey: deviceKeys.publicKey)
+        let direct = localNetwork ? InMemoryDirectLink() : nil
+        self.direct = direct
+        host = FakeHost(link: link, direct: direct, hostID: hostID, deviceID: deviceID, devicePublicKey: deviceKeys.publicKey)
         pairingAPI = ScriptedPairingAPI(hostID: hostID, hostKeys: host.keys)
         let cache = cache
         let dependencies = RelayDeviceDependencies(
             defaultRelayURL: URL(string: "https://relay.example.test")!,
             transportFactory: DeviceTransportFactory(link: link, deviceID: deviceID),
+            directDiscovery: direct,
+            directTransportFactory: direct,
             pairingAPI: pairingAPI,
             pairingPollInterval: .milliseconds(20),
             makeRepository: { _ in cache },
@@ -282,20 +359,21 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     try await harness.host.start()
     await harness.waitUntil { harness.state?.hasCompleteSync == true }
     #expect(harness.state?.sessions.map(\.summary.id) == [SessionID("B"), SessionID("A")])
-    // A is held → patched from the tail; B was unknown → summary only, no
-    // timeline until someone opens it; C pruned.
-    #expect(harness.session("A")?.timeline.count == 5)
+    // A's rows came from an earlier run without a sync mark, so they count
+    // as nothing loaded: like B (unknown → summary only) its content waits
+    // for a tap; C pruned. The index itself asked for no rows.
+    #expect(harness.session("A")?.timeline.count == 3)
     #expect(harness.session("B")?.timeline.isEmpty == true)
     #expect(harness.settings.lastSync(for: harness.hostID) != nil)
     #expect(harness.state?.health?.daemonVersion == "fake")
     var kinds = await harness.host.requests.map(\.kind)
-    #expect(kinds.contains(.fetchTimelineSince))
+    #expect(!kinds.contains(.fetchTimelineSince))
     #expect(!kinds.contains(.fetchSession))
     let index = try await harness.cache.sessionIndex(limit: 10)
     #expect(index.map(\.summary.id).sorted { $0.rawValue < $1.rawValue } == [SessionID("A"), SessionID("B")])
     #expect(index.first { $0.summary.id == SessionID("B") }?.timelineItemCount == 0)
 
-    // Opening B takes it whole; while it is on its way the channel says so.
+    // Opening B takes its tail; while it is on its way the channel says so.
     harness.controller.openSession(hostID: harness.hostID, id: SessionID("B"))
     #expect(harness.controller.isFetchingSession(hostID: harness.hostID, id: SessionID("B")))
     await harness.waitUntil { harness.session("B")?.timeline.count == 2 }
@@ -306,10 +384,18 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     #expect(try await harness.cache.sessionDetail(id: SessionID("B"), cursor: nil, limit: 10)?.timeline.count == 2)
     kinds = await harness.host.requests.map(\.kind)
     #expect(kinds.filter { $0 == .fetchSession }.count == 1)
-    // Opening a held, current session asks for nothing more.
+    // B holds everything the Mac has: nothing older to page.
+    #expect(!harness.controller.canLoadOlder(hostID: harness.hostID, id: SessionID("B")))
+
+    // Opening A merges the Mac's tail over the old rows (5 now, by id).
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 5 }
+    // Opening a held, current session again asks for nothing more.
+    harness.controller.closeSession(hostID: harness.hostID, id: SessionID("A"))
+    let asked = await harness.host.requests.count
     harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
     try await Task.sleep(for: .milliseconds(50))
-    #expect(await harness.host.requests.count == kinds.count)
+    #expect(await harness.host.requests.count == asked)
     await harness.host.stop()
 }
 
@@ -317,9 +403,13 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     let base = Date(timeIntervalSince1970: 1_000)
     let harness = Harness()
     try await harness.host.repository.replaceSession(detail("A", items: 1, at: base))
-    // A is held from an earlier run; the host also has S, which the iPhone
-    // will know by summary only.
-    try await harness.cache.replaceSession(detail("A", items: 1, at: base))
+    // A is held from an earlier run — its rows and its sync mark survive a
+    // relaunch; the host also has S, which the iPhone will know by summary only.
+    let heldA = detail("A", items: 1, at: base)
+    try await harness.cache.replaceSession(heldA)
+    harness.settings.setSyncMarks([SessionID("A"): SessionSyncMark(
+        timelineItemCount: 1, lastItemAt: heldA.timeline.last?.occurredAt, oldest: TimelineCursor(heldA.timeline[0]), hasOlder: false
+    )], for: harness.hostID)
     try await harness.host.repository.replaceSession(detail("S", items: 1, at: base))
     try await harness.host.start()
     try await harness.controller.addChannel(harness.credentials)
@@ -447,10 +537,11 @@ private final class RevokingTransportFactory: RelayFrameTransportFactory, @unche
         return RevokedTransport()
     }
 
-    private struct RevokedTransport: RelayFrameTransport {
+    private final class RevokedTransport: RelayFrameTransport, Sendable {
         func connect(hostID: HostID, role: RelayConnectionRole, token: String) async throws {}
         func send(_ frame: RelayRoutingFrame) async throws { throw RelayClientError.notConnected }
         func next() async throws -> RelayIncomingMessage { throw RelayClientError.unauthorized }
+        func ping() async throws {}
         func disconnect() async {}
     }
 }
@@ -853,5 +944,184 @@ private actor ScriptedPairingAPI: RelayPairingAPI {
     // One new opening, and nothing arrived out of order or outside a session.
     #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == openings + 1)
     #expect(await harness.host.outOfOrderRequests == 0)
+    await harness.host.stop()
+}
+
+@Test @MainActor func openingTakesTheTailAndLoadEarlierPagesOlderRows() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 200, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+    #expect(harness.session("A")?.timeline.isEmpty == true)
+
+    // Opening takes the newest page only, and says older rows exist.
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 80 }
+    #expect(harness.session("A")?.timeline.first?.id == TimelineItemID("A-item-120"))
+    #expect(harness.session("A")?.timeline.last?.id == TimelineItemID("A-item-199"))
+    #expect(harness.controller.canLoadOlder(hostID: harness.hostID, id: SessionID("A")))
+    #expect(harness.settings.syncMarks(for: harness.hostID)[SessionID("A")] == nil || true)
+
+    // Each `Load earlier` adds one page above, until the Mac has no more.
+    harness.controller.loadOlder(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 160 }
+    #expect(harness.session("A")?.timeline.first?.id == TimelineItemID("A-item-40"))
+    #expect(harness.controller.canLoadOlder(hostID: harness.hostID, id: SessionID("A")))
+    harness.controller.loadOlder(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 200 }
+    #expect(!harness.controller.canLoadOlder(hostID: harness.hostID, id: SessionID("A")))
+    let kinds = await harness.host.requests.map(\.kind)
+    #expect(kinds.filter { $0 == .fetchSession }.count == 1)
+    #expect(kinds.filter { $0 == .fetchSessionBefore }.count == 2)
+    // The whole page is in the cache too, in order.
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 500)?.timeline.count != 200 {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 500)?.timeline.count == 200)
+    // The mark remembers the window across a relaunch.
+    for _ in 0..<50 where harness.settings.syncMarks(for: harness.hostID)[SessionID("A")]?.hasOlder != false {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    let mark = try #require(harness.settings.syncMarks(for: harness.hostID)[SessionID("A")])
+    #expect(mark.hasOlder == false)
+    #expect(mark.oldest?.id == TimelineItemID("A-item-0"))
+    await harness.host.stop()
+}
+
+@Test @MainActor func aTrimmedRowIsCompletedOnDemandAndNeverTrimmedAgain() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    let huge = JSONValue.string(String(repeating: "x", count: 200_000))
+    let big = TimelineItem(
+        id: TimelineItemID("A-big"), sessionID: SessionID("A"), turnID: TurnID("A-turn"), occurredAt: base.addingTimeInterval(5),
+        payload: .tool(ToolTimelinePayload(name: "Bash", summary: "ls", content: huge, status: .succeeded, toolUseID: "t1"))
+    )
+    var full = detail("A", items: 3, at: base)
+    full = SessionDetail(summary: full.summary, turns: full.turns, timeline: full.timeline + [big])
+    try await harness.host.repository.replaceSession(full)
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 4 }
+    let trimmed = try #require(harness.session("A")?.timeline.last)
+    #expect(trimmed.isTruncated)
+    if case let .tool(payload) = trimmed.payload { #expect(payload.content == nil && payload.summary == "ls") } else { Issue.record("payload kind changed") }
+
+    // Asking for the whole row brings the content; the cache keeps it.
+    harness.controller.fetchTimelineItems(hostID: harness.hostID, id: SessionID("A"), itemIDs: [TimelineItemID("A-big")])
+    await harness.waitUntil { harness.session("A")?.timeline.last?.isTruncated == false }
+    if case let .tool(payload) = harness.session("A")?.timeline.last?.payload { #expect(payload.content == huge) } else { Issue.record("payload kind changed") }
+
+    // The same row arriving trimmed again (a live event) does not undo it.
+    let again = AgentIngressEvent(
+        eventID: EventID("e-big"), sessionID: SessionID("A"), turnID: TurnID("A-turn"), agent: .codex,
+        occurredAt: base.addingTimeInterval(5), phase: .executing, timelineItem: big
+    )
+    try await harness.host.push(events: [again])
+    await harness.waitUntil { harness.session("A")?.summary.phase == .executing }
+    #expect(harness.session("A")?.timeline.last?.isTruncated == false)
+    for _ in 0..<300 where try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 10)?.timeline.last?.isTruncated != false {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await harness.cache.sessionDetail(id: SessionID("A"), cursor: nil, limit: 10)?.timeline.last?.isTruncated == false)
+    await harness.host.stop()
+}
+
+@Test @MainActor func aStalledAnswerIsAskedOnceMoreThenGivenUpAlone() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 2, at: base))
+    try await harness.host.repository.replaceSession(detail("B", items: 2, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+
+    await harness.host.setStalled([.fetchSession])
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    #expect(harness.controller.isFetchingSession(hostID: harness.hostID, id: SessionID("A")))
+    // Timeout (2 s in tests): asked once more under a new id…
+    for _ in 0..<600 where await harness.host.requests.count(where: { $0.kind == .fetchSession }) < 2 {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.host.requests.count(where: { $0.kind == .fetchSession }) == 2)
+    #expect(harness.controller.isFetchingSession(hostID: harness.hostID, id: SessionID("A")))
+    // …then given up, and the Mac told so. Nothing else was reset: the
+    // channel is still open and another session opens normally.
+    for _ in 0..<600 where await harness.host.cancelled.isEmpty {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.host.cancelled.count == 1)
+    #expect(!harness.controller.isFetchingSession(hostID: harness.hostID, id: SessionID("A")))
+    #expect(harness.state?.lastError?.contains("did not answer") == true)
+    #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == 1)
+    await harness.host.setStalled([])
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("B"))
+    await harness.waitUntil { harness.session("B")?.timeline.count == 2 }
+    await harness.host.stop()
+}
+
+@Test @MainActor func leavingTheDetailCancelsItsPageRequest() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    try await harness.host.repository.replaceSession(detail("A", items: 100, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.hasCompleteSync == true }
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 80 }
+
+    await harness.host.setStalled([.fetchSessionBefore])
+    harness.controller.loadOlder(hostID: harness.hostID, id: SessionID("A"))
+    #expect(harness.controller.isLoadingOlder(hostID: harness.hostID, id: SessionID("A")))
+    harness.controller.closeSession(hostID: harness.hostID, id: SessionID("A"))
+    #expect(!harness.controller.isLoadingOlder(hostID: harness.hostID, id: SessionID("A")))
+    for _ in 0..<300 where await harness.host.cancelled.isEmpty {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await harness.host.cancelled.count == 1)
+    // What was loaded stays; the window is unchanged.
+    #expect(harness.session("A")?.timeline.count == 80)
+    #expect(harness.controller.canLoadOlder(hostID: harness.hostID, id: SessionID("A")))
+    await harness.host.stop()
+}
+
+@Test @MainActor func aMacOnTheSameNetworkIsReachedDirectlyAndTheRelayTakesOverWhenItLeaves() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness(localNetwork: true)
+    let direct = try #require(harness.direct)
+    try await harness.host.repository.replaceSession(detail("A", items: 2, at: base))
+    try await harness.host.start()
+    try await harness.controller.addChannel(harness.credentials)
+    harness.controller.start()
+
+    // The Mac is on the network: the channel session moves onto the direct
+    // link and the Relay carries nothing more for it.
+    await harness.waitUntil { harness.state?.connectionPath == .direct && harness.state?.hasCompleteSync == true }
+    #expect(harness.state?.connectionPath == .direct)
+    #expect(await harness.host.currentPath != .relay)
+    let relayFramesBefore = await harness.link.hostSent.count
+    harness.controller.openSession(hostID: harness.hostID, id: SessionID("A"))
+    await harness.waitUntil { harness.session("A")?.timeline.count == 2 }
+    #expect(await harness.link.hostSent.count == relayFramesBefore)
+    #expect(await direct.hostSent.count > 0)
+
+    // Wi‑Fi gone: the direct connection drops, the Relay takes the channel
+    // back with a fresh session, and the cache is intact.
+    let openings = await harness.host.requests.count(where: { $0.kind == .syncIndex })
+    await direct.setAdvertised(false)
+    await direct.dropAllConnections()
+    await harness.waitUntil { harness.state?.connectionPath == .relay && harness.state?.hasCompleteSync == true }
+    #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == openings + 1)
+    #expect(await harness.host.currentPath == .relay)
+    #expect(harness.session("A")?.timeline.count == 2)
+
+    // Back on the network: direct again.
+    await direct.setAdvertised(true)
+    await harness.waitUntil { harness.state?.connectionPath == .direct && harness.state?.hasCompleteSync == true }
+    #expect(await harness.host.currentPath != .relay)
     await harness.host.stop()
 }

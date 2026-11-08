@@ -1,7 +1,7 @@
 import Foundation
 
 public struct ProtocolVersion: Codable, Hashable, Sendable {
-    public static let current = ProtocolVersion(major: 1, minor: 3)
+    public static let current = ProtocolVersion(major: 1, minor: 4)
 
     public let major: UInt16
     public let minor: UInt16

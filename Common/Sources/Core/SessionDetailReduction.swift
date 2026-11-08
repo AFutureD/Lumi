@@ -30,26 +30,34 @@ public enum SessionDetailReduction {
         )
     }
 
-    /// `mergeSession(partial)` on a loaded detail: the partial's summary wins,
-    /// its rows upsert into the timeline, and turns are re-projected from the
-    /// merged rows (the partial's own `turns` are derivable and ignored).
+    /// `mergeSession(partial)` on a loaded detail: the partial's summary wins
+    /// and its rows upsert into the timeline. Turns: the daemon's own list
+    /// when the partial carries one (part 0 of a page — the one view that
+    /// knows turns the loaded tail does not reach), otherwise re-projected
+    /// from the merged rows.
     public static func merging(_ partial: SessionDetail, into detail: SessionDetail) -> SessionDetail {
         let timeline = merge(partial.timeline, into: detail.timeline)
         return SessionDetail(
             summary: partial.summary,
-            turns: TurnProjection.turns(from: timeline, sessionID: partial.summary.id),
+            turns: partial.turns.isEmpty ? TurnProjection.turns(from: timeline, sessionID: partial.summary.id) : partial.turns,
             timeline: timeline
         )
     }
 
-    /// Upsert by id; an older copy never regresses a newer row.
+    /// Upsert by id under one rule every store shares: an older copy never
+    /// regresses a newer row, and a trimmed Relay copy never replaces a
+    /// whole one (`TimelineItem.truncated`).
+    public static func supersedes(_ incoming: TimelineItem, _ existing: TimelineItem) -> Bool {
+        incoming.occurredAt >= existing.occurredAt && !(incoming.isTruncated && !existing.isTruncated)
+    }
+
     public static func merge(_ items: [TimelineItem], into timeline: [TimelineItem]) -> [TimelineItem] {
         guard !items.isEmpty else { return timeline }
         var merged = timeline
         var indexByID = Dictionary(merged.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
         for item in items {
             if let index = indexByID[item.id] {
-                if item.occurredAt >= merged[index].occurredAt { merged[index] = item }
+                if supersedes(item, merged[index]) { merged[index] = item }
             } else {
                 indexByID[item.id] = merged.count
                 merged.append(item)

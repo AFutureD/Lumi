@@ -3,6 +3,28 @@ import Foundation
 
 public typealias RolloutCursor = Transport.RolloutCursor
 
+/// One page of a session's timeline read from its newest end
+/// (`SessionRepository.timelinePage`): the summary and turns a part 0
+/// carries, the rows in timeline order, and whether older rows exist
+/// before them.
+public struct TimelinePage: Hashable, Sendable {
+    public let summary: SessionSummary
+    public let turns: [TurnSummary]
+    /// Oldest first — the order the timeline is stored and shown in.
+    public let timeline: [TimelineItem]
+    public let hasOlder: Bool
+
+    public init(summary: SessionSummary, turns: [TurnSummary], timeline: [TimelineItem], hasOlder: Bool) {
+        self.summary = summary
+        self.turns = turns
+        self.timeline = timeline
+        self.hasOlder = hasOlder
+    }
+
+    /// The position to page older history from: the oldest row here.
+    public var oldest: TimelineCursor? { timeline.first.map(TimelineCursor.init) }
+}
+
 public protocol SessionRepository: Sendable {
     @discardableResult
     func apply(_ event: AgentIngressEvent) async throws -> Bool
@@ -41,6 +63,15 @@ public protocol SessionRepository: Sendable {
     /// `occurredAt >= since`, paged like `sessionDetail` (`cursor` is the
     /// offset inside the filtered rows).
     func timelineSince(id: SessionID, since: Date, cursor: PaginationCursor?, limit: Int) async throws -> SessionDetail?
+    /// One page of the timeline as a lazy mirror reads it, newest end first:
+    /// without `before`, the newest `limit` rows (the tail); with it, the
+    /// `limit` rows just before that position. Rows come back in timeline
+    /// order (oldest first) with the summary, every turn, and whether rows
+    /// older than the page remain. `nil` when the session is not retained.
+    func timelinePage(id: SessionID, before: TimelineCursor?, limit: Int) async throws -> TimelinePage?
+    /// The named rows, whole — for a mirror that holds trimmed copies
+    /// (`TimelineItem.truncated`). Unknown ids are simply absent.
+    func timelineItems(id: SessionID, itemIDs: [TimelineItemID]) async throws -> SessionDetail?
     /// The turn a transcript increment continues: the turnID of the newest
     /// turn-scoped timeline item (`TurnProjection.currentTurnID`).
     func currentTurnID(sessionID: SessionID) async throws -> TurnID?
@@ -281,7 +312,7 @@ public actor InMemorySessionRepository: SessionRepository {
         if let item = event.timelineItem {
             var items = timeline[event.sessionID, default: []]
             if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
-                if item.occurredAt >= items[existingIndex].occurredAt {
+                if SessionDetailReduction.supersedes(item, items[existingIndex]) {
                     items[existingIndex] = item
                 }
             } else {
@@ -413,7 +444,7 @@ public actor InMemorySessionRepository: SessionRepository {
         var items = timeline[id, default: []]
         for item in detail.timeline {
             if let existingIndex = items.firstIndex(where: { $0.id == item.id }) {
-                if item.occurredAt >= items[existingIndex].occurredAt {
+                if SessionDetailReduction.supersedes(item, items[existingIndex]) {
                     items[existingIndex] = item
                 }
             } else {
@@ -447,6 +478,26 @@ public actor InMemorySessionRepository: SessionRepository {
             timeline: page,
             nextCursor: nextOffset < items.count ? PaginationCursor(value: String(nextOffset)) : nil
         )
+    }
+
+    public func timelinePage(id: SessionID, before: TimelineCursor?, limit: Int) async throws -> TimelinePage? {
+        guard let summary = sessions[id] else { return nil }
+        let pageSize = max(1, min(limit, 500))
+        var items = timeline[id, default: []]
+        if let before {
+            items = items.filter { item in
+                item.occurredAt < before.occurredAt
+                    || (item.occurredAt == before.occurredAt && item.id.rawValue < before.id.rawValue)
+            }
+        }
+        let page = Array(items.suffix(pageSize))
+        return TimelinePage(summary: summary, turns: sortedTurns(id), timeline: page, hasOlder: items.count > page.count)
+    }
+
+    public func timelineItems(id: SessionID, itemIDs: [TimelineItemID]) async throws -> SessionDetail? {
+        guard let summary = sessions[id] else { return nil }
+        let wanted = Set(itemIDs)
+        return SessionDetail(summary: summary, turns: [], timeline: timeline[id, default: []].filter { wanted.contains($0.id) })
     }
 
     public func rolloutCursor(sessionID: SessionID) async throws -> RolloutCursor? {

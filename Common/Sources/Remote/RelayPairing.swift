@@ -67,7 +67,9 @@ public enum RelayURLValidation {
         case "https":
             break
         case "http":
-            guard allowInsecureLocalhost, host == "localhost" || host == "127.0.0.1" else { return nil }
+            // DEBUG only: `wrangler dev` on this Mac (localhost) or on another
+            // machine of the same private network (a phone testing against it).
+            guard allowInsecureLocalhost, host == "localhost" || host == "127.0.0.1" || Self.isPrivateNetworkAddress(host) else { return nil }
         default:
             return nil
         }
@@ -82,6 +84,16 @@ public enum RelayURLValidation {
     /// What the screens show for a Relay: its host (`relay.lumi.huanan.app`).
     public static func displayHost(_ url: URL) -> String {
         url.host ?? url.absoluteString
+    }
+
+    /// RFC 1918 IPv4 ranges: 10/8, 172.16/12, 192.168/16.
+    static func isPrivateNetworkAddress(_ host: String) -> Bool {
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+        if parts[0] == 10 { return true }
+        if parts[0] == 172, (16...31).contains(parts[1]) { return true }
+        if parts[0] == 192, parts[1] == 168 { return true }
+        return false
     }
 }
 

@@ -54,6 +54,8 @@ private final class RelayHarness {
         pinDeviceKey: Bool = true,
         pairingCodeLifetime: Duration = .seconds(5 * 60),
         pairingDecisionTimeout: Duration = .seconds(60),
+        heartbeat: RelayHeartbeat = RelayHeartbeat(interval: .seconds(60), timeout: .seconds(60)),
+        directLink: (any DirectHostLink)? = nil,
         restarting previous: RelayHarness? = nil
     ) {
         if let previous {
@@ -86,13 +88,15 @@ private final class RelayHarness {
             statePath: statePath,
             transportFactory: link,
             rest: rest,
+            directLink: directLink,
             hostName: { "Test Mac" },
             healthProvider: healthProvider,
             usageProvider: usageProvider,
             planUsageProvider: planUsageProvider,
             onConnectionChange: { connected in connections.append(connected) },
             eventCoalesceInterval: .milliseconds(20),
-            reconnectDelay: .milliseconds(50),
+            reconnectBackoff: RelayBackoff(base: .milliseconds(50), cap: .milliseconds(200)),
+            heartbeat: heartbeat,
             deviceRefreshInterval: .seconds(60),
             healthInterval: .seconds(60),
             pairingCodeLifetime: pairingCodeLifetime,
@@ -331,7 +335,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
     await harness.stop()
 }
 
-@Test func hostServesFullSessionsTimelineTailsAndRemovals() async throws {
+@Test func hostServesSessionTailsSinceTailsAndRemovals() async throws {
     let base = Date(timeIntervalSince1970: 1_000)
     let harness = RelayHarness()
     try await harness.repository.replaceSession(sampleDetail("a", items: 5, at: base))
@@ -339,7 +343,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
 
     try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: [SessionID("a"), SessionID("ghost")]), via: device)
     let seen = try await harness.collect(from: device) { $0.kind == .sessionRemoved }
-    let full = seen.map(\.payload).filter { $0.kind == .sessionFull }
+    let full = seen.map(\.payload).filter { $0.kind == .sessionTail }
     #expect(full.count == 1)
     #expect(full[0].requestID == RequestID("f"))
     let assembled = try #require(RelayFrameReduction.assemble(parts: full))
@@ -775,7 +779,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
         sessionIDs: [SessionID("a"), SessionID("ghost"), SessionID("ghost-child")]
     ), via: device)
     let fetched = try await harness.collect(from: device) { $0.kind == .sessionRemoved && $0.sessionIDs == [SessionID("ghost-child")] }
-    #expect(fetched.map(\.payload).filter { $0.kind == .sessionFull }.count == 1)
+    #expect(fetched.map(\.payload).filter { $0.kind == .sessionTail }.count == 1)
     let removedIDs = fetched.map(\.payload).filter { $0.kind == .sessionRemoved }.compactMap(\.sessionIDs)
     #expect(removedIDs == [[SessionID("ghost")], [SessionID("ghost-child")]])
 
@@ -873,13 +877,13 @@ private final class PresetLog: @unchecked Sendable {
     try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: ["a", "b", "c", "d"].map(SessionID.init)), via: device)
     try await harness.request(RemoteSessionPayload(kind: .fetchUsage, requestID: RequestID("u"), usageRange: .today), via: device)
     let seen = try await harness.collect(from: device) { payload in
-        payload.kind == .sessionFull && payload.session?.summary.id == SessionID("d")
+        payload.kind == .sessionTail && payload.session?.summary.id == SessionID("d")
     }
     let kinds = seen.map(\.payload.kind)
     let usageAt = try #require(kinds.firstIndex(of: .usageReport))
-    let lastSessionAt = try #require(kinds.lastIndex(of: .sessionFull))
+    let lastSessionAt = try #require(kinds.lastIndex(of: .sessionTail))
     #expect(usageAt < lastSessionAt)
-    #expect(kinds.filter { $0 == .sessionFull }.count == 4)
+    #expect(kinds.filter { $0 == .sessionTail }.count == 4)
     await harness.stop()
 }
 
@@ -1320,4 +1324,171 @@ private final class PresetLog: @unchecked Sendable {
     #expect(upgraded.current(for: device) == 12)
     #expect(upgraded.verifiedKey(for: device) == key)
     #expect(upgraded.revokedAt(for: device) == nil)
+}
+
+// MARK: - Pages, cancellation and the local network
+
+@Test func hostServesOlderPagesWithTheirWindowFacts() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    try await harness.repository.replaceSession(sampleDetail("a", items: 200, at: base))
+    let device = try await harness.connectAndSync()
+
+    // The tail: the newest 80 rows, newest first across parts, with where the
+    // page starts and that more exists.
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("tail"), sessionIDs: [SessionID("a")], limit: 80), via: device)
+    let tail = try await harness.collect(from: device) { $0.kind == .sessionTail && $0.session?.nextCursor == nil }.map(\.payload)
+    let tailPage = try #require(RelayFrameReduction.assemble(parts: tail))
+    #expect(tailPage.timeline.count == 80)
+    #expect(tailPage.timeline.first?.id == TimelineItemID("a-item-120"))
+    #expect(tailPage.turns.count == 1)
+    #expect(tail.last?.hasOlder == true)
+    #expect(tail.last?.oldest == TimelineCursor(tailPage.timeline[0]))
+
+    // One page older than the window, then the last one.
+    try await harness.request(RemoteSessionPayload(
+        kind: .fetchSessionBefore, requestID: RequestID("older"), sessionIDs: [SessionID("a")], limit: 80, before: tail.last?.oldest
+    ), via: device)
+    let older = try await harness.collect(from: device) { $0.kind == .sessionHistory && $0.session?.nextCursor == nil }.map(\.payload)
+    let olderPage = try #require(RelayFrameReduction.assemble(parts: older))
+    #expect(olderPage.timeline.map(\.id).first == TimelineItemID("a-item-40"))
+    #expect(olderPage.timeline.map(\.id).last == TimelineItemID("a-item-119"))
+    #expect(older.last?.hasOlder == true)
+    try await harness.request(RemoteSessionPayload(
+        kind: .fetchSessionBefore, requestID: RequestID("oldest"), sessionIDs: [SessionID("a")], limit: 80, before: older.last?.oldest
+    ), via: device)
+    let oldest = try await harness.collect(from: device) { $0.kind == .sessionHistory && $0.session?.nextCursor == nil }.map(\.payload)
+    #expect(RelayFrameReduction.assemble(parts: oldest)?.timeline.count == 40)
+    #expect(oldest.last?.hasOlder == false)
+
+    // A since-tail the newest page can answer comes as rows to add; one it
+    // cannot (too far back) comes as a fresh tail instead.
+    try await harness.request(RemoteSessionPayload(
+        kind: .fetchTimelineSince, requestID: RequestID("since"), sessionIDs: [SessionID("a")], since: base.addingTimeInterval(190), limit: 80
+    ), via: device)
+    let since = try await harness.collect(from: device) { $0.kind == .sessionTimeline && $0.session?.nextCursor == nil }.map(\.payload)
+    #expect(RelayFrameReduction.assemble(parts: since)?.timeline.count == 10)
+    try await harness.request(RemoteSessionPayload(
+        kind: .fetchTimelineSince, requestID: RequestID("far"), sessionIDs: [SessionID("a")], since: base.addingTimeInterval(10), limit: 80
+    ), via: device)
+    let far = try await harness.collect(from: device) { $0.kind == .sessionTail && $0.requestID == RequestID("far") && $0.session?.nextCursor == nil }.map(\.payload)
+    #expect(RelayFrameReduction.assemble(parts: far)?.timeline.count == 80)
+    await harness.stop()
+}
+
+@Test func hostTrimsLargeRowsAndServesThemWholeOnRequest() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    let huge = JSONValue.string(String(repeating: "y", count: 300_000))
+    let small = sampleDetail("a", items: 2, at: base)
+    let big = TimelineItem(
+        id: TimelineItemID("a-big"), sessionID: SessionID("a"), turnID: TurnID("a-turn"), occurredAt: base.addingTimeInterval(5),
+        payload: .tool(ToolTimelinePayload(name: "Bash", summary: "cat", content: huge, status: .succeeded, toolUseID: "t"))
+    )
+    try await harness.repository.replaceSession(SessionDetail(summary: small.summary, turns: small.turns, timeline: small.timeline + [big]))
+    let device = try await harness.connectAndSync()
+
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("t"), sessionIDs: [SessionID("a")], limit: 80), via: device)
+    let tail = try await harness.collect(from: device) { $0.kind == .sessionTail && $0.session?.nextCursor == nil }.map(\.payload)
+    let trimmed = try #require(RelayFrameReduction.assemble(parts: tail)?.timeline.first { $0.id == TimelineItemID("a-big") })
+    #expect(trimmed.isTruncated)
+    if case let .tool(payload) = trimmed.payload { #expect(payload.content == nil) } else { Issue.record("payload kind changed") }
+
+    try await harness.request(RemoteSessionPayload(kind: .fetchTimelineItems, requestID: RequestID("i"), sessionIDs: [SessionID("a")], itemIDs: [TimelineItemID("a-big")]), via: device)
+    let items = try await harness.collect(from: device) { $0.kind == .sessionItems && $0.session?.nextCursor == nil }.map(\.payload)
+    let whole = try #require(RelayFrameReduction.assemble(parts: items)?.timeline.first)
+    #expect(!whole.isTruncated)
+    if case let .tool(payload) = whole.payload { #expect(payload.content == huge) } else { Issue.record("payload kind changed") }
+    await harness.stop()
+}
+
+@Test func aCancelledRequestStopsBeforeItsNextPartAndARepeatSupersedesTheQueuedOne() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = RelayHarness()
+    // Many large rows: the tail is several parts, enough for a cancel to
+    // land while it is still going out.
+    let rows = (0..<120).map { index in
+        TimelineItem(
+            id: TimelineItemID("a-item-\(index)"), sessionID: SessionID("a"), turnID: TurnID("a-turn"),
+            occurredAt: base.addingTimeInterval(Double(index)),
+            payload: .message(MessageTimelinePayload(role: .assistant, text: String(repeating: "\(index)-", count: 20_000)))
+        )
+    }
+    let summary = sampleDetail("a", items: 1, at: base).summary
+    try await harness.repository.replaceSession(SessionDetail(summary: summary, turns: [], timeline: rows))
+    let device = try await harness.connectAndSync()
+
+    // Two asks for the same session back to back: the daemon answers the
+    // newest id only.
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("first"), sessionIDs: [SessionID("a")], limit: 120), via: device)
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("second"), sessionIDs: [SessionID("a")], limit: 120), via: device)
+    let seen = try await harness.collect(from: device) { $0.requestID == RequestID("second") && $0.session?.nextCursor == nil }.map(\.payload)
+    let firstParts = seen.filter { $0.requestID == RequestID("first") }
+    let secondParts = seen.filter { $0.requestID == RequestID("second") }
+    #expect(secondParts.last?.session?.nextCursor == nil)
+    #expect(firstParts.isEmpty || firstParts.last?.session?.nextCursor != nil)
+
+    // A cancel right behind an ask: the answer stops short.
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("third"), sessionIDs: [SessionID("a")], limit: 120), via: device)
+    try await harness.request(RemoteSessionPayload(kind: .cancelRequest, requestID: RequestID("c"), cancels: RequestID("third")), via: device)
+    // Something unrelated afterwards marks the end of what the daemon sent.
+    try await harness.request(RemoteSessionPayload(kind: .fetchTimelineSince, requestID: RequestID("end"), sessionIDs: [SessionID("a")], since: base.addingTimeInterval(119), limit: 10), via: device)
+    let after = try await harness.collect(from: device) { $0.requestID == RequestID("end") }.map(\.payload)
+    let thirdParts = after.filter { $0.requestID == RequestID("third") }
+    #expect(thirdParts.last?.session?.nextCursor != nil || thirdParts.isEmpty)
+    await harness.stop()
+}
+
+@Test func hostAnswersOnTheLocalNetworkAndKeepsThatSessionWhenTheRelayDrops() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let direct = InMemoryDirectLink()
+    let harness = RelayHarness(directLink: direct)
+    try await harness.repository.replaceSession(sampleDetail("a", items: 3, at: base))
+    // The Relay side is up; the local listener advertises as soon as the
+    // host has its identity.
+    // `connectAndSync` registers the host, which also starts the listener.
+    _ = try await harness.connectAndSync()
+
+    // An iPhone on the same network opens its channel session over TCP.
+    let local = direct.makeTransport(to: DirectEndpoint(hostID: try harness.hostCredentials.hostID, serviceName: "memory"))
+    try await local.connect(hostID: try harness.hostCredentials.hostID, role: .device(harness.deviceID), token: "token")
+    guard case .presence(online: true) = try await local.next() else {
+        Issue.record("the direct link should report the host online at once")
+        return
+    }
+    try await harness.sync(via: local)
+    let index = try await harness.collect(from: local) { $0.kind == .sessionIndex }
+    #expect(index.last?.payload.index?.count == 1)
+    #expect(await direct.hostSent.count == index.count + 1)
+    let relayFramesBefore = await harness.link.hostSent.count
+
+    // A push goes out over the direct session, not the Relay.
+    let event = AgentIngressEvent(
+        eventID: EventID("e1"), sessionID: SessionID("a"), turnID: TurnID("a-turn"), agent: .codex,
+        occurredAt: base.addingTimeInterval(10), phase: .executing,
+        timelineItem: TimelineItem(
+            id: TimelineItemID("a-item-9"), sessionID: SessionID("a"), turnID: TurnID("a-turn"),
+            occurredAt: base.addingTimeInterval(10), payload: .message(MessageTimelinePayload(role: .assistant, text: "hi"))
+        )
+    )
+    _ = try await harness.repository.apply(event)
+    harness.hub.publish(event)
+    let pushed = try await harness.collect(from: local) { $0.kind == .sessionMessage }
+    #expect(pushed.last?.payload.events?.count == 1)
+    #expect(await harness.link.hostSent.count == relayFramesBefore)
+
+    // The Relay socket drops and comes back: the direct session is untouched.
+    await harness.link.dropHost()
+    for _ in 0..<300 where await !harness.link.isHostConnected {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    try await harness.request(RemoteSessionPayload(kind: .fetchSession, requestID: RequestID("f"), sessionIDs: [SessionID("a")], limit: 80), via: local)
+    let tail = try await harness.collect(from: local) { $0.kind == .sessionTail && $0.session?.nextCursor == nil }
+    #expect(RelayFrameReduction.assemble(parts: tail.map(\.payload))?.timeline.count == 4)
+
+    // The connection closes: its session is gone, a frame for it goes nowhere.
+    await direct.dropAllConnections()
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(await direct.connectionCount == 0)
+    await harness.stop()
 }
