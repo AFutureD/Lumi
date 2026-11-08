@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
 ### Daemon
 
 - [Lumi for Mac] - “Settings > Daemon”不再只有 Running / Not connected：状态拆成 Not installed、Waiting for approval in Login Items、Not running、Starting…、Not responding、Incompatible daemon、Error，药丸按色区分，卡片底部写出原因；按钮跟着状态走（未安装 Install & Start、等待允许时 Open Login Items…、已注册 Reinstall / Stop & uninstall）。本地缓存数据库的错误单独显示，不再混进连接状态。
@@ -189,7 +191,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AFutureD/Lumi/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AFutureD/Lumi/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AFutureD/Lumi/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/AFutureD/Lumi/compare/v0.1.5...v0.1.6
