@@ -59,8 +59,9 @@ final class DirectConnection: @unchecked Sendable {
         (frames, framesIn) = AsyncStream.makeStream(of: Result<RelayRoutingFrame, any Error>.self)
     }
 
-    /// Starts the connection and resolves once it is ready (or failed).
-    func start() async throws {
+    /// Starts the connection and resolves once it is ready (or failed, or
+    /// `timeout` passed without either — the connection is cancelled then).
+    func start(timeout: Duration) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             queue.async { [self] in
                 guard !started else { continuation.resume(); return }
@@ -70,6 +71,13 @@ final class DirectConnection: @unchecked Sendable {
                     self?.stateChanged(state)
                 }
                 connection.start(queue: queue)
+                let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
+                queue.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                    guard let self, let pending = ready else { return }
+                    ready = nil
+                    pending.resume(throwing: RelayClientError.notConnected)
+                    connection.cancel()
+                }
             }
         }
     }
@@ -236,28 +244,37 @@ public final class BonjourHostListener: DirectHostLink, Sendable {
         state.withLock { $0.connections[connection.id] = connection }
         log.info("direct_connection_accepted", metadata: .fields(["connection": connection.id.rawValue, "open": count + 1]))
         connection.accept()
+        // The tasks below capture only values that are Sendable on their
+        // own (the id, the stream, the continuation, a mutex): the
+        // connection object stays behind the state lock and is reached by id.
+        let id = connection.id
+        let frames = connection.frames
+        let eventsIn = eventsIn
         let sawFrame = Mutex(false)
+        // Idle deadline: a connection that never speaks is closed.
+        let idle = Task { [weak self] in
+            try? await Task.sleep(for: DirectNetwork.idleTimeout)
+            guard !Task.isCancelled, !sawFrame.withLock({ $0 }) else { return }
+            self?.cancel(id)
+        }
         let reader = Task { [weak self] in
-            guard let self else { return }
-            // Idle deadline: a connection that never speaks is closed.
-            let idle = Task {
-                try? await Task.sleep(for: DirectNetwork.idleTimeout)
-                guard !Task.isCancelled, !sawFrame.withLock({ $0 }) else { return }
-                connection.cancel()
-            }
-            for await result in connection.frames {
+            for await result in frames {
                 switch result {
                 case let .success(frame):
                     sawFrame.withLock { $0 = true }
-                    eventsIn.yield(.frame(connection.id, frame))
+                    eventsIn.yield(.frame(id, frame))
                 case let .failure(error):
-                    log.debug("direct_connection_read_failed", metadata: .fields(["connection": connection.id.rawValue, "error": error]))
+                    log.debug("direct_connection_read_failed", metadata: .fields(["connection": id.rawValue, "error": error]))
                 }
             }
             idle.cancel()
-            remove(connection.id)
+            self?.remove(id)
         }
-        state.withLock { $0.readers[connection.id] = reader }
+        state.withLock { $0.readers[id] = reader }
+    }
+
+    private func cancel(_ id: DirectConnectionID) {
+        state.withLock { $0.connections[id] }?.cancel()
     }
 
     private func remove(_ id: DirectConnectionID) {
@@ -430,19 +447,12 @@ public actor DirectClientTransport: RelayFrameTransport {
         self.connection = connection
         finished = false
         buffer = []
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await connection.start() }
-            group.addTask {
-                try await Task.sleep(for: DirectNetwork.connectTimeout)
-                throw RelayClientError.notConnected
-            }
-            try await group.next()
-            group.cancelAll()
-        }
+        try await connection.start(timeout: DirectNetwork.connectTimeout)
         // The daemon itself is the far end: it is online while the connection is.
         deliver(.success(.presence(online: true)))
+        let frames = connection.frames
         reader = Task { [weak self] in
-            for await result in connection.frames {
+            for await result in frames {
                 switch result {
                 case let .success(frame): await self?.deliver(.success(.frame(frame)))
                 case let .failure(error): await self?.deliver(.failure(error))
