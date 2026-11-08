@@ -15,13 +15,41 @@ private let dbLog = Logger(label: "db")
 /// inject a scripted stub.
 public protocol MacDaemonClient: Sendable {
     func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse
+    /// Same round trip, allowed to start a stopped daemon first (`wake`) and
+    /// to log an expected failure below warning (`failureLogLevel`).
+    func request(
+        _ request: IPCRequest,
+        socketPath: String,
+        timeoutSeconds: Int64,
+        wake: DaemonWakePolicy?,
+        failureLogLevel: Logger.Level
+    ) throws -> IPCResponse
 }
 
 extension MacDaemonClient {
+    /// Stubs without a wake path answer as if none were asked for.
+    public func request(
+        _ request: IPCRequest,
+        socketPath: String,
+        timeoutSeconds: Int64,
+        wake: DaemonWakePolicy?,
+        failureLogLevel: Logger.Level
+    ) throws -> IPCResponse {
+        try self.request(request, socketPath: socketPath, timeoutSeconds: timeoutSeconds)
+    }
+
     /// The blocking socket round trip off the main actor.
-    func send(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64 = 15) async throws -> IPCResponse {
+    func send(
+        _ request: IPCRequest,
+        socketPath: String,
+        timeoutSeconds: Int64 = 15,
+        wake: DaemonWakePolicy? = nil,
+        failureLogLevel: Logger.Level = .warning
+    ) async throws -> IPCResponse {
         try await Task.detached {
-            try self.request(request, socketPath: socketPath, timeoutSeconds: timeoutSeconds)
+            try self.request(
+                request, socketPath: socketPath, timeoutSeconds: timeoutSeconds, wake: wake, failureLogLevel: failureLogLevel
+            )
         }.value
     }
 }
@@ -30,6 +58,23 @@ extension DaemonIPCClient: MacDaemonClient {
     public func request(_ request: IPCRequest, socketPath: String, timeoutSeconds: Int64) throws -> IPCResponse {
         try self.request(request, socketPath: socketPath, timeout: .seconds(timeoutSeconds))
     }
+
+    public func request(
+        _ request: IPCRequest,
+        socketPath: String,
+        timeoutSeconds: Int64,
+        wake: DaemonWakePolicy?,
+        failureLogLevel: Logger.Level
+    ) throws -> IPCResponse {
+        try self.request(
+            request, socketPath: socketPath, timeout: .seconds(timeoutSeconds), wake: wake, failureLogLevel: failureLogLevel
+        )
+    }
+}
+
+/// A `health` request that came back without one.
+public enum DaemonProbeError: Error, Sendable {
+    case healthMissing
 }
 
 @MainActor
@@ -53,7 +98,22 @@ public final class MacSessionStore {
     /// natural lead fallback when the lead itself is deselected.
     public private(set) var selectedIDs: [SessionID] = []
     public private(set) var health: DaemonHealth?
-    public private(set) var connectionError: String?
+    /// Why the daemon is not answering, classified; `nil` while it is.
+    public private(set) var connectionFailure: DaemonConnectionFailure?
+    /// The Mac's own sync database failing — separate from the daemon, which
+    /// may be perfectly fine.
+    public private(set) var cacheError: String?
+    /// The failure as one line, for places that only show text.
+    public var connectionError: String? { connectionFailure?.description }
+    /// Pacing of the event stream's reconnects; reset by every answer.
+    private var reconnectBackoff = DaemonReconnectBackoff()
+    /// Whether this store talks to the installed daemon (the one launchd
+    /// runs for the app's LaunchAgent). False under `LUMI_SOCKET` /
+    /// `LUMI_SUPPORT_DIRECTORY` and in tests, where the daemon on the socket
+    /// is some other process and the registered service must be left alone.
+    /// Decided from the socket, not from the wake policy: `LUMI_WAKE_SERVICE=0`
+    /// only turns the wake off.
+    public let talksToInstalledDaemon: Bool
     public private(set) var dataRevision: UInt64 = 0
 
     private let client: any MacDaemonClient
@@ -67,7 +127,7 @@ public final class MacSessionStore {
     private let cache: SQLiteSessionRepository?
     private let cachePath: String
     private var started = false
-    private var observers: [UUID: () -> Void] = [:]
+    private var observers = ObserverRegistry()
     private var pendingSelectionID: SessionID?
     private var reconcileTask: Task<Void, Never>?
     private var reconcilePending = false
@@ -94,6 +154,7 @@ public final class MacSessionStore {
     ) {
         self.socketPath = socketPath
         self.wake = wake ?? .default(socketPath: socketPath, timeout: .seconds(8))
+        self.talksToInstalledDaemon = DaemonEndpoint.isInstalledDaemonSocket(socketPath)
         self.client = client
         let resolvedCachePath: String
         if let cachePath {
@@ -115,7 +176,7 @@ public final class MacSessionStore {
             cache = try SQLiteSessionRepository(path: resolvedCachePath)
         } catch {
             cache = nil
-            connectionError = "Unable to open the macOS sync database: \(error)"
+            cacheError = "Unable to open the macOS sync database: \(error)"
             dbLog.error("cache_open_failed", metadata: .fields(["path": resolvedCachePath, "error": error]))
         }
     }
@@ -146,9 +207,7 @@ public final class MacSessionStore {
 
     @discardableResult
     public func observe(_ observer: @escaping () -> Void) -> UUID {
-        let id = UUID()
-        observers[id] = observer
-        return id
+        observers.add(observer)
     }
 
     /// The session driving the detail pane, synchronously — set before the
@@ -206,7 +265,7 @@ public final class MacSessionStore {
                 if let detail { detailCache.insert(detail) } else { detailCache.evict(sessionID) }
                 notifyObservers()
             } catch {
-                connectionError = "Unable to read the macOS sync database: \(error)"
+                cacheError = "Unable to read the macOS sync database: \(error)"
                 dbLog.error("cache_read_failed", metadata: .fields(["session": sessionID.rawValue, "error": error]))
                 notifyObservers()
             }
@@ -229,6 +288,7 @@ public final class MacSessionStore {
 
     /// Daemon-management actions: resync from the daemon as it is.
     public func refresh() {
+        guard started else { return }
         scheduleReconcile()
         connectEventStream()
     }
@@ -473,7 +533,7 @@ public final class MacSessionStore {
         let pruned = try await cache.pruneSessions(keeping: Set(index.map(\.id)))
         if pruned > 0 { noteCacheWrite() }
         health = healthResponse.health
-        connectionError = nil
+        daemonAnswered()
         dbLog.info("reconciled", metadata: .fields([
             "daemon_sessions": index.count,
             "local_sessions": local.count,
@@ -543,7 +603,7 @@ public final class MacSessionStore {
                 // row the database now holds.
                 await reloadFromCache(persistedDataChanged: true)
             } catch {
-                connectionError = "Unable to apply the daemon summary: \(error)"
+                cacheError = "Unable to apply the daemon summary: \(error)"
                 dbLog.error("summary_apply_failed", metadata: .fields(["session": summary.id.rawValue, "error": error]))
                 notifyObservers()
             }
@@ -591,7 +651,7 @@ public final class MacSessionStore {
                         }
                     } catch {
                         failed += 1
-                        self.connectionError = "Unable to apply the daemon event: \(error)"
+                        self.cacheError = "Unable to apply the daemon event: \(error)"
                         dbLog.error("event_apply_failed", metadata: .fields([
                             "session": event.sessionID.rawValue,
                             "event": event.eventID.rawValue,
@@ -608,7 +668,7 @@ public final class MacSessionStore {
                 ]))
             }
             if appliedAny {
-                self.connectionError = nil
+                self.cacheError = nil
                 await self.reloadFromCache(
                     persistedDataChanged: true,
                     appliedEvents: appliedEvents
@@ -676,7 +736,7 @@ public final class MacSessionStore {
                     || detailChanged
             )
         } catch {
-            connectionError = "Unable to read the macOS sync database: \(error)"
+            cacheError = "Unable to read the macOS sync database: \(error)"
             dbLog.error("cache_reload_failed", metadata: .fields(["error": error]))
             notifyObservers()
         }
@@ -722,17 +782,42 @@ public final class MacSessionStore {
         modelStampEpoch &+= 1
     }
 
+    /// One `health` round trip fresh from the socket — what the lifecycle
+    /// controller trusts after a restart instead of this store's last
+    /// reading, which a slow reconcile may still be writing. `wake` lets the
+    /// request start a stopped daemon through launchd; it is never granted
+    /// for an isolated daemon (`self.wake` is nil there).
+    /// `quietly` logs a failed probe at debug: a restart verification
+    /// expects failures while the daemon comes up and reports the outcome
+    /// once itself.
+    public func probeHealth(wake: Bool, quietly: Bool = false) async throws -> DaemonHealth {
+        let response = try await client.send(
+            IPCRequest(operation: .health),
+            socketPath: socketPath,
+            timeoutSeconds: 2,
+            wake: wake ? self.wake : nil,
+            failureLogLevel: quietly ? .debug : .warning
+        )
+        if let failure = response.failure { throw failure }
+        guard let health = response.health else { throw DaemonProbeError.healthMissing }
+        return health
+    }
+
     private func connectEventStream() {
         guard started, !eventSubscriber.isRunning else { return }
         let subscriber = eventSubscriber
         let socketPath = socketPath
         let wake = wake
+        // Once the outage is announced, the connect layer's own failure
+        // lines follow this store's to debug.
+        let failureLogLevel: Logger.Level = reconnectBackoff.isLoud ? .warning : .debug
         let storeReference = WeakMacSessionStoreReference(self)
         Task.detached {
             do {
                 try subscriber.start(
                     socketPath: socketPath,
                     wake: wake,
+                    failureLogLevel: failureLogLevel,
                     onEvent: { event in
                         Task { @MainActor in storeReference.value?.enqueueAgentEvent(event) }
                     },
@@ -743,7 +828,7 @@ public final class MacSessionStore {
                         Task { @MainActor in
                             guard let store = storeReference.value else { return }
                             store.health = health
-                            store.connectionError = nil
+                            store.daemonAnswered()
                             store.notifyObservers()
                             // The stream just (re)connected; catch up on
                             // whatever it missed while down.
@@ -762,15 +847,46 @@ public final class MacSessionStore {
         }
     }
 
+    /// A health frame or an answered request: the daemon is reachable, any
+    /// outage is over, and the next one starts the reconnect series over.
+    private func daemonAnswered() {
+        connectionFailure = nil
+        let attempts = reconnectBackoff.recordConnected()
+        if attempts > 0 {
+            log.info("daemon_stream_recovered", metadata: .fields(["attempts": attempts]))
+        }
+    }
+
+    /// The stream failed to connect or dropped. Reconnects back off from 2 s
+    /// to 30 s; the first few disconnects are warnings, then one line marks
+    /// the outage and the rest go to debug until the daemon answers again.
     private func eventStreamDisconnected(_ error: Error? = nil) {
         guard started else { return }
         health = nil
-        connectionError = error.map(String.init(describing:)) ?? "Daemon event stream disconnected"
-        log.warning("daemon_stream_disconnected", metadata: .fields(["reconnect_in_s": 2, "error": error]))
+        connectionFailure = error.map(DaemonConnectionFailure.init) ?? .streamClosed
+        reconnectBackoff.recordDisconnect()
+        let delay = reconnectBackoff.delay
+        let fields: Logger.Metadata = .fields([
+            "attempt": reconnectBackoff.consecutiveFailures,
+            "reconnect_in_s": delay.components.seconds,
+            "error": error,
+        ])
+        if reconnectBackoff.isLoud {
+            log.warning("daemon_stream_disconnected", metadata: fields)
+        } else if reconnectBackoff.isGoingQuiet {
+            log.warning("daemon_stream_unavailable", metadata: .fields([
+                "attempts": reconnectBackoff.consecutiveFailures,
+                "max_reconnect_in_s": DaemonReconnectBackoff.maximumDelay.components.seconds,
+                "detail": "further disconnects log at debug until the daemon answers",
+                "error": error,
+            ]))
+        } else {
+            log.debug("daemon_stream_disconnected", metadata: fields)
+        }
         notifyObservers()
         guard reconnectTask == nil else { return }
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: delay)
             guard let self, self.started, !Task.isCancelled else { return }
             self.reconnectTask = nil
             self.connectEventStream()
@@ -842,7 +958,7 @@ public final class MacSessionStore {
     }
 
     private func handleConnectionFailure(_ error: Error, action: String) {
-        connectionError = String(describing: error)
+        connectionFailure = DaemonConnectionFailure(error)
         health = nil
         log.warning("daemon_request_failed", metadata: .fields(["action": action, "error": error]))
         notifyObservers()
@@ -850,7 +966,7 @@ public final class MacSessionStore {
 
     private func notifyObservers(dataChanged: Bool = false) {
         if dataChanged { dataRevision &+= 1 }
-        observers.values.forEach { $0() }
+        observers.notify()
     }
 
     /// The app's synchronized session cache, by function under the shared

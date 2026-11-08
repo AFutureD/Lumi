@@ -157,21 +157,27 @@ final class SettingsDetailViewController: NSViewController {
 
     private(set) var selectedSection: SettingsSectionID = .general
 
-    init(store: MacSessionStore, nook: HaloController, softwareUpdates: SoftwareUpdateController, planUsage: PlanUsageModel) {
+    init(
+        store: MacSessionStore,
+        daemonLifecycle: DaemonLifecycleController,
+        nook: HaloController,
+        softwareUpdates: SoftwareUpdateController,
+        planUsage: PlanUsageModel
+    ) {
         self.store = store
         self.nook = nook
         self.softwareUpdates = softwareUpdates
         self.planUsage = planUsage
-        model = SettingsModel(store: store)
+        model = SettingsModel(store: store, daemonLifecycle: daemonLifecycle)
         super.init(nibName: nil, bundle: nil)
         model.presentError = { [weak self] error in self?.showError(error) }
         model.confirm = { [weak self] title, message, button in
             await self?.confirm(title: title, message: message, button: button) ?? false
         }
-        store.observe { [weak self] in
-            guard self?.selectedSection == .daemon else { return }
-            self?.updateSubheader()
-        }
+        // The model observes both first (it registered in its init), so the
+        // pill reads an already-updated availability.
+        store.observe { [weak self] in self?.refreshDaemonPill() }
+        daemonLifecycle.observe { [weak self] in self?.refreshDaemonPill() }
     }
 
     @available(*, unavailable)
@@ -234,14 +240,16 @@ final class SettingsDetailViewController: NSViewController {
         }
     }
 
+    private func refreshDaemonPill() {
+        guard selectedSection == .daemon else { return }
+        updateSubheader()
+    }
+
     private func updateSubheader() {
         var leading: [NSView] = []
         if selectedSection == .daemon {
-            if store.health != nil {
-                daemonPill.configure(tone: .green, text: "Running")
-            } else {
-                daemonPill.configure(tone: .gray, text: "Not connected")
-            }
+            let pill = model.daemonAvailability.pill
+            daemonPill.configure(tone: pill.tone, text: pill.text)
             leading.append(daemonPill)
         }
         subheader.setLeadingViews(leading, trailingText: selectedSection.detailSubtitle)

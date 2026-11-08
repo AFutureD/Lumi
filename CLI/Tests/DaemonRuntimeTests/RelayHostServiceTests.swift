@@ -300,7 +300,7 @@ private func sampleDetail(_ id: String, items: Int, at base: Date) -> SessionDet
 
 @Test func hostRegistersOnceAndAnswersSyncIndexWithHealth() async throws {
     let base = Date(timeIntervalSince1970: 1_000)
-    let health = DaemonHealth(daemonVersion: "t", executableHash: "h", uptimeSeconds: 1, activeSessionCount: 1, retainedSessionCount: 2, socketPath: "/s", relayConnected: true)
+    let health = DaemonHealth(daemonVersion: "t", executableHash: "h", process: nil, uptimeSeconds: 1, activeSessionCount: 1, retainedSessionCount: 2, socketPath: "/s", relayConnected: true)
     let harness = RelayHarness(healthProvider: { health })
     try await harness.repository.replaceSession(sampleDetail("a", items: 3, at: base))
     try await harness.repository.replaceSession(sampleDetail("b", items: 0, at: base.addingTimeInterval(-100)))

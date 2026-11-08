@@ -59,19 +59,24 @@ enum LumenMain {
                 subscriptions.publish(summary: verdict)
             }
         }
-        let executableHash: String
+        // Both halves of the daemon's identity come from the one executable
+        // file: its content hash (is this the bundled build?) and its path
+        // (which Lumi.app launched it?).
+        let (executablePath, executableHash): (String, String)
         do {
-            executableHash = try ExecutableFingerprint.currentExecutable()
+            let executable = try ExecutableFingerprint.currentExecutableURL()
+            (executablePath, executableHash) = (executable.path, try ExecutableFingerprint.sha256Hex(fileAt: executable))
         } catch {
             // An empty hash never matches the bundled binary, so the Mac app's
             // auto-update restarts this process — self-healing over crashing.
-            executableHash = ""
+            (executablePath, executableHash) = ("", "")
             log.error("executable_fingerprint_failed", metadata: .fields(["error": error]))
         }
         let service = DaemonService(
             repository: repository,
             socketPath: configuration.socketPath,
             executableHash: executableHash,
+            executablePath: executablePath,
             subscriptions: subscriptions,
             reingester: SessionReingester(
                 repository: repository,

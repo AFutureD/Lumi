@@ -173,6 +173,14 @@ private func hookFrame(_ fields: [String: Any]) -> Data {
     #expect(response.status == .ok)
     #expect(response.health?.daemonVersion == DaemonService.version)
     #expect(response.health?.executableHash == "test-hash")
+    // The identity names this very process: the pid is ours, and the
+    // executable path is the resolved file the fingerprint hashes.
+    #expect(response.health?.process?.processID == getpid())
+    #expect(response.health?.process?.executablePath == (try ExecutableFingerprint.currentExecutableURL()).path)
+    // One instance id per process, stable across requests.
+    let again = try DaemonIPCClient().request(IPCRequest(operation: .health), socketPath: socketPath)
+    #expect(response.health?.process?.instanceID.isEmpty == false)
+    #expect(again.health?.process?.instanceID == response.health?.process?.instanceID)
 }
 
 @Test func listPlusPagedGetSessionReassemblesEverySession() async throws {

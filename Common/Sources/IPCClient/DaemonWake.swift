@@ -92,7 +92,8 @@ extension FrameConnection {
     public static func connect(
         socketPath: String,
         timeout: Duration,
-        wake: DaemonWakePolicy?
+        wake: DaemonWakePolicy?,
+        failureLogLevel: Logger.Level = .warning
     ) throws -> FrameConnection {
         do {
             return try connect(socketPath: socketPath, deadline: ContinuousClock.now + timeout)
@@ -106,7 +107,7 @@ extension FrameConnection {
             do {
                 reply = try DaemonWaker.wake(service: wake.service, timeout: wake.timeout)
             } catch {
-                log.warning("ipc_wake_failed", metadata: .fields([
+                log.log(level: failureLogLevel, "ipc_wake_failed", metadata: .fields([
                     "service": wake.service,
                     "socket": socketPath,
                     "ms": LogClock.milliseconds(since: started),

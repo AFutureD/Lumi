@@ -22,12 +22,15 @@ public final class ApplicationCoordinator: NSObject {
     private let softwareUpdates = SoftwareUpdateController()
     private lazy var mainWindow = MainWindowController(
         store: store,
+        daemonLifecycle: daemonLifecycle,
         relayHost: relayHost,
         nook: notch,
         softwareUpdates: softwareUpdates,
         planUsage: planUsage
     )
-    private lazy var daemonAutoUpdater = DaemonAutoUpdater(store: store)
+    /// The one owner of daemon management: the launch-time update check and
+    /// the Settings panel's Install / Reinstall / Stop.
+    private lazy var daemonLifecycle = DaemonLifecycleController(store: store)
     private var mainWindowCloseObserver: NSObjectProtocol?
 
     public override init() {
@@ -64,7 +67,7 @@ public final class ApplicationCoordinator: NSObject {
         _ = relayHost
         store.start()
         planUsage.start()
-        daemonAutoUpdater.start()
+        daemonLifecycle.start()
         mainWindow.showWindow(nil)
         observeMainWindowClose()
         notch.start()
@@ -114,7 +117,17 @@ public final class ApplicationCoordinator: NSObject {
     /// Codex trust is then re-authorized on every launch, not only after a
     /// rewrite of our own: its trust records are keyed by a handler's position
     /// in `hooks.json`, so any tool editing that file silently untrusts ours.
+    ///
+    /// Both are automatic management of installed resources and follow the
+    /// daemon's policy: a development build or an app on an isolated daemon
+    /// leaves the installed helper and the agents' configs alone.
     private func refreshInstalledHooks() {
+        guard case .automatic = daemonLifecycle.policy else {
+            log.info("hook_refresh_skipped", metadata: .fields([
+                "reason": daemonLifecycle.policy.reason.map { String(describing: $0) },
+            ]))
+            return
+        }
         guard let helper = Bundle.main.url(forResource: "Spark", withExtension: nil) else { return }
         Task.detached(priority: .utility) {
             let codex = CodexHookInstaller()

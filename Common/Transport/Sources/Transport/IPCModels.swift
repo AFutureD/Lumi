@@ -345,6 +345,34 @@ public enum IPCResponseStatus: String, Codable, Hashable, Sendable {
     case error
 }
 
+/// The running daemon process as its clients identify it. `instanceID` is
+/// minted once per process start and is the only field compared for "is
+/// this still the same daemon" — pids are reused and dates lose precision on
+/// the wire. `processID` and `startedAt` are for people. `executablePath`
+/// names the build that launched it: the `Lumen` inside some `Lumi.app`,
+/// which the Mac app compares with its own bundled `Lumen` to tell a daemon
+/// it may replace from one another copy of Lumi runs.
+public struct DaemonProcessIdentity: Codable, Hashable, Sendable {
+    public let instanceID: String
+    public let processID: Int32
+    public let startedAt: Date
+    public let executablePath: String
+
+    public init(instanceID: String, processID: Int32, startedAt: Date, executablePath: String) {
+        self.instanceID = instanceID
+        self.processID = processID
+        self.startedAt = startedAt
+        self.executablePath = executablePath
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case instanceID
+        case processID
+        case startedAt
+        case executablePath
+    }
+}
+
 public struct DaemonHealth: Codable, Hashable, Sendable {
     public let daemonVersion: String
     /// SHA-256 of the daemon's own executable, computed once at daemon startup.
@@ -352,6 +380,9 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
     /// fingerprinting and is therefore stale — a required field would make the
     /// app fail to decode exactly the health message it needs to detect that.
     public let executableHash: String?
+    /// Optional for the same reason: a daemon from before identity reporting
+    /// sends none, and the app must still decode its health to replace it.
+    public let process: DaemonProcessIdentity?
     public let uptimeSeconds: Int64
     public let activeSessionCount: Int
     public let retainedSessionCount: Int
@@ -361,6 +392,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
     public init(
         daemonVersion: String,
         executableHash: String?,
+        process: DaemonProcessIdentity?,
         uptimeSeconds: Int64,
         activeSessionCount: Int,
         retainedSessionCount: Int,
@@ -369,6 +401,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
     ) {
         self.daemonVersion = daemonVersion
         self.executableHash = executableHash
+        self.process = process
         self.uptimeSeconds = uptimeSeconds
         self.activeSessionCount = activeSessionCount
         self.retainedSessionCount = retainedSessionCount
@@ -379,6 +412,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case daemonVersion
         case executableHash
+        case process
         case uptimeSeconds
         case activeSessionCount
         case retainedSessionCount

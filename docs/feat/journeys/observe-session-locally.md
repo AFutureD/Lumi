@@ -22,7 +22,7 @@
    - 系统反馈：Daemon 面板显示 Running 与运行信息。
    - 规则引用：[MAC-R-001](../modules/mac-session-view.md#mac-r-001-daemon-决定实时可用性)。
 2. 在中栏选择“Agents”，在 Integrations 列表里你使用的 Agent 行（Codex / Claude Code）点击“Install”。
-   - 系统反馈：卡片显示 integration installed；Codex 卡片随后显示“Trusted by Codex”。
+   - 系统反馈：该行按钮变为 Remove；Codex 行副标题随后显示 `Installed · N handlers`（Codex 在场且信任成功）。
    - 数据变化：只增加 Lumi Hook，其他集成保留，写入前留有备份；Codex 的信任记录只针对 Lumi 自己的处理项写入。
    - 规则引用：[MAC-R-002](../modules/mac-session-view.md#mac-r-002-安装不替换现有-hooks)、[MAC-R-021](../modules/mac-session-view.md#mac-r-021-自动向-codex-申请-hook-信任)。
 3. 回到侧边栏“Sessions”，在 Codex 里提交一次任务（新 Session 或旧 Session 都可以）。

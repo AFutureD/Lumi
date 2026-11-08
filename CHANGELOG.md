@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Daemon
+
+- [Lumi for Mac] - “Settings > Daemon”不再只有 Running / Not connected：状态拆成 Not installed、Waiting for approval in Login Items、Not running、Starting…、Not responding、Incompatible daemon、Error，药丸按色区分，卡片底部写出原因；按钮跟着状态走（未安装 Install & Start、等待允许时 Open Login Items…、已注册 Reinstall / Stop & uninstall）。本地缓存数据库的错误单独显示，不再混进连接状态。
+- [Lumi for Mac] - 卡片新增 Managed by 与 Process 两行：daemon 自述启动时生成的实例标识、pid、启动时刻与可执行文件来源。来自另一个 Lumi 安装包的 daemon 只显示来源、不自动替换；点 Reinstall 替换前先确认。
+- [Lumi for Mac] - 安装 / 重装后直接向 daemon 探测最长 20 秒，另一个进程以当前版本应答才算完成；系统没有换进程、规定时间内没有应答、回来的仍是别的版本，都写在卡片底部，不再静默等待。手动 Reinstall / Stop 执行前核对确认框里的进程，中途换了进程就拒绝。
+- [Lumi for Mac] - 开发构建（从 Xcode 运行）与隔离运行不再自动重装已安装的 daemon，也不再覆盖已安装的 helper 与 Codex 信任；面板底部标明管理已关。此前从 Xcode 运行一次就会把正式版 daemon 与 helper 换成开发版。
+- [Lumi for Mac] - 事件流重连按 2、4、8、16、30 秒退避；daemon 长时间不在时不再每 2 秒记一条 warning，前 3 次之后只记一条 `daemon_stream_unavailable`，恢复时记一条。
+- daemon 的健康自述新增 `process`（实例标识、pid、启动时刻、可执行路径），本机协议版本 1.2 → 1.3。旧 daemon 不带这个字段，新 App 视其为过期并在正式构建里重装一次。
+
 ### 会话查看
 
 - [Lumi for Mac] - 修复回合完成卡片约 6 秒到时后 Notch 不收回、一直展开到鼠标悬停再移开的问题。此前卡片换回列表引起的面板高度变化会被当成用户还在操作，面板因此留在展开状态。随之更新 OpenNook。

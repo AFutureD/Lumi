@@ -10,11 +10,17 @@ public enum ExecutableFingerprint {
         try Data(contentsOf: url, options: .mappedIfSafe).sha256Hex
     }
 
-    public static func currentExecutable() throws -> String {
+    /// The running process's executable with symlinks resolved: the file the
+    /// fingerprint hashes, and the path the daemon reports as its identity.
+    public static func currentExecutableURL() throws -> URL {
         guard let executable = Bundle.main.executableURL else {
             throw CocoaError(.fileNoSuchFile)
         }
-        return try sha256Hex(fileAt: executable.resolvingSymlinksInPath())
+        return executable.resolvingSymlinksInPath()
+    }
+
+    public static func currentExecutable() throws -> String {
+        try sha256Hex(fileAt: currentExecutableURL())
     }
 }
 

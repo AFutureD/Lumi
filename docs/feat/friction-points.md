@@ -4,18 +4,25 @@
 
 ## daemon 不可用
 
-**用户会看到**：“Settings > Daemon”的药丸显示 Not connected，Status 行附带原因；Notch 没有数据时空态显示 Daemon unavailable。Sessions 页面本身不显示连接状态，表现为刷新和删除不生效。
+**用户会看到**：“Settings > Daemon”的药丸不是绿色的 Running：灰色 Not installed / Needs approval / Not running，橙色 Starting，或红色 Error。Status 行写同一状态的全称，卡片底部一行给出原因。Notch 没有数据时空态显示 Daemon unavailable。Sessions 页面本身不显示连接状态，表现为刷新和删除不生效。
 
-**可能原因**：daemon 尚未安装、等待系统允许，或本身起不来。已安装的 daemon 停了不需要人工处理：Mac App 的事件流和 Agent 的每一次 hook 在连不上时都会通过系统按需把它拉起来，即使系统暂缓了登录时的自动启动。App 启动时还会自动重装版本过期或起不来的已安装 daemon（[MAC-R-022](modules/mac-session-view.md#mac-r-022-启动时自动更新已安装的-daemon)）。所以持续的 Not connected 只剩三种：从未安装、系统拦截、daemon 自己启动失败。Status 行先给出注册状态（未安装 / 等待允许），已注册却连不上时才显示连接或唤醒错误。
+**可能原因**：按 Status 行对号。
+
+- Not installed：从未安装，或已卸载。
+- Waiting for approval in Login Items：系统还没允许这个后台项目。
+- Not running：已注册但没有在跑。Mac App 的事件流和 Agent 的每一次 hook 在连不上时都会通过系统按需把它拉起来，即使系统暂缓了登录时的自动启动；持续 Not running 说明它自己起不来，看 daemon.log。
+- Starting…：刚唤醒或刚断开，几秒内应变成 Running。
+- Not responding / Incompatible daemon / Error：daemon 在，但不回应或与 App 版本不匹配。
+
+App 启动时会自动重装版本过期或起不来的已安装 daemon（[MAC-R-022](modules/mac-session-view.md#mac-r-022-启动时自动更新已安装的-daemon)），重装没有达到预期时把结论写在卡片底部：系统没有换进程、规定时间内没有应答、回来的仍是别的版本。卡片写明 daemon 来自另一个 Lumi 时，这份 App 不会自动替换它。
 
 **恢复步骤**：
 
-1. 打开侧边栏“Settings”，在中栏选择“Daemon”。
-2. 点击“Install & Start daemon”（已安装时点“Reinstall daemon”）。
-3. 如系统要求允许后台项目，完成授权后返回 App。
-4. 回到“Sessions”，点击刷新图标（Refresh）。
+1. 打开侧边栏“Settings”，在中栏选择“Daemon”，按 Status 行行动：Not installed 点“Install & Start daemon”；Waiting for approval 点“Open Login Items…”，允许 Lumi 后返回；其余点“Reinstall daemon”。
+2. 等卡片底部的结论：几秒内变成 Running 即可。写明没有应答或没有换进程时，在 Logs 卡片点“Show in Finder”看 daemon.log，再 Reinstall 一次。
+3. 回到“Sessions”，点击刷新图标（Refresh）。
 
-**完成信号**：Daemon 面板显示 Running。断线期间 Mac 上已同步的 Session 不会自动删除。
+**完成信号**：药丸绿色 Running，Managed by 显示 This Lumi。断线期间 Mac 上已同步的 Session 不会自动删除。
 
 ## Codex 未信任 Hook
 
@@ -29,7 +36,7 @@
 2. Codex 行提示未信任时点“Trust”；副标题提示 trust unverified 时先确认 Codex 已安装且能启动，再点一次“Trust”。
 3. 若按钮之后仍提示未信任，在 Codex 打开 `/hooks`，核对 Lumi 命令后手动信任。
 
-**完成信号**：卡片改为显示“Trusted by Codex”，新 Session 的首个 Hook 事件到达后 Mac 列表自动更新。
+**完成信号**：Codex 行副标题改为 `Installed · N handlers`、不再带警示色，新 Session 的首个 Hook 事件到达后 Mac 列表自动更新。
 
 ## No Sessions
 

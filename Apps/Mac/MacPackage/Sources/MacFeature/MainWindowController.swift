@@ -15,6 +15,7 @@ final class MainWindowController: NSWindowController {
 
     init(
         store: MacSessionStore,
+        daemonLifecycle: DaemonLifecycleController,
         relayHost: RelayHostStatusClient,
         nook: HaloController,
         softwareUpdates: SoftwareUpdateController,
@@ -22,6 +23,7 @@ final class MainWindowController: NSWindowController {
     ) {
         rootController = RootSplitViewController(
             store: store,
+            daemonLifecycle: daemonLifecycle,
             relayHost: relayHost,
             nook: nook,
             softwareUpdates: softwareUpdates,
@@ -145,6 +147,7 @@ final class RootSplitViewController: NSSplitViewController {
 
     init(
         store: MacSessionStore,
+        daemonLifecycle: DaemonLifecycleController,
         relayHost: RelayHostStatusClient,
         nook: HaloController,
         softwareUpdates: SoftwareUpdateController,
@@ -159,6 +162,7 @@ final class RootSplitViewController: NSSplitViewController {
         settingsNavigation = SettingsNavigationViewController()
         settingsDetail = SettingsDetailViewController(
             store: store,
+            daemonLifecycle: daemonLifecycle,
             nook: nook,
             softwareUpdates: softwareUpdates,
             planUsage: planUsage

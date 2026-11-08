@@ -1,11 +1,24 @@
 import Foundation
 import ServiceManagement
 
-/// Single owner of the daemon's `SMAppService` registration, shared by the
-/// Settings panel and the launch-time auto-updater so both restart the daemon
-/// the same way.
+/// The daemon's `SMAppService` registration, behind a seam so the lifecycle
+/// controller can be exercised against a fake launchd.
 @MainActor
-final class DaemonServiceManager {
+protocol DaemonServiceManaging: AnyObject {
+    var status: SMAppService.Status { get }
+    func register() throws
+    func unregister() async throws
+    func reinstall() async throws
+    /// System Settings › General › Login Items, where a `requiresApproval`
+    /// registration waits for the user.
+    func openLoginItems()
+}
+
+/// Single owner of the daemon's `SMAppService` registration. Only
+/// `DaemonLifecycleController` drives it, so every restart — automatic or
+/// from Settings — goes the same way.
+@MainActor
+final class DaemonServiceManager: DaemonServiceManaging {
     private let service = SMAppService.agent(plistName: "app.huanan.lumi.daemon.plist")
 
     var status: SMAppService.Status { service.status }
@@ -24,8 +37,8 @@ final class DaemonServiceManager {
     /// returns once smd accepted it while launchd removes the job on its own
     /// time, and a register racing that removal is refused ("Operation
     /// already in progress") and leaves smd watching a job that no longer
-    /// exists. Whether launchd then spawns the daemon is not assumed — the
-    /// app's stream reconnect wakes it.
+    /// exists. Whether launchd then spawns the daemon is not assumed: the
+    /// caller verifies with a fresh health probe.
     func reinstall() async throws {
         if service.status == .enabled {
             try await service.unregister()
@@ -34,21 +47,18 @@ final class DaemonServiceManager {
         try service.register()
     }
 
-    /// Insurance on top of the awaited unregister: polls for up to two
-    /// seconds so the register never lands on a job launchd still holds.
+    /// Insurance on top of the awaited unregister, not a guarantee: polls
+    /// for up to two seconds so the register rarely lands on a job launchd
+    /// still holds. Apple's contract is that the awaited `unregister()`
+    /// alone suffices; this covers the "already in progress" refusals seen
+    /// in practice.
     private func waitUntilUnregistered() async throws {
         for _ in 0..<40 where service.status == .enabled {
             try await Task.sleep(for: .milliseconds(50))
         }
     }
 
-    func describeStatus() -> String {
-        switch service.status {
-        case .notRegistered: "daemon is not installed"
-        case .enabled: "daemon is registered but unavailable"
-        case .requiresApproval: "approval is required in System Settings"
-        case .notFound: "embedded daemon service was not found"
-        @unknown default: "daemon status is unknown"
-        }
+    func openLoginItems() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 }

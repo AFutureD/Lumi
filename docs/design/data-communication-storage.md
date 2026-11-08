@@ -112,7 +112,7 @@ IPC `get_settings` / `set_settings` 传的是整份 `DaemonSettings`（Transport
 | `mark_session_hidden_in_notch` | 人在 Notch 点了 Archive：置 `hiddenInNotch`（仅 Notch 隐藏；新 prompt 或会话重启时由 reducer 清除） | 短连接请求 |
 | `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；Claude 父 Session 连同 sidechain 子 Agent 一起重建，用户已删除（tombstone）的子 Agent 保持删除；返回重建后的 SessionDetail。不走事件流：调用方把返回的 detail 写入本地缓存并跟一次对账，daemon 把重建的每个 Session 作为未请求的 `session_full` 推给已同步 iPhone | 短连接请求（15s） |
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
-| `health` | daemon 状态（含 `relayConnected`） | 短连接请求 |
+| `health` | daemon 状态：版本、可执行文件指纹、进程身份 `process`（`instanceID` / pid / `startedAt` / 可执行路径；旧 daemon 没有这个字段）、运行时长、计数、socket、`relayConnected` | 短连接请求；Mac 重装后的验证也用它直接探测 |
 | `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
 | `relay_status` | daemon 的 Relay Host 状态：已连接、Host ID、Relay URL、错误、已配对设备（含是否已钉住公钥） | Mac App 侧栏 / 工具栏（30 秒轮询；配对页可见时由 `relay_pairing_state` 代替） |
 | `relay_pairing_start` | 开始一个新配对会话：daemon 生成 nonce 与承诺，向 Relay 建会话、领 6 位配对码；返回 `{sessionID, code, relayURL, expiresAt}`（上一个会话随之取消） | 短连接请求（进入配对页、New code、结果显示完） |
@@ -287,8 +287,8 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 
 | 故障 | 当前行为 | 恢复 |
 | --- | --- | --- |
-| helper 找不到 daemon | 1 秒内失败、stderr、非零退出 | daemon 恢复后等待下一 Hook；rollout watcher 补充持久事件 |
-| Mac 订阅断开 | health 置空，2 秒后重连 | 重连成功即触发一次对账，补上断线期间的缺口 |
+| helper 找不到 daemon | 先经 Mach 服务按需唤醒（最多 4 秒），应答再等 2 秒；仍失败只记 `hook_forward_failed`（helper.log / errors.log / stderr），退出码仍为 0，不阻塞 Agent | 唤醒成功则本次 Hook 照常送达；唤醒也失败时等待下一 Hook，rollout watcher 补充持久事件 |
+| Mac 订阅断开 | health 置空，按 2 / 4 / 8 / 16 / 30 秒退避重连；前 3 次 warning，之后一条 `daemon_stream_unavailable` 后转 debug | daemon 一应答退避归零并触发一次对账，补上断线期间的缺口 |
 | daemon 不可用 | Mac 保留 SQLite 供本地查看；Host WSS 随 daemon 下线，iPhone 收到 presence offline 在 Macs 页把该 Mac 标为 Offline，但继续显示缓存 | daemon 恢复（launchd 拉起）后 iPhone 收到 presence online 自动 `sync_index` |
 | Mac App 退出 | 不影响 iPhone：Relay Host 在 daemon 里 | — |
 | iOS WSS 断开 | 继续显示缓存，2 秒后重连 | 重连后 Host 在线即 `sync_index` 对账 |

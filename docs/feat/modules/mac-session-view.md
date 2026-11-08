@@ -193,11 +193,12 @@ Activity 标题右侧有两枚下拉按钮：
 
 - **General**：Startup 卡片提供“Open Lumi at login”开关（登录自动启动 Lumi；daemon 的常驻另由 Daemon 设置管理，互不影响）；Software Updates 卡片提供“Automatically check for updates”开关，脚注注明下载或安装前 Lumi 都会先询问。完整更新行为见[软件更新](software-updates.md)。
 - **Notch**：见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
-- **Daemon**：subheader 显示 Running / Not connected 药丸。
-  - Local service 卡片：Status、Uptime、Active sessions、Stored sessions 和 Socket 路径；已安装时提供“Reinstall daemon”（立即执行）和“Stop & uninstall”（需确认，确认框注明采集停止但历史保留），未安装时提供“Install & Start daemon”。
+- **Daemon**：subheader 的药丸与 Local service 卡片的 Status 行出自同一判定：Running（绿）、Starting（橙）、Not installed / Needs approval / Not running（灰）、Error（红）。
+  - Local service 卡片：Status、Managed by（This Lumi / Another Lumi · 路径 / Unknown）、Process（pid · since 时刻）、Uptime、Active sessions、Stored sessions 和 Socket 路径。需要解释时卡片底部多一行：连接失败的原因、上一次自动或手动操作的结论（系统没有换进程、规定时间内没有应答、回来的仍是别的版本）、本地缓存错误。
+  - 按钮随状态变化：未安装时“Install & Start daemon”；等待系统允许时“Open Login Items…”与“Stop & uninstall”；已注册时“Reinstall daemon”与“Stop & uninstall”。“Stop & uninstall”需确认，确认框注明采集停止、历史保留与将停掉的 pid；替换来自另一个 Lumi 的 daemon 时“Reinstall daemon”也先确认。操作进行中按钮禁用并显示转圈。隔离运行（环境变量指向别的 daemon）时不提供这些按钮。
   - Session history 卡片：标题显示保存的 Session 条数和磁盘占用；点“Clear history…”并在确认框（Clear Lumi Session history?）点“Clear History”即清空 Lumi 保存的全部 Session 与时间线，Agent 自身历史不受影响。
   - Logs 卡片：显示日志目录（`~/Library/Logs/Lumi`，含 daemon.log / helper.log / app.log 和只收错误的 errors.log），“Show in Finder”直接打开；哪些内容会进日志见[恢复路径](../friction-points.md#仍无法恢复先看日志)。
-  - 升级 App 后不需要手动 Reinstall：启动时发现 daemon 版本过期或起不来会自动重装（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。
+  - 升级 App 后不需要手动 Reinstall：启动时发现 daemon 版本过期或起不来会自动重装并验证（[MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon)）。开发构建与隔离运行不自动动已安装的 daemon 与 helper，卡片底部会标明。
 - **Agents**：两组内容。
   - Integrations：一张卡片列出全部 Agent（Codex、Claude Code），每行是图标、名称、等宽配置文件路径和状态副标题，行尾一个按钮表示当前动作——未安装 Install、已安装 Remove（红字）；Codex 已安装但未被信任时按钮换成蓝色的 Trust（Remove 移进右键菜单），副标题以警示色说明 Session 会停止上报（[MAC-R-021](#mac-r-021-自动向-codex-申请-hook-信任)）。
   - Filters：隐藏幽灵 Session 的规则列表，见[隐藏幽灵 Session](#隐藏幽灵-sessionfilters)与 [MAC-R-025](#mac-r-025-filters-在-session-首条用户消息判一次并冻结)。
@@ -209,7 +210,7 @@ Activity 标题右侧有两枚下拉按钮：
 
 - 条件：daemon 已安装、获准运行并成功连接。
 - 行为：App 在启动时取得完整数据，并订阅后续 Agent 事件。
-- 结果：连接状态显示在“Settings > Daemon”的药丸与 Status 行；daemon 断开且无数据时，Notch 空态显示 Daemon unavailable。Session 保持同步。
+- 结果：连接状态显示在“Settings > Daemon”的药丸与 Status 行（Running / Starting / Not installed / Needs approval / Not running / Error，Status 行写全称并在卡片底部给出原因）；daemon 断开且无数据时，Notch 空态显示 Daemon unavailable。Session 保持同步。
 - 限制或例外：daemon 断开时，Mac 仍可查看本地已同步内容，但刷新和删除无法完成；Sessions 页面本身不显示连接状态。
 
 ### MAC-R-002 安装不替换现有 Hooks
@@ -390,7 +391,7 @@ Activity 标题右侧有两枚下拉按钮：
 - 条件：Hook 已安装（Codex 或 Claude Code），且 Mac App 启动时自带的 helper 与已安装副本不一致（按文件内容逐字节比对）。
 - 行为：启动时自动把 helper 更新为当前版本，并把 Hook 配置刷新到当前事件集——补上新增事件、移除 Lumi 不再监听的事件下自己的处理项；配置完全一致时不写任何文件。
 - 结果：升级 App 后 Hook 立即获得新采集能力，无需重新点击“Install”。
-- 限制或例外：从未安装过 Hook 时启动不做任何事；配置刷新仍只触碰 Lumi 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。
+- 限制或例外：从未安装过 Hook 时启动不做任何事；配置刷新仍只触碰 Lumi 自己的处理项（[MAC-R-002](#mac-r-002-安装不替换现有-hooks)）。开发构建（从 Xcode 运行）与隔离运行不自动刷新，已安装的 helper 保持正式版（同 [MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon) 的管理策略）。
 
 ### MAC-R-021 自动向 Codex 申请 Hook 信任
 
@@ -400,14 +401,15 @@ Activity 标题右侧有两枚下拉按钮：
 - 限制或例外：
   - Codex 按处理项在 hooks.json 中的位置记录信任，任何工具改写这个文件都会让信任失效，因此每次启动都会重新申请。
   - 本机没有 Codex、或 Codex 版本还没有信任机制时副标题只显示 Installed。
+  - 开发构建与隔离运行不在启动时自动申请（同 [MAC-R-022](#mac-r-022-启动时自动更新已安装的-daemon) 的管理策略）；点“Install”或“Trust”之后仍会。
   - 仍有处理项未被信任时，Codex 行的副标题以警示色提示未信任数量与“Session 会停止上报”，行尾按钮换成蓝色的“Trust”（Remove 移进右键菜单）；Codex 没有应答（无法确认信任状态）时副标题提示 trust unverified。仍失败则需要用户在 Codex `/hooks` 中手动信任。
 
 ### MAC-R-022 启动时自动更新已安装的 daemon
 
-- 条件：daemon 已安装，且 Mac App 启动后发现它运行的不是当前 App 自带的版本（按可执行文件指纹比对，指纹缺失也按不一致处理），或已注册的 daemon 根本起不来（启动约 10 秒后仍连不上——常见于注册指向的安装包被重编译或删除）。
-- 行为：自动重装 daemon 服务（等系统完成注销后再注册，两步不撞车），让系统换用 App 内的新版本；随后由事件流重连按需把 daemon 拉起，不依赖系统在注册那一刻就启动它。手动“Reinstall daemon”走同一条路。
-- 结果：升级 App 后 daemon 立即获得新采集能力，无需去 Settings 手动 Reinstall；注册损坏时也能在启动后自行恢复，不再无限报连接失败。
-- 限制或例外：从未安装过 daemon 时启动不做任何事（不会擅自注册服务）。每次 App 启动最多自动重装一次；重装后仍不一致（例如开发版 App 对着已注册的正式版 daemon）或仍连不上时只记录日志，不再重试。手动“Reinstall daemon”仍可用作兜底。
+- 条件：正式构建的 Mac App、连接的是安装版 daemon，且 daemon 已安装。启动后发现它运行的不是当前 App 自带的版本（按可执行文件指纹比对；指纹缺失、或没有进程身份的旧 daemon 也按过期处理），或已注册的 daemon 启动约 10 秒后仍连不上（常见于注册指向的安装包被重编译或删除）。
+- 行为：自动重装 daemon 服务（等系统完成注销后再注册），随后直接向 daemon 探测最长 20 秒，另一个进程以当前版本应答才算完成。来自另一个 Lumi 安装包的 daemon 不替换，只在 Daemon 面板写明它来自哪里。手动“Reinstall daemon”走同一条路、做同样的验证。
+- 结果：升级 App 后 daemon 立即获得新采集能力，无需去 Settings 手动 Reinstall；注册损坏时也能在启动后自行恢复。重装没有达到预期时（系统没有换进程、规定时间内没有应答、回来的仍是别的版本），Daemon 面板底部直接写明，不再静默等待。
+- 限制或例外：从未安装过 daemon 时启动不做任何事（不会擅自注册服务）。每次 App 启动最多自动重装一次。开发构建（从 Xcode 运行）与隔离运行不自动重装、不自动刷新 helper，面板会标明；开发构建仍可手动 Reinstall，替换来自另一个 Lumi 的 daemon 时先确认。
 
 ### MAC-R-023 Activity 过滤同时收窄列表与时间轴
 

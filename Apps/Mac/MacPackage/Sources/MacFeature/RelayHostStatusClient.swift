@@ -27,7 +27,7 @@ final class RelayHostStatusClient {
     /// expired code the daemon keeps until the page asks for another);
     /// `nil` when none. Refreshed every second while the Pairing page is up.
     private(set) var pairing: RelayPairingSession?
-    private var observers: [UUID: () -> Void] = [:]
+    private var observers = ObserverRegistry()
     private var pollTask: Task<Void, Never>?
     private var pairingVisible = false
     private var lastSeenRelayConnected: Bool?
@@ -52,9 +52,7 @@ final class RelayHostStatusClient {
     /// Multiple views (Pairing, sidebar, toolbar) observe connection and device changes.
     @discardableResult
     func observe(_ observer: @escaping () -> Void) -> UUID {
-        let id = UUID()
-        observers[id] = observer
-        return id
+        observers.add(observer)
     }
 
     /// The Pairing screen polls faster while it is on screen.
@@ -192,6 +190,6 @@ final class RelayHostStatusClient {
     }
 
     private func notifyObservers() {
-        observers.values.forEach { $0() }
+        observers.notify()
     }
 }

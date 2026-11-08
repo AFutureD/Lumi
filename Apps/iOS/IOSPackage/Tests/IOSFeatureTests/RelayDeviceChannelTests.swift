@@ -99,7 +99,7 @@ private actor FakeHost {
             let now = Date()
             let entries = try await repository.sessionIndex(limit: 10_000)
             try await send(RelayPayloadBatcher.indexParts(entries, requestID: requestID, generatedAt: now).map(\.prepared))
-            let health = DaemonHealth(daemonVersion: "fake", executableHash: nil, uptimeSeconds: 1, activeSessionCount: entries.count, retainedSessionCount: entries.count, socketPath: "/s", relayConnected: true)
+            let health = DaemonHealth(daemonVersion: "fake", executableHash: nil, process: nil, uptimeSeconds: 1, activeSessionCount: entries.count, retainedSessionCount: entries.count, socketPath: "/s", relayConnected: true)
             try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))])
         } catch {
             Issue.record("fake host failed to open a channel session: \(error)")

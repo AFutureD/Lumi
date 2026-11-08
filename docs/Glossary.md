@@ -46,6 +46,34 @@
 - Filters 里的 Application 与 Session 详情 Overview 的 Application 栏同义（AaaS 六个名字之一）。
 - 同词不同义：Activity 时间线里按 Category / Importance 筛行的控件也叫过滤器，但那是看时的显示筛选，与 Settings 的 Filters（决定 Session 是否被隐藏）是两回事。
 
+## Settings · Daemon
+
+| 概念 | 界面用词 | 中文写法 |
+| ---- | -------- | -------- |
+| daemon 在运行、已连上 | Running | 运行中 |
+| 刚唤醒或刚断开，正在等它应答 | Starting… | 启动中 |
+| 从未安装或已卸载 | Not installed | 未安装 |
+| 系统还没允许这个后台项目（药丸写 Needs approval） | Waiting for approval in Login Items | 等待允许 |
+| 已注册但没有在跑 | Not running | 未运行 |
+| 在跑但不回应 | Not responding | 无响应 |
+| daemon 与 App 的协议版本不匹配 | Incompatible daemon | 版本不匹配 |
+| 其他失败（药丸写 Error） | Error | 出错 |
+| 运行中的 daemon 来自哪份 Lumi：This Lumi / Another Lumi · 路径 / Unknown | Managed by | 管理方 |
+| 运行中的 daemon 的进程号与启动时刻 | Process | 进程 |
+| 让系统换用本 App 内的 daemon | Reinstall daemon | 重装 |
+| 停止并注销 daemon | Stop & uninstall | 停止并卸载 |
+| 去系统设置允许后台项目 | Open Login Items… | 打开登录项 |
+
+- 重装与停止并卸载都先核对确认框里的进程，中途换了进程就拒绝，让用户重新看一眼。
+- 来自另一个 Lumi 的 daemon 不自动替换；点 Reinstall 替换前先确认。
+- 重装后的结论写在卡片底部：系统没有换进程、规定时间内没有应答、回来的仍是别的版本。
+
+### 禁用说法（Settings · Daemon）
+
+| 说法 | 原因 |
+| ---- | ---- |
+| Not connected | 2026-11-08 起拆成 Not installed / Waiting for approval / Not running / Starting / Not responding / Error，各自对应一个动作 |
+
 ## 配对
 
 | 概念                                   | 界面用词         | 中文写法 |

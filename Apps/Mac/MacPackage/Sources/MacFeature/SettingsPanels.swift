@@ -13,9 +13,17 @@ private let log = Logger(label: "ui")
 @MainActor
 final class SettingsModel: ObservableObject {
     @Published private(set) var loginEnabled = false
-    @Published private(set) var daemonRegistered = false
-    @Published private(set) var daemonServiceDescription = ""
-    @Published private(set) var isDaemonConnected = false
+    /// The one reading behind the pill, the Status row and the buttons.
+    @Published private(set) var daemonAvailability: DaemonAvailability = .starting
+    /// `pid · since …` of the running daemon.
+    @Published private(set) var daemonProcessText: String?
+    /// Which copy of Lumi the running daemon comes from.
+    @Published private(set) var daemonManagedByText: String?
+    /// The lifecycle controller's last word: a management policy, a failed
+    /// restart, a foreign daemon.
+    @Published private(set) var daemonNotice: String?
+    @Published private(set) var isDaemonBusy = false
+    @Published private(set) var cacheError: String?
     @Published private(set) var daemonUptimeText: String?
     @Published private(set) var daemonSocketPath: String?
     @Published private(set) var activeSessionCount = 0
@@ -43,25 +51,30 @@ final class SettingsModel: ObservableObject {
     var confirm: (_ title: String, _ message: String, _ button: String) async -> Bool = { _, _, _ in false }
 
     private let store: MacSessionStore
+    private let daemonLifecycle: DaemonLifecycleController
     private let loginService = SMAppService.mainApp
-    private let daemonService = DaemonServiceManager()
+    /// Install / Reinstall / Stop act on the registered daemon; against an
+    /// isolated daemon they are not offered at all.
+    var allowsDaemonActions: Bool { daemonLifecycle.policy.allowsManualActions }
     /// Each probe launches a `codex app-server`, so panel re-appearances reuse
     /// the last answer for a while.
     private var lastCodexTrustProbe: Date?
     private static let codexTrustProbeInterval: TimeInterval = 60
 
-    init(store: MacSessionStore) {
+    init(store: MacSessionStore, daemonLifecycle: DaemonLifecycleController) {
         self.store = store
+        self.daemonLifecycle = daemonLifecycle
         version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
         build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
         store.observe { [weak self] in self?.reloadDaemonDiagnostics() }
+        daemonLifecycle.observe { [weak self] in self?.reloadDaemonDiagnostics() }
         reload()
     }
 
     /// Re-reads every service status; called when a panel appears.
     func reload() {
         loginEnabled = loginService.status == .enabled
-        daemonRegistered = daemonService.status == .enabled
+        daemonLifecycle.refreshServiceStatus()
         hookInstalled = CodexHookInstaller().isInstalled()
         claudeHookInstalled = ClaudeHookInstaller().isInstalled()
         reloadDaemonDiagnostics()
@@ -86,11 +99,23 @@ final class SettingsModel: ObservableObject {
     }
 
     private func reloadDaemonDiagnostics() {
-        if let health = store.health {
-            isDaemonConnected = true
-            daemonServiceDescription = "Running"
+        let health = store.health
+        let ownership = daemonLifecycle.ownership(of: health)
+        daemonAvailability = DaemonAvailability.resolve(
+            service: daemonLifecycle.serviceStatus,
+            health: health,
+            failure: store.connectionFailure,
+            ownership: ownership,
+            isolated: daemonLifecycle.policy == .manualOnly(.isolatedDaemon)
+        )
+        daemonNotice = daemonLifecycle.notice?.text
+        isDaemonBusy = daemonLifecycle.isBusy
+        cacheError = store.cacheError
+        if let health {
             daemonUptimeText = SessionElapsedFormatter.string(from: TimeInterval(health.uptimeSeconds))
             daemonSocketPath = SessionPagePresentationBuilder.abbreviatedWorkspace(health.socketPath)
+            daemonProcessText = health.process.map(Self.processText)
+            daemonManagedByText = Self.managedByText(ownership)
             activeSessionCount = store.sessions.filter {
                 switch $0.lifecycle {
                 case .starting, .running, .waitingForInput: true
@@ -98,20 +123,32 @@ final class SettingsModel: ObservableObject {
                 }
             }.count
         } else {
-            isDaemonConnected = false
-            // A registration problem is the actionable cause; the socket or
-            // wake error only explains an enabled service that is not answering.
-            let cause = daemonService.status == .enabled
-                ? (store.connectionError ?? daemonService.describeStatus())
-                : daemonService.describeStatus()
-            daemonServiceDescription = "Not connected · \(cause)"
             daemonUptimeText = nil
             daemonSocketPath = nil
+            daemonProcessText = nil
+            daemonManagedByText = nil
             activeSessionCount = 0
         }
         storedSessionCount = store.sessions.count
         historySizeText = store.cacheDatabaseSizeBytes().map {
             ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+        }
+    }
+
+    static func processText(_ process: DaemonProcessIdentity) -> String {
+        let sameDay = Calendar.current.isDateInToday(process.startedAt)
+        let since = sameDay
+            ? process.startedAt.formatted(date: .omitted, time: .shortened)
+            : process.startedAt.formatted(date: .abbreviated, time: .shortened)
+        return "pid \(process.processID) · since \(since)"
+    }
+
+    static func managedByText(_ ownership: DaemonOwnership) -> String {
+        switch ownership {
+        case .owned: "This Lumi"
+        case let .foreign(executablePath):
+            "Another Lumi · \(SessionPagePresentationBuilder.abbreviatedWorkspace(DaemonOwnership.bundlePath(containing: executablePath)) ?? DaemonOwnership.bundlePath(containing: executablePath))"
+        case .unknown: "Unknown · the daemon predates identity reporting"
         }
     }
 
@@ -138,20 +175,31 @@ final class SettingsModel: ObservableObject {
     }
 
     func installDaemon() {
-        do {
-            try daemonService.register()
-            store.refresh()
-        } catch {
-            presentError(error)
-        }
-        reload()
-    }
-
-    func reinstallDaemon() {
         Task {
             do {
-                try await daemonService.reinstall()
-                store.refresh()
+                try await daemonLifecycle.install()
+            } catch {
+                presentError(error)
+            }
+            reload()
+        }
+    }
+
+    /// Replacing this app's own daemon is routine; replacing one another copy
+    /// of Lumi runs is a takeover the user confirms first. The process shown
+    /// in the confirmation is the one the controller re-checks before acting.
+    func reinstallDaemon() {
+        Task {
+            let process = store.health?.process
+            if case .foreign = daemonLifecycle.ownership(of: store.health) {
+                guard await confirm(
+                    "Replace the running daemon with this Lumi's?",
+                    "The daemon\(Self.processClause(process)) runs from \(daemonManagedByText ?? "another copy of Lumi"). Reinstalling registers this app's daemon in its place; the other copy will see its daemon replaced.",
+                    "Reinstall"
+                ) else { return }
+            }
+            do {
+                try await daemonLifecycle.reinstall(confirmed: process)
             } catch {
                 presentError(error)
             }
@@ -161,19 +209,27 @@ final class SettingsModel: ObservableObject {
 
     func uninstallDaemon() {
         Task {
+            let process = store.health?.process
             guard await confirm(
                 "Stop and uninstall the daemon?",
-                "Session collection stops until you install it again. Stored history is kept.",
+                "Session collection stops until you install it again. Stored history is kept.\(process.map { " The daemon\(Self.processClause($0)) is stopped." } ?? "")",
                 "Stop & Uninstall"
             ) else { return }
             do {
-                try await daemonService.unregister()
-                store.refresh()
+                try await daemonLifecycle.uninstall(confirmed: process)
             } catch {
                 presentError(error)
             }
             reload()
         }
+    }
+
+    func openLoginItems() {
+        daemonLifecycle.openLoginItems()
+    }
+
+    private static func processClause(_ process: DaemonProcessIdentity?) -> String {
+        process.map { " (pid \($0.processID))" } ?? ""
     }
 
     func toggleCodexHook() {
@@ -298,7 +354,11 @@ struct DaemonSettingsPanel: View {
         SettingsPanelScroll {
             SettingsSection(title: "Local service") {
                 SettingsCard {
-                    SettingsFactRow(label: "Status", value: model.daemonServiceDescription)
+                    SettingsFactRow(label: "Status", value: model.daemonAvailability.statusText)
+                    Divider()
+                    SettingsFactRow(label: "Managed by", value: model.daemonManagedByText ?? "—")
+                    Divider()
+                    SettingsFactRow(label: "Process", value: model.daemonProcessText ?? "—", isMonospaced: model.daemonProcessText != nil)
                     Divider()
                     SettingsFactRow(label: "Uptime", value: model.daemonUptimeText ?? "—", isMonospaced: model.daemonUptimeText != nil)
                     Divider()
@@ -307,18 +367,42 @@ struct DaemonSettingsPanel: View {
                     SettingsFactRow(label: "Stored sessions", value: "\(model.storedSessionCount)", isMonospaced: true)
                     Divider()
                     SettingsFactRow(label: "Socket", value: model.daemonSocketPath ?? "—", isMonospaced: model.daemonSocketPath != nil)
-                }
-                HStack(spacing: 8) {
-                    if model.daemonRegistered {
-                        Button("Reinstall daemon") { model.reinstallDaemon() }
-                        Button { model.uninstallDaemon() } label: {
-                            Text("Stop & uninstall").foregroundStyle(Design.Color.UI.destructiveText)
-                        }
-                    } else {
-                        Button("Install & Start daemon") { model.installDaemon() }
+                    if let detail = model.daemonAvailability.detailText {
+                        Divider()
+                        SettingsFootnote(text: detail)
+                    }
+                    if let notice = model.daemonNotice {
+                        Divider()
+                        SettingsFootnote(text: notice)
+                    }
+                    if let cacheError = model.cacheError {
+                        Divider()
+                        SettingsFootnote(text: "Local cache: \(cacheError)")
                     }
                 }
-                .padding(.top, 2)
+                if model.allowsDaemonActions {
+                    HStack(spacing: 8) {
+                        ForEach(model.daemonAvailability.actions, id: \.self) { action in
+                            switch action {
+                            case .install:
+                                Button("Install & Start daemon") { model.installDaemon() }
+                            case .openLoginItems:
+                                Button("Open Login Items…") { model.openLoginItems() }
+                            case .reinstall:
+                                Button("Reinstall daemon") { model.reinstallDaemon() }
+                            case .uninstall:
+                                Button { model.uninstallDaemon() } label: {
+                                    Text("Stop & uninstall").foregroundStyle(Design.Color.UI.destructiveText)
+                                }
+                            }
+                        }
+                        if model.isDaemonBusy {
+                            ProgressView().controlSize(.small).padding(.leading, 4)
+                        }
+                    }
+                    .disabled(model.isDaemonBusy)
+                    .padding(.top, 2)
+                }
             }
 
             SettingsSection(title: "Session history") {

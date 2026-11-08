@@ -18,6 +18,9 @@ public actor DaemonService {
     private let socketPath: String
     private let startedAt: Date
     private let executableHash: String
+    private let executablePath: String
+    /// Minted once per process: the identity clients compare across restarts.
+    private let instanceID = UUID().uuidString
     private var relayConnected = false
     private var relay: RelayHostService?
     private var hookIngest: HookIngestService?
@@ -31,6 +34,7 @@ public actor DaemonService {
         repository: any SessionRepository,
         socketPath: String,
         executableHash: String,
+        executablePath: String = (try? ExecutableFingerprint.currentExecutableURL())?.path ?? "",
         startedAt: Date = Date(),
         subscriptions: DaemonSubscriptionHub = DaemonSubscriptionHub(),
         reingester: SessionReingester? = nil
@@ -39,6 +43,7 @@ public actor DaemonService {
         self.reingester = reingester ?? SessionReingester(repository: repository)
         self.socketPath = socketPath
         self.executableHash = executableHash
+        self.executablePath = executablePath
         self.startedAt = startedAt
         self.subscriptions = subscriptions
     }
@@ -472,6 +477,7 @@ public actor DaemonService {
             health: DaemonHealth(
                 daemonVersion: Self.version,
                 executableHash: executableHash,
+                process: DaemonProcessIdentity(instanceID: instanceID, processID: getpid(), startedAt: startedAt, executablePath: executablePath),
                 uptimeSeconds: Int64(max(0, now.timeIntervalSince(startedAt))),
                 activeSessionCount: activeCount,
                 retainedSessionCount: sessions.count,

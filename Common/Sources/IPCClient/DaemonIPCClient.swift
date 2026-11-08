@@ -32,15 +32,21 @@ public final class DaemonIPCClient: @unchecked Sendable {
 
     /// `wake` lets a request start the daemon when its socket is not there
     /// (`DaemonWakePolicy`); without it a missing daemon is a plain failure.
+    /// `failureLogLevel` is for callers that expect failures — a probe loop
+    /// waiting for a daemon to come up — so the log keeps one line per
+    /// outcome rather than one per attempt.
     public func request(
         _ request: IPCRequest,
         socketPath: String,
         timeout: Duration = .seconds(2),
-        wake: DaemonWakePolicy? = nil
+        wake: DaemonWakePolicy? = nil,
+        failureLogLevel: Logger.Level = .warning
     ) throws -> IPCResponse {
         let started = ContinuousClock.now
         do {
-            let (response, bytesOut) = try send(request, socketPath: socketPath, timeout: timeout, wake: wake)
+            let (response, bytesOut) = try send(
+                request, socketPath: socketPath, timeout: timeout, wake: wake, failureLogLevel: failureLogLevel
+            )
             let failed = response.status == .error
             log.log(level: failed ? .warning : .debug, "ipc_request", metadata: .fields([
                 "op": request.operation.rawValue,
@@ -52,7 +58,7 @@ public final class DaemonIPCClient: @unchecked Sendable {
             ]))
             return response
         } catch {
-            log.warning("ipc_request_failed", metadata: .fields([
+            log.log(level: failureLogLevel, "ipc_request_failed", metadata: .fields([
                 "op": request.operation.rawValue,
                 "socket": socketPath,
                 "ms": LogClock.milliseconds(since: started),
@@ -66,7 +72,8 @@ public final class DaemonIPCClient: @unchecked Sendable {
         _ request: IPCRequest,
         socketPath: String,
         timeout: Duration,
-        wake: DaemonWakePolicy?
+        wake: DaemonWakePolicy?,
+        failureLogLevel: Logger.Level
     ) throws -> (IPCResponse, Int) {
         // Inside a traced unit (a helper run, a Mac reconcile pass) the
         // request carries that unit's id, so the daemon's lines join ours.
@@ -78,7 +85,9 @@ public final class DaemonIPCClient: @unchecked Sendable {
 
         // The connect has its own budget (a wake may sit inside it); one
         // deadline then covers the write and the response read.
-        let connection = try FrameConnection.connect(socketPath: socketPath, timeout: timeout, wake: wake)
+        let connection = try FrameConnection.connect(
+            socketPath: socketPath, timeout: timeout, wake: wake, failureLogLevel: failureLogLevel
+        )
         defer { connection.close() }
         let deadline = ContinuousClock.now + timeout
         try connection.writeFrame(body, deadline: deadline)
@@ -121,6 +130,7 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
     public func start(
         socketPath: String,
         wake: DaemonWakePolicy? = nil,
+        failureLogLevel: Logger.Level = .warning,
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void,
         onSummary: @escaping @Sendable (SessionSummary) -> Void,
         onHealth: @escaping @Sendable (DaemonHealth) -> Void,
@@ -135,7 +145,9 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
         lock.unlock()
 
         do {
-            let newConnection = try FrameConnection.connect(socketPath: socketPath, timeout: .seconds(10), wake: wake)
+            let newConnection = try FrameConnection.connect(
+                socketPath: socketPath, timeout: .seconds(10), wake: wake, failureLogLevel: failureLogLevel
+            )
             let deadline = ContinuousClock.now + .seconds(10)
             do {
                 let body = try TransportCoding.makeEncoder().encode(
@@ -169,7 +181,7 @@ public final class DaemonEventSubscriber: @unchecked Sendable {
             lock.lock()
             connecting = false
             lock.unlock()
-            log.warning("ipc_stream_connect_failed", metadata: .fields(["socket": socketPath, "error": error]))
+            log.log(level: failureLogLevel, "ipc_stream_connect_failed", metadata: .fields(["socket": socketPath, "error": error]))
             throw error
         }
     }
@@ -282,6 +294,24 @@ public enum DaemonEndpoint {
     /// running (`DaemonWaker`); the Unix socket stays the only data channel.
     public static let machServiceName = "app.huanan.lumi.daemon"
 
+    /// Whether the environment points this process at an isolated daemon
+    /// (`LUMI_SOCKET`, `LUMI_SUPPORT_DIRECTORY`) rather than the installed one.
+    public static func isIsolated(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        ["LUMI_SOCKET", "LUMI_SUPPORT_DIRECTORY"].contains { !(environment[$0] ?? "").isEmpty }
+    }
+
+    /// Whether `socketPath` is the installed daemon's socket here: no
+    /// isolation override and the default path. `LUMI_WAKE_SERVICE` alone
+    /// changes how that daemon is woken, not which daemon it is.
+    public static func isInstalledDaemonSocket(
+        _ socketPath: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        applicationSupportDirectory: URL = LumiPaths.applicationSupportBase()
+    ) -> Bool {
+        !isIsolated(environment: environment)
+            && socketPath == defaultSocketPath(environment: environment, applicationSupportDirectory: applicationSupportDirectory)
+    }
+
     /// The service a client wakes, or `nil` when the environment points this
     /// process at an isolated daemon (`LUMI_SOCKET`, `LUMI_SUPPORT_DIRECTORY`)
     /// — waking the installed daemon would start the wrong one.
@@ -293,8 +323,7 @@ public enum DaemonEndpoint {
         if let override = environment["LUMI_WAKE_SERVICE"], !override.isEmpty {
             return ["0", "false", "no"].contains(override.lowercased()) ? nil : override
         }
-        let isolated = ["LUMI_SOCKET", "LUMI_SUPPORT_DIRECTORY"].contains { !(environment[$0] ?? "").isEmpty }
-        return isolated ? nil : machServiceName
+        return isIsolated(environment: environment) ? nil : machServiceName
     }
 }
 

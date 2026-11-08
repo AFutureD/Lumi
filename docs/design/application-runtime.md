@@ -88,11 +88,21 @@ OpenNook 配置：
 
 ### daemon 与 Hook 管理
 
-- `SMAppService.agent` 使用 App bundle 内的 LaunchAgent plist 注册 per-user daemon。
-- LaunchAgent `RunAtLoad = true`，异常退出后由 `KeepAlive.SuccessfulExit = false` 触发恢复。
-- daemon 是 background process，节流重启间隔 5 秒。
-- helper 从 App bundle 安装到用户 Application Support，再写入 Codex Hooks。
-- 开机启动使用 `SMAppService.mainApp`，与 daemon 注册分开控制。
+daemon（Lumen）由 `SMAppService.agent` 用 App 包内的 LaunchAgent plist 注册为 per-user 服务：`RunAtLoad`，异常退出后由 `KeepAlive.SuccessfulExit = false` 恢复（节流 5 秒），同名 Mach service 供客户端按需唤醒。helper（Spark）从 App 包复制到用户 Application Support，再写入 Codex / Claude Code 的 Hook 配置。开机启动用 `SMAppService.mainApp`，与 daemon 注册分开。
+
+App 维护这两样「已安装资源」遵守三条规则（来源：docs/research/daemon-lifecycle-model.md）：
+
+- 管理策略先于一切。只有正式构建、且连接的是安装版 daemon 的 socket，App 才自动动手：启动时修复过期或起不来的 daemon，刷新 helper 与 Codex 信任。开发构建（DerivedData）与隔离运行（`LUMI_SOCKET` / `LUMI_SUPPORT_DIRECTORY`）只观察。开发构建仍提供手动 Install / Reinstall / Stop；隔离运行连手动按钮都不提供，因为它们作用于注册的那个 daemon，而不是正在观察的这个。
+- 三种身份分开判断。daemon 的健康自述带 `process`：启动时生成的 `instanceID` 回答「还是不是同一个进程」，pid 与启动时刻给人看，可执行文件路径回答「来自哪份安装包」。路径与本 App 自带的 `Lumen` 完全相同才算本 App 的；来自别的 bundle 的 daemon 只报告、不替换，Settings 显示 `Another Lumi · 路径`。没有 `process` 的旧 daemon 视为过期，正式构建修复一次。版本是否一致仍按可执行文件 SHA-256 指纹比对。
+- 重启以新鲜探测为准。每次（重）注册后，控制器直接向 socket 发 `health` 探测（允许唤醒），最长 20 秒、每 0.5 秒一次，而不是读 store 里可能被慢对账覆盖的旧 health。判定：另一个 `instanceID` 且指纹等于 App 自带的，完成；另一个进程但指纹不同，stillStale；窗口内一直是原进程在答，restartNotObserved（系统没有换进程）；窗口内无人应答，noResponse。每种结论都写进 Settings 的 Local service 卡片底部，不再静默等待。
+
+操作串行。`DaemonLifecycleController` 是 daemon 管理的唯一拥有者，自动流程与 Settings 的 Install / Reinstall / Stop 都经它；同一时间只跑一个操作，手动操作一开始就结束本次启动的自动流程。手动 Reinstall / Stop 带着确认框里看到的进程身份，执行前再探测一次，发现是另一个进程在答就拒绝；没有应答不算改变，刚死掉的 daemon 仍是用户要停的那个。替换来自别的 bundle 的 daemon 先确认。
+
+事件流重连按 2、4、8、16、30 秒退避，daemon 一应答归零。前 3 次断开记 warning，第 4 次记一条 `daemon_stream_unavailable` 后转 debug，连接层的 `ipc_stream_connect_failed` / `ipc_wake_failed` 同步降级；恢复时记 `daemon_stream_recovered attempts=`。
+
+Settings › Daemon 的药丸、Status 行与按钮出自同一个解析器 `DaemonAvailability`：注册状态优先（Not installed / Waiting for approval in Login Items / No daemon service in this app），已注册再看 socket 的结论（Starting… / Not running / Not responding / Incompatible daemon / Error），有 health 即 Running。隔离运行没有自己的注册，只看 socket。注册状态缓存在控制器里，面板出现与每次操作后刷新，不随每批事件去问 launchd。本地缓存数据库的错误单独显示为 `Local cache: …`，不混进连接状态。
+
+验证期间的失败探测记 debug（`failureLogLevel` 贯穿 IPC 请求与 wake），最终结论带上最后一次失败原因；注册后系统报 requiresApproval 直接结束验证，不白等；App 自带 `Lumen` 读不出指纹时结论是「无法验证」而不是「无应答」。
 
 ## iOS App
 
