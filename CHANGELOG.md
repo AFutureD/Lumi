@@ -4,9 +4,9 @@
 
 ## [Unreleased]
 
-## [0.3.2] - 2026-11-08
+## [0.3.3] - 2026-11-08
 
-v0.3.1 的发布在 CI 的 Mac 测试一步失败（Xcode 26.6 对直连代码的并发捕获更严），Mac 与 iPhone 包没有发出，只部署了 Relay；同一批改动修好后以 0.3.2 发出。
+v0.3.1 与 v0.3.2 的发布都在 CI 的 Mac 测试一步失败（Xcode 26.6 对直连代码的并发捕获更严，两处相邻的闭包各挡了一次），Mac 与 iPhone 包没有发出，只部署了 Relay；同一批改动修好后以 0.3.3 发出。
 
 ### 配对与同步
 
@@ -205,8 +205,8 @@ v0.3.1 的发布在 CI 的 Mac 测试一步失败（Xcode 26.6 对直连代码�
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.2...HEAD
-[0.3.2]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.2
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/AFutureD/Lumi/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AFutureD/Lumi/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AFutureD/Lumi/compare/v0.1.6...v0.2.0
