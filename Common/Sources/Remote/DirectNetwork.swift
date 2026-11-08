@@ -244,24 +244,26 @@ public final class BonjourHostListener: DirectHostLink, Sendable {
         state.withLock { $0.connections[connection.id] = connection }
         log.info("direct_connection_accepted", metadata: .fields(["connection": connection.id.rawValue, "open": count + 1]))
         connection.accept()
-        // The tasks below capture only values that are Sendable on their
-        // own (the id, the stream, the continuation, a mutex): the
-        // connection object stays behind the state lock and is reached by id.
+        // Both tasks are `@Sendable` and capture only Sendable values (the
+        // id, the stream, the continuation, the other task): the connection
+        // object stays behind the state lock and is reached by id. No local
+        // mutex is shared between them — a non-copyable local captured by
+        // two closures is one region to the Swift 6.3 compiler.
         let id = connection.id
         let frames = connection.frames
         let eventsIn = eventsIn
-        let sawFrame = Mutex(false)
-        // Idle deadline: a connection that never speaks is closed.
-        let idle = Task { [weak self] in
+        // Idle deadline: a connection that never speaks is closed. The
+        // reader cancels this task on the first frame.
+        let idle = Task { @Sendable [weak self] in
             try? await Task.sleep(for: DirectNetwork.idleTimeout)
-            guard !Task.isCancelled, !sawFrame.withLock({ $0 }) else { return }
+            guard !Task.isCancelled else { return }
             self?.cancel(id)
         }
-        let reader = Task { [weak self] in
+        let reader = Task { @Sendable [weak self] in
             for await result in frames {
                 switch result {
                 case let .success(frame):
-                    sawFrame.withLock { $0 = true }
+                    idle.cancel()
                     eventsIn.yield(.frame(id, frame))
                 case let .failure(error):
                     log.debug("direct_connection_read_failed", metadata: .fields(["connection": id.rawValue, "error": error]))
