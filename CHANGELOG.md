@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-08
+
 ### 配对与同步
 
 - [Lumi for iPhone] - 点开 Session 先看到最近的活动：第一次点开只取最新的一页（约 80 条），每到一片就显示；列表顶上出现 Load earlier 时点它再取更早的一页。此前要等整本时间线传完才显示，长会话要等几分钟。
@@ -201,7 +203,8 @@
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/AFutureD/Lumi/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AFutureD/Lumi/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AFutureD/Lumi/compare/v0.1.6...v0.2.0
