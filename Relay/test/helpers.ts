@@ -176,7 +176,7 @@ export function routingFrame(
   body: Uint8Array = new TextEncoder().encode("opaque-encrypted-payload"),
 ): ArrayBuffer {
   return encodeBinaryFrame({
-    version: { major: 1, minor: 5 },
+    version: { major: 1, minor: 6 },
     hostID: frameHostID,
     deviceID: frameDeviceID,
     sequence,
