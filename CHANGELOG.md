@@ -4,7 +4,9 @@
 
 ## [Unreleased]
 
-## [0.3.4] - 2026-11-12
+## [0.3.5] - 2026-11-12
+
+v0.3.4 的发布在 CI 的 Relay 检查一步失败（Relay 测试里写死的协议号没有随 1.6 更新），流程随即取消，没有发出安装包；修好后以 0.3.5 发出。Relay 本身这一版没有改动。
 
 ### Session 活动
 
@@ -227,8 +229,8 @@ v0.3.1 与 v0.3.2 的发布都在 CI 的 Mac 测试一步失败（Xcode 26.6 对
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.4...HEAD
-[0.3.4]: https://github.com/AFutureD/Lumi/compare/v0.3.3...v0.3.4
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/AFutureD/Lumi/compare/v0.3.3...v0.3.5
 [0.3.3]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/AFutureD/Lumi/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AFutureD/Lumi/compare/v0.2.0...v0.2.1
