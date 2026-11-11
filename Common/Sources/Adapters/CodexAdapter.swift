@@ -29,6 +29,7 @@ public struct CodexAdapter: AgentAdapter {
         case fileChange
         case webSearch
         case imageView
+        case commandExecution
     }
 
     // MARK: - Hooks
@@ -131,7 +132,6 @@ public struct CodexAdapter: AgentAdapter {
                 phase: .executing,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.summary(ofToolInput: payload.toolInput?.foundationObject),
                     content: payload.toolInput,
                     status: .started,
                     toolUseID: toolUseID
@@ -148,7 +148,6 @@ public struct CodexAdapter: AgentAdapter {
                 phase: .thinking,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.excerpt(Self.responseText(response)),
                     content: payload.toolResponse,
                     status: failed ? .failed : .succeeded,
                     toolUseID: toolUseID
@@ -321,7 +320,6 @@ public struct CodexAdapter: AgentAdapter {
                         occurredAt: occurredAt,
                         payload: .context(ContextTimelinePayload(
                             kind: "base_instructions",
-                            summary: "Base instructions",
                             content: baseInstructions
                         ))
                     )
@@ -384,7 +382,6 @@ public struct CodexAdapter: AgentAdapter {
                 phase: .executing,
                 timeline: .tool(ToolTimelinePayload(
                     name: name,
-                    summary: AdapterText.summary(ofToolInput: input),
                     content: input.flatMap { try? JSONValue(jsonObject: $0) },
                     status: .started,
                     toolUseID: callID
@@ -401,13 +398,33 @@ public struct CodexAdapter: AgentAdapter {
                 phase: .thinking,
                 timeline: .tool(ToolTimelinePayload(
                     name: resolvedName,
-                    summary: AdapterText.excerpt(output),
                     content: output.map(JSONValue.string),
                     status: failed ? .failed : .succeeded,
                     durationMilliseconds: duration,
                     toolUseID: callID
                 )),
                 itemID: callID.map { TimelineItemIDs.toolResult(sessionID, toolUseID: $0) }
+            )
+        }
+
+        /// One action Codex recorded as a finished item, stored whole: the
+        /// row's line and preview are read from the item's own fields
+        /// (`CodexItemShape`), so nothing of it is picked apart here.
+        func itemRow(name: String, item: [String: Any], rowID: TimelineItemID?) -> AgentIngressEvent {
+            let status = item.string("status")
+            return makeEvent(
+                lifecycle: .running,
+                phase: .thinking,
+                timeline: .tool(ToolTimelinePayload(
+                    name: name,
+                    content: try? JSONValue(jsonObject: item),
+                    // A finished item that is not `completed` (failed,
+                    // declined) did not do what it was asked.
+                    status: status == nil || status == "completed" ? .succeeded : .failed,
+                    durationMilliseconds: Self.itemDuration(item["duration"]),
+                    toolUseID: item.string("id")
+                )),
+                itemID: rowID
             )
         }
 
@@ -465,14 +482,8 @@ public struct CodexAdapter: AgentAdapter {
                 ))
             }
             if let content = try? JSONValue(jsonObject: payload) {
-                let summary = [payload.string("model"), payload.string("effort"), payload.string("cwd")]
-                    .compactMap { $0 }.joined(separator: " · ")
                 events.append(makeEvent(
-                    timeline: .config(ConfigTimelinePayload(
-                        kind: "turn_context",
-                        summary: summary.isEmpty ? nil : summary,
-                        content: content
-                    )),
+                    timeline: .config(ConfigTimelinePayload(kind: "turn_context", content: content)),
                     suffix: ":config",
                     diagnosticKey: turnID.map { "config:turn_context:\($0.rawValue)" } ?? "config:turn_context"
                 ))
@@ -495,11 +506,7 @@ public struct CodexAdapter: AgentAdapter {
                 diagnosticKey = "context:compacted:\(context.byteOffset)"
             }
             return [makeEvent(
-                timeline: .context(ContextTimelinePayload(
-                    kind: recordType,
-                    summary: recordType == "compacted" ? "Compaction summary" : "World state",
-                    content: content
-                )),
+                timeline: .context(ContextTimelinePayload(kind: recordType, content: content)),
                 suffix: ":context",
                 diagnosticKey: diagnosticKey
             )]
@@ -547,19 +554,13 @@ public struct CodexAdapter: AgentAdapter {
             case "context_compacted":
                 guard let content = try? JSONValue(jsonObject: payload) else { return [] }
                 return [makeEvent(
-                    timeline: .context(ContextTimelinePayload(
-                        kind: type,
-                        summary: "Context compacted",
-                        content: content
-                    )),
+                    timeline: .context(ContextTimelinePayload(kind: type, content: content)),
                     suffix: ":context"
                 )]
 
             case "thread_settings_applied":
                 guard let settingsDictionary = payload.dictionary("thread_settings"),
                       let settings = try? JSONValue(jsonObject: settingsDictionary) else { return [] }
-                let summary = [settingsDictionary.string("model"), settingsDictionary.string("reasoning_effort")]
-                    .compactMap { $0 }.joined(separator: " · ")
                 return [
                     makeEvent(
                         timeline: .modelConfiguration(ModelConfigurationTimelinePayload(
@@ -573,11 +574,7 @@ public struct CodexAdapter: AgentAdapter {
                         diagnosticKey: "model_configuration:thread_settings"
                     ),
                     makeEvent(
-                        timeline: .config(ConfigTimelinePayload(
-                            kind: "thread_settings",
-                            summary: summary.isEmpty ? "Thread settings" : summary,
-                            content: settings
-                        )),
+                        timeline: .config(ConfigTimelinePayload(kind: "thread_settings", content: settings)),
                         suffix: ":config"
                     ),
                 ]
@@ -639,11 +636,13 @@ public struct CodexAdapter: AgentAdapter {
                 )]
 
             case "exec_command_begin":
+                guard admit(.commandExecution, 0) else { return [] }
                 let command = (payload.array("command") as? [String])?.joined(separator: " ")
                     ?? payload.string("command")
                 return [toolCall(name: "Shell command", callID: payload.string("call_id"), input: command)]
 
             case "exec_command_end":
+                guard admit(.commandExecution, 0) else { return [] }
                 let exitCode = payload.int("exit_code") ?? 0
                 return [toolResult(
                     name: nil,
@@ -747,66 +746,29 @@ public struct CodexAdapter: AgentAdapter {
                 case "McpToolCall":
                     guard admit(.mcpCall, 1) else { return [] }
                     let name = [item.string("server"), item.string("tool")].compactMap { $0 }.joined(separator: "/")
-                    return [makeEvent(
-                        lifecycle: .running,
-                        phase: .thinking,
-                        timeline: .tool(ToolTimelinePayload(
-                            name: name.isEmpty ? "MCP tool" : name,
-                            summary: AdapterText.excerpt(Self.responseText(item["result"]))
-                                ?? AdapterText.summary(ofToolInput: item["arguments"]),
-                            content: item.jsonValue(keys: ["arguments", "result"]),
-                            status: item.string("status") == "failed" ? .failed : .succeeded,
-                            durationMilliseconds: Self.itemDuration(item["duration"]),
-                            toolUseID: item.string("id")
-                        )),
-                        itemID: rowID
-                    )]
+                    return [itemRow(name: name.isEmpty ? "MCP tool" : name, item: item, rowID: rowID)]
 
                 case "Extension":
                     let kind = item.string("kind") ?? "Extension"
                     if kind == "web.search", !admit(.webSearch, 1) { return [] }
-                    return [makeEvent(
-                        lifecycle: .running,
-                        phase: .thinking,
-                        timeline: .tool(ToolTimelinePayload(
-                            name: kind,
-                            summary: AdapterText.excerpt(item.string("query")),
-                            content: item.jsonValue("query"),
-                            status: .succeeded,
-                            toolUseID: item.string("id")
-                        )),
-                        itemID: rowID
-                    )]
+                    return [itemRow(name: kind, item: item, rowID: rowID)]
 
                 case "FileChange":
                     guard admit(.fileChange, 1) else { return [] }
-                    return [makeEvent(
-                        lifecycle: .running,
-                        phase: .thinking,
-                        timeline: .tool(ToolTimelinePayload(
-                            name: "Apply patch",
-                            summary: AdapterText.excerpt(item.dictionary("changes")?.keys.sorted().joined(separator: ", ")),
-                            content: item.jsonValue("changes"),
-                            status: item.string("status") == "failed" ? .failed : .succeeded,
-                            toolUseID: item.string("id")
-                        )),
-                        itemID: rowID
-                    )]
+                    return [itemRow(name: "Apply patch", item: item, rowID: rowID)]
 
                 case "ImageView":
                     guard admit(.imageView, 1) else { return [] }
-                    return [makeEvent(
-                        lifecycle: .running,
-                        phase: .thinking,
-                        timeline: .tool(ToolTimelinePayload(
-                            name: "View image",
-                            summary: AdapterText.excerpt(item.string("path")),
-                            content: item.jsonValue("path"),
-                            status: .succeeded,
-                            toolUseID: item.string("id")
-                        )),
-                        itemID: rowID
-                    )]
+                    return [itemRow(name: "View image", item: item, rowID: rowID)]
+
+                case "CommandExecution":
+                    // One shell command a script ran: the command, Codex's own
+                    // reading of it (`parsed_cmd`), its exit code and output.
+                    // The script's call / output pair (`response_item`) stays
+                    // a row pair of its own — the item carries no reference
+                    // back to the call (`exec-<uuid>` vs `call_…`).
+                    guard admit(.commandExecution, 1) else { return [] }
+                    return [itemRow(name: "Shell", item: item, rowID: rowID)]
 
                 case "Plan":
                     guard let text = item.string("text"), !text.isEmpty else { return [] }
@@ -817,14 +779,13 @@ public struct CodexAdapter: AgentAdapter {
                         itemID: rowID
                     )]
 
-                case "CommandExecution", "DynamicToolCall", "CollabAgentToolCall", "ContextCompaction":
-                    // The `response_item` call/output pair stays the sole
-                    // source of execution rows and the top-level `compacted`
-                    // record of the compaction marker. These items use an
-                    // unrelated id scheme (`exec-<uuid>` vs `call_…`), so
-                    // they cannot upsert the same rows, and an incremental
-                    // read boundary between call and item would turn
-                    // arbitration into duplicate rows.
+                case "DynamicToolCall", "CollabAgentToolCall", "ContextCompaction":
+                    // The `response_item` call/output pair is the source of
+                    // these rows, and the top-level `compacted` record of the
+                    // compaction marker. The items use an unrelated id scheme
+                    // (`exec-<uuid>` vs `call_…`), so they cannot upsert the
+                    // same rows, and an incremental read boundary between
+                    // call and item would turn arbitration into duplicates.
                     return []
 
                 default:

@@ -401,6 +401,10 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
     public let retainedSessionCount: Int
     public let socketPath: String
     public let relayConnected: Bool
+    /// The revision of the daemon's stored history (`HistoryRevision`): what
+    /// a mirror compares its copy against. `nil` from a daemon that predates
+    /// revisions reads as `HistoryRevision.first`.
+    public let historyRevision: Int?
 
     public init(
         daemonVersion: String,
@@ -410,7 +414,8 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
         activeSessionCount: Int,
         retainedSessionCount: Int,
         socketPath: String,
-        relayConnected: Bool
+        relayConnected: Bool,
+        historyRevision: Int? = nil
     ) {
         self.daemonVersion = daemonVersion
         self.executableHash = executableHash
@@ -420,6 +425,7 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
         self.retainedSessionCount = retainedSessionCount
         self.socketPath = socketPath
         self.relayConnected = relayConnected
+        self.historyRevision = historyRevision
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -431,7 +437,26 @@ public struct DaemonHealth: Codable, Hashable, Sendable {
         case retainedSessionCount
         case socketPath
         case relayConnected
+        case historyRevision
     }
+}
+
+/// The revision of the daemon's stored history. It moves when the daemon
+/// rewrites rows it already holds — a migration that reshapes records, a
+/// backfill that recovers rows from the agents' own files — and only once
+/// the rewrite is complete.
+///
+/// A mirror (the Mac cache, an iPhone cache) records the revision its copy
+/// was taken from. Rows rewritten in place change no summary and no clock,
+/// so ordinary reconciliation cannot see them: when the daemon's revision
+/// differs from the mirror's, the mirror drops its copy and takes the
+/// sessions again.
+public enum HistoryRevision {
+    /// History as every daemon before revisions kept it.
+    public static let first = 1
+    /// Rows hold no stored one-line summary (lines are read from the
+    /// records); Codex items are stored whole, shell commands included.
+    public static let current = 2
 }
 
 public struct IPCFailure: Codable, Hashable, Sendable, Error, LocalizedError {

@@ -221,7 +221,13 @@ enum LumenMain {
         // therefore exits 0 and stays down (KeepAlive.SuccessfulExit=false)
         // until a client wakes it; a service failure exits non-zero and
         // launchd relaunches.
-        var services: [any Service] = [backfill, server, watcher, claudeWatcher, usageScanner, modelPrices, planUsage]
+        // Rows earlier builds never stored are read back from the agents'
+        // own files in the background; the revision moves when all is done.
+        let historyBackfill = HistoryBackfill(
+            repository: repository,
+            onRevised: { await service.announceHistoryRevision() }
+        )
+        var services: [any Service] = [backfill, server, watcher, claudeWatcher, usageScanner, modelPrices, planUsage, historyBackfill]
         if let relay { services.append(relay) }
         if let wakeListener { services.append(wakeListener) }
         let group = ServiceGroup(configuration: .init(

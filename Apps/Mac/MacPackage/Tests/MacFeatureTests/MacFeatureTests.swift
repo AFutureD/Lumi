@@ -1371,13 +1371,13 @@ func rawDataRowsHeldTrimmedAreFetchedWholeFromTheDaemon() async throws {
     let whole = TimelineItem(
         id: TimelineItemID("tool:shots:t1:result"), sessionID: sessionID, occurredAt: date,
         payload: .tool(ToolTimelinePayload(
-            name: "Read", summary: "[Image]", content: .string(String(repeating: "x", count: 200_000)),
+            name: "Read", content: .string(String(repeating: "x", count: 200_000)),
             status: .succeeded, toolUseID: "t1"
         ))
     )
     let small = TimelineItem(
         id: TimelineItemID("tool:shots:t1:call"), sessionID: sessionID, occurredAt: date,
-        payload: .tool(ToolTimelinePayload(name: "Read", summary: "shot.png", status: .started, toolUseID: "t1"))
+        payload: .tool(ToolTimelinePayload(name: "Read", content: .object(["file_path": .string("shot.png")]), status: .started, toolUseID: "t1"))
     )
     let detail = SessionDetail(
         summary: SessionSummary(

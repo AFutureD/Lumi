@@ -24,6 +24,8 @@ final class SessionDetailViewController: NSViewController {
     private var renderGeneration = 0
     private var displayedSessionID: SessionID?
     private var presentation: SessionPagePresentation?
+    /// The record sheet on screen, kept to dismiss it.
+    private var previewSheet: NSViewController?
 
     init(store: MacSessionStore) {
         self.store = store
@@ -160,7 +162,7 @@ final class SessionDetailViewController: NSViewController {
             presentation: presentation,
             state: activityState,
             onPreview: { [weak self] activity in
-                self?.showRawData(for: activity)
+                self?.showPreview(for: activity)
             }
         )
     }
@@ -169,55 +171,33 @@ final class SessionDetailViewController: NSViewController {
         SessionInspectorView(presentation: presentation)
     }
 
-    private func showRawData(for activity: SessionActivityPresentation) {
-        guard let hostWindow = view.window else { return }
+    /// Opens the row's records: read for a person (Preview), or as stored
+    /// (Raw). A tool's call and result open together, whichever was clicked.
+    private func showPreview(for activity: SessionActivityPresentation) {
+        guard view.window != nil else { return }
+        let rows = presentation?.activities.map(\.row) ?? [activity.row]
+        let preview = ActivityPreviewBuilder.make(for: activity.row, among: rows)
+        let model = ActivityPreviewModel(activity: activity, preview: preview)
+        let sheet = NSHostingController(rootView: ActivityPreviewSheet(model: model, onDone: { [weak self] in
+            guard let self, let sheet = self.previewSheet else { return }
+            self.previewSheet = nil
+            self.dismiss(sheet)
+        }))
+        sheet.preferredContentSize = ActivityPreviewSheet.size
+        previewSheet = sheet
+        presentAsSheet(sheet)
 
-        let textScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 680, height: 420))
-        let textView = NSTextView(frame: textScroll.contentView.bounds)
-        textView.autoresizingMask = [.width, .height]
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.importsGraphics = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.isAutomaticLinkDetectionEnabled = false
-        textView.drawsBackground = false
-        textView.font = Design.Font.mono
-        textView.textColor = .labelColor
-        textView.textContainerInset = NSSize(width: 10, height: 10)
         // A row the cache holds trimmed shows its whole form from the
         // daemon; until it arrives the sheet says so, and a failure is shown
         // above the trimmed copy rather than passing the copy off as whole.
-        let rawItems = activity.rawItems
-        let needsWholeRows = rawItems.contains(where: \.isTruncated)
-        textView.string = needsWholeRows
-            ? "Loading full content…"
-            : SessionPagePresentationBuilder.rawData(for: rawItems)
-        textView.textContainer?.widthTracksTextView = true
-
-        textScroll.documentView = textView
-        textScroll.hasVerticalScroller = true
-        textScroll.autohidesScrollers = true
-        textScroll.borderType = .bezelBorder
-
-        let alert = NSAlert()
-        alert.messageText = "\(activity.label) Raw Data"
-        alert.informativeText = activity.occurredAt
-        alert.accessoryView = textScroll
-        alert.addButton(withTitle: "Done")
-        alert.beginSheetModal(for: hostWindow)
-
-        guard needsWholeRows else { return }
-        Task { [store, weak textView] in
-            let text: String
+        guard !preview.truncatedItemIDs.isEmpty else { return }
+        Task { [store, weak model] in
             do {
-                text = SessionPagePresentationBuilder.rawData(for: try await store.wholeTimelineItems(rawItems))
+                let whole = try await store.wholeTimelineItems(preview.items)
+                model?.install(whole: whole)
             } catch {
-                text = "Couldn't load full content: \(error)\n\n"
-                    + SessionPagePresentationBuilder.rawData(for: rawItems)
+                model?.fail(error)
             }
-            textView?.string = text
         }
     }
 }

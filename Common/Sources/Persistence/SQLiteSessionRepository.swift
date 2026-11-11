@@ -290,6 +290,100 @@ public actor SQLiteSessionRepository: SessionRepository {
                 "ms": LogClock.milliseconds(since: started),
             ]))
         }
+        // The Activity line used to be stored beside the record it was read
+        // from (`summary`). It is read from the record when shown now
+        // (`TimelineLineText`), so the stored copy goes, and the rows a line
+        // cannot be read from in their old shape take the shape the adapters
+        // write today — one reading fits every stored row:
+        //   · Two Claude hook records kept a fact only in their summary: why
+        //     an instructions file was loaded, which scope a settings file
+        //     belongs to. Those move into `content`, under the hook's names.
+        //   · A Codex item row kept a part of the item (a path, the changes,
+        //     the query). It becomes an item: `type` plus exactly the fields
+        //     the old row held, under the item's own names. What the old row
+        //     never kept is absent — the daemon's history backfill reads the
+        //     whole item back from the rollout where the file still exists.
+        //   · A result recorded in a later read than its call carried the
+        //     placeholder name `Tool`; it takes its call's name.
+        migrator.registerMigration("lumi-v14-lines-read-from-records") { db in
+            let started = ContinuousClock.now
+            let decoder = TransportCoding.makeDecoder()
+            let encoder = TransportCoding.makeEncoder()
+            func rewrite(_ id: String, _ change: (TimelineItem) -> TimelinePayload?) throws -> Bool {
+                guard let data = try Data.fetchOne(db, sql: "SELECT item FROM timeline WHERE id = ?", arguments: [id]) else { return false }
+                let item = try decoder.decode(TimelineItem.self, from: data)
+                guard let payload = change(item) else { return false }
+                let encoded = try encoder.encode(TimelineItem(
+                    id: item.id, sessionID: item.sessionID, turnID: item.turnID, occurredAt: item.occurredAt,
+                    payload: payload, truncated: item.truncated
+                ))
+                try db.execute(sql: "UPDATE timeline SET item = ? WHERE id = ?", arguments: [encoded, id])
+                return true
+            }
+
+            // Read what only the summaries hold before they go. Both records
+            // are small; the size bound keeps the scan off the large rows.
+            let hookRows = try Row.fetchAll(db, sql: """
+                SELECT id,
+                       coalesce(json_extract(CAST(item AS TEXT), '$.payload.context.summary'),
+                                json_extract(CAST(item AS TEXT), '$.payload.config.summary')) AS summary
+                FROM timeline
+                WHERE length(item) < 16384
+                  AND ((json_extract(CAST(item AS TEXT), '$.payload.context.kind') = 'instructions'
+                        AND json_type(CAST(item AS TEXT), '$.payload.context.content') = 'text')
+                    OR (json_extract(CAST(item AS TEXT), '$.payload.config.kind') = 'config_change'
+                        AND json_type(CAST(item AS TEXT), '$.payload.config.content') = 'text'))
+                """)
+            var hookRewritten = 0
+            for row in hookRows {
+                let id: String = row["id"]
+                let summary: String? = row["summary"]
+                if try rewrite(id, { Self.hookRecordWithItsFacts($0.payload, summary: summary) }) { hookRewritten += 1 }
+            }
+
+            let itemIDs = try String.fetchAll(db, sql: "SELECT id FROM timeline WHERE id LIKE 'codex\\_item:%' ESCAPE '\\'")
+            var itemsReshaped = 0
+            for id in itemIDs {
+                if try rewrite(id, { Self.codexItemInItsOwnShape($0.payload) }) { itemsReshaped += 1 }
+            }
+
+            try db.execute(sql: """
+                UPDATE timeline
+                SET item = CAST(json_set(
+                    CAST(item AS TEXT), '$.payload.tool.name',
+                    (SELECT json_extract(CAST(c.item AS TEXT), '$.payload.tool.name')
+                     FROM timeline c WHERE c.id = substr(timeline.id, 1, length(timeline.id) - 6) || 'call')
+                ) AS BLOB)
+                WHERE id LIKE 'tool:%:result'
+                  AND json_extract(CAST(item AS TEXT), '$.payload.tool.name') = 'Tool'
+                  AND EXISTS (
+                      SELECT 1 FROM timeline c
+                      WHERE c.id = substr(timeline.id, 1, length(timeline.id) - 6) || 'call'
+                        AND json_extract(CAST(c.item AS TEXT), '$.payload.tool.name') IS NOT NULL
+                  )
+                """)
+            let named = db.changesCount
+
+            // `json_remove` rewrites the row as it reads it: every other
+            // value is kept as written (checked against a real store).
+            try db.execute(sql: """
+                UPDATE timeline
+                SET item = CAST(json_remove(
+                    CAST(item AS TEXT),
+                    '$.payload.tool.summary', '$.payload.context.summary', '$.payload.config.summary'
+                ) AS BLOB)
+                WHERE json_type(CAST(item AS TEXT), '$.payload.tool.summary') IS NOT NULL
+                   OR json_type(CAST(item AS TEXT), '$.payload.context.summary') IS NOT NULL
+                   OR json_type(CAST(item AS TEXT), '$.payload.config.summary') IS NOT NULL
+                """)
+            dbLog.info("stored_lines_removed", metadata: .fields([
+                "summaries_removed": db.changesCount,
+                "hook_records_rewritten": hookRewritten,
+                "codex_items_reshaped": itemsReshaped,
+                "results_named": named,
+                "ms": LogClock.milliseconds(since: started),
+            ]))
+        }
         try migrator.migrate(database)
         Self.ensureAutoVacuum(database, path: path)
     }
@@ -1200,6 +1294,55 @@ public actor SQLiteSessionRepository: SessionRepository {
         }
     }
 
+    public func backfillTimeline(_ items: [TimelineItem], sessionID: SessionID) async throws -> Int {
+        guard !items.isEmpty else { return 0 }
+        let encoder = encoder
+        let written = try await database.write { db -> Int in
+            guard let first = try Double.fetchOne(
+                db,
+                sql: "SELECT MIN(occurred_at) FROM timeline WHERE session_id = ?",
+                arguments: [sessionID.rawValue]
+            ) else { return 0 }
+            var written = 0
+            for item in items where item.occurredAt.timeIntervalSince1970 >= first {
+                try db.execute(
+                    sql: """
+                        INSERT INTO timeline(id, session_id, occurred_at, item)
+                        VALUES(?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            occurred_at = excluded.occurred_at,
+                            item = excluded.item
+                        """,
+                    arguments: [
+                        item.id.rawValue,
+                        sessionID.rawValue,
+                        item.occurredAt.timeIntervalSince1970,
+                        try encoder.encode(item),
+                    ]
+                )
+                written += 1
+            }
+            return written
+        }
+        if written > 0 { turnsCache.removeValue(forKey: sessionID) }
+        return written
+    }
+
+    public func historyRevision() async throws -> Int? {
+        try await database.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM metadata WHERE key = 'history_revision'").flatMap(Int.init)
+        }
+    }
+
+    public func setHistoryRevision(_ revision: Int) async throws {
+        try await database.write { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO metadata(key, value) VALUES('history_revision', ?)",
+                arguments: [String(revision)]
+            )
+        }
+    }
+
     public func isRolloutBaselineInitialized() async throws -> Bool {
         try await database.read { db in
             try String.fetchOne(
@@ -1215,5 +1358,75 @@ public actor SQLiteSessionRepository: SessionRepository {
                 sql: "INSERT OR REPLACE INTO metadata(key, value) VALUES('rollout_baseline_initialized', '1')"
             )
         }
+    }
+}
+
+// MARK: - lumi-v14 record shapes
+
+extension SQLiteSessionRepository {
+    /// A hook `instructions` / `config_change` record that held only a path,
+    /// with the fact its old summary carried next to it: `basename · reason`
+    /// for a loaded instructions file, `source · basename` for a changed
+    /// settings file. `nil` for any other record.
+    static func hookRecordWithItsFacts(_ payload: TimelinePayload, summary: String?) -> TimelinePayload? {
+        switch payload {
+        case let .context(context):
+            guard context.kind == "instructions", let path = context.content?.stringValue else { return nil }
+            var content: [String: JSONValue] = ["file_path": .string(path)]
+            let prefix = (path as NSString).lastPathComponent + " · "
+            if let summary, summary.hasPrefix(prefix), summary.count > prefix.count {
+                content["load_reason"] = .string(String(summary.dropFirst(prefix.count)))
+            }
+            return .context(ContextTimelinePayload(kind: context.kind, content: .object(content)))
+        case let .config(config):
+            guard config.kind == "config_change", let path = config.content?.stringValue else { return nil }
+            var content: [String: JSONValue] = [:]
+            let name = (path as NSString).lastPathComponent
+            if !path.isEmpty { content["file_path"] = .string(path) }
+            if let summary, !summary.isEmpty, summary != name {
+                let suffix = " · " + name
+                let source = !name.isEmpty && summary.hasSuffix(suffix) ? String(summary.dropLast(suffix.count)) : summary
+                if !source.isEmpty { content["source"] = .string(source) }
+            }
+            return .config(ConfigTimelinePayload(kind: config.kind, content: content.isEmpty ? nil : .object(content)))
+        default:
+            return nil
+        }
+    }
+
+    /// A Codex item row from before items were stored whole, as an item:
+    /// `type` and the fields the row held, under the item's own names.
+    /// `nil` when the row is not a tool row or already holds an item.
+    static func codexItemInItsOwnShape(_ payload: TimelinePayload) -> TimelinePayload? {
+        guard case let .tool(tool) = payload, CodexItemShape(tool.content) == nil else { return nil }
+        var item: [String: JSONValue] = [:]
+        item["id"] = tool.toolUseID.map(JSONValue.string)
+        let status: JSONValue = .string(tool.status == .failed ? "failed" : "completed")
+        switch tool.name {
+        case "Apply patch":
+            item["type"] = .string("FileChange")
+            item["changes"] = tool.content
+            item["status"] = status
+        case "View image":
+            item["type"] = .string("ImageView")
+            item["path"] = tool.content
+        default:
+            if let fields = tool.content?.objectValue, fields["arguments"] != nil || fields["result"] != nil {
+                item["type"] = .string("McpToolCall")
+                let parts = tool.name.split(separator: "/", maxSplits: 1).map(String.init)
+                if parts.count == 2 {
+                    item["server"] = .string(parts[0])
+                    item["tool"] = .string(parts[1])
+                }
+                item["arguments"] = fields["arguments"]
+                item["result"] = fields["result"]
+                item["status"] = status
+            } else {
+                item["type"] = .string("Extension")
+                item["kind"] = .string(tool.name)
+                item["query"] = tool.content
+            }
+        }
+        return .tool(tool.withContent(.object(item)))
     }
 }

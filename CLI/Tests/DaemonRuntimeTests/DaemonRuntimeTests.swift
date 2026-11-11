@@ -1392,7 +1392,7 @@ private func bulkyToolEvent(_ id: String, session: SessionID) -> AgentIngressEve
             sessionID: session,
             occurredAt: Date(timeIntervalSince1970: 100),
             payload: .tool(ToolTimelinePayload(
-                name: "Read", summary: "[Image]",
+                name: "Read",
                 content: .string(String(repeating: "x", count: 200_000)),
                 status: .succeeded, toolUseID: id
             ))

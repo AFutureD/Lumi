@@ -88,7 +88,7 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
     ])
     let running = session("r", timeline: [
         .message(.init(role: .user, text: "hi")),
-        .tool(.init(name: "shell", summary: "swift test", status: .started, toolUseID: "t")),
+        .tool(.init(name: "shell", content: .object(["command": .string("swift test")]), status: .started, toolUseID: "t")),
     ])
     let items = SessionListPresentation.items(from: [channel("Mac", sessions: [done, running])])
     let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.sessionID.rawValue, $0) })

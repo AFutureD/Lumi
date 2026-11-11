@@ -4,11 +4,23 @@
 
 ## [Unreleased]
 
+### Session 活动
+
+- Activity 每一行的文字现在直接从记录读出，记录里不再另存这一行文字。Claude 的工具调用优先显示 Agent 自己写的说明，没有再显示命令、文件路径、搜索词或网址。
+- Codex 执行的 shell 命令现在出现在 Activity 里，按 Codex 自己对命令的解读显示为 `Read · 文件名`、`Search · "搜索词" in 目录`、`List · 目录` 或 `Run · 命令原文`；失败的命令标为 FAILED 并带退出码，每条命令带耗时。此前 Activity 里没有这些命令，只有 `exec` 加一行脚本。
+- Codex 的其他动作换成可读的写法：`Edit · 文件名 +2 -1`、`View image`、`Generate image`、`Web search`、`Open page`，MCP 工具显示最能说明用途的参数而不是返回的 JSON。Codex 的脚本行（`exec`）开始和结束两行都显示这次调用的 id，一眼能看出哪两行是一对。
+- [Lumi for Mac] - 点开 Activity 的一行不再只有原始 JSON：窗口默认是 Preview——消息显示完整正文，工具调用和它的结果合在一个窗口，命令、输出、diff、截图、网页结果各自成区——右上角可切到 Raw 看保存的原文，原文里的时间是可读的日期时间。
+- [Lumi for iPhone] - 活动详情页显示记录本身的内容：完整命令、其余参数、完整输出或错误、diff，而不是列表上的那一行文字。
+- 升级后 daemon 会把 Codex 自己的记录文件还在的旧 Session 重读一遍，补上以前没有记录的命令；完成后 Mac 与已配对 iPhone 各自重新同步一次。文件已被删除的旧 Session 保持原样。
+- Claude 载入指令文件的记录（加载原因）与配置变更的记录（配置来源）：这两项此前只写在另存的那行文字里，现在保存在记录内容中，在 Raw 里能看到；已有数据在升级时一并搬过去。
+
 ### 数据存储
 
+- 超大的单条内容在 Mac 与 iPhone 上留下的是截短的副本——结构不变，只截短其中过长的文字——所以列表上仍能读出是哪条命令、哪个文件；此前整段内容被去掉。项太多、每段文字截到最短仍超过上限的记录才不保留内容。
+- 本地协议 1.5 → 1.6：记录不再带 `summary`；daemon 的健康信息新增历史版本号，daemon 原地改写过已保存的历史后，Mac 与 iPhone 据此丢掉本地副本重新同步。Lumi for Mac、Lumi for iPhone 与 daemon 一起发布。
 - 截图只存一份：Claude 工具结果里同一张图（以及重复出现的长命令输出）不再存两遍，原始 JSON 里重复的位置换成指向保留那份的 `{"lumi.sameAs": …}`；已有数据在升级时一并改写。本机实测（221 个 Session）daemon 库的 Session 内容从 344.8 MiB 降到 199.2 MiB。
 - 删除 Session、清空历史后数据库文件随即变小：daemon、Mac、iPhone 的数据库删除后把空间还给磁盘；升级后第一次启动时把此前留下的空闲页一次性压实（本机实测 daemon 库文件 2.04 GB → 249 MB，改写加压实约 7 秒）。
-- [Lumi for Mac] - 本地副本对超大的单条内容只存摘要，点开原始 JSON 时先显示 `Loading full content…`，再从 daemon 取回完整内容；取不到时写明原因。升级后第一次启动会丢掉旧的本地副本、从 daemon 重新同步一遍（本机实测 7.3 秒，文件 1.68 GB → 64 MB）。
+- [Lumi for Mac] - 本地副本对超大的单条内容不存全文，点开这一行时先显示 `Loading full content…`，再从 daemon 取回完整内容；取不到时写明原因。升级后第一次启动会丢掉旧的本地副本、从 daemon 重新同步一遍（本机实测 7.3 秒，文件 1.68 GB → 64 MB）。
 - 修复：同一条活动先以小内容记下、之后变大时，Mac 与 iPhone 可能一直停在旧的小版本。
 - 本地协议 1.4 → 1.5：daemon 发给 Mac 的行与发给 iPhone 的一样按单条预算裁剪，新增 `get_timeline_items` 按条取完整行。Lumi for Mac 与 daemon 一起发布。
 

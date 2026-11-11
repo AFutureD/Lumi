@@ -64,70 +64,59 @@ struct ActivityDetailPresentation: Equatable, Sendable {
 }
 
 enum ActivityDetailPresentationBuilder {
-    /// A tool call and its result are paired by `toolUseID` into Command +
-    /// Output; everything else shows its own text under a category heading.
+    /// The row's records as the shared preview reads them
+    /// (`ActivityPreviewBuilder`): a tool call and its result open together,
+    /// each section holding what the record itself says — the command, the
+    /// output, the diff — rather than the row's one-line text. This page
+    /// shows every section as text.
     static func make(for activity: SessionActivityPresentation, in activities: [SessionActivityPresentation]) -> ActivityDetailPresentation {
         let row = activity.row
-        let title = TextShaping.firstLine(row.text)
+        let preview = ActivityPreviewBuilder.make(for: row, among: activities.map(\.row))
         var sections: [ActivityDetailSection] = []
-
-        var truncated = row.items.filter(\.isTruncated).map(\.id)
-        if let toolUseID = row.toolUseID {
-            let paired = activities.map(\.row).filter { $0.toolUseID == toolUseID }
-            let call = paired.first { $0.tag == .tool } ?? (row.tag == .tool ? row : nil)
-            let result = paired.first { $0.tag == .result || $0.tag == .failed }
-            for other in [call, result].compactMap({ $0 }) where other.id != row.id {
-                truncated += other.items.filter(\.isTruncated).map(\.id)
-            }
-            if let call {
-                sections.append(ActivityDetailSection(title: "Command", text: call.text, isMonospaced: true))
-            }
-            if let result {
-                sections.append(ActivityDetailSection(title: "Output", text: result.text, isMonospaced: true))
-            } else if call != nil {
-                sections.append(ActivityDetailSection(title: "Output", text: "Still running…", isMonospaced: true))
-            }
-        } else {
-            switch row.tag {
-            case .user, .assistant:
-                sections.append(ActivityDetailSection(title: "Message", text: row.text, isMonospaced: false))
-            case .reasoning:
-                sections.append(ActivityDetailSection(title: "Reasoning", text: row.text, isMonospaced: false))
-            case .plan:
-                sections.append(ActivityDetailSection(title: "Plan", text: planText(row), isMonospaced: false))
-            case .subagent:
-                sections.append(ActivityDetailSection(title: "Subagent", text: row.text, isMonospaced: false))
-            case .failed, .turnFailed, .aborted:
-                sections.append(ActivityDetailSection(title: "Error", text: row.text, isMonospaced: true))
-            case .turnEnd:
-                sections.append(ActivityDetailSection(title: "Turn", text: row.text, isMonospaced: false))
-            case .config:
-                sections.append(ActivityDetailSection(title: "Configuration", text: row.text, isMonospaced: true))
-            case .session, .compact, .context, .tool, .result:
-                sections.append(ActivityDetailSection(title: "Context", text: row.text, isMonospaced: true))
-            }
+        if !preview.facts.isEmpty, row.toolUseID != nil {
+            sections.append(ActivityDetailSection(title: "Status", text: lines(preview.facts), isMonospaced: true))
         }
-
+        for section in preview.sections {
+            let (text, isMonospaced): (String, Bool) = switch section.body {
+            case let .prose(text), let .markdown(text):
+                (text, false)
+            case let .code(text), let .diff(text):
+                (text, true)
+            case let .image(image):
+                (imageNote(image), false)
+            case let .facts(facts):
+                (lines(facts), true)
+            case let .links(links):
+                (links.map { [$0.title, $0.url == $0.title ? nil : $0.url].compactMap { $0 }.joined(separator: "\n") }.joined(separator: "\n\n"), false)
+            }
+            sections.append(ActivityDetailSection(title: section.title, text: text, isMonospaced: isMonospaced))
+        }
+        // A call whose result has not come yet says so where the output goes.
+        if row.toolUseID != nil, preview.items.count == 1, row.tag == .tool {
+            sections.append(ActivityDetailSection(title: "Output", text: "Still running…", isMonospaced: true))
+        }
+        // A record with nothing but its line: the line is the content.
+        if sections.isEmpty {
+            sections.append(ActivityDetailSection(title: row.label.capitalized, text: row.text, isMonospaced: false))
+        }
         return ActivityDetailPresentation(
             tag: row.tag,
             label: row.label,
-            title: title,
+            title: TextShaping.firstLine(row.text),
             sections: sections,
             isFailed: activity.isFailed,
-            truncatedItemIDs: truncated
+            truncatedItemIDs: preview.truncatedItemIDs
         )
     }
 
-    private static func planText(_ row: TimelineRow) -> String {
-        guard case let .plan(payload) = row.items.last?.payload else { return row.text }
-        let steps = payload.steps.map { step in
-            let mark = switch step.status {
-            case .pending: "○"
-            case .inProgress: "◐"
-            case .completed: "●"
-            }
-            return "\(mark) \(step.text)"
+    private static func lines(_ facts: [ActivityPreview.Fact]) -> String {
+        facts.map { "\($0.label): \($0.value)" }.joined(separator: "\n")
+    }
+
+    private static func imageNote(_ image: ActivityPreview.Image) -> String {
+        switch image {
+        case .base64: "Image"
+        case let .file(path): path
         }
-        return ([payload.explanation].compactMap { $0 } + steps).joined(separator: "\n")
     }
 }

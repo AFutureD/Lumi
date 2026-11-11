@@ -327,7 +327,8 @@ private func jsonLines(_ objects: [[String: Any]]) -> String {
     guard case let .tool(tool)? = events[0].timelineItem?.payload else {
         Issue.record("expected tool item"); return
     }
-    #expect(tool.name == "Edit" && tool.toolUseID == "tu" && tool.summary == "/a/b.swift")
+    #expect(tool.name == "Edit" && tool.toolUseID == "tu")
+    #expect(TimelineLineText.tool(tool, name: tool.name) == "Edit · /a/b.swift")
     #expect(events[0].timelineItem?.id == TimelineItemIDs.toolCall(SessionID("s"), toolUseID: "tu"))
 
     let richData = data([

@@ -135,18 +135,34 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 | `StopFailure`（Claude） | Failed | Idle | 收口当前 Turn：outcome=failed | `turnEnd(failed, error_type · error_message)` |
 | `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
 | `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)`；Claude 且会话仍临时（无 Turn、无 transcript）→ 改为 `disposition: .discard`（删除 + 墓碑，无 item） |
-| `InstructionsLoaded`（Claude） | — | — | — | `context(instructions)` |
-| `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `config(config_change / cwd_changed)`；CwdChanged 同时更新 workspace |
+| `InstructionsLoaded`（Claude） | — | — | — | `context(instructions)`，content = `{file_path, load_reason}` |
+| `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `config(config_change / cwd_changed)`，content = `{file_path, source}` / `{old_cwd, new_cwd}`；CwdChanged 同时更新 workspace |
 | `Notification(agent_needs_input / permission_prompt / idle_prompt)`（Claude） | Waiting For Input | Waiting For Approval / Idle | — | 无 |
 
 未知 Hook 事件返回空数组。
 
 ## transcript / rollout 事件映射
 
-工具行统一携带两份数据：`summary` 是活动列表行的一行摘要（首个非空行、160 字符截断），`content` 是来源原始输入 / 输出的全文（started 存完整输入，succeeded / failed 存完整结果），Raw Data 视图据此完整展示。下表 cell 里的「摘要」都只指 `summary`。
+工具、上下文和配置行只存来源写下的记录本身：`content` 是原始输入（started）、原始结果（succeeded / failed），或一条完整的 Codex item。行上不另存派生数据——**记录是唯一事实来源，读法在显示时现算**：
+
+- Activity 那一行文字由 `TimelineLineText`（Transport）从 `name` / `kind` / `content` 读出：首个非空行、160 字符截断；格式是「名字 · 说明 · 耗时」。
+- 点开一行看到的 Preview 由 `ActivityPreviewBuilder`（Core）从同一批记录读出；Raw 是记录原文。
+- 两者都通过 `AgentRecordShapes`（Transport）读各家记录的形状（Claude 的工具输入与结果、Codex 的 item），这是唯一知道这些形状的地方。
+
+读法的要点：
+
+| 记录 | 行文字 |
+| --- | --- |
+| 工具调用，输入是具名参数 | 名字 + 最能说明用途的参数：`description`、`title`、`command`、`cmd`、`file_path`、`path`、`pattern`、`query`、`url`、`prompt`、`input`、`text` 依次取第一个有内容的；都没有时列前 4 个参数名。JSON 字符串形式的参数（Codex `function_call.arguments`）先解成对象 |
+| 工具结果 | 名字 + 结果文本首行（Claude transcript 取 `content.content`，退回 `toolUseResult.stdout`；hook 取 `tool_result` / `tool_response`）；失败且无文本显示 `failed` |
+| Codex `CommandExecution` | 按 Codex 自己的 `parsed_cmd`：`Read · 文件名` / `Search · "query" in path` / `List · path` / `Run · 命令`；相邻同类合并，失败加 `exit <code>` |
+| Codex `FileChange` / `ImageView` / `Extension` / `McpToolCall` | `Edit · 文件名 +N -M`（add → `Create`，delete → `Delete`，多文件 → `Edit · N files`）/ `View image · 文件名` / `Web search · query`、`Open page · url`、`Find in page · pattern`、`Generate image · 文件名` / `server/tool · 参数` |
+| Codex 脚本外壳（`exec`，内容是脚本或输出文本） | `exec · <toolUseID>`：调用行与结果行同一个 id |
+| 上下文 / 配置 | 固定种类用固定文案（`Base instructions`、`World state`、`Compaction summary`、`Context compacted`、`Thread settings`）；`turn_context` = model · effort · cwd；Claude attachment 读 `addedNames` 个数、`filename` / `path` 或 `content` 首行；字符串内容取首行；其余是 kind 把下划线换成空格 |
 
 - 每个大值只存一份。Claude 的工具结果同时带模型看到的 `content` 和 Claude Code 自己的 `toolUseResult`，截图在两边各有一份 base64，命令输出在 `toolUseResult.stdout` 里再出现一次。`toolUseResult` 里不短于 1 KiB、且与 `content` 里某个字符串相同的值，换成引用对象 `{"lumi.sameAs": "<JSON Pointer>"}`，指针（RFC 6901）相对工具的 `content` 对象，例如 `/content/0/source/data`。引用是对象、原值是字符串，按原形状读的代码会显式失败而不是读到别的东西；`content` 本身不改。规则在 `ToolResultDeduplication`（Core），入库时由 adapter 调用，已存的行由 migration `lumi-v13` 改写。
-- 只有 daemon 保存完整行；Mac 缓存和 iPhone 收到的是按内容预算裁剪的镜像行，打开 Raw Data / 活动详情时再向 daemon 取整行（见 [数据、通信与存储设计](data-communication-storage.md#镜像行与同-id-取舍)）。
+- 只有 daemon 保存完整行；Mac 缓存和 iPhone 收到的是按内容预算裁剪的镜像行——结构保留、长字符串截短，所以行文字仍读得出来——打开记录时再向 daemon 取整行（见 [数据、通信与存储设计](data-communication-storage.md#镜像行与同-id-取舍)）。
+- 结果行的名字在入库前补齐：结果与调用不在同一次读取里时 adapter 只知道占位名 `Tool`，daemon 在 `apply` 之前从已存的调用行取名（`ToolResultNaming`），所以每份副本的结果行都带真实工具名。
 - 内容不做脱敏：daemon、Mac 缓存和已配对 iPhone 持有的都是原始内容，按高敏感数据保护。
 
 **Codex rollout**（`RolloutReadState.currentTurnID` 由 `task_started` / `turn_context` 的 `turn_id` 设定，其余记录归入当前 Turn）：
@@ -159,8 +175,9 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 | `user_message` / `agent_message` / `agent_reasoning` | `message(user)`（Turn.prompt）/ `message(assistant)` / `reasoning` |
 | `response_item reasoning` | 忽略（`agent_reasoning` 的加密副本） |
 | `response_item message` role=developer / user 内 `<tag>` 或 `# AGENTS.md` | `context(developer_instructions / <tag> / agents_md)`；普通 user/assistant 忽略（event_msg 已有） |
-| `response_item custom_tool_call` / `function_call` | `tool(started, name, input 摘要, toolUseID=call_id)`；`update_plan` → `plan` |
-| `response_item *_output` | `tool(succeeded/failed by metadata.exit_code, output 摘要, toolUseID)`；名称从同次读取的 call 或投影阶段配对补齐 |
+| `response_item custom_tool_call` / `function_call` | `tool(started, name, content=input 原文, toolUseID=call_id)`；`update_plan` → `plan`。Codex code mode 下模型唯一的工具是 `exec`（一段调用真实工具的 JavaScript），这一对 call / output 是脚本外壳 |
+| `response_item *_output` | `tool(succeeded/failed by metadata.exit_code, content=输出文本, toolUseID)`；名称从同次读取的 call 取，跨读取时入库前从已存的调用行补齐 |
+| `item_completed` 的 `CommandExecution` / `FileChange` / `ImageView` / `McpToolCall` / `Extension` | 一行 `tool(succeeded/failed by status, content=完整 item, duration, toolUseID=item.id)`，行 ID `codex_item:<session>:<item.id>`。这是脚本实际做的事；item 不带回指 call 的字段（`exec-<uuid>` 对 `call_…`），所以与外壳各自成行 |
 | exec/patch/mcp/dynamic/web/image begin·end | 同上，含 `call_id` |
 | `task_complete` / `turn_aborted` | `turnEnd(completed|failed|aborted)`，Waiting For Input / Failed / Interrupted |
 | `world_state` / `compacted` / `context_compacted` | `context(…)` |
@@ -174,7 +191,7 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 | `user` 字符串或 `text` block | `message(user)`；开 Turn 的记录以首个普通文本写 Turn.prompt 并占稳定 prompt item id（`user_prompt:<s>:<turn>`），其余文本是独立行；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 开头的斜杠命令记录保持为 `message(user)` **原文不解析**（turn-neutral）；其余 `<local-command-stdout>` 等标签块为 `context(<tag>)` |
 | `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
 | `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)`；content = 原始 `content` block + 顶层 `toolUseResult`（与 `content` 重复的大值换成 `lumi.sameAs` 引用，见上文） |
-| `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
+| `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, content=input 原文, toolUseID=id)` |
 | `assistant` 终态 `stop_reason` / 顶层 `error` | Turn 收口，正常/异常分类见「Turn 边界」的表；`turnEnd` ID `turn_end:<s>:<turn>`，与 Stop/StopFailure hook 落同一行，Stop hook 丢失时下一次读增量自愈 |
 | `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |
 | `attachment` / `system` / `summary` | `context(…)`；attachment 中的运行模式类（`auto_mode` / `plan_mode` / `plan_mode_exit` / `command_permissions`）改为 `config(…)` |

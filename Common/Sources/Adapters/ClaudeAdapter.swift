@@ -171,7 +171,6 @@ public struct ClaudeAdapter: AgentAdapter {
                 phase: .executing,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.summary(ofToolInput: payload.toolInput?.foundationObject),
                     content: payload.toolInput,
                     status: .started,
                     toolUseID: toolUseID
@@ -190,7 +189,6 @@ public struct ClaudeAdapter: AgentAdapter {
                 phase: .thinking,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.excerpt(CodexAdapter.responseText(result?.foundationObject)),
                     content: content.isEmpty ? nil : .object(content),
                     status: failed ? .failed : .succeeded,
                     toolUseID: toolUseID
@@ -204,7 +202,6 @@ public struct ClaudeAdapter: AgentAdapter {
                 phase: .thinking,
                 timeline: rich ? nil : .tool(ToolTimelinePayload(
                     name: toolName,
-                    summary: AdapterText.excerpt(payload.error) ?? "failed",
                     content: payload.error.map(JSONValue.string),
                     status: .failed,
                     toolUseID: toolUseID
@@ -315,26 +312,24 @@ public struct ClaudeAdapter: AgentAdapter {
             )]
 
         case .instructionsLoaded:
+            // The hook's own facts, under the hook's own field names: which
+            // file was loaded and why.
             let path = payload.filePath ?? "instructions"
+            var content: [String: JSONValue] = ["file_path": .string(path)]
+            content["load_reason"] = (payload.loadReason ?? payload.reason).map(JSONValue.string)
             return [event(
-                timeline: .context(ContextTimelinePayload(
-                    kind: "instructions",
-                    summary: [URL(fileURLWithPath: path).lastPathComponent, payload.loadReason ?? payload.reason]
-                        .compactMap { $0 }.joined(separator: " · "),
-                    content: .string(path)
-                )),
+                timeline: .context(ContextTimelinePayload(kind: "instructions", content: .object(content))),
                 itemID: TimelineItemIDs.diagnostic(sessionID, key: "context:instructions:\(path)")
             )]
 
         case .configChange:
-            let path = payload.filePath ?? ""
+            // Which settings file changed (`file_path`) and which scope it
+            // belongs to (`source`), as the hook names them.
+            var content: [String: JSONValue] = [:]
+            content["file_path"] = payload.filePath.flatMap { $0.isEmpty ? nil : JSONValue.string($0) }
+            content["source"] = payload.configSource.flatMap { $0.isEmpty ? nil : JSONValue.string($0) }
             return [event(
-                timeline: .config(ConfigTimelinePayload(
-                    kind: "config_change",
-                    summary: [payload.configSource, URL(fileURLWithPath: path).lastPathComponent]
-                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
-                    content: .string(path)
-                ))
+                timeline: .config(ConfigTimelinePayload(kind: "config_change", content: content.isEmpty ? nil : .object(content)))
             )]
 
         case .cwdChanged:
@@ -356,7 +351,6 @@ public struct ClaudeAdapter: AgentAdapter {
                     occurredAt: occurredAt,
                     payload: .config(ConfigTimelinePayload(
                         kind: "cwd_changed",
-                        summary: newCwd,
                         content: content.isEmpty ? nil : .object(content)
                     ))
                 )
@@ -482,7 +476,6 @@ public struct ClaudeAdapter: AgentAdapter {
                         events.append(makeEvent(
                             timeline: .context(ContextTimelinePayload(
                                 kind: "system_reminder",
-                                summary: AdapterText.excerpt(reminder),
                                 content: .string(reminder)
                             )),
                             suffix: next()
@@ -520,7 +513,6 @@ public struct ClaudeAdapter: AgentAdapter {
                         events.append(makeEvent(
                             timeline: .context(ContextTimelinePayload(
                                 kind: kind,
-                                summary: AdapterText.excerpt(trimmed),
                                 content: .string(trimmed)
                             )),
                             suffix: next()
@@ -545,8 +537,6 @@ public struct ClaudeAdapter: AgentAdapter {
                     let toolUseID = block.raw.string("tool_use_id")
                     let failed = block.raw.bool("is_error") == true
                         || (root.dictionary("toolUseResult")?.bool("interrupted") == true)
-                    let output = CodexAdapter.responseText(block.raw["content"])
-                        ?? root.dictionary("toolUseResult")?.string("stdout")
                     var raw: [String: JSONValue] = [:]
                     if let value = block.raw.jsonValue("content") { raw["content"] = value }
                     if let value = root.jsonValue("toolUseResult") { raw["toolUseResult"] = value }
@@ -559,7 +549,6 @@ public struct ClaudeAdapter: AgentAdapter {
                         phase: .thinking,
                         timeline: .tool(ToolTimelinePayload(
                             name: name,
-                            summary: AdapterText.excerpt(output),
                             content: raw.isEmpty ? nil : .object(raw),
                             status: failed ? .failed : .succeeded,
                             toolUseID: toolUseID
@@ -570,7 +559,7 @@ public struct ClaudeAdapter: AgentAdapter {
 
                 case "image", "document":
                     events.append(makeEvent(
-                        timeline: .context(ContextTimelinePayload(kind: block.type, summary: block.type.capitalized)),
+                        timeline: .context(ContextTimelinePayload(kind: block.type)),
                         suffix: next()
                     ))
 
@@ -636,7 +625,6 @@ public struct ClaudeAdapter: AgentAdapter {
                         phase: .executing,
                         timeline: .tool(ToolTimelinePayload(
                             name: name,
-                            summary: AdapterText.summary(ofToolInput: block.raw["input"]),
                             content: block.raw.jsonValue("input"),
                             status: .started,
                             toolUseID: toolUseID
@@ -722,14 +710,13 @@ public struct ClaudeAdapter: AgentAdapter {
         case "attachment":
             let attachment = root.dictionary("attachment")
             let kind = attachment?.string("type") ?? "attachment"
-            let summary = attachment.flatMap { Self.attachmentSummary($0) } ?? kind.replacingOccurrences(of: "_", with: " ")
             let content = root.jsonValue("attachment")
             // Run-mode attachments are how the agent runs, not model input.
             if Self.configAttachmentKinds.contains(kind) {
-                return [makeEvent(timeline: .config(ConfigTimelinePayload(kind: kind, summary: summary, content: content)))]
+                return [makeEvent(timeline: .config(ConfigTimelinePayload(kind: kind, content: content)))]
             }
             return [makeEvent(
-                timeline: .context(ContextTimelinePayload(kind: kind, summary: summary, content: content))
+                timeline: .context(ContextTimelinePayload(kind: kind, content: content))
             )]
 
         case "system":
@@ -738,7 +725,6 @@ public struct ClaudeAdapter: AgentAdapter {
             return [makeEvent(
                 timeline: .context(ContextTimelinePayload(
                     kind: subtype,
-                    summary: AdapterText.excerpt(content) ?? subtype.replacingOccurrences(of: "_", with: " "),
                     content: content.map(JSONValue.string)
                 ))
             )]
@@ -748,7 +734,6 @@ public struct ClaudeAdapter: AgentAdapter {
             return [makeEvent(
                 timeline: .context(ContextTimelinePayload(
                     kind: "summary",
-                    summary: AdapterText.excerpt(summary),
                     content: .string(summary)
                 ))
             )]
@@ -852,16 +837,6 @@ public struct ClaudeAdapter: AgentAdapter {
     static let configAttachmentKinds: Set<String> = [
         "auto_mode", "plan_mode", "plan_mode_exit", "command_permissions",
     ]
-
-    static func attachmentSummary(_ attachment: [String: Any]) -> String? {
-        let type = attachment.string("type") ?? "attachment"
-        if let names = attachment["addedNames"] as? [String], !names.isEmpty {
-            return "\(type.replacingOccurrences(of: "_", with: " ")) · \(names.count) tools"
-        }
-        if let path = attachment.string("filename") ?? attachment.string("path") { return "\(type) · \(path)" }
-        if let content = attachment.string("content") { return AdapterText.excerpt(content) }
-        return type.replacingOccurrences(of: "_", with: " ")
-    }
 
     static func contextWindow(forModel model: String?) -> Int64? {
         guard let model else { return nil }

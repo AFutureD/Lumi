@@ -1383,7 +1383,7 @@ private final class PresetLog: @unchecked Sendable {
     let small = sampleDetail("a", items: 2, at: base)
     let big = TimelineItem(
         id: TimelineItemID("a-big"), sessionID: SessionID("a"), turnID: TurnID("a-turn"), occurredAt: base.addingTimeInterval(5),
-        payload: .tool(ToolTimelinePayload(name: "Bash", summary: "cat", content: huge, status: .succeeded, toolUseID: "t"))
+        payload: .tool(ToolTimelinePayload(name: "Bash", content: huge, status: .succeeded, toolUseID: "t"))
     )
     try await harness.repository.replaceSession(SessionDetail(summary: small.summary, turns: small.turns, timeline: small.timeline + [big]))
     let device = try await harness.connectAndSync()
@@ -1392,7 +1392,10 @@ private final class PresetLog: @unchecked Sendable {
     let tail = try await harness.collect(from: device) { $0.kind == .sessionTail && $0.session?.nextCursor == nil }.map(\.payload)
     let trimmed = try #require(RelayFrameReduction.assemble(parts: tail)?.timeline.first { $0.id == TimelineItemID("a-big") })
     #expect(trimmed.isTruncated)
-    if case let .tool(payload) = trimmed.payload { #expect(payload.content == nil) } else { Issue.record("payload kind changed") }
+    // The trimmed copy keeps its shape; the long string in it is cut short.
+    if case let .tool(payload) = trimmed.payload {
+        #expect((payload.content?.stringValue?.utf8.count ?? .max) <= 4 * 1024)
+    } else { Issue.record("payload kind changed") }
 
     try await harness.request(RemoteSessionPayload(kind: .fetchTimelineItems, requestID: RequestID("i"), sessionIDs: [SessionID("a")], itemIDs: [TimelineItemID("a-big")]), via: device)
     let items = try await harness.collect(from: device) { $0.kind == .sessionItems && $0.session?.nextCursor == nil }.map(\.payload)

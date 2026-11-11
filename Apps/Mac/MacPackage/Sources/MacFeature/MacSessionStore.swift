@@ -549,6 +549,23 @@ public final class MacSessionStore {
         // there when its first Turn arrives); visibility is filtered at read
         // time, so the index and the fetches carry all sessions.
         let index = indexResponse.sessions ?? []
+        // The daemon rewrote rows it already held (`HistoryRevision`): no
+        // summary and no clock moved, so the diff below cannot see it. A copy
+        // taken from another revision is dropped and taken again.
+        let daemonRevision = healthResponse.health?.historyRevision ?? HistoryRevision.first
+        // A cache from before revisions were recorded was taken from a
+        // daemon at the first one.
+        let cacheRevision = try await cache.historyRevision() ?? HistoryRevision.first
+        if cacheRevision != daemonRevision {
+            let dropped = try await cache.pruneSessions(keeping: [])
+            try await cache.setHistoryRevision(daemonRevision)
+            if dropped > 0 { noteCacheWrite() }
+            dbLog.info("cache_rebuilt_for_history_revision", metadata: .fields([
+                "from": cacheRevision,
+                "to": daemonRevision,
+                "dropped": dropped,
+            ]))
+        }
         let local = try await cache.listSessions(limit: 10_000)
         let plan = SessionReconcilePlan.make(local: local, daemon: index)
         var fetched = 0

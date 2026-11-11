@@ -102,7 +102,7 @@ IPC `get_settings` / `set_settings` 传的是整份 `DaemonSettings`（Transport
 - 编码：`TransportEnvelope<IPCRequest|IPCResponse>` JSON。
 - framing：4-byte big-endian payload 长度 + JSON bytes。
 - 最大帧：8 MiB。
-- 版本：`major = 1`；只要 major 相同即视为兼容。
+- 版本：`major = 1`；只要 major 相同即视为兼容。minor 记录线上形状的非破坏性变化（1.6：行不再带 `summary`，health 新增 `historyRevision`）。数据形状的断代不靠协议号，靠历史版本号（见 [历史版本号](#历史版本号)）。
 - request ID：用于请求/响应关联；订阅推送使用独立 envelope。
 
 ### IPC 操作
@@ -112,7 +112,7 @@ IPC `get_settings` / `set_settings` 传的是整份 `DaemonSettings`（Transport
 | `ingest_hook` | helper 转发一次 hook 调用：`{createdAt, agent, env 白名单, data 原始字节}`（payload 的 JSON 渲染只进 helper 帧日志，不进帧）。daemon 反序列化 payload、经 `RichSourceCatchUp` 追平 transcript / rollout 增量、归并 hook、识别 AaaS 标题并逐事件应用（游标由 daemon 单一持有，不再过 IPC；冷启动大历史内部交给串行回填队列）。响应只是告知——helper 超时后 daemon 照常完成 | 短连接请求（helper 超时 2s） |
 | `list_sessions` | 查询全部 Summary（对账索引） | 短连接请求 |
 | `get_session` | 分页查询一个 Session 的 Timeline，行是镜像行（经内容预算裁剪）；全量只按单 Session 传输 | 短连接请求 |
-| `get_timeline_items {sessionID, itemIDs}` | 一个 Session 里指定行的完整形态（不裁剪）；Mac 打开 Raw Data 时对裁剪行逐行请求，不落缓存 | 短连接请求（15s） |
+| `get_timeline_items {sessionID, itemIDs}` | 一个 Session 里指定行的完整形态（不裁剪）；Mac 打开记录窗口时对裁剪行逐行请求，不落缓存 | 短连接请求（15s） |
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
 | `mark_session_reviewed` | 人打开了 Session：清除 `needsReview` | 短连接请求 |
 | `mark_session_hidden_in_notch` | 人在 Notch 点了 Archive：置 `hiddenInNotch`（仅 Notch 隐藏；新 prompt 或会话重启时由 reducer 清除） | 短连接请求 |
@@ -274,13 +274,30 @@ sequenceDiagram
 
 ### 镜像行与同 ID 取舍
 
-只有 daemon 保存每一行的完整形态。daemon 发给任何镜像的行——Mac 走 IPC（`get_session`、`subscribe`），iPhone 走 Relay——都先经同一份内容预算（`TimelineContentBudget`，Transport）：编码后超过 64 KiB 的行，工具 / 上下文 / 配置的 `content` 置空，消息 / 推理 / 错误文本截到 48 KiB，标 `truncated: true`；只有摘要行本身超限时摘要再截到 4 KiB。列表、Notch、Inspector 只用摘要与元数据，不受影响；要看整行的地方（Mac 的 Raw Data、iPhone 的活动详情）按需向 daemon 取：Mac 用 `get_timeline_items`（不落缓存），iPhone 用 `fetch_timeline_items`（落缓存）。
+只有 daemon 保存每一行的完整形态。daemon 发给任何镜像的行——Mac 走 IPC（`get_session`、`subscribe`），iPhone 走 Relay——都先经同一份内容预算（`TimelineContentBudget`，Transport）。编码后超过 64 KiB 的行标 `truncated: true`，并按这条规则变小：
+
+- 工具 / 上下文 / 配置的 `content` **保留结构，只截短其中的长字符串**：上限依次取 4 KiB、1 KiB、256 B，直到整行不超过 64 KiB；最后一档仍超（成千上万个短值）才把 `content` 整个去掉。
+- 消息 / 推理 / 错误 / Turn 结束的文本截到 48 KiB；名字、标题、计划步骤这类短字段截到 4 KiB。
+
+保留结构是因为行文字是从 `content` 读出来的（见 [Agent 与 Hook 设计](agent-hook.md#transcript--rollout-事件映射)）：裁剪后的行仍要读得出是哪条命令、哪个文件。从被截短的内容数出来的数字不可信，所以裁剪行的行文字不带 diff 的增删行数。裁剪是行的纯函数，同一行每次裁剪结果相同。
+
+要看整行的地方（Mac 的记录窗口、iPhone 的活动详情）按需向 daemon 取：Mac 用 `get_timeline_items`（不落缓存），iPhone 用 `fetch_timeline_items`（落缓存）。
 
 同一个 id 的两份行由一条规则取舍（`SessionDetailReduction.supersedes`，内存折叠与 SQLite upsert 共用，SQLite 端在事务里解码现有行再判断）：
 
 - 时间更早的不覆盖更晚的。
 - 裁剪行只在它恰好是现有完整行裁剪后的样子时让位——完整行留着。
 - 其余情况新到的覆盖：同一 id 先以小的完整行入库、后来变大被裁剪（hook 先写工具结果、transcript 后写同 id），裁剪的新版本照常替换旧的小版本。
+
+
+### 历史版本号
+
+daemon 有时要原地改写已经保存的行：迁移改变记录形状，或回填把以前没存的行从 Agent 自己的文件里读回来。这类改写不动任何 summary、任何时钟，镜像的常规对账（Mac 比 summary，iPhone 比行数与最新行时间）看不见它。
+
+- daemon 在 `metadata` 里记一个整数 `history_revision`（`HistoryRevision`，Transport），只在一次改写全部完成后才前进，并随 health 报出（`DaemonHealth.historyRevision`；没有该字段的旧 daemon 视为 1）。
+- 镜像在自己的库里记下它这份副本取自哪个版本（没记过的旧缓存视为 1）。daemon 报出的版本与之不同，镜像就丢掉全部副本重新取：Mac 在每次对账开头判断，iPhone 在收到 health 帧时判断。
+- 版本前进时 daemon 在事件流上推一帧 health（Mac 收到任何 health 帧都会对账），Relay 主机的 health 比较包含这个字段，所以在线的 iPhone 也会收到；不在线的端在下次连接拿到 health 时处理。
+- 版本 2：行不再存一行摘要；Codex item 整条保存，包括以前完全不存的 shell 命令。迁移 `lumi-v14` 改写已存的行（去掉 `summary`，把两种 hook 记录只写在摘要里的事实搬进 `content`，把旧的 Codex item 行改成 item 自己的形状，给占位名 `Tool` 的结果行补上调用的名字）；`HistoryBackfill`（daemon 的一次性后台任务）对 rollout 文件还在的 Codex Session 从头重读，把 item 行经 `backfillTimeline` 写入——只写时间线，不经事件、不动 summary、不发布；早于该 Session 第一条已存行的行跳过（子 Agent 的 rollout 开头是父历史的拷贝）。全部做完才把版本记为 2。中途停止的 daemon 下次启动从头再做，行按 id upsert，重复无害。
 
 ### 分页
 

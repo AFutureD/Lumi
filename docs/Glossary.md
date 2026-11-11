@@ -120,7 +120,15 @@
 | iPhone 第一次点开某个 Session、时间线还在路上时详情页中央的那一行 | Loading session… | 加载 Session |
 | iPhone 详情 Activity 列表顶上的那一行：Mac 上还有更早的活动没取来，点它取一页 | Load earlier | 加载更早 |
 | iPhone 活动详情页底部：这条活动的完整内容只在 Mac 上，点按钮取来 | Full content is on the Mac. · Load full content | 取完整内容 |
-| Mac 原始 JSON 窗口：超大内容正在从 daemon 取完整版 / 取不到时窗口顶部的说明 | Loading full content… · Couldn't load full content: <原因> | 取完整内容 |
+| Mac 点开 Activity 一行弹出的窗口里的两个视图：整理好的内容 / 保存的原文 | Preview · Raw | 记录窗口的视图 |
+| Mac 记录窗口 Preview 里各分区的标题 | Message · Reasoning · Plan · Turn · Command · Input · Output · Error · Change · Diff · Content · Script · Image · Prompt · Queries · Results · Page · Pattern · Record；Codex 改文件的分区是 Edited · Created · Deleted 加文件路径；错误记录的分区用这条错误自己的标题 | Preview 分区 |
+| Mac 记录窗口 Preview 顶部的几项事实 | Status（Running · Succeeded · Failed）· Duration · Exit code · Directory · Path · Action · Saved to | 记录的事实 |
+| Mac 记录窗口：这条记录除了那一行文字没有更多内容 | No content | 无内容 |
+| Mac 记录窗口：超大内容正在从 daemon 取完整版 / 取不到时的说明 | Loading full content… · Couldn't load full content: <原因> | 取完整内容 |
+| Activity 行上 Codex 动作的名字：读文件 / 搜索 / 列目录 / 其他命令 | Read · Search · List · Run | 命令动作 |
+| Activity 行上 Codex 改文件的名字：修改 / 新建 / 删除 | Edit · Create · Delete | 改动动作 |
+| Activity 行上 Codex 的图片与网页动作 | View image · Generate image · Web search · Open page · Find in page | 图片与网页动作 |
+| Codex 一次调用多个工具的那段脚本在 Activity 里的名字；它后面跟这次调用的 id | exec | 脚本 |
 | iPhone Macs 页里这台 Mac 在同一网络、直接连着（不经 Relay） | Online · Direct | 直连 |
 
 - Usage 与 Session 无关：删除 Session、清空历史都不会改变 Usage 的数字。
@@ -201,3 +209,5 @@
 | 说法                         | 原因                                                                 |
 | ---------------------------- | -------------------------------------------------------------------- |
 | 到点自动换新、自动换一个新码 | 2026-08-28 起配对码到期只停在 Expired，不自动换；换码只有 New code。 |
+| Raw Data（窗口标题）、原始 JSON 窗口 | 2026-11-12 起点开 Activity 一行是带 Preview 与 Raw 两个视图的记录窗口，不再有只显示原文的窗口；保存的原文在 Raw 里。 |
+| 摘要（指 Activity 行的那行文字，或超大内容在 Mac / iPhone 上留下的部分） | 2026-11-12 起记录里不再另存一行摘要：行上的文字是从记录本身读出来的；超大内容在 Mac / iPhone 上留下的是“截短的副本”。Summary 仍是 Usage 总览卡的名字。 |

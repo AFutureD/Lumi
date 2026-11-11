@@ -482,8 +482,10 @@ public enum SessionPagePresentationBuilder {
 
     // MARK: Helpers
 
+    /// The record as stored, indented: the wire encoder's own form, so a
+    /// date reads as a date (`2026-11-11T05:07:14.000Z`).
     private static func prettyJSON<T: Encodable>(_ value: T) -> String {
-        let encoder = JSONEncoder()
+        let encoder = TransportCoding.makeEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(value),
               let result = String(data: data, encoding: .utf8) else {

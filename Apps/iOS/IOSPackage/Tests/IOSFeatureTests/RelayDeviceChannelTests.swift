@@ -36,6 +36,10 @@ private actor FakeHost {
     private var stalled: Set<RemotePayloadKind> = []
 
     func setStalled(_ kinds: Set<RemotePayloadKind>) { stalled = kinds }
+    /// The history revision the host reports in its health (`nil`: a daemon
+    /// from before revisions).
+    private var historyRevision: Int?
+    func setHistoryRevision(_ revision: Int?) { historyRevision = revision }
     var currentPath: Path { sessionPath }
     /// Every request that counted, openings (`sync_index`) included.
     private(set) var requests: [RemoteSessionPayload] = []
@@ -136,7 +140,7 @@ private actor FakeHost {
             let now = Date()
             let entries = try await repository.sessionIndex(limit: 10_000)
             try await send(RelayPayloadBatcher.indexParts(entries, requestID: requestID, generatedAt: now).map(\.prepared))
-            let health = DaemonHealth(daemonVersion: "fake", executableHash: nil, process: nil, uptimeSeconds: 1, activeSessionCount: entries.count, retainedSessionCount: entries.count, socketPath: "/s", relayConnected: true)
+            let health = DaemonHealth(daemonVersion: "fake", executableHash: nil, process: nil, uptimeSeconds: 1, activeSessionCount: entries.count, retainedSessionCount: entries.count, socketPath: "/s", relayConnected: true, historyRevision: historyRevision)
             try await send([RelayCryptography.prepare(RemoteSessionPayload(kind: .health, generatedAt: now, health: health))])
         } catch {
             Issue.record("fake host failed to open a channel session: \(error)")
@@ -338,6 +342,32 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
             )
         }
     )
+}
+
+@Test @MainActor func aCopyTakenFromAnotherHistoryRevisionIsDroppedAndTakenAgain() async throws {
+    let base = Date(timeIntervalSince1970: 1_000)
+    let harness = Harness()
+    // The cache holds A as an earlier daemon stored it; the host has since
+    // rewritten its history in place — same summary, same clocks, same row
+    // count — and says so with a new revision.
+    try await harness.cache.replaceSession(detail("A", items: 3, at: base))
+    try await harness.host.repository.replaceSession(detail("A", items: 3, at: base))
+    await harness.host.setHistoryRevision(HistoryRevision.current)
+
+    try await harness.controller.addChannel(harness.credentials)
+    await harness.waitUntil { harness.state?.sessions.count == 1 }
+    #expect(harness.session("A")?.timeline.count == 3)
+    try await harness.host.start()
+    // The health frame names the revision: the copy is dropped — A's rows
+    // with it — and the index is asked for again.
+    await harness.waitUntil { harness.session("A")?.timeline.isEmpty == true && harness.state?.hasCompleteSync == true }
+    #expect(harness.state?.sessions.map(\.summary.id) == [SessionID("A")])
+    #expect(await harness.host.requests.count(where: { $0.kind == .syncIndex }) == 2)
+    // The cache records the revision its copy now comes from.
+    for _ in 0 ..< 200 where (try? await harness.cache.historyRevision()) != HistoryRevision.current {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(try await harness.cache.historyRevision() == HistoryRevision.current)
 }
 
 @Test @MainActor func coldStartShowsTheCacheThenReconcilesAgainstTheIndex() async throws {
@@ -999,7 +1029,7 @@ private actor ScriptedPairingAPI: RelayPairingAPI {
     let huge = JSONValue.string(String(repeating: "x", count: 200_000))
     let big = TimelineItem(
         id: TimelineItemID("A-big"), sessionID: SessionID("A"), turnID: TurnID("A-turn"), occurredAt: base.addingTimeInterval(5),
-        payload: .tool(ToolTimelinePayload(name: "Bash", summary: "ls", content: huge, status: .succeeded, toolUseID: "t1"))
+        payload: .tool(ToolTimelinePayload(name: "Bash", content: huge, status: .succeeded, toolUseID: "t1"))
     )
     var full = detail("A", items: 3, at: base)
     full = SessionDetail(summary: full.summary, turns: full.turns, timeline: full.timeline + [big])
@@ -1012,7 +1042,10 @@ private actor ScriptedPairingAPI: RelayPairingAPI {
     await harness.waitUntil { harness.session("A")?.timeline.count == 4 }
     let trimmed = try #require(harness.session("A")?.timeline.last)
     #expect(trimmed.isTruncated)
-    if case let .tool(payload) = trimmed.payload { #expect(payload.content == nil && payload.summary == "ls") } else { Issue.record("payload kind changed") }
+    // The trimmed copy keeps its shape; the long string in it is cut short.
+    if case let .tool(payload) = trimmed.payload {
+        #expect((payload.content?.stringValue?.utf8.count ?? .max) <= 4 * 1024)
+    } else { Issue.record("payload kind changed") }
 
     // Asking for the whole row brings the content; the cache keeps it.
     harness.controller.fetchTimelineItems(hostID: harness.hostID, id: SessionID("A"), itemIDs: [TimelineItemID("A-big")])

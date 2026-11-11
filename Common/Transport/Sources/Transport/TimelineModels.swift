@@ -22,7 +22,9 @@ public struct MessageTimelinePayload: Codable, Hashable, Sendable {
 
 /// One tool message. `started` is the *call* (PreToolUse / `assistant.tool_use`);
 /// `succeeded` / `failed` is the *result* (PostToolUse / `user.tool_result`).
-/// Call and result are separate timeline items paired by `toolUseID`.
+/// Call and result are separate timeline items paired by `toolUseID`. A
+/// Codex item (`item_completed`) is one row holding both: Codex records what
+/// an action did only when it is done.
 public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     public enum Status: String, Codable, Hashable, Sendable {
         case started
@@ -31,63 +33,41 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     }
 
     public let name: String
-    /// One-line rendering for the activity list row.
-    public let summary: String?
-    /// The complete raw input (started) or result (succeeded / failed) as it
-    /// appeared at the source — what the Raw Data view shows. A Claude
-    /// result keeps one copy of each large value: a repeat inside
-    /// `toolUseResult` is a `{"lumi.sameAs": <pointer>}` reference
-    /// (`ToolResultDeduplication`).
+    /// The record as the source wrote it: the raw input of a call, the raw
+    /// result, or a whole Codex item. Every reading of the row — its Activity
+    /// line (`TimelineLineText`), its preview — is worked out from this, and
+    /// nothing derived from it is stored next to it. A Claude result keeps
+    /// one copy of each large value: a repeat inside `toolUseResult` is a
+    /// `{"lumi.sameAs": <pointer>}` reference (`ToolResultDeduplication`).
     public let content: JSONValue?
-
-    /// The same call with other content (dedupe, trimming).
-    public func withContent(_ content: JSONValue?) -> ToolTimelinePayload {
-        ToolTimelinePayload(
-            name: name, summary: summary, content: content, status: status,
-            durationMilliseconds: durationMilliseconds, toolUseID: toolUseID
-        )
-    }
     public let status: Status
     public let durationMilliseconds: Int64?
     public let toolUseID: String?
 
     public init(
         name: String,
-        summary: String? = nil,
         content: JSONValue? = nil,
         status: Status,
         durationMilliseconds: Int64? = nil,
         toolUseID: String? = nil
     ) {
         self.name = name
-        self.summary = summary
         self.content = content
         self.status = status
         self.durationMilliseconds = durationMilliseconds
         self.toolUseID = toolUseID
     }
 
+    /// The same call with other content (dedupe, trimming).
+    public func withContent(_ content: JSONValue?) -> ToolTimelinePayload {
+        ToolTimelinePayload(
+            name: name, content: content, status: status,
+            durationMilliseconds: durationMilliseconds, toolUseID: toolUseID
+        )
+    }
+
     public var isCall: Bool { status == .started }
     public var isResult: Bool { status != .started }
-
-    private enum CodingKeys: String, CodingKey {
-        case name
-        case summary
-        case content
-        case status
-        case durationMilliseconds
-        case toolUseID
-    }
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decode(String.self, forKey: .name)
-        summary = try c.decodeIfPresent(String.self, forKey: .summary)
-        content = try c.decodeIfPresent(JSONValue.self, forKey: .content)
-        status = try c.decode(Status.self, forKey: .status)
-        durationMilliseconds = try c.decodeIfPresent(Int64.self, forKey: .durationMilliseconds)
-        toolUseID = try c.decodeIfPresent(String.self, forKey: .toolUseID)
-    }
 }
 
 /// Model reasoning / thinking text (Claude `thinking` block, Codex reasoning).
@@ -101,15 +81,14 @@ public struct ReasoningTimelinePayload: Codable, Hashable, Sendable {
 
 /// Context injected into the model that the user did not type: instructions
 /// files, attachments, system reminders, hook-injected context, expanded
-/// skills, compaction summaries. Always turn-level.
+/// skills, compaction summaries. Always turn-level. The row's line is read
+/// from `kind` and `content` when shown (`TimelineLineText`).
 public struct ContextTimelinePayload: Codable, Hashable, Sendable {
     public let kind: String
-    public let summary: String?
     public let content: JSONValue?
 
-    public init(kind: String, summary: String? = nil, content: JSONValue? = nil) {
+    public init(kind: String, content: JSONValue? = nil) {
         self.kind = kind
-        self.summary = summary
         self.content = content
     }
 }
@@ -118,12 +97,10 @@ public struct ContextTimelinePayload: Codable, Hashable, Sendable {
 /// directory, model / effort / sandbox of a turn.
 public struct ConfigTimelinePayload: Codable, Hashable, Sendable {
     public let kind: String
-    public let summary: String?
     public let content: JSONValue?
 
-    public init(kind: String, summary: String? = nil, content: JSONValue? = nil) {
+    public init(kind: String, content: JSONValue? = nil) {
         self.kind = kind
-        self.summary = summary
         self.content = content
     }
 }

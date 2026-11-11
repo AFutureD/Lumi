@@ -1326,6 +1326,7 @@ public actor RelayHostService: Service {
             && lhs.activeSessionCount == rhs.activeSessionCount
             && lhs.retainedSessionCount == rhs.retainedSessionCount
             && lhs.relayConnected == rhs.relayConnected
+            && lhs.historyRevision == rhs.historyRevision
     }
 
     // MARK: - Serial send loop

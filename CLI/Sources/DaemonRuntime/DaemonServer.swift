@@ -226,6 +226,10 @@ public actor DaemonServer: Service {
                     )))
                 case let .summary(summary):
                     writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, summary: summary)))
+                case let .health(health):
+                    // The Mac reconciles on every health frame; a moved
+                    // history revision makes that pass rebuild its copy.
+                    writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, health: health)))
                 }
             }
             if !subscription.claim(id) {

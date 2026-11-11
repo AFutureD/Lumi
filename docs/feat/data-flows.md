@@ -25,7 +25,7 @@ flowchart LR
 - **主要消费者**：Mac 主窗口、Notch、在线的已配对 iPhone，以及回合结束时的推送提醒（[IOS-R-016](modules/iphone-live-view.md#ios-r-016-关键时刻推送提醒)）。
 - **保留方式**：不按时间自动删除；用户可删除单条或清空全部。
 - **展示边界**：主活动时间线显示属于当前 Session 的消息、工具、计划、子 Agent、错误和已进入时间线的未知记录；Subagent 为执行任务获得的父 Session 历史不重复显示为自身活动。模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情的 Inspector 与 iPhone 详情的 Info Tab 展示这些诊断数据。规则见 [MAC-R-018](modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
-- **隐私边界**：Session 内容按原样完整保留——消息与 reasoning 全文、工具的完整输入与输出（点击 Activity 行即可查看原始数据；同一张截图在一条工具结果里只存一份）、每类最新内部上下文的完整嵌套内容（基础指令、线程上下文、世界状态、压缩历史）。其中可能出现路径、凭据、环境信息。完整内容由 daemon 保存；Mac 与 iPhone 对超大的单条内容只存摘要，点开时再向 daemon 取（[MAC-R-026](modules/mac-session-view.md#mac-r-026-超大内容只在-daemon-保存完整版)）。本地副本及已配对设备都必须视为高敏感数据；当前没有内容级脱敏保证。Lumi 未识别的其他事件和完整原始日志文件不会被另外复制。
+- **隐私边界**：Session 内容按原样完整保留——消息与 reasoning 全文、工具的完整输入与输出（在 Mac 点击 Activity 行，切到 Raw 即可查看保存的原文；同一张截图在一条工具结果里只存一份）、每类最新内部上下文的完整嵌套内容（基础指令、线程上下文、世界状态、压缩历史）。其中可能出现路径、凭据、环境信息。完整内容由 daemon 保存；Mac 与 iPhone 对超大的单条内容只存截短的副本；Mac 点开时自动向 daemon 取完整内容，iPhone 点 `Load full content` 才取（[MAC-R-026](modules/mac-session-view.md#mac-r-026-超大内容只在-daemon-保存完整版)）。本地副本及已配对设备都必须视为高敏感数据；当前没有内容级脱敏保证。Lumi 未识别的其他事件和完整原始日志文件不会被另外复制。
 
 ### 从 Agent 事件到三端一致
 
@@ -69,7 +69,7 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 | 位置 | 保存内容 | 用户可见行为 |
 | --- | --- | --- |
 | daemon | 该 Mac 已加入 Lumi 的 Session，包括保留的模型、上下文和消耗数据 | 本机权威数据；不自动过期 |
-| Mac App | 与 daemon 同步的本地副本；超大的单条内容只存摘要 | 快速启动和浏览；断线时仍可查看最近同步内容（超大内容的完整版要等 daemon 在线） |
+| Mac App | 与 daemon 同步的本地副本；超大的单条内容只存截短的副本 | 快速启动和浏览；断线时仍可查看最近同步内容（超大内容的完整版要等 daemon 在线） |
 | iPhone App | 每台已配对 Mac 一个本机缓存数据库；配对凭据在 Keychain（[IOS-R-010](modules/iphone-live-view.md#ios-r-010-session-内容缓存在本机)） | 启动立即显示缓存；Mac 离线仍可翻看 |
 | Relay | 设备授权、进行中的配对会话、每台设备的推送地址、传输进度和限流等运行所需信息 | 不提供 Session 正文或历史查询；推送提醒的标题和状态不写入存储 |
 

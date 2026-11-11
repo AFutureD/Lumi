@@ -666,6 +666,9 @@ final class RelayDeviceChannel {
     private var hasCompleteSync = false
     private var lastError: String?
     private var health: DaemonHealth?
+    /// The daemon history revision this cache was taken from
+    /// (`HistoryRevision`); `nil` until one is recorded.
+    private var cacheHistoryRevision: Int?
     /// The channel session this connection syncs under. Memory only: gone
     /// with the connection or the Mac going offline, replaced by the next
     /// `sync_index`.
@@ -1134,6 +1137,21 @@ final class RelayDeviceChannel {
         sessions.removeAll { $0.summary.id == id }
     }
 
+    /// The Mac's daemon rewrote rows it already held (`HistoryRevision`): no
+    /// summary and no clock moved, so the index diff cannot see it. A copy
+    /// taken from another revision is dropped and taken again.
+    private func adoptHistoryRevision() {
+        guard let health else { return }
+        let revision = health.historyRevision ?? HistoryRevision.first
+        // A cache from before revisions were recorded was taken from a
+        // daemon at the first one.
+        guard revision != cacheHistoryRevision ?? HistoryRevision.first else { return }
+        let isFirstCopy = sessions.isEmpty && hidden.isEmpty
+        cacheHistoryRevision = revision
+        enqueueCacheWrite { [cache] in try await cache.setHistoryRevision(revision) }
+        if !isFirstCopy { clear() }
+    }
+
     /// Empties the cache (no tombstones, no dedupe reset) and re-indexes.
     func clear() {
         sessions = []
@@ -1159,7 +1177,10 @@ final class RelayDeviceChannel {
             // A mark for a session the cache no longer has is stale.
             let cached = Set(loaded.map(\.summary.id))
             marks = marks.filter { cached.contains($0.key) }
+            cacheHistoryRevision = try await cache.historyRevision()
             cacheLoaded = true
+            // A health frame that came before the cache was read.
+            adoptHistoryRevision()
         } catch {
             lastError = "Unable to read the session cache: \(error)"
         }
@@ -1727,6 +1748,7 @@ final class RelayDeviceChannel {
             completeSyncIfSettled()
         case .health:
             health = payload.health
+            if cacheLoaded { adoptHistoryRevision() }
         case .usageReport:
             guard let requestID = payload.requestID, let request = usageRequests[requestID], case let .usage(preset) = request.kind else { return }
             usageRequests[requestID] = nil

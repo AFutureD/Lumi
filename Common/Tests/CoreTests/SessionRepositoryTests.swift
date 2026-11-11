@@ -96,7 +96,7 @@ import Testing
                 id: TimelineItemID("config"),
                 sessionID: midReplay.id,
                 occurredAt: base.addingTimeInterval(172_800),
-                payload: .config(ConfigTimelinePayload(kind: "config_change", summary: "settings.json"))
+                payload: .config(ConfigTimelinePayload(kind: "config_change", content: .object(["file_path": .string("/repo/settings.json")])))
             )
         ),
         to: midReplay

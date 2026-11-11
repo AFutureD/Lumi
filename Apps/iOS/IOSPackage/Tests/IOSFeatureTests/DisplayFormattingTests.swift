@@ -42,15 +42,25 @@ import Testing
     let detail = SessionDetail(
         summary: SessionSummary(id: sessionID, agent: .codex, title: "t", lifecycle: .running, phase: .executing, startedAt: base, updatedAt: base, lastActivityAt: base),
         timeline: [
-            TimelineItem(id: TimelineItemID("1"), sessionID: sessionID, occurredAt: base, payload: .tool(.init(name: "shell", summary: "swift build", status: .started, toolUseID: "x"))),
-            TimelineItem(id: TimelineItemID("2"), sessionID: sessionID, occurredAt: base.addingTimeInterval(1), payload: .tool(.init(name: "shell", summary: "error: boom", status: .failed, durationMilliseconds: 1_500, toolUseID: "x"))),
+            TimelineItem(id: TimelineItemID("1"), sessionID: sessionID, occurredAt: base, payload: .tool(.init(name: "shell", content: .object(["command": .string("swift build"), "timeout": .number(60)]), status: .started, toolUseID: "x"))),
+            TimelineItem(id: TimelineItemID("2"), sessionID: sessionID, occurredAt: base.addingTimeInterval(1), payload: .tool(.init(name: "shell", content: .string("error: boom\nat line 3"), status: .failed, durationMilliseconds: 1_500, toolUseID: "x"))),
         ]
     )
     let presentation = SessionDetailPresentationBuilder.make(detail: detail)
     #expect(presentation.activities.map(\.label) == ["TOOL", "FAILED"])
     let sheet = ActivityDetailPresentationBuilder.make(for: presentation.activities[1], in: presentation.activities)
     #expect(sheet.isFailed)
-    #expect(sheet.sections.map(\.title) == ["Command", "Output"])
-    #expect(sheet.sections[0].text == "shell · swift build")
-    #expect(sheet.sections[1].text == "shell · error: boom · 1.5s")
+    // The page shows what the records hold — the command, the whole output
+    // — not the rows' one-line text.
+    #expect(presentation.activities.map(\.content) == ["shell · swift build", "shell · error: boom · 1.5s"])
+    #expect(sheet.sections.map(\.title) == ["Status", "Input", "Command", "Error"])
+    #expect(sheet.sections[0].text == "Status: Failed\nDuration: 1.5s")
+    #expect(sheet.sections[1].text == "timeout: 60")
+    #expect(sheet.sections[2].text == "$ swift build")
+    #expect(sheet.sections[3].text == "error: boom\nat line 3")
+
+    // A call still waiting for its result says so.
+    let waiting = SessionDetailPresentationBuilder.make(detail: SessionDetail(summary: detail.summary, timeline: [detail.timeline[0]]))
+    let running = ActivityDetailPresentationBuilder.make(for: waiting.activities[0], in: waiting.activities)
+    #expect(running.sections.last?.text == "Still running…")
 }

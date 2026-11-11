@@ -94,15 +94,22 @@ private func noisyText(bytes: Int) -> String {
     #expect(TimelineContentBudget.trimmed(small).truncated == nil)
 
     let bigContent = JSONValue.string(noisyText(bytes: 200_000))
-    let tool = TimelineContentBudget.trimmed(item(.tool(ToolTimelinePayload(name: "Bash", summary: "ls", content: bigContent, status: .succeeded, toolUseID: "t1"))))
+    // A trimmed row keeps its shape: the long string is cut, the short
+    // fields its line is read from stay.
+    let bigResult = JSONValue.object(["content": bigContent, "toolUseResult": .object(["filePath": .string("/repo/a.swift")])])
+    let tool = TimelineContentBudget.trimmed(item(.tool(ToolTimelinePayload(name: "Bash", content: bigResult, status: .succeeded, toolUseID: "t1"))))
     #expect(tool.isTruncated)
+    #expect(TimelineContentBudget.encodedSize(tool) <= TimelineContentBudget.maxItemBytes)
     if case let .tool(payload) = tool.payload {
-        #expect(payload.content == nil)
-        #expect(payload.summary == "ls")
+        #expect((payload.content?["content"]?.stringValue?.utf8.count ?? 0) <= 4 * 1024)
+        #expect(payload.content?["toolUseResult"]?["filePath"]?.stringValue == "/repo/a.swift")
         #expect(payload.toolUseID == "t1")
     } else { Issue.record("payload kind changed") }
-    let context = TimelineContentBudget.trimmed(item(.context(ContextTimelinePayload(kind: "file", summary: "CLAUDE.md", content: bigContent))))
-    if case let .context(payload) = context.payload { #expect(payload.content == nil) } else { Issue.record("payload kind changed") }
+    let context = TimelineContentBudget.trimmed(item(.context(ContextTimelinePayload(kind: "file", content: bigContent))))
+    #expect(TimelineContentBudget.encodedSize(context) <= TimelineContentBudget.maxItemBytes)
+    if case let .context(payload) = context.payload {
+        #expect((payload.content?.stringValue?.utf8.count ?? 0) <= 4 * 1024)
+    } else { Issue.record("payload kind changed") }
     let reasoning = TimelineContentBudget.trimmed(item(.reasoning(ReasoningTimelinePayload(text: noisyText(bytes: 200_000)))))
     #expect(TimelineContentBudget.encodedSize(reasoning) <= TimelineContentBudget.maxItemBytes)
     // A trimmed copy only ever gets smaller; the flag is the one addition.

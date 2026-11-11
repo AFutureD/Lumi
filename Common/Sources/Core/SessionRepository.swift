@@ -105,6 +105,20 @@ public protocol SessionRepository: Sendable {
     func setSessionFilterRules(_ rules: [SessionFilterRule]) async throws
     func isRolloutBaselineInitialized() async throws -> Bool
     func markRolloutBaselineInitialized() async throws
+    /// Installs rows recovered from a session's own source after the fact
+    /// (history backfill): upsert by id, timeline only — the summary, the
+    /// processed-event ledger and every clock stay as they are, and nothing
+    /// is published. Rows older than the session's first stored row are left
+    /// out: a subagent's rollout opens with a copy of its parent's history,
+    /// which is not the child's activity. Returns the rows written; a
+    /// session that holds no rows (or is no longer retained) takes none.
+    func backfillTimeline(_ items: [TimelineItem], sessionID: SessionID) async throws -> Int
+    /// The history revision recorded in this store (`HistoryRevision`): on
+    /// the daemon, the revision its stored history has reached; on a mirror,
+    /// the daemon revision its copy was taken from. `nil` when none was
+    /// ever recorded.
+    func historyRevision() async throws -> Int?
+    func setHistoryRevision(_ revision: Int) async throws
 }
 
 public enum SessionReduction {
@@ -272,6 +286,7 @@ public actor InMemorySessionRepository: SessionRepository {
     private var cursors: [String: RolloutCursor] = [:]
     private var ignoredSessionIDs: Set<SessionID> = []
     private var rolloutBaselineInitialized = false
+    private var storedHistoryRevision: Int?
     private var filterRules: [SessionFilterRule] = []
     private let sessionFilter: (any SessionFilterEvaluating)?
 
@@ -542,6 +557,28 @@ public actor InMemorySessionRepository: SessionRepository {
     public func setSessionFilterRules(_ rules: [SessionFilterRule]) async throws {
         filterRules = rules
     }
+
+    public func backfillTimeline(_ items: [TimelineItem], sessionID: SessionID) async throws -> Int {
+        guard var stored = timeline[sessionID], let first = stored.map(\.occurredAt).min() else { return 0 }
+        var written = 0
+        for item in items where item.occurredAt >= first {
+            if let index = stored.firstIndex(where: { $0.id == item.id }) {
+                stored[index] = item
+            } else {
+                stored.append(item)
+            }
+            written += 1
+        }
+        stored.sort { lhs, rhs in
+            lhs.occurredAt == rhs.occurredAt ? lhs.id.rawValue < rhs.id.rawValue : lhs.occurredAt < rhs.occurredAt
+        }
+        timeline[sessionID] = stored
+        return written
+    }
+
+    public func historyRevision() async throws -> Int? { storedHistoryRevision }
+
+    public func setHistoryRevision(_ revision: Int) async throws { storedHistoryRevision = revision }
 
     public func isRolloutBaselineInitialized() async throws -> Bool {
         rolloutBaselineInitialized

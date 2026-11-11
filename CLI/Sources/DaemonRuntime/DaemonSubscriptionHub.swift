@@ -12,6 +12,9 @@ private let log = Logger(label: "agent")
 public enum DaemonStreamMessage: Sendable {
     case event(AgentIngressEvent)
     case summary(SessionSummary)
+    /// The daemon's health as of now, sent when it changes in a way a
+    /// mirror must act on — the history revision moved (`HistoryRevision`).
+    case health(DaemonHealth)
 }
 
 /// In-process fan-out for the daemon's single local stream. Subscribers are
@@ -55,6 +58,10 @@ public final class DaemonSubscriptionHub: Sendable {
         publish(.summary(summary))
     }
 
+    public func publish(health: DaemonHealth) {
+        publish(.health(health))
+    }
+
     public func publish(_ message: DaemonStreamMessage) {
         let current = handlers.withLock { Array($0.values) }
         if log.logLevel <= .debug {
@@ -70,6 +77,12 @@ public final class DaemonSubscriptionHub: Sendable {
                 log.debug("stream_publish", metadata: .fields([
                     "kind": "summary",
                     "session": summary.id.rawValue,
+                    "subscribers": current.count,
+                ]))
+            case let .health(health):
+                log.debug("stream_publish", metadata: .fields([
+                    "kind": "health",
+                    "history_revision": health.historyRevision,
                     "subscribers": current.count,
                 ]))
             }

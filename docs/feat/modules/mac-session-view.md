@@ -41,7 +41,8 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
    - Inspector：右侧 288 pt。顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段；由 Toggle Inspector 显隐，状态在重启后保留。
    - Activity：独占主区，按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；用户键入的斜杠命令显示为用户消息（内容为记录原文，含 `<command-name>` 等标签），而不是上下文；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。
    - Activity 粘顶 header：标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮。默认 User、Model、Exec 三行横向时间轴（Session 开始/结束、压缩与配置横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；密度偏好在重启后保留。
-   - Activity 交互：点击任一时间轴方格跳到对应记录并短暂高亮；点击记录行查看原始 JSON（截图、长输出这类超大内容先显示 `Loading full content…`，从 daemon 取回后原地换成完整内容，见 [MAC-R-026](#mac-r-026-超大内容只在-daemon-保存完整版)）；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
+   - Activity 每一行：时间、类别标签和一行文字。文字直接说明这一步做了什么——执行的命令、读的文件、搜的内容，见 [MAC-R-027](#mac-r-027-activity-每行的文字说明这一步做了什么)。
+   - Activity 交互：点击任一时间轴方格跳到对应记录并短暂高亮；点击记录行打开这条记录，默认是整理好的 Preview，可切到 Raw 看保存的原文，见 [MAC-R-028](#mac-r-028-点开记录行查看-preview-与-raw)；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
 4. 窗口缩放只改变右栏中 Activity 主区的宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
 ### iPhone 与 Settings 页面
@@ -56,7 +57,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 - 紧凑时：显示列表中的 Session 数量和最近一个 Session 的状态色。
 - 展开后：按最近活动时间列出最近七天内活动过的全部主 Session（包括已关闭的会话）；视口一次最多显示六条，更多内容向下滚动；底部一行显示列表中的 Session 总数。
 - 顶栏：品牌图标、“Lumi”标题、一枚锁形“保持展开”开关（与 Notch 设置里的 Stay expanded 同一状态）和设置按钮；设置按钮打开主 App 的“Settings > Notch”，不在 Notch 内维护第二套设置页。
-- 正在工作的 Session 在标题下多一行最近活动（类别标签 + 摘要）。
+- 正在工作的 Session 在标题下多一行最近活动（类别标签 + 这条活动的那一行文字）。
 - 带 Subagent 的 Session 在标题下多一条可点开的 Subagent 计数条（子 Agent 的子 Agent 也算在同一条里）：运行中默认展开成胶囊，其他状态默认折叠；点击胶囊直接打开该 Subagent；悬停在带 Subagent 的行上时，这一行显示为一张卡片。
 - Session 的 Turn 结束或失败时 Notch 自动展开并短暂提示；回合开始不自动展开。
 - 收起：鼠标移出刘海形状即收起，开启保持展开时除外；展开状态下按 Esc 也收起。Notch 没有全局快捷键，也不响应拖到它上面的文件。
@@ -223,7 +224,7 @@ Activity 标题右侧有两枚下拉按钮：
 ### MAC-R-003 展示活动并保留 Session 诊断数据
 
 - 条件：Session 产生受支持的 Agent 事件。
-- 行为：Activity 整理消息、系统与上下文、reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Inspector 展示 Session 元数据、模型配置和消耗指标。模型每开始一次思考就出现一行 REASONING（思考结束不另起一行）；Claude 只落盘签名、没有正文的思考也占一行，内容显示为 `Empty`。
+- 行为：Activity 整理消息、系统与上下文、reasoning、工具、计划、子 Agent、错误和可识别的未知记录；Inspector 展示 Session 元数据、模型配置和消耗指标。模型每开始一次思考就出现一行 REASONING（思考结束不另起一行）；Claude 只落盘签名、没有正文的思考也占一行，内容显示为 `Empty`。Codex 执行的每条 shell 命令、每次改文件、看图、生成图片、网页搜索和 MCP 工具调用各占一行。
 - 结果：用户能在 Activity 中按发生顺序查看对话与执行上下文，并在 Inspector 中查看当前配置和 Token 使用。重复事件不产生重复记录，乱序事件不回退可见状态。
 - 限制或例外：每类最新诊断记录会完整保存来源提供的嵌套内容，其中可能出现路径、凭据、环境信息或工具内容；当前没有内容级脱敏保证。只有 Lumi 能识别为活动的记录会显示，其他来源事件不会另行保留。
 
@@ -315,7 +316,7 @@ Activity 标题右侧有两枚下拉按钮：
 - 条件：Mac 本地同步数据中存在最近七天内活动过、未被 Notch 归档、已产生过 Turn 且状态已知的主 Session——正在启动、工作、压缩上下文、等待审批、Turn 已结束停在提示符（待查看与已查看都算）、已关闭（Completed），或以失败 / 中断收尾。
 - 行为：
   - 紧凑状态显示列表中的主 Session 数量；展开后按最近活动时间全量列出这些主 Session，视口一次最多显示六条（按各行实际高度截到第六条为止），更多内容向下滚动，底部一行显示列表中的 Session 总数。
-  - 正在工作（蓝色档）的行在标题下显示最近一条活动（类别标签 + 摘要）。
+  - 正在工作（蓝色档）的行在标题下显示最近一条活动（类别标签 + 这条活动的那一行文字）。
   - 带 Subagent 的 Session 不论处于哪一档都在标题下保留一条 Subagent 计数条（叠放的状态点按 running → waiting → failed → done 排列，文案为 `N subagents` 加各非零档的数量，单数写 `1 subagent`）；蓝色档默认展开成胶囊（状态点 + 名称 + 已运行时长，按同样顺序自由换行），其他档默认折叠。
   - 点计数条切换展开 / 折叠，这一行的选择在它的状态档变化前一直保留，状态档变化后回到默认；点击胶囊打开该 Subagent 的详情。悬停在带 Subagent 的行上时该行以卡片底色高亮，位置与尺寸不变。
   - Turn 正常完成时 Notch 自动展开、显示约 6 秒回合完成卡片（标题、Turn complete 与用时、tokens / context 胶囊、最后一条助手消息摘要、Jump to Agent 按钮；点卡片本身进入该 Session 详情）后自动收回；Turn 以失败或中断收尾时不出卡片，而是自动展开并短暂显示错误提示（标题 + 错误摘要，约 3 秒）后收回。
@@ -349,7 +350,7 @@ Activity 标题右侧有两枚下拉按钮：
   - 带 Subagent 的行在副标题右端显示叠放状态点与折叠箭头，点这一簇（或键盘左右方向键）切换展开；展开后每个 Subagent（含更深层的子 Agent）占一行且本身可选中——选中 Subagent 即在右栏查看它自己的详情，父级行同时取消高亮。
   - Running / Waiting / Failed 默认展开、Completed 默认收起，手动切换在该行默认档位变化前一直保留（本次 App 运行期间）。
   - 详情固定为 Activity 主区 + Inspector。Inspector 顶部显示 Token 总量、Context 使用比例（最近一次用量 / 上下文窗口）和 Elapsed（运行中的 Session 持续计时，结束的 Session 停在最后活动时间）；其下 Overview（Session ID、Agent、Application、Lifecycle、Turn Phase、Needs Attention、Started；Agent 显示引擎与角色——Codex、Codex(subagent)、Claude、Claude(subagent)；Application 是承载会话的 AaaS 应用，如 Paseo、ChatGPT，早于归属记录的旧 Session 显示 Not available）、有 lineage 时的 Lineage（Thread Source、Subagent Depth、Agent Nickname、Agent Role）、Model（Model、Provider、Context Window、Reasoning Effort、Client Version）和 Usage。
-  - Activity 行可打开对应记录的完整原始内容。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
+  - 点 Activity 行打开这条记录的 Preview 与 Raw（[MAC-R-028](#mac-r-028-点开记录行查看-preview-与-raw)）。Subagent 的标题与活动归属见 [MAC-R-018](#mac-r-018-subagent-使用自己的标题与活动)。
 - 结果：用户可以按 Main Session 浏览或收起整组 Subagent，再在右栏查看当前副本保存的活动记录与指标。
 - 限制或例外：
   - 没有 Activity 时显示明确空状态。
@@ -443,14 +444,57 @@ Activity 标题右侧有两枚下拉按钮：
 
 - 条件：一条活动的内容超过单条上限（约 64 KB）——通常是截图、很长的命令输出或注入的上下文。
 - 行为：
-  - Mac 本地只保存它的摘要；列表、时间轴、Notch 和 Inspector 本来就只用摘要，显示不变。
-  - 点开这一行的原始 JSON 时先显示 `Loading full content…`，再从 daemon 取回完整内容原地替换。
-  - 一张截图在一条工具结果里只存一份；原始 JSON 中重复的位置显示为 `{"lumi.sameAs": "/content/0/source/data"}`，指向保留的那一份。
+  - Mac 本地保存这条记录的截短副本：记录的结构不变，只有其中过长的文字被截短，所以它在列表、时间轴和 Notch 里显示的那一行不变。
+  - 点开这一行时，Preview 先用截短副本显示，上方写着 `Loading full content…`；从 daemon 取回完整内容后，Preview 与 Raw 原地换成完整版。取回之前 Raw 只显示 `Loading full content…`，不把截短副本当成原文。
+  - 一张截图在一条工具结果里只存一份；Raw 中重复的位置显示为 `{"lumi.sameAs": "/content/0/source/data"}`，指向保留的那一份。
   - 删除 Session 或清空历史后，daemon 与 Mac 的数据库文件随即变小，不再一直占着删除前的大小。
 - 结果：带大量截图的长 Session 不再让 Mac 本地数据库膨胀；需要时仍能看到完整内容。
 - 限制或例外：
-  - 取完整内容需要 daemon 在线；取不到时窗口顶部写 `Couldn't load full content:` 加原因，下面附上摘要版，不会把摘要版当成完整内容。
-  - 升级到这一版后第一次启动，Mac 会丢掉旧的本地副本、从 daemon 重新同步一遍；同步完成前列表短暂为空，Session 历史本身由 daemon 保存，不受影响。
+  - 取完整内容需要 daemon 在线；取不到时 Preview 上方写 `Couldn't load full content:` 加原因并保留截短副本的内容，Raw 在同一句说明下面附上截短副本，不会把它当成完整内容。
+  - 被截短的改动记录，行上不显示增删行数；点开取回完整内容后可以看到完整的 diff。
+  - 截短副本里的截图在完整内容取回之前显示 `The image could not be read.`，取回后换成图片。
+  - 一条记录里的项太多、把每段文字都截到最短仍超过上限时，本地副本不保留它的内容，行上只显示名字和耗时；点开后照常从 daemon 取完整内容。
+  - 升级到这一版后，Mac 会丢掉旧的本地副本、从 daemon 重新同步，同步完成前列表短暂为空；daemon 补完旧 Codex Session 的命令记录（[MAC-R-027](#mac-r-027-activity-每行的文字说明这一步做了什么)）后，Mac 再同步一次。Session 历史本身由 daemon 保存，不受影响。
+
+### MAC-R-027 Activity 每行的文字说明这一步做了什么
+
+- 条件：Activity 显示一条记录。
+- 行为：
+  - 每行是「名字 · 说明」，带结果的行末尾再加耗时（不足 1 毫秒不显示）。每段说明只取一行、最多 160 个字符，整行最多 320 个字符。
+  - Claude 的工具调用：Agent 为这次调用写了说明时显示这句说明；没写时显示它执行的命令、读写的文件路径、搜索词或网址，这些都没有时列出参数名（最多 4 个）。结果行显示输出的第一行，失败行显示错误的第一行，没有任何文字时显示 `failed`。
+  - Codex 的 shell 命令按 Codex 自己对命令的解读显示：读文件是 `Read · 文件名`，搜索是 `Search · "搜索词" in 目录`，列目录是 `List · 目录`，其他命令是 `Run · 命令原文`。一条命令做了几件事时并在同一行，例如 `Read · A.swift, B.swift`。失败的命令标签为 FAILED，并带 `exit` 加退出码；没有退出码时写 `failed`。
+  - Codex 的其他动作：改文件是 `Edit · 文件名 +增加行数 -删除行数`（新建文件为 `Create`，删除文件为 `Delete`，一次改多个文件为 `Edit · N files +增加行数 -删除行数`）；看图是 `View image · 文件名`；生成图片是 `Generate image · 文件名`；网页是 `Web search · 搜索词`、`Open page · 网址` 或 `Find in page · 关键词`；MCP 工具是 `服务名/工具名` 加最能说明用途的一个参数的值，没有这样的参数时同样列出参数名。
+  - Codex 用一段脚本一次调用多个工具。脚本本身占两行——开始一行 TOOL、结束一行 RESULT——都显示 `exec · ` 加这次调用的 id，同一个 id 的两行是一对；脚本实际做的每件事是它们之间各自的一行。
+  - 上下文与配置行显示种类名、相关文件名或内容的第一行。
+- 结果：不点开记录，就能从列表读出 Agent 每一步做了什么、哪一步失败。
+- 限制或例外：
+  - Codex 的 shell 命令行出现在升级到这一版之后产生的活动里；更早的 Codex Session，只要 Codex 自己的记录文件还在，daemon 会在升级后自动重读并补上，文件已被删除的保持原样。
+  - 脚本的开始行与结束行不显示脚本内容，点开后在 Preview 里看（[MAC-R-028](#mac-r-028-点开记录行查看-preview-与-raw)）。
+
+### MAC-R-028 点开记录行查看 Preview 与 Raw
+
+- 条件：用户在 Activity 点击一条记录行。
+- 行为：
+  - 弹出这条记录的窗口：左上角是类别标签，右上角在 `Preview` 与 `Raw` 之间切换，默认 Preview；底部是时间和 `Done`。窗口不重复那一行的文字。
+  - 工具调用与它的结果是同一个窗口：点调用行或结果行，打开的内容相同；左上角的标签和底部的时间是所点那一行的。
+  - Preview 按记录的种类分区显示：
+    - 用户消息和 Assistant 回复显示完整正文，回复里的粗体、行内代码和链接按格式显示；超过 4,000 个字符的回复按纯文本放进可滚动的方框。Turn 结束的行在 `Turn` 区显示这一回合最后的回复。
+    - 工具：上方列出 Status（Running、Succeeded 或 Failed）和 Duration；`Command` 是带 `$` 的完整命令，`Input` 列出其余参数，`Output` 是完整输出。Claude 的工具和 MCP 工具失败时这一区叫 `Error`；Codex 的命令失败时仍叫 `Output`，另列 Exit code 和 Directory。
+    - Claude 的改动：`Change` 区是这次调用要做的替换，`Diff` 区是实际应用的改动（记录里有时才出现），增加的行绿色、删除的行红色；写文件的调用在 `Content` 区显示整份文件。
+    - Codex 的改动：每个文件一区，标题是 `Edited`、`Created` 或 `Deleted` 加文件路径；修改显示红绿 diff，新建和删除显示整份文件。
+    - 截图、Codex 查看或生成的图片直接显示成图片；生成的图片另有 `Prompt` 区。
+    - Codex 的网页搜索显示 `Queries` 和 `Results`（标题、网址、摘要，标题可点开）。
+    - Codex 的脚本显示 `Script`（脚本原文）和 `Output`。
+    - 错误：分区以这条错误自己的标题为名，显示完整的错误信息。
+    - 上下文与配置：内容是文字就显示文字，是多项数据就逐项列出。
+    - 没有更多内容的记录显示 `No content`。
+  - Raw 显示这个窗口用到的记录保存的原文（JSON），其中的时间是可读的日期时间。
+  - 较长的文字放在可滚动的方框里；正文和各分区的内容可以选中复制。
+- 结果：日常查看用 Preview 就能读懂一条记录；需要核对保存的原始数据时切到 Raw。
+- 限制或例外：
+  - 超大内容先显示截短副本，再换成完整内容，见 [MAC-R-026](#mac-r-026-超大内容只在-daemon-保存完整版)。
+  - Codex 查看过的图片读的是那个路径上现在的文件；文件已不在原处时这一区显示 `The image is no longer at` 加路径。
+  - Preview 不翻译、不改写内容；记录里可能出现路径、凭据或环境信息，见 [MAC-R-003](#mac-r-003-展示活动并保留-session-诊断数据)。
 
 ## 空状态与故障
 

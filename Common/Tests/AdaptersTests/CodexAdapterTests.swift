@@ -595,16 +595,87 @@ private func rolloutLine(
     """, offset: 7, state: &state)
     #expect(plan.first?.timelineItem?.payload == .plan(PlanTimelinePayload(explanation: "# 改名计划", steps: [])))
 
-    // The response_item call/output pair owns execution rows; the compaction
-    // marker stays with the top-level `compacted` record.
-    let exec = try rolloutLine(adapter, """
-    {"timestamp":"2026-08-25T10:00:08Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-3","command":"ls","exit_code":0,"status":"completed"}}}
-    """, offset: 8, state: &state)
+    // The compaction marker stays with the top-level `compacted` record.
     let compaction = try rolloutLine(adapter, """
     {"timestamp":"2026-08-25T10:00:09Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction","id":"cc-1"}}}
     """, offset: 9, state: &state)
-    #expect(exec.isEmpty)
     #expect(compaction.isEmpty)
+}
+
+@Test func itemsAreStoredWholeAndReadByTheirOwnFields() throws {
+    let adapter = CodexAdapter()
+    var state = RolloutReadState()
+    func row(_ line: String, offset: UInt64) throws -> (item: TimelineItem, tool: ToolTimelinePayload) {
+        let event = try #require(try rolloutLine(adapter, line, offset: offset, state: &state).first)
+        let item = try #require(event.timelineItem)
+        guard case let .tool(tool) = item.payload else { throw AgentAdapterError.malformedJSON }
+        return (item, tool)
+    }
+    func line(_ tool: ToolTimelinePayload) -> String { TimelineLineText.tool(tool, name: tool.name) }
+
+    // A command as Codex 0.164 records it: the wrapped argv, its own reading
+    // of the command, the exit code, the output, the duration.
+    let read = try row("""
+    {"timestamp":"2026-11-11T05:07:16Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"session-1","turn_id":"turn-9","item":{"type":"CommandExecution","id":"exec-3","process_id":"36464","command":["/bin/zsh","-lc","cat skills/i-have-adhd/SKILL.md"],"cwd":"file:///repo","parsed_cmd":[{"type":"read","cmd":"cat skills/i-have-adhd/SKILL.md","name":"SKILL.md","path":"skills/i-have-adhd/SKILL.md"}],"source":"unified_exec_startup","status":"completed","aggregated_output":"---\\nname: i-have-adhd\\n","exit_code":0,"duration":{"secs":0,"nanos":18875000}},"started_at_ms":1,"completed_at_ms":2}}
+    """, offset: 0)
+    #expect(read.item.id == TimelineItemID("codex_item:session-1:exec-3"))
+    #expect(read.tool.name == "Shell")
+    #expect(read.tool.status == .succeeded)
+    #expect(read.tool.toolUseID == "exec-3")
+    #expect(read.tool.durationMilliseconds == 18)
+    #expect(line(read.tool) == "Read · SKILL.md · 18ms")
+    // The item is the content, whole.
+    #expect(read.tool.content?["aggregated_output"]?.stringValue == "---\nname: i-have-adhd\n")
+    #expect(read.tool.content?["cwd"]?.stringValue == "file:///repo")
+    #expect(read.tool.content?["process_id"]?.stringValue == "36464")
+
+    let failed = try row("""
+    {"timestamp":"2026-11-11T05:07:27Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-4","command":["/bin/zsh","-lc","curl -L --fail https://example.com/docs"],"cwd":"file:///repo","parsed_cmd":[{"type":"unknown","cmd":"curl -L --fail https://example.com/docs"}],"status":"failed","aggregated_output":"curl: (56)","exit_code":56,"duration":{"secs":0,"nanos":486452625}}}}
+    """, offset: 1)
+    #expect(failed.tool.status == .failed)
+    #expect(line(failed.tool) == "Run · curl -L --fail https://example.com/docs · exit 56 · 486ms")
+
+    let patch = try row("""
+    {"timestamp":"2026-11-11T05:07:30Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange","id":"exec-5","status":"completed","changes":{"/repo/docs/model.md":{"type":"update","unified_diff":"@@ -1 +1,2 @@\\n-old\\n+new\\n+more\\n","move_path":null}},"stdout":"Success. Updated the following files:\\nM docs/model.md\\n","stderr":""}}}
+    """, offset: 2)
+    #expect(patch.tool.name == "Apply patch")
+    #expect(line(patch.tool) == "Edit · model.md +2 -1")
+    #expect(patch.tool.content?["stdout"]?.stringValue?.hasPrefix("Success.") == true)
+
+    let search = try row("""
+    {"timestamp":"2026-11-11T05:07:35Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Extension","kind":"web.search","id":"exec-6","query":"site:tailscale.com tsnet ...","action":{"type":"search","query":null,"queries":["site:tailscale.com tsnet","site:tailscale.com ssh"]},"results":[{"type":"text_result","ref_id":"turn0search0","title":"Tailscale SSH","url":"https://tailscale.com/kb/ssh","snippet":"When you enable","domain":"tailscale.com"}]}}}
+    """, offset: 3)
+    #expect(search.tool.name == "web.search")
+    #expect(line(search.tool) == "Web search · site:tailscale.com tsnet ...")
+    guard case let .webSearch(reading)? = CodexItemShape(search.tool.content) else { Issue.record("not a web search"); return }
+    #expect(reading.queries == ["site:tailscale.com tsnet", "site:tailscale.com ssh"])
+    #expect(reading.results.first?.title == "Tailscale SSH")
+
+    let mcp = try row("""
+    {"timestamp":"2026-11-11T05:07:40Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","id":"exec-7","server":"codex_app","tool":"set_thread_title","arguments":{"title":"[Rex] Remote login"},"pluginId":"codex-app-tools@openai-bundled","status":"completed","result":{"content":[{"type":"text","text":"{}"}],"isError":false},"duration":{"secs":0,"nanos":880338625}}}}
+    """, offset: 4)
+    #expect(line(mcp.tool) == "codex_app/set_thread_title · [Rex] Remote login · 880ms")
+    #expect(mcp.tool.content?["pluginId"]?.stringValue == "codex-app-tools@openai-bundled")
+}
+
+@Test func theScriptCallAndItsOutputStayARowPairOfTheirOwn() throws {
+    let adapter = CodexAdapter()
+    var state = RolloutReadState()
+    let call = try rolloutLine(adapter, """
+    {"timestamp":"2026-11-11T05:07:14Z","type":"response_item","payload":{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_4319","name":"exec","input":"const r = await tools.exec_command({cmd:\\\"ls\\\"});\\ntext(r)"}}
+    """, offset: 0, state: &state)
+    let output = try rolloutLine(adapter, """
+    {"timestamp":"2026-11-11T05:07:17Z","type":"response_item","payload":{"type":"custom_tool_call_output","id":"ctco_1","call_id":"call_4319","output":[{"type":"input_text","text":"Script completed\\nWall time 3.3 seconds\\nOutput:\\n"}]}}
+    """, offset: 1, state: &state)
+    guard case let .tool(callTool)? = call.first?.timelineItem?.payload,
+          case let .tool(outputTool)? = output.first?.timelineItem?.payload else {
+        Issue.record("Expected the wrapper pair")
+        return
+    }
+    #expect(TimelineLineText.tool(callTool, name: callTool.name) == "exec · call_4319")
+    #expect(TimelineLineText.tool(outputTool, name: outputTool.name) == "exec · call_4319")
+    // The script itself stays in the record.
+    #expect(callTool.content?.stringValue?.hasPrefix("const r = await tools.exec_command") == true)
 }
 
 @Test func channelArbitrationPrefersItemsOverLegacyEventTwins() throws {

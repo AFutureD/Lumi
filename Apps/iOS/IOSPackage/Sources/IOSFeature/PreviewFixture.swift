@@ -70,27 +70,27 @@ enum PreviewFixture {
             source: "session_meta", model: "gpt-5-codex", provider: "openai", contextWindow: 272_000,
             reasoningEffort: "medium", clientVersion: "codex-cli 0.48.2", settings: .object([:])
         )))
-        add(2, .config(.init(kind: "turn_context", summary: "gpt-5-codex · medium · ~/dev/lumi")))
-        add(2, .context(.init(kind: "developer_instructions", summary: "System Instructions · developer instructions")))
+        add(2, .config(.init(kind: "turn_context", content: .object(["model": .string("gpt-5-codex"), "effort": .string("medium"), "cwd": .string("~/dev/lumi")]))))
+        add(2, .context(.init(kind: "developer_instructions", content: .string("System Instructions · developer instructions"))))
         add(5, .message(.init(role: .user, text: "Refactor the transport DTO boundaries so Common no longer imports AppKit")))
         add(10, .reasoning(.init(text: "Inspecting package targets before editing")))
-        add(12, .tool(.init(name: "shell", summary: "rg --files Common/Sources", status: .started, toolUseID: "t1")))
-        add(13, .tool(.init(name: "shell", summary: "rg --files Common/Sources", status: .succeeded, durationMilliseconds: 820, toolUseID: "t1")))
+        add(12, .tool(.init(name: "shell", content: .object(["command": .string("rg --files Common/Sources")]), status: .started, toolUseID: "t1")))
+        add(13, .tool(.init(name: "shell", content: .string("rg --files Common/Sources"), status: .succeeded, durationMilliseconds: 820, toolUseID: "t1")))
         add(17, .message(.init(role: .assistant, text: "I'll start by mapping which files cross the transport boundary.")))
-        add(32, .tool(.init(name: "apply_patch", summary: "Core/SessionStatusTone.swift", status: .started, toolUseID: "t2")))
-        add(33, .tool(.init(name: "apply_patch", summary: "Core/SessionStatusTone.swift", status: .succeeded, durationMilliseconds: 210, toolUseID: "t2")))
+        add(32, .tool(.init(name: "apply_patch", content: .object(["path": .string("Core/SessionStatusTone.swift")]), status: .started, toolUseID: "t2")))
+        add(33, .tool(.init(name: "apply_patch", content: .string("Core/SessionStatusTone.swift"), status: .succeeded, durationMilliseconds: 210, toolUseID: "t2")))
         add(53, .subagent(.init(name: "audit-encryption", agentSessionID: "01J9F2KQ7YB3", status: .started)))
-        add(90, .tool(.init(name: "shell", summary: "swift build --package-path Common", status: .started, toolUseID: "t3")))
+        add(90, .tool(.init(name: "shell", content: .object(["command": .string("swift build --package-path Common")]), status: .started, toolUseID: "t3")))
         add(95, .tool(.init(
             name: "shell",
-            summary: "error: no such module 'AppKit'\n --> Common/Sources/Transport/SessionEnvelope.swift:4:8\n  |\n4 | import AppKit\n  |        ^\nCompiling Transport (12 sources)\nerror: fatalError",
+            content: .string("error: no such module 'AppKit'\n --> Common/Sources/Transport/SessionEnvelope.swift:4:8\n  |\n4 | import AppKit\n  |        ^\nCompiling Transport (12 sources)\nerror: fatalError"),
             status: .failed, durationMilliseconds: 5_100, toolUseID: "t3"
         )))
         add(98, .reasoning(.init(text: "Build failed on a missing import")))
-        add(113, .tool(.init(name: "apply_patch", summary: "Common/Package.swift", status: .started, toolUseID: "t4")))
-        add(114, .tool(.init(name: "apply_patch", summary: "Common/Package.swift", status: .succeeded, durationMilliseconds: 180, toolUseID: "t4")))
-        add(166, .tool(.init(name: "shell", summary: "swift build --package-path Common", status: .started, toolUseID: "t5")))
-        add(172, .tool(.init(name: "shell", summary: "Build complete! (6.02s)", status: .succeeded, durationMilliseconds: 6_020, toolUseID: "t5")))
+        add(113, .tool(.init(name: "apply_patch", content: .object(["path": .string("Common/Package.swift")]), status: .started, toolUseID: "t4")))
+        add(114, .tool(.init(name: "apply_patch", content: .string("Common/Package.swift"), status: .succeeded, durationMilliseconds: 180, toolUseID: "t4")))
+        add(166, .tool(.init(name: "shell", content: .object(["command": .string("swift build --package-path Common")]), status: .started, toolUseID: "t5")))
+        add(172, .tool(.init(name: "shell", content: .string("Build complete! (6.02s)"), status: .succeeded, durationMilliseconds: 6_020, toolUseID: "t5")))
         add(173, .plan(.init(explanation: "Plan updated", steps: [
             .init(text: "Map boundary-crossing files", status: .completed),
             .init(text: "Move DTOs into Transport", status: .completed),
@@ -103,7 +103,7 @@ enum PreviewFixture {
             total: TokenUsage(inputTokens: 184_220, cachedInputTokens: 151_808, outputTokens: 9_431, reasoningOutputTokens: 6_208, totalTokens: 193_651),
             modelContextWindow: 272_000
         )))
-        add(223, .tool(.init(name: "shell", summary: "swift test --package-path MacPackage", status: .started, toolUseID: "t6")))
+        add(223, .tool(.init(name: "shell", content: .object(["command": .string("swift test --package-path MacPackage")]), status: .started, toolUseID: "t6")))
 
         let refactorSummary = SessionSummary(
             id: refactor, agent: .codex, title: "Refactor transport DTO boundaries",
@@ -145,8 +145,8 @@ enum PreviewFixture {
             turns: [TurnSummary(id: TurnID("hook-turn"), sessionID: hook, phase: .executing, startedAt: hookStart)],
             timeline: [
                 TimelineItem(id: TimelineItemID("hook-0"), sessionID: hook, turnID: TurnID("hook-turn"), occurredAt: hookStart, payload: .message(.init(role: .user, text: "Why does install-hooks.sh fail on a clean machine?"))),
-                TimelineItem(id: TimelineItemID("hook-1"), sessionID: hook, turnID: TurnID("hook-turn"), occurredAt: hookStart.addingTimeInterval(20), payload: .tool(.init(name: "Bash", summary: "install-hooks.sh", status: .started, toolUseID: "h1"))),
-                TimelineItem(id: TimelineItemID("hook-2"), sessionID: hook, turnID: TurnID("hook-turn"), occurredAt: hookStart.addingTimeInterval(25), payload: .tool(.init(name: "Bash", summary: "install-hooks.sh: permission denied", status: .failed, durationMilliseconds: 4_000, toolUseID: "h1"))),
+                TimelineItem(id: TimelineItemID("hook-1"), sessionID: hook, turnID: TurnID("hook-turn"), occurredAt: hookStart.addingTimeInterval(20), payload: .tool(.init(name: "Bash", content: .object(["command": .string("install-hooks.sh")]), status: .started, toolUseID: "h1"))),
+                TimelineItem(id: TimelineItemID("hook-2"), sessionID: hook, turnID: TurnID("hook-turn"), occurredAt: hookStart.addingTimeInterval(25), payload: .tool(.init(name: "Bash", content: .string("install-hooks.sh: permission denied"), status: .failed, durationMilliseconds: 4_000, toolUseID: "h1"))),
             ]
         )
 
@@ -191,7 +191,7 @@ enum PreviewFixture {
             turns: [TurnSummary(id: TurnID("cache-turn"), sessionID: cache, phase: .executing, startedAt: cacheStart)],
             timeline: [
                 TimelineItem(id: TimelineItemID("cache-0"), sessionID: cache, turnID: TurnID("cache-turn"), occurredAt: cacheStart, payload: .message(.init(role: .user, text: "Rebuild the relay session cache from the index"))),
-                TimelineItem(id: TimelineItemID("cache-1"), sessionID: cache, turnID: TurnID("cache-turn"), occurredAt: cacheStart.addingTimeInterval(30), payload: .tool(.init(name: "shell", summary: "rg --files relay/src", status: .started, toolUseID: "c1"))),
+                TimelineItem(id: TimelineItemID("cache-1"), sessionID: cache, turnID: TurnID("cache-turn"), occurredAt: cacheStart.addingTimeInterval(30), payload: .tool(.init(name: "shell", content: .object(["command": .string("rg --files relay/src")]), status: .started, toolUseID: "c1"))),
             ]
         )
         let migrationStart = now.addingTimeInterval(-90 * 60)

@@ -323,28 +323,14 @@ public enum TimelineProjection {
                     name = known
                 }
             }
+            let text = TimelineLineText.tool(payload, name: name, isTruncated: item.isTruncated)
             switch payload.status {
             case .started:
-                return Draft(
-                    tag: .tool,
-                    status: .started,
-                    text: joined([name, payload.summary]),
-                    toolUseID: payload.toolUseID
-                )
+                return Draft(tag: .tool, status: .started, text: text, toolUseID: payload.toolUseID)
             case .succeeded:
-                return Draft(
-                    tag: .result,
-                    status: .succeeded,
-                    text: joined([name, payload.summary, duration(payload.durationMilliseconds)]),
-                    toolUseID: payload.toolUseID
-                )
+                return Draft(tag: .result, status: .succeeded, text: text, toolUseID: payload.toolUseID)
             case .failed:
-                return Draft(
-                    tag: .failed,
-                    status: .failed,
-                    text: joined([name, payload.summary ?? "failed", duration(payload.durationMilliseconds)]),
-                    toolUseID: payload.toolUseID
-                )
+                return Draft(tag: .failed, status: .failed, text: text, toolUseID: payload.toolUseID)
             }
 
         case let .plan(payload):
@@ -378,10 +364,10 @@ public enum TimelineProjection {
             )
 
         case let .context(payload):
-            return Draft(tag: .context, status: .info, text: payload.summary ?? humanized(payload.kind))
+            return Draft(tag: .context, status: .info, text: TimelineLineText.context(kind: payload.kind, content: payload.content))
 
         case let .config(payload):
-            return Draft(tag: .config, status: .info, text: payload.summary ?? humanized(payload.kind))
+            return Draft(tag: .config, status: .info, text: TimelineLineText.config(kind: payload.kind, content: payload.content))
 
         case let .sessionMarker(payload):
             switch payload.kind {
@@ -429,15 +415,7 @@ public enum TimelineProjection {
     // MARK: - Text helpers
 
     private static func joined(_ parts: [String?]) -> String {
-        parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-    }
-
-    private static func duration(_ milliseconds: Int64?) -> String? {
-        guard let milliseconds else { return nil }
-        if milliseconds < 1_000 { return "\(milliseconds)ms" }
-        let seconds = Double(milliseconds) / 1_000
-        if seconds < 60 { return String(format: "%.1fs", seconds) }
-        return "\(Int(seconds) / 60)m \(Int(seconds) % 60)s"
+        TimelineLineText.joined(parts)
     }
 
     private static func humanized(_ value: String) -> String {

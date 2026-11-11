@@ -110,6 +110,13 @@ public actor DaemonService {
         try? await health(now: now).health
     }
 
+    /// The stored history reached a new revision: tell the mirrors that are
+    /// listening now. The others read it from the health they get on connect.
+    public func announceHistoryRevision() async {
+        guard let health = await currentHealth() else { return }
+        subscriptions.publish(health: health)
+    }
+
     public func handle(
         _ envelope: TransportEnvelope<IPCRequest>,
         now: Date = Date()
@@ -501,7 +508,8 @@ public actor DaemonService {
                 activeSessionCount: activeCount,
                 retainedSessionCount: sessions.count,
                 socketPath: socketPath,
-                relayConnected: relayConnected
+                relayConnected: relayConnected,
+                historyRevision: try await repository.historyRevision() ?? HistoryRevision.first
             )
         )
     }

@@ -23,7 +23,7 @@ private func item(
 
 @Test func toolCallAndResultStayAsTwoRowsPairedByToolUseID() {
     let rows = TimelineProjection.rows(from: [
-        item("a", 0, .tool(ToolTimelinePayload(name: "Bash", summary: "npm test", status: .started, toolUseID: "tu1"))),
+        item("a", 0, .tool(ToolTimelinePayload(name: "Bash", content: .object(["command": .string("npm test")]), status: .started, toolUseID: "tu1"))),
         item("b", 5, .tool(ToolTimelinePayload(name: "Bash", status: .succeeded, durationMilliseconds: 7_100, toolUseID: "tu1"))),
     ])
     #expect(rows.count == 2)
@@ -50,12 +50,12 @@ private func item(
 
 @Test func contextStaysOneRowPerItemAndConfigSpansLanes() {
     let rows = TimelineProjection.rows(from: [
-        item("c1", 0, turnID: nil, .context(ContextTimelinePayload(kind: "instructions", summary: "CLAUDE.md"))),
-        item("c2", 1, turnID: nil, .context(ContextTimelinePayload(kind: "base_instructions", summary: "Base instructions"))),
-        item("k1", 2, turnID: nil, .config(ConfigTimelinePayload(kind: "cwd_changed", summary: "/tmp"))),
+        item("c1", 0, turnID: nil, .context(ContextTimelinePayload(kind: "instructions", content: .object(["file_path": .string("/repo/CLAUDE.md")])))),
+        item("c2", 1, turnID: nil, .context(ContextTimelinePayload(kind: "base_instructions"))),
+        item("k1", 2, turnID: nil, .config(ConfigTimelinePayload(kind: "cwd_changed", content: .object(["new_cwd": .string("/tmp")])))),
         item("hidden", 2, turnID: nil, .modelConfiguration(ModelConfigurationTimelinePayload(source: "x", model: "gpt-5", settings: .null))),
         item("u", 3, .message(MessageTimelinePayload(role: .user, text: "hi"))),
-        item("c4", 4, .context(ContextTimelinePayload(kind: "system_reminder", summary: "reminder"))),
+        item("c4", 4, .context(ContextTimelinePayload(kind: "system_reminder", content: .string("reminder")))),
     ])
     #expect(rows.count == 5)
     #expect(rows[0].tag == .context && rows[1].tag == .context)
@@ -139,8 +139,8 @@ private func item(
 @Test func newPayloadsRoundTripThroughCoding() throws {
     let payloads: [TimelinePayload] = [
         .reasoning(ReasoningTimelinePayload(text: "t")),
-        .context(ContextTimelinePayload(kind: "attachment", summary: "a", content: .string("x"))),
-        .config(ConfigTimelinePayload(kind: "config_change", summary: "settings.json", content: .string("x"))),
+        .context(ContextTimelinePayload(kind: "attachment", content: .string("x"))),
+        .config(ConfigTimelinePayload(kind: "config_change", content: .object(["file_path": .string("/repo/settings.json")]))),
         .sessionMarker(SessionMarkerTimelinePayload(kind: .compactionStarted, detail: "manual")),
         .turnEnd(TurnEndTimelinePayload(outcome: .aborted, message: "user")),
         .tool(ToolTimelinePayload(name: "Bash", status: .started, toolUseID: "id")),
@@ -189,7 +189,7 @@ private func item(
         // Claude may persist a thinking block with only a signature; each
         // such block is a thinking step of its own.
         item("r1", 0, .reasoning(ReasoningTimelinePayload(text: ""))),
-        item("t1", 1, .tool(ToolTimelinePayload(name: "Bash", summary: "ls", status: .started, toolUseID: "tu1"))),
+        item("t1", 1, .tool(ToolTimelinePayload(name: "Bash", content: .object(["command": .string("ls")]), status: .started, toolUseID: "tu1"))),
         item("r2", 2, .reasoning(ReasoningTimelinePayload(text: ""))),
         item("r3", 3, .reasoning(ReasoningTimelinePayload(text: ""))),
         item("r4", 4, .reasoning(ReasoningTimelinePayload(text: "**Planning**"))),

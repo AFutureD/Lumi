@@ -84,6 +84,48 @@ public extension JSONValue {
     }
 }
 
+/// Typed reads of loose JSON, for code that interprets an agent's own record
+/// shapes (`AgentRecordShapes`). A mismatch is `nil`, never a trap.
+public extension JSONValue {
+    subscript(key: String) -> JSONValue? {
+        if case let .object(value) = self { value[key] } else { nil }
+    }
+
+    var stringValue: String? {
+        if case let .string(value) = self { value } else { nil }
+    }
+
+    /// A string that says something: `nil` for empty.
+    var text: String? {
+        if case let .string(value) = self, !value.isEmpty { value } else { nil }
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case let .object(value) = self { value } else { nil }
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case let .array(value) = self { value } else { nil }
+    }
+
+    var boolValue: Bool? {
+        if case let .boolean(value) = self { value } else { nil }
+    }
+
+    var int64Value: Int64? {
+        if case let .number(value) = self { NSDecimalNumber(decimal: value).int64Value } else { nil }
+    }
+
+    /// The object a JSON-encoded string holds (`"{\"code\":…}"`), as some
+    /// agents record call arguments.
+    var decodedObjectString: JSONValue? {
+        guard case let .string(value) = self, value.hasPrefix("{"),
+              let data = value.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return try? JSONValue(jsonObject: object)
+    }
+}
+
 public enum JSONValueError: Error, Equatable, Sendable {
     case unsupportedType(String)
     case unsupportedNumber(String)

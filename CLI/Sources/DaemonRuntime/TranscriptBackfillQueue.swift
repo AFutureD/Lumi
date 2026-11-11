@@ -52,7 +52,8 @@ enum RichSourceCatchUp {
             maximumBytes: maximumBytes
         )
         var applied = 0
-        for event in read.events {
+        for readEvent in read.events {
+            let event = try await ToolResultNaming.named(readEvent, in: repository)
             if try await repository.apply(event) {
                 applied += 1
                 onEvent(event)

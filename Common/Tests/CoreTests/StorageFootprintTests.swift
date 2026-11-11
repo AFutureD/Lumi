@@ -127,7 +127,7 @@ private func toolRow(_ id: String = "tool:s:t1:result", at offset: TimeInterval 
     TimelineItem(
         id: TimelineItemID(id), sessionID: SessionID("s"), turnID: TurnID("t1"),
         occurredAt: base.addingTimeInterval(offset),
-        payload: .tool(ToolTimelinePayload(name: "Read", summary: "read", content: .string(output), status: .succeeded, toolUseID: "t1"))
+        payload: .tool(ToolTimelinePayload(name: "Read", content: .string(output), status: .succeeded, toolUseID: "t1"))
     )
 }
 
@@ -188,7 +188,7 @@ private func temporaryPath() -> (String, URL) {
     let duplicated = TimelineItem(
         id: TimelineItemID("tool:s:t1:result"), sessionID: SessionID("s"), turnID: TurnID("t1"),
         occurredAt: base.addingTimeInterval(1),
-        payload: .tool(ToolTimelinePayload(name: "Read", summary: "[Image]", content: .object(screenshotResult()), status: .succeeded, toolUseID: "t1"))
+        payload: .tool(ToolTimelinePayload(name: "Read", content: .object(screenshotResult()), status: .succeeded, toolUseID: "t1"))
     )
     do {
         let repository = try SQLiteSessionRepository(path: path)
@@ -208,8 +208,115 @@ private func temporaryPath() -> (String, URL) {
         return
     }
     #expect(tool.content == .object(ToolResultDeduplication.deduplicated(screenshotResult())))
-    #expect(tool.summary == "[Image]")
     #expect(stored.occurredAt == duplicated.occurredAt)
+}
+
+// MARK: Lines read from records (lumi-v14)
+
+/// Rows as builds before v14 stored them: every line kept beside its record.
+private let storedBeforeV14: [(id: String, json: String)] = [
+    ("tool:s:t1:call", #"{"id":"tool:s:t1:call","occurredAt":"1970-01-01T00:16:41.000Z","payload":{"tool":{"content":{"command":"ls -la","description":"List files"},"name":"Bash","status":"started","summary":"ls -la","toolUseID":"t1"},"type":"tool"},"sessionID":"s","turnID":"t1"}"#),
+    ("tool:s:t1:result", #"{"id":"tool:s:t1:result","occurredAt":"1970-01-01T00:16:42.000Z","payload":{"tool":{"content":{"content":"total 8\nfile"},"name":"Tool","status":"succeeded","summary":"total 8","toolUseID":"t1"},"type":"tool"},"sessionID":"s","turnID":"t1"}"#),
+    ("diagnostic:s:context:instructions:/repo/CLAUDE.md", #"{"id":"diagnostic:s:context:instructions:/repo/CLAUDE.md","occurredAt":"1970-01-01T00:16:43.000Z","payload":{"context":{"content":"/repo/CLAUDE.md","kind":"instructions","summary":"CLAUDE.md · session_start"},"type":"context"},"sessionID":"s"}"#),
+    ("cfg", #"{"id":"cfg","occurredAt":"1970-01-01T00:16:44.000Z","payload":{"config":{"content":"/repo/.claude/settings.json","kind":"config_change","summary":"project_settings · settings.json"},"type":"config"},"sessionID":"s"}"#),
+    ("codex_item:s:exec-1", #"{"id":"codex_item:s:exec-1","occurredAt":"1970-01-01T00:16:45.000Z","payload":{"tool":{"content":{"/repo/a.md":{"type":"update","unified_diff":"@@\n-a\n+b\n","move_path":null}},"name":"Apply patch","status":"succeeded","summary":"/repo/a.md","toolUseID":"exec-1"},"type":"tool"},"sessionID":"s","turnID":"t1"}"#),
+    ("codex_item:s:exec-2", #"{"id":"codex_item:s:exec-2","occurredAt":"1970-01-01T00:16:46.000Z","payload":{"tool":{"content":"tsnet only ...","name":"web.search","status":"succeeded","summary":"tsnet only ...","toolUseID":"exec-2"},"type":"tool"},"sessionID":"s","turnID":"t1"}"#),
+    ("codex_item:s:exec-3", #"{"id":"codex_item:s:exec-3","occurredAt":"1970-01-01T00:16:47.000Z","payload":{"tool":{"content":{"arguments":{"title":"New title"},"result":{"content":[{"text":"{}","type":"text"}]}},"durationMilliseconds":880,"name":"codex_app/set_thread_title","status":"succeeded","summary":"{}","toolUseID":"exec-3"},"type":"tool"},"sessionID":"s","turnID":"t1"}"#),
+    ("codex_item:s:msg_1", #"{"id":"codex_item:s:msg_1","occurredAt":"1970-01-01T00:16:48.000Z","payload":{"message":{"role":"assistant","text":"done"},"type":"message"},"sessionID":"s","turnID":"t1"}"#),
+]
+
+@Test func storedLinesGoAndRowsTakeTheShapeLinesAreReadFrom() async throws {
+    let (path, directory) = temporaryPath()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    do {
+        let repository = try SQLiteSessionRepository(path: path)
+        try await repository.replaceSession(session([]))
+    }
+    // Stand the file back before v14, holding rows as older builds wrote them.
+    let queue = try DatabaseQueue(path: path)
+    try await queue.write { db in
+        try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'lumi-v14-lines-read-from-records'")
+        for (offset, row) in storedBeforeV14.enumerated() {
+            try db.execute(
+                sql: "INSERT INTO timeline(id, session_id, occurred_at, item) VALUES(?, 's', ?, ?)",
+                arguments: [row.id, 1_001 + Double(offset), Data(row.json.utf8)]
+            )
+        }
+    }
+    try queue.close()
+
+    let reopened = try SQLiteSessionRepository(path: path)
+    let detail = try #require(try await reopened.timelineItems(
+        id: SessionID("s"), itemIDs: storedBeforeV14.map { TimelineItemID($0.id) }
+    ))
+    let rows = TimelineProjection.rows(from: detail.timeline)
+    #expect(rows.map(\.text) == [
+        "Bash · List files",
+        // Recorded as `Tool` in a later read than its call: named after it.
+        "Bash · total 8",
+        "CLAUDE.md · session_start",
+        "project_settings · settings.json",
+        "Edit · a.md +1 -1",
+        "Web search · tsnet only ...",
+        "codex_app/set_thread_title · New title · 880ms",
+        "done",
+    ])
+    // No stored row names a summary any more, and the facts two hook
+    // records kept only there now sit in their content.
+    let raw = try await DatabaseQueue(path: path).read { db in
+        try String.fetchAll(db, sql: "SELECT CAST(item AS TEXT) FROM timeline ORDER BY occurred_at")
+    }
+    #expect(raw.allSatisfy { !$0.contains("\"summary\"") })
+    let byID = Dictionary(uniqueKeysWithValues: detail.timeline.map { ($0.id.rawValue, $0.payload) })
+    #expect(byID["diagnostic:s:context:instructions:/repo/CLAUDE.md"] == .context(ContextTimelinePayload(
+        kind: "instructions",
+        content: .object(["file_path": .string("/repo/CLAUDE.md"), "load_reason": .string("session_start")])
+    )))
+    #expect(byID["cfg"] == .config(ConfigTimelinePayload(
+        kind: "config_change",
+        content: .object(["file_path": .string("/repo/.claude/settings.json"), "source": .string("project_settings")])
+    )))
+    guard case let .tool(search)? = byID["codex_item:s:exec-2"] else { Issue.record("not a tool row"); return }
+    #expect(search.content == .object([
+        "id": .string("exec-2"), "type": .string("Extension"), "kind": .string("web.search"), "query": .string("tsnet only ..."),
+    ]))
+}
+
+@Test func backfillInstallsRowsWithoutTouchingTheSummaryAndSkipsOlderHistory() async throws {
+    let (path, directory) = temporaryPath()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = try SQLiteSessionRepository(path: path)
+    let stored = toolRow("tool:s:t1:result", at: 10, output: "kept")
+    try await repository.replaceSession(session([stored]))
+    let before = try #require(try await repository.sessionSummary(id: SessionID("s")))
+
+    func command(_ id: String, at offset: TimeInterval) -> TimelineItem {
+        TimelineItem(
+            id: TimelineItemID(id), sessionID: SessionID("s"), turnID: TurnID("t1"),
+            occurredAt: base.addingTimeInterval(offset),
+            payload: .tool(ToolTimelinePayload(
+                name: "Shell", content: .object(["type": .string("CommandExecution"), "command": .array([.string("ls")])]),
+                status: .succeeded, toolUseID: id
+            ))
+        )
+    }
+    // A subagent's rollout opens with its parent's history: rows older than
+    // the session's first stored row are not this session's activity.
+    let written = try await repository.backfillTimeline(
+        [command("codex_item:s:parent", at: 2), command("codex_item:s:mine", at: 11)], sessionID: SessionID("s")
+    )
+    #expect(written == 1)
+    let detail = try #require(try await repository.timelineItems(
+        id: SessionID("s"), itemIDs: [stored.id, TimelineItemID("codex_item:s:mine"), TimelineItemID("codex_item:s:parent")]
+    ))
+    #expect(detail.timeline.map(\.id.rawValue) == ["tool:s:t1:result", "codex_item:s:mine"])
+    #expect(try await repository.sessionSummary(id: SessionID("s")) == before)
+    // A session that holds nothing takes nothing.
+    #expect(try await repository.backfillTimeline([command("codex_item:x:1", at: 1)], sessionID: SessionID("missing")) == 0)
+
+    #expect(try await repository.historyRevision() == nil)
+    try await repository.setHistoryRevision(HistoryRevision.current)
+    #expect(try await repository.historyRevision() == HistoryRevision.current)
 }
 
 private func header(_ path: String) async throws -> (mode: Int, freePages: Int) {

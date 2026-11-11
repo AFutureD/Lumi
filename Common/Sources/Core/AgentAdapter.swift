@@ -222,32 +222,3 @@ public enum AdapterDates {
         return try? Date(value, strategy: .iso8601)
     }
 }
-
-public enum AdapterText {
-    /// First non-empty line, whitespace-collapsed, capped — for tool input /
-    /// output excerpts and context summaries.
-    public static func excerpt(_ value: String?, maximumCharacters: Int = 160) -> String? {
-        guard let value else { return nil }
-        let collapsed = value
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first(where: { !$0.isEmpty }) ?? ""
-        guard !collapsed.isEmpty else { return nil }
-        if collapsed.count <= maximumCharacters { return collapsed }
-        return String(collapsed.prefix(maximumCharacters)) + "…"
-    }
-
-    /// Compact one-line rendering of a tool input dictionary (`command`,
-    /// `file_path`, `pattern`, … first; falls back to sorted keys).
-    public static func summary(ofToolInput input: Any?) -> String? {
-        guard let input else { return nil }
-        if let text = input as? String { return excerpt(text) }
-        guard let dictionary = input as? [String: Any] else { return nil }
-        for key in ["command", "cmd", "file_path", "path", "pattern", "query", "url", "prompt", "description", "input", "text"] {
-            if let value = dictionary[key] as? String, !value.isEmpty { return excerpt(value) }
-            if let values = dictionary[key] as? [String], !values.isEmpty { return excerpt(values.joined(separator: " ")) }
-        }
-        let keys = dictionary.keys.sorted().prefix(4).joined(separator: ", ")
-        return keys.isEmpty ? nil : keys
-    }
-}
