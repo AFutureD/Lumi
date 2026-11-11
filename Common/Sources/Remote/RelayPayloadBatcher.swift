@@ -50,17 +50,12 @@ public enum RelayPayloadBatcher {
     }
 
     /// Live events in arrival order, each timeline row trimmed to the Relay
-    /// content budget (`RelayContentBudget`).
+    /// content budget (`TimelineContentBudget`).
     public static func eventBatches(
         _ events: [AgentIngressEvent],
         generatedAt: Date
     ) throws -> [Batch] {
-        let trimmed = events.map { event -> AgentIngressEvent in
-            guard let item = event.timelineItem else { return event }
-            var copy = event
-            copy.timelineItem = RelayContentBudget.trimmed(item)
-            return copy
-        }
+        let trimmed = events.map(TimelineContentBudget.trimmed)
         let chunks = try pack(trimmed, size: { try encodedSize($0) }) { chunk in
             RemoteSessionPayload(kind: .sessionMessage, generatedAt: generatedAt, events: chunk)
         }
@@ -86,7 +81,7 @@ public enum RelayPayloadBatcher {
 
     /// Greedy fill by encoded size, then a compressed-size check of each
     /// part. A single item over the budget still travels alone — callers
-    /// trim rows first (`RelayContentBudget`), so this is the exception.
+    /// trim rows first (`TimelineContentBudget`), so this is the exception.
     static func pack<Item>(
         _ items: [Item],
         size: (Item) throws -> Int,

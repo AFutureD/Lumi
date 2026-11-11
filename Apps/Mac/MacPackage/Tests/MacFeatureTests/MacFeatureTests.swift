@@ -1341,6 +1341,17 @@ private final class StubDaemonClient: MacDaemonClient, @unchecked Sendable {
                     ? PaginationCursor(value: String(nextOffset))
                     : nil
             ))
+        case .getTimelineItems:
+            guard let id = request.sessionID, let detail = details[id] else {
+                return IPCResponse(status: .error, failure: IPCFailure(
+                    code: "session_not_found", message: "gone", retryable: false
+                ))
+            }
+            let wanted = Set(request.itemIDs ?? [])
+            return IPCResponse(status: .ok, session: SessionDetail(
+                summary: detail.summary,
+                timeline: detail.timeline.filter { wanted.contains($0.id) }
+            ))
         case .deleteSession:
             if let id = request.sessionID {
                 summaries.removeAll { $0.id == id }
@@ -1350,6 +1361,44 @@ private final class StubDaemonClient: MacDaemonClient, @unchecked Sendable {
         default:
             return IPCResponse(status: .ok)
         }
+    }
+}
+
+@Test @MainActor
+func rawDataRowsHeldTrimmedAreFetchedWholeFromTheDaemon() async throws {
+    let sessionID = SessionID("shots")
+    let date = Date(timeIntervalSince1970: 100)
+    let whole = TimelineItem(
+        id: TimelineItemID("tool:shots:t1:result"), sessionID: sessionID, occurredAt: date,
+        payload: .tool(ToolTimelinePayload(
+            name: "Read", summary: "[Image]", content: .string(String(repeating: "x", count: 200_000)),
+            status: .succeeded, toolUseID: "t1"
+        ))
+    )
+    let small = TimelineItem(
+        id: TimelineItemID("tool:shots:t1:call"), sessionID: sessionID, occurredAt: date,
+        payload: .tool(ToolTimelinePayload(name: "Read", summary: "shot.png", status: .started, toolUseID: "t1"))
+    )
+    let detail = SessionDetail(
+        summary: SessionSummary(
+            id: sessionID, agent: .claude, title: "Shots", lifecycle: .running, phase: .thinking,
+            startedAt: date, updatedAt: date, lastActivityAt: date
+        ),
+        timeline: [small, whole]
+    )
+    let stub = StubDaemonClient(details: [detail])
+    let (store, directory) = try macStoreFixture(client: stub)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let trimmed = TimelineContentBudget.trimmed(whole)
+    #expect(try await store.wholeTimelineItems([small, trimmed]) == [small, whole])
+    // Only the trimmed row costs a request.
+    #expect(stub.operations.filter { $0 == .getTimelineItems }.count == 1)
+
+    // A row the daemon no longer has is an error, never the trimmed copy.
+    stub.replace(details: [SessionDetail(summary: detail.summary, timeline: [small])])
+    await #expect(throws: (any Error).self) {
+        _ = try await store.wholeTimelineItems([trimmed])
     }
 }
 

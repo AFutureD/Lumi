@@ -86,7 +86,7 @@ describe("relay authorization and forwarding", () => {
     // Text on a routing socket is not a frame: the socket closes.
     const textSocket = await openSocket("device", deviceToken, deviceID);
     const textClosed = new Promise<number>((resolve) => textSocket.addEventListener("close", (event) => resolve(event.code)));
-    textSocket.send(JSON.stringify({ version: { major: 1, minor: 4 }, hostID, deviceID, sequence: 3, kind: "request" }));
+    textSocket.send(JSON.stringify({ version: { major: 1, minor: 5 }, hostID, deviceID, sequence: 3, kind: "request" }));
     expect(await textClosed).toBe(4004);
 
     // Devices cannot publish data frames (or the retired hello/ack/attention kinds).

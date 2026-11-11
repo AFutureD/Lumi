@@ -120,6 +120,7 @@
 | iPhone 第一次点开某个 Session、时间线还在路上时详情页中央的那一行 | Loading session… | 加载 Session |
 | iPhone 详情 Activity 列表顶上的那一行：Mac 上还有更早的活动没取来，点它取一页 | Load earlier | 加载更早 |
 | iPhone 活动详情页底部：这条活动的完整内容只在 Mac 上，点按钮取来 | Full content is on the Mac. · Load full content | 取完整内容 |
+| Mac 原始 JSON 窗口：超大内容正在从 daemon 取完整版 / 取不到时窗口顶部的说明 | Loading full content… · Couldn't load full content: <原因> | 取完整内容 |
 | iPhone Macs 页里这台 Mac 在同一网络、直接连着（不经 Relay） | Online · Direct | 直连 |
 
 - Usage 与 Session 无关：删除 Session、清空历史都不会改变 Usage 的数字。

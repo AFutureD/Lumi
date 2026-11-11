@@ -90,6 +90,14 @@ App 启动时会自动重装版本过期或起不来的已安装 daemon（[MAC-R
 
 **完成信号**：该 Session 从 Mac 和在线 iPhone 中消失；之后只有你在同一会话里再次发出请求（或会话重启）它才会回来。Agent 自身 Session 不受影响。
 
+## Raw Data 显示 Couldn't load full content
+
+点开一行的原始 JSON 时，超大内容（截图、长输出）要从 daemon 取完整版；取不到时窗口顶部写 `Couldn't load full content:` 加原因，下面是只含摘要的版本。
+
+1. 原因是连不上 daemon：按[daemon 不可用](#daemon-不可用)恢复后，关掉窗口重新点开这一行。
+2. 原因是 daemon 没有这一行（`no longer has row …`）：这个 Session 刚被删除或重算过，点工具栏刷新后再点开。
+3. 仍失败时查看 errors.log 里的 `timeline_items_fetch_failed`（见[先看日志](#仍无法恢复先看日志)）。
+
 ## Relay unavailable
 
 **用户会看到**：Mac“iPhone”页的药丸显示 Relay unavailable，页头副标题显示具体错误，配对码区显示 `···-···`，不能完成配对；已配对 iPhone 收不到新内容。

@@ -596,6 +596,11 @@ public struct SessionDetail: Codable, Hashable, Sendable {
         self.nextCursor = nextCursor
     }
 
+    /// The same page with other rows (the mirror-trimmed copy).
+    public func withTimeline(_ timeline: [TimelineItem]) -> SessionDetail {
+        SessionDetail(summary: summary, turns: turns, timeline: timeline, nextCursor: nextCursor)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case summary
         case turns

@@ -44,11 +44,17 @@ public enum SessionDetailReduction {
         )
     }
 
-    /// Upsert by id under one rule every store shares: an older copy never
-    /// regresses a newer row, and a trimmed Relay copy never replaces a
-    /// whole one (`TimelineItem.truncated`).
+    /// Upsert by id under one rule every store shares (in memory and the
+    /// SQLite mirrors): an older copy never regresses a newer row, and a
+    /// trimmed copy yields to a whole row only when it is that very row
+    /// trimmed (`TimelineContentBudget`). A trimmed copy of a *changed* row —
+    /// the same id grown past the budget, e.g. a hook-written tool result
+    /// later rewritten from the transcript — still replaces the stale whole
+    /// one; its whole form is fetched on demand like any trimmed row.
     public static func supersedes(_ incoming: TimelineItem, _ existing: TimelineItem) -> Bool {
-        incoming.occurredAt >= existing.occurredAt && !(incoming.isTruncated && !existing.isTruncated)
+        guard incoming.occurredAt >= existing.occurredAt else { return false }
+        guard incoming.isTruncated, !existing.isTruncated else { return true }
+        return TimelineContentBudget.trimmed(existing) != incoming
     }
 
     public static func merge(_ items: [TimelineItem], into timeline: [TimelineItem]) -> [TimelineItem] {

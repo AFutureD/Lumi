@@ -161,14 +161,11 @@ public final class MacSessionStore {
             resolvedCachePath = cachePath
         } else {
             resolvedCachePath = Self.defaultCachePath()
-            // Only the default path participates in the one-time layout
-            // migration: an explicit path (parameter or `LUMI_MAC_CACHE`)
-            // is an isolated cache with no legacy twin.
+            // Only the default path retires the older cache files: an
+            // explicit path (parameter or `LUMI_MAC_CACHE`) is an isolated
+            // cache with no predecessor.
             if ProcessInfo.processInfo.environment["LUMI_MAC_CACHE"]?.isEmpty != false {
-                Self.migrateLegacyCache(
-                    from: Self.legacyDefaultCachePath(),
-                    to: resolvedCachePath
-                )
+                Self.discardRetiredCaches(Self.retiredDefaultCachePaths())
             }
         }
         self.cachePath = resolvedCachePath
@@ -464,6 +461,49 @@ public final class MacSessionStore {
         return details
     }
 
+    /// The whole form of each row the cache holds trimmed, straight from the
+    /// daemon (`get_timeline_items`); rows that fit the budget come back as
+    /// they are. One request per row, so one large row never shares a frame
+    /// with another. The whole rows are not cached — the cache keeps mirror
+    /// rows only. Any failure is thrown for the caller to show.
+    public func wholeTimelineItems(_ items: [TimelineItem]) async throws -> [TimelineItem] {
+        let started = ContinuousClock.now
+        var whole: [TimelineItem] = []
+        whole.reserveCapacity(items.count)
+        var fetched = 0
+        do {
+            for item in items {
+                guard item.isTruncated else {
+                    whole.append(item)
+                    continue
+                }
+                let response = try await request(
+                    IPCRequest(operation: .getTimelineItems, sessionID: item.sessionID, itemIDs: [item.id]),
+                    timeoutSeconds: 15
+                )
+                if let failure = response.failure { throw failure }
+                guard let row = response.session?.timeline.first(where: { $0.id == item.id }) else {
+                    throw MacSessionStoreError.timelineItemMissing(item.id)
+                }
+                whole.append(row)
+                fetched += 1
+            }
+        } catch {
+            dbLog.error("timeline_items_fetch_failed", metadata: .fields([
+                "session": items.first?.sessionID.rawValue,
+                "items": items.count,
+                "error": error,
+            ]))
+            throw error
+        }
+        dbLog.info("timeline_items_fetched", metadata: .fields([
+            "session": items.first?.sessionID.rawValue,
+            "fetched": fetched,
+            "ms": LogClock.milliseconds(since: started),
+        ]))
+        return whole
+    }
+
     /// Reconciles the local cache with the daemon at session granularity: a
     /// summary index decides which sessions to refetch in full (paged
     /// `get_session`) and which to prune. Full state never crosses the socket
@@ -563,8 +603,9 @@ public final class MacSessionStore {
             )
             if let failure = response.failure {
                 if failure.code == "session_not_found" { return nil }
-                // Full tool content can make even a small page overflow the
-                // frame; shrink all the way down to one item per page.
+                // Rows arrive trimmed to the mirror budget, but a page of
+                // them can still overflow the frame; shrink all the way down
+                // to one item per page.
                 if failure.code == "response_too_large", limit > 1 {
                     log.warning("session_page_too_large", metadata: .fields(["session": id.rawValue, "limit": limit]))
                     limit = max(1, limit / 8)
@@ -970,8 +1011,10 @@ public final class MacSessionStore {
     }
 
     /// The app's synchronized session cache, by function under the shared
-    /// support root: `Lumi/Storage/cache.sqlite`.
-    private static let cacheRelativePath = "Storage/cache.sqlite"
+    /// support root. It holds mirror rows — trimmed to the per-row budget by
+    /// the daemon (`TimelineContentBudget`) — and is rebuilt from the daemon
+    /// whenever this file is new.
+    private static let cacheRelativePath = "Storage/session-cache.sqlite"
 
     private static func defaultCachePath() -> String {
         // `LUMI_MAC_CACHE` isolates the Mac cache the way `LUMI_SOCKET`
@@ -985,50 +1028,42 @@ public final class MacSessionStore {
             .path
     }
 
-    /// Pre-2026-08-31 layout: `Lumi/Mac/sessions.sqlite3`.
-    private static func legacyDefaultCachePath() -> String {
-        LumiPaths.supportDirectory()
-            .appendingPathComponent("Mac/sessions.sqlite3")
-            .path
+    /// Cache files of earlier layouts, newest first. Each held whole rows,
+    /// which the mirror no longer stores, so none is carried over: the
+    /// current file starts empty and the first reconcile refills it.
+    /// - `Storage/cache.sqlite` (2026-08-31 – 2026-11-11): whole rows.
+    /// - `Mac/sessions.sqlite3` (before 2026-08-31).
+    private static func retiredDefaultCachePaths() -> [String] {
+        let root = LumiPaths.supportDirectory()
+        return [
+            root.appendingPathComponent("Storage/cache.sqlite").path,
+            root.appendingPathComponent("Mac/sessions.sqlite3").path,
+        ]
     }
 
-    /// One-time move-and-rename of the legacy cache trio into `Storage/`.
-    /// Sidecars first, main file last, so an interrupted run re-enters on the
-    /// next launch. The cache is rebuildable from the daemon, so a collision
-    /// resolves by deleting the legacy files rather than keeping both.
-    nonisolated static func migrateLegacyCache(
-        from legacyPath: String,
-        to newPath: String,
+    /// Deletes each retired cache with its SQLite sidecars (sidecars first,
+    /// main file last, so an interrupted run re-enters on the next launch),
+    /// then its directory if nothing else is left in it. The cache is
+    /// rebuildable from the daemon; a failure is logged and retried on the
+    /// next launch.
+    nonisolated static func discardRetiredCaches(
+        _ paths: [String],
         fileManager: FileManager = .default
     ) {
-        guard legacyPath != newPath, fileManager.fileExists(atPath: legacyPath) else { return }
-        do {
-            if fileManager.fileExists(atPath: newPath) {
-                for suffix in ["-wal", "-shm", ""] where fileManager.fileExists(atPath: legacyPath + suffix) {
-                    try fileManager.removeItem(atPath: legacyPath + suffix)
+        for path in paths where fileManager.fileExists(atPath: path) {
+            do {
+                let bytes = (try? fileManager.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value
+                for suffix in ["-wal", "-shm", "-journal", ""] where fileManager.fileExists(atPath: path + suffix) {
+                    try fileManager.removeItem(atPath: path + suffix)
                 }
-                dbLog.info("cache_removed_legacy", metadata: .fields(["path": legacyPath]))
-            } else {
-                try fileManager.createDirectory(
-                    atPath: (newPath as NSString).deletingLastPathComponent,
-                    withIntermediateDirectories: true,
-                    attributes: [.posixPermissions: 0o700]
-                )
-                for suffix in ["-wal", "-shm", ""] where fileManager.fileExists(atPath: legacyPath + suffix) {
-                    try fileManager.moveItem(atPath: legacyPath + suffix, toPath: newPath + suffix)
+                dbLog.info("cache_retired", metadata: .fields(["path": path, "bytes": bytes]))
+                let directory = (path as NSString).deletingLastPathComponent
+                if let remaining = try? fileManager.contentsOfDirectory(atPath: directory), remaining.isEmpty {
+                    try fileManager.removeItem(atPath: directory)
                 }
-                dbLog.info("cache_migrated", metadata: .fields(["from": legacyPath, "to": newPath]))
+            } catch {
+                dbLog.error("cache_retire_failed", metadata: .fields(["path": path, "error": error]))
             }
-            let legacyDirectory = (legacyPath as NSString).deletingLastPathComponent
-            if let remaining = try? fileManager.contentsOfDirectory(atPath: legacyDirectory), remaining.isEmpty {
-                try fileManager.removeItem(atPath: legacyDirectory)
-            }
-        } catch {
-            dbLog.error("cache_migration_failed", metadata: .fields([
-                "from": legacyPath,
-                "to": newPath,
-                "error": error,
-            ]))
         }
     }
 }
@@ -1041,6 +1076,16 @@ private final class WeakMacSessionStoreReference: @unchecked Sendable {
     }
 }
 
-private enum MacSessionStoreError: Error {
+private enum MacSessionStoreError: Error, CustomStringConvertible {
     case cacheUnavailable
+    /// The daemon answered `get_timeline_items` without the row: it was
+    /// deleted or rebuilt since the cache took its trimmed copy.
+    case timelineItemMissing(TimelineItemID)
+
+    var description: String {
+        switch self {
+        case .cacheUnavailable: "the session cache is unavailable"
+        case let .timelineItemMissing(id): "the daemon no longer has row \(id.rawValue)"
+        }
+    }
 }

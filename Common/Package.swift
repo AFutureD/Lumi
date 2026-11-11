@@ -45,6 +45,7 @@ let package = Package(
             name: "Persistence",
             dependencies: [
                 "Core",
+                "Diagnostics",
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Transport", package: "Transport"),
             ]

@@ -127,7 +127,12 @@ public enum IPCOperation: Hashable, Sendable {
     /// daemon does all parsing and domain reduction.
     case ingestHook
     case listSessions
+    /// One page of a Session as the Mac mirror holds it: every timeline row
+    /// trimmed to the mirror budget (`TimelineContentBudget`).
     case getSession
+    /// Whole rows of one Session (`sessionID`, `itemIDs`), untrimmed — what
+    /// the Mac's Raw Data view shows for a row it holds trimmed.
+    case getTimelineItems
     case deleteSession
     case markSessionReviewed
     case markSessionHiddenInNotch
@@ -164,6 +169,7 @@ public enum IPCOperation: Hashable, Sendable {
         case .ingestHook: "ingest_hook"
         case .listSessions: "list_sessions"
         case .getSession: "get_session"
+        case .getTimelineItems: "get_timeline_items"
         case .deleteSession: "delete_session"
         case .markSessionReviewed: "mark_session_reviewed"
         case .markSessionHiddenInNotch: "mark_session_hidden_in_notch"
@@ -197,6 +203,7 @@ extension IPCOperation: Codable {
         case "ingest_hook": .ingestHook
         case "list_sessions": .listSessions
         case "get_session": .getSession
+        case "get_timeline_items": .getTimelineItems
         case "delete_session": .deleteSession
         case "mark_session_reviewed": .markSessionReviewed
         case "mark_session_hidden_in_notch": .markSessionHiddenInNotch
@@ -233,6 +240,8 @@ public struct IPCRequest: Codable, Hashable, Sendable {
     public let sessionID: SessionID?
     public let cursor: PaginationCursor?
     public let limit: Int?
+    /// `get_timeline_items`: the rows wanted, all of `sessionID`.
+    public let itemIDs: [TimelineItemID]?
     /// `ingest_hook`: frame creation time (RFC 3339 on the wire). Observes
     /// forwarding latency and is the fallback clock for payloads that carry
     /// no `timestamp` of their own.
@@ -268,6 +277,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         sessionID: SessionID? = nil,
         cursor: PaginationCursor? = nil,
         limit: Int? = nil,
+        itemIDs: [TimelineItemID]? = nil,
         createdAt: Date? = nil,
         agent: AgentProvider? = nil,
         env: [String: String]? = nil,
@@ -285,6 +295,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         self.sessionID = sessionID
         self.cursor = cursor
         self.limit = limit
+        self.itemIDs = itemIDs
         self.createdAt = createdAt
         self.agent = agent
         self.env = env
@@ -304,6 +315,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         case sessionID
         case cursor
         case limit
+        case itemIDs
         case createdAt
         case agent
         case env
@@ -324,6 +336,7 @@ public struct IPCRequest: Codable, Hashable, Sendable {
         sessionID = try c.decodeIfPresent(SessionID.self, forKey: .sessionID)
         cursor = try c.decodeIfPresent(PaginationCursor.self, forKey: .cursor)
         limit = try c.decodeIfPresent(Int.self, forKey: .limit)
+        itemIDs = try c.decodeIfPresent([TimelineItemID].self, forKey: .itemIDs)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         agent = try c.decodeIfPresent(AgentProvider.self, forKey: .agent)
         env = try c.decodeIfPresent([String: String].self, forKey: .env)

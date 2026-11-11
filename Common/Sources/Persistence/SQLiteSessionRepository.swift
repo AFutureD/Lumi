@@ -1,7 +1,11 @@
 import Core
+import Diagnostics
+import Logging
 import Transport
 import Foundation
 import GRDB
+
+private let dbLog = Logger(label: "db")
 
 public actor SQLiteSessionRepository: SessionRepository {
     private let database: DatabaseQueue
@@ -246,7 +250,94 @@ public actor SQLiteSessionRepository: SessionRepository {
                 );
                 """)
         }
+        // Claude tool results stored a screenshot (and long command output)
+        // twice: in `content` and again in `toolUseResult`. Rewrite them by
+        // the rule the adapter now applies on ingest, so one rule describes
+        // every stored row. Ids first, then row by row — never UPDATE the
+        // table under an open cursor over it.
+        migrator.registerMigration("lumi-v13-dedupe-tool-results") { db in
+            let started = ContinuousClock.now
+            let decoder = TransportCoding.makeDecoder()
+            let encoder = TransportCoding.makeEncoder()
+            let ids = try String.fetchAll(db, sql: """
+                SELECT id FROM timeline
+                WHERE id LIKE 'tool:%'
+                  AND json_extract(CAST(item AS TEXT), '$.payload.tool.content.toolUseResult') IS NOT NULL
+                """)
+            var rewritten = 0
+            var bytesBefore = 0
+            var bytesAfter = 0
+            for id in ids {
+                guard let data = try Data.fetchOne(db, sql: "SELECT item FROM timeline WHERE id = ?", arguments: [id]) else { continue }
+                let item = try decoder.decode(TimelineItem.self, from: data)
+                guard case let .tool(tool) = item.payload, let content = tool.content else { continue }
+                let deduplicated = ToolResultDeduplication.deduplicated(content)
+                guard deduplicated != content else { continue }
+                let encoded = try encoder.encode(TimelineItem(
+                    id: item.id, sessionID: item.sessionID, turnID: item.turnID, occurredAt: item.occurredAt,
+                    payload: .tool(tool.withContent(deduplicated)), truncated: item.truncated
+                ))
+                try db.execute(sql: "UPDATE timeline SET item = ? WHERE id = ?", arguments: [encoded, id])
+                rewritten += 1
+                bytesBefore += data.count
+                bytesAfter += encoded.count
+            }
+            dbLog.info("tool_results_deduplicated", metadata: .fields([
+                "candidates": ids.count,
+                "rewritten": rewritten,
+                "bytes_before": bytesBefore,
+                "bytes_after": bytesAfter,
+                "ms": LogClock.milliseconds(since: started),
+            ]))
+        }
         try migrator.migrate(database)
+        Self.ensureAutoVacuum(database, path: path)
+    }
+
+    /// Pages freed by a delete go back to the file system at the commit
+    /// (`auto_vacuum = FULL`), so the file tracks the live data. The mode
+    /// lives in the file header: a file created before this setting is
+    /// converted once with a VACUUM, and the header check is the only gate —
+    /// an interrupted conversion simply runs again on the next open. A
+    /// failed conversion (typically no room for the temporary copy) leaves
+    /// a working database in the old mode; it is logged as an error, not
+    /// thrown, and retried on the next open.
+    private static func ensureAutoVacuum(_ database: DatabaseQueue, path: String) {
+        let started = ContinuousClock.now
+        do {
+            let (mode, pages, freePages) = try database.read { db in
+                (
+                    try Int.fetchOne(db, sql: "PRAGMA auto_vacuum") ?? 0,
+                    try Int.fetchOne(db, sql: "PRAGMA page_count") ?? 0,
+                    try Int.fetchOne(db, sql: "PRAGMA freelist_count") ?? 0
+                )
+            }
+            guard mode != 1 else { return }
+            let bytesBefore = fileSize(path)
+            try database.writeWithoutTransaction { db in
+                try db.execute(sql: "PRAGMA auto_vacuum = FULL")
+                try db.execute(sql: "VACUUM")
+            }
+            dbLog.info("database_compacted", metadata: .fields([
+                "path": path,
+                "previous_mode": mode,
+                "pages": pages,
+                "free_pages": freePages,
+                "bytes_before": bytesBefore,
+                "bytes_after": fileSize(path),
+                "ms": LogClock.milliseconds(since: started),
+            ]))
+        } catch {
+            dbLog.error("database_compaction_failed", metadata: .fields([
+                "path": path,
+                "error": error,
+                "ms": LogClock.milliseconds(since: started),
+            ]))
+        }
+    }
+
+    private static func fileSize(_ path: String) -> Int64? {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value
     }
 
     /// The settings store over this repository's database — the same file,
@@ -399,25 +490,7 @@ public actor SQLiteSessionRepository: SessionRepository {
             )
 
             if let item = event.timelineItem {
-                try db.execute(
-                    sql: """
-                        INSERT INTO timeline(id, session_id, occurred_at, item)
-                        VALUES(?, ?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            session_id = excluded.session_id,
-                            occurred_at = excluded.occurred_at,
-                            item = excluded.item
-                        WHERE excluded.occurred_at >= timeline.occurred_at
-                          AND NOT (json_extract(CAST(excluded.item AS TEXT), '$.truncated') IS 1
-                                   AND json_extract(CAST(timeline.item AS TEXT), '$.truncated') IS NULL)
-                        """,
-                    arguments: [
-                        item.id.rawValue,
-                        event.sessionID.rawValue,
-                        item.occurredAt.timeIntervalSince1970,
-                        try encoder.encode(item),
-                    ]
-                )
+                try Self.upsert(item, sessionID: event.sessionID, db, encoder: encoder, decoder: decoder)
             }
             try db.execute(
                 sql: "INSERT INTO processed_events(id, occurred_at) VALUES(?, ?)",
@@ -753,6 +826,7 @@ public actor SQLiteSessionRepository: SessionRepository {
 
     public func mergeSession(_ detail: SessionDetail) async throws {
         let encoder = encoder
+        let decoder = decoder
         turnsCache.removeValue(forKey: detail.summary.id)
         try await database.write { db in
             let summary = detail.summary
@@ -777,27 +851,46 @@ public actor SQLiteSessionRepository: SessionRepository {
                 ]
             )
             for item in detail.timeline {
-                try db.execute(
-                    sql: """
-                        INSERT INTO timeline(id, session_id, occurred_at, item)
-                        VALUES(?, ?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            session_id = excluded.session_id,
-                            occurred_at = excluded.occurred_at,
-                            item = excluded.item
-                        WHERE excluded.occurred_at >= timeline.occurred_at
-                          AND NOT (json_extract(CAST(excluded.item AS TEXT), '$.truncated') IS 1
-                                   AND json_extract(CAST(timeline.item AS TEXT), '$.truncated') IS NULL)
-                        """,
-                    arguments: [
-                        item.id.rawValue,
-                        summary.id.rawValue,
-                        item.occurredAt.timeIntervalSince1970,
-                        try encoder.encode(item),
-                    ]
-                )
+                try Self.upsert(item, sessionID: summary.id, db, encoder: encoder, decoder: decoder)
             }
         }
+    }
+
+    /// One row in, under the rule every store shares
+    /// (`SessionDetailReduction.supersedes`): the stored copy, if any, is
+    /// decoded and compared in Swift so the SQLite mirrors and the in-memory
+    /// fold cannot drift apart.
+    private static func upsert(
+        _ item: TimelineItem,
+        sessionID: SessionID,
+        _ db: Database,
+        encoder: JSONEncoder,
+        decoder: JSONDecoder
+    ) throws {
+        if let stored = try Data.fetchOne(
+            db,
+            sql: "SELECT item FROM timeline WHERE id = ?",
+            arguments: [item.id.rawValue]
+        ) {
+            let existing = try decoder.decode(TimelineItem.self, from: stored)
+            guard SessionDetailReduction.supersedes(item, existing) else { return }
+        }
+        try db.execute(
+            sql: """
+                INSERT INTO timeline(id, session_id, occurred_at, item)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    occurred_at = excluded.occurred_at,
+                    item = excluded.item
+                """,
+            arguments: [
+                item.id.rawValue,
+                sessionID.rawValue,
+                item.occurredAt.timeIntervalSince1970,
+                try encoder.encode(item),
+            ]
+        )
     }
 
     public func timelinePage(id: SessionID, before: TimelineCursor?, limit: Int) async throws -> TimelinePage? {

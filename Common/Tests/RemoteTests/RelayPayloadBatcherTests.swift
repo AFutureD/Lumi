@@ -79,7 +79,7 @@ private func noisyText(bytes: Int) -> String {
     #expect(delivered[0].timelineItem?.isTruncated == false)
     let item = try #require(delivered[1].timelineItem)
     #expect(item.isTruncated)
-    #expect(RelayContentBudget.encodedSize(item) <= RelayContentBudget.maxItemBytes)
+    #expect(TimelineContentBudget.encodedSize(item) <= TimelineContentBudget.maxItemBytes)
     if case let .message(message) = item.payload { #expect(message.text.hasSuffix("…")) } else { Issue.record("payload kind changed") }
     #expect(delivered[1].phase == .executing)
     #expect(delivered[1].aaas == SessionAaaS(kind: .paseo, agentID: "p-1"))
@@ -90,21 +90,21 @@ private func noisyText(bytes: Int) -> String {
         TimelineItem(id: TimelineItemID("i"), sessionID: SessionID("s"), occurredAt: date, payload: payload)
     }
     let small = item(.message(MessageTimelinePayload(role: .user, text: "hi")))
-    #expect(RelayContentBudget.trimmed(small) == small)
-    #expect(RelayContentBudget.trimmed(small).truncated == nil)
+    #expect(TimelineContentBudget.trimmed(small) == small)
+    #expect(TimelineContentBudget.trimmed(small).truncated == nil)
 
     let bigContent = JSONValue.string(noisyText(bytes: 200_000))
-    let tool = RelayContentBudget.trimmed(item(.tool(ToolTimelinePayload(name: "Bash", summary: "ls", content: bigContent, status: .succeeded, toolUseID: "t1"))))
+    let tool = TimelineContentBudget.trimmed(item(.tool(ToolTimelinePayload(name: "Bash", summary: "ls", content: bigContent, status: .succeeded, toolUseID: "t1"))))
     #expect(tool.isTruncated)
     if case let .tool(payload) = tool.payload {
         #expect(payload.content == nil)
         #expect(payload.summary == "ls")
         #expect(payload.toolUseID == "t1")
     } else { Issue.record("payload kind changed") }
-    let context = RelayContentBudget.trimmed(item(.context(ContextTimelinePayload(kind: "file", summary: "CLAUDE.md", content: bigContent))))
+    let context = TimelineContentBudget.trimmed(item(.context(ContextTimelinePayload(kind: "file", summary: "CLAUDE.md", content: bigContent))))
     if case let .context(payload) = context.payload { #expect(payload.content == nil) } else { Issue.record("payload kind changed") }
-    let reasoning = RelayContentBudget.trimmed(item(.reasoning(ReasoningTimelinePayload(text: noisyText(bytes: 200_000)))))
-    #expect(RelayContentBudget.encodedSize(reasoning) <= RelayContentBudget.maxItemBytes)
+    let reasoning = TimelineContentBudget.trimmed(item(.reasoning(ReasoningTimelinePayload(text: noisyText(bytes: 200_000)))))
+    #expect(TimelineContentBudget.encodedSize(reasoning) <= TimelineContentBudget.maxItemBytes)
     // A trimmed copy only ever gets smaller; the flag is the one addition.
     let encoded = try TransportCoding.makeEncoder().encode(tool)
     #expect(String(decoding: encoded, as: UTF8.self).contains("\"truncated\":true"))

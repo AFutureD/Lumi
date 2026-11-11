@@ -43,12 +43,12 @@ public enum RelaySessionPartitioner {
         // content budget, but a row that cannot fit a frame even alone is
         // trimmed after all rather than never arriving.
         let trimmed = timeline.map { item in
-            trimming || RelayContentBudget.encodedSize(item) > RelayPayloadBatcher.maxEncodedBytes
-                ? RelayContentBudget.trimmed(item)
+            trimming || TimelineContentBudget.encodedSize(item) > RelayPayloadBatcher.maxEncodedBytes
+                ? TimelineContentBudget.trimmed(item)
                 : item
         }
         let ordered = order == .newestFirst ? Array(trimmed.reversed()) : trimmed
-        var chunks = try RelayPayloadBatcher.pack(ordered, size: RelayContentBudget.encodedSize) { chunk in
+        var chunks = try RelayPayloadBatcher.pack(ordered, size: TimelineContentBudget.encodedSize) { chunk in
             payload(kind: kind, requestID: requestID, summary: summary, turns: [], timeline: chunk, part: 0, hasMore: true, hasOlder: nil, oldest: nil, generatedAt: generatedAt)
         }
         if chunks.isEmpty { chunks = [[]] }

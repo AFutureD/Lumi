@@ -550,6 +550,8 @@ public struct ClaudeAdapter: AgentAdapter {
                     var raw: [String: JSONValue] = [:]
                     if let value = block.raw.jsonValue("content") { raw["content"] = value }
                     if let value = root.jsonValue("toolUseResult") { raw["toolUseResult"] = value }
+                    // A screenshot / long output appears in both; keep one.
+                    raw = ToolResultDeduplication.deduplicated(raw)
                     let name = toolUseID.flatMap { state.toolNames[$0] } ?? "Tool"
                     if let toolUseID { state.openToolUseIDs.removeAll { $0 == toolUseID } }
                     events.append(makeEvent(

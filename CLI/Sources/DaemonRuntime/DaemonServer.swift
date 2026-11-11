@@ -219,7 +219,11 @@ public actor DaemonServer: Service {
             let id = service.subscriptions.subscribe { message in
                 switch message {
                 case let .event(event):
-                    writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, event: event)))
+                    // The Mac mirror holds trimmed rows, like the Relay's.
+                    writer.send(TransportEnvelope(payload: IPCResponse(
+                        status: .accepted,
+                        event: TimelineContentBudget.trimmed(event)
+                    )))
                 case let .summary(summary):
                     writer.send(TransportEnvelope(payload: IPCResponse(status: .accepted, summary: summary)))
                 }

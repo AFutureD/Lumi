@@ -1,15 +1,15 @@
-import Transport
 import Foundation
 
-/// The per-row content budget of the Relay copy. A row whose encoded form
-/// exceeds it travels trimmed — tool output, injected context and
-/// configuration lose their `content`, message / reasoning / error text is
-/// cut to fit — and is marked `truncated`, so a mirror can ask for the whole
-/// row (`fetch_timeline_items`) when someone opens it. The daemon's and the
-/// Mac's own rows are never touched: this applies only to what leaves over
-/// the Relay.
-public enum RelayContentBudget {
-    /// Encoded bytes a row may take on the wire before it is trimmed.
+/// The per-row content budget of every mirror copy. Only the daemon keeps
+/// whole rows; what it sends to a mirror — the Mac over IPC (`get_session`,
+/// the event stream), an iPhone over the Relay — is trimmed by this one
+/// rule. A row whose encoded form exceeds the budget loses its bulk (tool
+/// output, injected context and configuration lose their `content`;
+/// message / reasoning / error text is cut to fit) and is marked
+/// `truncated`, so the mirror asks for the whole row when someone opens it
+/// (`get_timeline_items` on the Mac, `fetch_timeline_items` on an iPhone).
+public enum TimelineContentBudget {
+    /// Encoded bytes a mirror row may take before it is trimmed.
     public static let maxItemBytes = 64 * 1024
     /// Text kept of a long message / reasoning / error, leaving room for the
     /// row's other fields under `maxItemBytes`.
@@ -17,7 +17,7 @@ public enum RelayContentBudget {
     /// A one-line summary that alone overflows is cut to this.
     static let maxSummaryBytes = 4 * 1024
 
-    /// The row as the Relay copy should carry it: unchanged when it fits.
+    /// The row as a mirror should hold it: unchanged when it fits.
     public static func trimmed(_ item: TimelineItem) -> TimelineItem {
         guard encodedSize(item) > maxItemBytes else { return item }
         let first = TimelineItem(
@@ -30,6 +30,14 @@ public enum RelayContentBudget {
             id: item.id, sessionID: item.sessionID, turnID: item.turnID, occurredAt: item.occurredAt,
             payload: trimmedSummaries(first.payload), truncated: true
         )
+    }
+
+    /// A live event as a mirror should receive it: its row, if any, trimmed.
+    public static func trimmed(_ event: AgentIngressEvent) -> AgentIngressEvent {
+        guard let item = event.timelineItem else { return event }
+        var copy = event
+        copy.timelineItem = trimmed(item)
+        return copy
     }
 
     /// The row's encoded size — what the packer budgets on.

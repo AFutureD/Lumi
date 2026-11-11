@@ -41,7 +41,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
    - Inspector：右侧 288 pt。顶部三张指标卡（TOKENS、CONTEXT、ELAPSED，运行中的 Session 每秒更新 Elapsed），下方 Overview、可选的 Lineage、Model、Usage 四组字段；由 Toggle Inspector 显隐，状态在重启后保留。
    - Activity：独占主区，按时间显示当前 Session 自己的全部消息、系统与上下文、模型回复与 reasoning、工具、计划、子 Agent、错误和可识别的未知记录；用户键入的斜杠命令显示为用户消息（内容为记录原文，含 `<command-name>` 等标签），而不是上下文；Subagent 为执行任务获得的父 Session 历史不会重复显示为该 Subagent 的活动。
    - Activity 粘顶 header：标题、数量、两枚过滤按钮（Category / Importance）和一个密度切换按钮。默认 User、Model、Exec 三行横向时间轴（Session 开始/结束、压缩与配置横跨三行），切换后压成一行“Timeline”，每条记录一个按类别着色的方格；密度偏好在重启后保留。
-   - Activity 交互：点击任一时间轴方格跳到对应记录并短暂高亮；点击记录行查看原始 JSON；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
+   - Activity 交互：点击任一时间轴方格跳到对应记录并短暂高亮；点击记录行查看原始 JSON（截图、长输出这类超大内容先显示 `Loading full content…`，从 daemon 取回后原地换成完整内容，见 [MAC-R-026](#mac-r-026-超大内容只在-daemon-保存完整版)）；悬停工具调用或结果行时，同一次调用的两行一起以类别色浅底高亮；过滤只对当前 Session 有效，见[过滤 Activity](#过滤-activity)。
 4. 窗口缩放只改变右栏中 Activity 主区的宽度；侧栏、中栏和 Inspector 保持各自宽度。
 
 ### iPhone 与 Settings 页面
@@ -438,6 +438,19 @@ Activity 标题右侧有两枚下拉按钮：
   - 停用的规则不参与判定；值为空的条件不命中任何 Session。
   - 规则只在这台 Mac 的 daemon 上判定与存储；Clear history 清掉的是 Session，规则保留。
   - 被隐藏的 Session 目前没有查看入口（计划后续提供显示开关）；daemon 的 Stored sessions 计数包含它们。
+
+### MAC-R-026 超大内容只在 daemon 保存完整版
+
+- 条件：一条活动的内容超过单条上限（约 64 KB）——通常是截图、很长的命令输出或注入的上下文。
+- 行为：
+  - Mac 本地只保存它的摘要；列表、时间轴、Notch 和 Inspector 本来就只用摘要，显示不变。
+  - 点开这一行的原始 JSON 时先显示 `Loading full content…`，再从 daemon 取回完整内容原地替换。
+  - 一张截图在一条工具结果里只存一份；原始 JSON 中重复的位置显示为 `{"lumi.sameAs": "/content/0/source/data"}`，指向保留的那一份。
+  - 删除 Session 或清空历史后，daemon 与 Mac 的数据库文件随即变小，不再一直占着删除前的大小。
+- 结果：带大量截图的长 Session 不再让 Mac 本地数据库膨胀；需要时仍能看到完整内容。
+- 限制或例外：
+  - 取完整内容需要 daemon 在线；取不到时窗口顶部写 `Couldn't load full content:` 加原因，下面附上摘要版，不会把摘要版当成完整内容。
+  - 升级到这一版后第一次启动，Mac 会丢掉旧的本地副本、从 daemon 重新同步一遍；同步完成前列表短暂为空，Session 历史本身由 daemon 保存，不受影响。
 
 ## 空状态与故障
 

@@ -365,6 +365,9 @@ private func detail(_ id: String, items: Int, at base: Date, firstItem: Int = 0,
     #expect(harness.session("A")?.timeline.count == 3)
     #expect(harness.session("B")?.timeline.isEmpty == true)
     #expect(harness.settings.lastSync(for: harness.hostID) != nil)
+    // Health is its own frame after the index, not part of the sync: wait
+    // for it rather than assume it landed with the last index part.
+    await harness.waitUntil { harness.state?.health != nil }
     #expect(harness.state?.health?.daemonVersion == "fake")
     var kinds = await harness.host.requests.map(\.kind)
     #expect(!kinds.contains(.fetchTimelineSince))

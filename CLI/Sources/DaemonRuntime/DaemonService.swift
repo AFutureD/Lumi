@@ -172,12 +172,31 @@ public actor DaemonService {
                         cursor: envelope.payload.cursor,
                         limit: envelope.payload.limit ?? 200
                     ) {
-                        payload = IPCResponse(status: .ok, session: session)
+                        // The Mac mirror holds trimmed rows; whole ones go
+                        // out only on `get_timeline_items`.
+                        payload = IPCResponse(status: .ok, session: session.withTimeline(
+                            session.timeline.map(TimelineContentBudget.trimmed)
+                        ))
                     } else {
                         payload = failure(code: "session_not_found", message: "The session is no longer retained.")
                     }
                 } else {
                     payload = failure(code: "missing_session_id", message: "The session request has no id.")
+                }
+            case .getTimelineItems:
+                if let id = envelope.payload.sessionID, let itemIDs = envelope.payload.itemIDs, !itemIDs.isEmpty {
+                    if let rows = try await repository.timelineItems(id: id, itemIDs: itemIDs) {
+                        dbLog.debug("timeline_items_served", metadata: .fields([
+                            "session": id.rawValue,
+                            "requested": itemIDs.count,
+                            "found": rows.timeline.count,
+                        ]))
+                        payload = IPCResponse(status: .ok, session: rows)
+                    } else {
+                        payload = failure(code: "session_not_found", message: "The session is no longer retained.")
+                    }
+                } else {
+                    payload = failure(code: "missing_item_ids", message: "The item request names no session or no rows.")
                 }
             case .deleteSession:
                 if let id = envelope.payload.sessionID {

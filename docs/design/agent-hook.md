@@ -143,7 +143,11 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 
 ## transcript / rollout 事件映射
 
-工具行统一携带两份数据：`summary` 是活动列表行的一行摘要（首个非空行、160 字符截断），`content` 是来源原始输入 / 输出的全文（started 存完整输入，succeeded / failed 存完整结果），Raw Data 视图据此完整展示。下表 cell 里的「摘要」都只指 `summary`。内容不做脱敏：daemon、Mac 缓存和已配对 iPhone 持有的是完整数据，按高敏感数据保护。
+工具行统一携带两份数据：`summary` 是活动列表行的一行摘要（首个非空行、160 字符截断），`content` 是来源原始输入 / 输出的全文（started 存完整输入，succeeded / failed 存完整结果），Raw Data 视图据此完整展示。下表 cell 里的「摘要」都只指 `summary`。
+
+- 每个大值只存一份。Claude 的工具结果同时带模型看到的 `content` 和 Claude Code 自己的 `toolUseResult`，截图在两边各有一份 base64，命令输出在 `toolUseResult.stdout` 里再出现一次。`toolUseResult` 里不短于 1 KiB、且与 `content` 里某个字符串相同的值，换成引用对象 `{"lumi.sameAs": "<JSON Pointer>"}`，指针（RFC 6901）相对工具的 `content` 对象，例如 `/content/0/source/data`。引用是对象、原值是字符串，按原形状读的代码会显式失败而不是读到别的东西；`content` 本身不改。规则在 `ToolResultDeduplication`（Core），入库时由 adapter 调用，已存的行由 migration `lumi-v13` 改写。
+- 只有 daemon 保存完整行；Mac 缓存和 iPhone 收到的是按内容预算裁剪的镜像行，打开 Raw Data / 活动详情时再向 daemon 取整行（见 [数据、通信与存储设计](data-communication-storage.md#镜像行与同-id-取舍)）。
+- 内容不做脱敏：daemon、Mac 缓存和已配对 iPhone 持有的都是原始内容，按高敏感数据保护。
 
 **Codex rollout**（`RolloutReadState.currentTurnID` 由 `task_started` / `turn_context` 的 `turn_id` 设定，其余记录归入当前 Turn）：
 
@@ -169,7 +173,7 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 | --- | --- |
 | `user` 字符串或 `text` block | `message(user)`；开 Turn 的记录以首个普通文本写 Turn.prompt 并占稳定 prompt item id（`user_prompt:<s>:<turn>`），其余文本是独立行；`<system-reminder>…</system-reminder>` 拆出为 `context(system_reminder)`；`<command-name>` 开头的斜杠命令记录保持为 `message(user)` **原文不解析**（turn-neutral）；其余 `<local-command-stdout>` 等标签块为 `context(<tag>)` |
 | `user` `text` = `[Request interrupted by user]` / `[Request interrupted by user for tool use]` | 用户按 stop。**不触发任何 hook**，此标记是被中断 Turn 唯一的收口信号：Interrupted / Idle + Turn `endedAt/outcome=aborted` + `turnEnd(aborted)`（ID `turn_end:<s>:<turn>`） |
-| `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)`；content = 原始 `content` block + 顶层 `toolUseResult` 全文 |
+| `user` `tool_result` block | `tool(succeeded/failed by is_error, toolUseID=tool_use_id)`；content = 原始 `content` block + 顶层 `toolUseResult`（与 `content` 重复的大值换成 `lumi.sameAs` 引用，见上文） |
 | `assistant` `thinking` / `text` / `tool_use` | `reasoning`（`thinking` 正文为空、只有 `signature` 时仍产出，text 为空串，投影显示 `Empty`；每个 block 一条，无结束记录）/ `message(assistant)` / `tool(started, name, input 摘要, toolUseID=id)` |
 | `assistant` 终态 `stop_reason` / 顶层 `error` | Turn 收口，正常/异常分类见「Turn 边界」的表；`turnEnd` ID `turn_end:<s>:<turn>`，与 Stop/StopFailure hook 落同一行，Stop hook 丢失时下一次读增量自愈 |
 | `assistant.message.usage` / `model` | `usageMetrics`（上下文窗口 200k / `[1m]` 1M）/ `modelConfiguration` |

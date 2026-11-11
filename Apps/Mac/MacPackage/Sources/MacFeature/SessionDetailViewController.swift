@@ -186,7 +186,14 @@ final class SessionDetailViewController: NSViewController {
         textView.font = Design.Font.mono
         textView.textColor = .labelColor
         textView.textContainerInset = NSSize(width: 10, height: 10)
-        textView.string = SessionPagePresentationBuilder.rawData(for: activity.rawItems)
+        // A row the cache holds trimmed shows its whole form from the
+        // daemon; until it arrives the sheet says so, and a failure is shown
+        // above the trimmed copy rather than passing the copy off as whole.
+        let rawItems = activity.rawItems
+        let needsWholeRows = rawItems.contains(where: \.isTruncated)
+        textView.string = needsWholeRows
+            ? "Loading full content…"
+            : SessionPagePresentationBuilder.rawData(for: rawItems)
         textView.textContainer?.widthTracksTextView = true
 
         textScroll.documentView = textView
@@ -200,6 +207,18 @@ final class SessionDetailViewController: NSViewController {
         alert.accessoryView = textScroll
         alert.addButton(withTitle: "Done")
         alert.beginSheetModal(for: hostWindow)
+
+        guard needsWholeRows else { return }
+        Task { [store, weak textView] in
+            let text: String
+            do {
+                text = SessionPagePresentationBuilder.rawData(for: try await store.wholeTimelineItems(rawItems))
+            } catch {
+                text = "Couldn't load full content: \(error)\n\n"
+                    + SessionPagePresentationBuilder.rawData(for: rawItems)
+            }
+            textView?.string = text
+        }
     }
 }
 

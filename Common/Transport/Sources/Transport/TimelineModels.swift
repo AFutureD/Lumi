@@ -34,8 +34,19 @@ public struct ToolTimelinePayload: Codable, Hashable, Sendable {
     /// One-line rendering for the activity list row.
     public let summary: String?
     /// The complete raw input (started) or result (succeeded / failed) as it
-    /// appeared at the source — what the Raw Data view shows.
+    /// appeared at the source — what the Raw Data view shows. A Claude
+    /// result keeps one copy of each large value: a repeat inside
+    /// `toolUseResult` is a `{"lumi.sameAs": <pointer>}` reference
+    /// (`ToolResultDeduplication`).
     public let content: JSONValue?
+
+    /// The same call with other content (dedupe, trimming).
+    public func withContent(_ content: JSONValue?) -> ToolTimelinePayload {
+        ToolTimelinePayload(
+            name: name, summary: summary, content: content, status: status,
+            durationMilliseconds: durationMilliseconds, toolUseID: toolUseID
+        )
+    }
     public let status: Status
     public let durationMilliseconds: Int64?
     public let toolUseID: String?
@@ -416,11 +427,11 @@ public struct TimelineItem: Codable, Hashable, Sendable {
     public let turnID: TurnID?
     public let occurredAt: Date
     public let payload: TimelinePayload
-    /// The Relay copy of this item carries only a slice of its content: the
-    /// daemon trimmed large tool output / context / message text to the
-    /// per-item budget before sending. The daemon and the Mac hold the
-    /// whole item; an iPhone asks for it with `fetch_timeline_items`.
-    /// Absent (`nil`) everywhere but on a trimmed Relay copy.
+    /// This mirror copy carries only a slice of its content: the daemon
+    /// trimmed large tool output / context / message text to the per-row
+    /// budget (`TimelineContentBudget`) before sending. Only the daemon
+    /// holds every whole row; the Mac asks for one with `get_timeline_items`,
+    /// an iPhone with `fetch_timeline_items`. Absent (`nil`) on whole rows.
     public let truncated: Bool?
 
     public init(

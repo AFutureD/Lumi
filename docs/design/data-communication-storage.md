@@ -31,8 +31,8 @@ daemon 保存本机权威 Session，也是唯一的数据源；Mac 经 IPC、iPh
 | --- | --- | --- | --- |
 | Codex state | 外部只读元数据源 | Thread 标题、主 Session / Subagent 类型和 lineage；不复制整张表 | `${CODEX_HOME:-~/.codex}/state_5.sqlite` 的 `threads` |
 | daemon | 本机权威 | Session、Timeline、已处理事件、rollout 游标、删除 tombstone、基线标记、Usage 桶、daemon 设置（`settings` 表，见下） | `~/Library/Application Support/Lumi/Lumen/sessions.sqlite3` |
-| Mac App | 同步缓存 | daemon 当前 Session 与 Timeline | `~/Library/Application Support/Lumi/Storage/cache.sqlite` |
-| iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session 与 Timeline（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
+| Mac App | 同步缓存 | daemon 当前 Session 与 Timeline 的镜像行（按内容预算裁剪，见「镜像行」） | `~/Library/Application Support/Lumi/Storage/session-cache.sqlite`（之前的 `Storage/cache.sqlite` 与更早的 `Mac/sessions.sqlite3` 存的是完整行，启动时删除，对账重建） |
+| iOS App | 每 Mac SQLite 缓存 | 对应 Mac 的 Session 与 Timeline 的镜像行，外加用户点开取回的完整行（与 daemon 同一 schema） | `~/Library/Application Support/Lumi/Channels/<hostID>.sqlite3`（App 容器内） |
 | daemon Keychain | 远程身份 | Relay URL、Host ID、Host secret、Host 密钥对 | service `app.huanan.lumi.daemon.relay`（account `host-credentials-v2`，由 daemon 自己创建） |
 | daemon 状态文件 | 发送序号与设备信任 | 每个 Device ID 的 Host 发送序号（发送前先落盘）、被信任设备的公钥（Match 时钉住、Revoke 时去掉，daemon 判断信任只读这里）、本机撤销记录；先写盘后生效 | `~/Library/Application Support/Lumi/Lumen/relay-host-state.json`（0600） |
 | iOS Keychain | 通道身份 | 每台 Mac 各自的 Relay URL、Host/Device ID、Device token、设备密钥对、Host 公钥、配对时间 | service `app.huanan.lumi.ios.relay`（account `device-channels-v4`） |
@@ -48,7 +48,7 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 | 表 | 用途 | 关键规则 |
 | --- | --- | --- |
 | `sessions` | 当前 Session Summary | `id` 主键；按 `last_activity_at` 倒序读取 |
-| `timeline` | Timeline item（Agent 领域消息） | `id` 主键；Session 外键级联删除；按时间与 ID 排序；跨来源同 ID 覆盖 |
+| `timeline` | Timeline item（Agent 领域消息） | `id` 主键；Session 外键级联删除；按时间与 ID 排序；跨来源同 ID 按「同 ID 取舍」覆盖 |
 | `processed_events` | 幂等键 | 同一个 Event ID 只应用一次 |
 | `rollout_cursors` | JSONL 增量位置 | 保存文件路径、byte offset、文件大小和 Session ID |
 | `ignored_sessions` | 删除/基线/helper discard tombstone | 阻止后到事件重新创建 Session；仅新的 prompt / SessionStart（未处理过的事件）能复活，重放的事件先被 `processed_events` 拒绝；客户端 `replaceSession` / `mergeSession` 会清该 Session 的本地墓碑（以 daemon 为准） |
@@ -60,6 +60,10 @@ daemon、Mac 和 iOS 复用同一个 `SQLiteSessionRepository` migration（iOS �
 `turns` 表已在 migration `lumi-v8` 删除：Turn 聚合（`TurnSummary`：prompt、started/ended、outcome、tool/subagent 计数、lastAssistantMessage）改为读取时由 `TurnProjection` 从 timeline 的 turn-scoped 行现算——时间线是唯一事实源，`SessionDetail.turns` 的 API 与 wire 形状不变，写入方传来的 `turns` 被忽略。
 
 migration `lumi-v3-sweep-empty-claude-sessions` 一次性清掉此前记录下的空 Claude 会话（`completed`、无 Turn、timeline 只有 session marker）并写墓碑——它们按现在的规则本来不会存在。
+
+migration `lumi-v13-dedupe-tool-results` 按 adapter 入库时的同一条规则（`ToolResultDeduplication`，见 [Agent Hook 设计](agent-hook.md#transcript--rollout-事件映射)）改写已存的 Claude 工具结果：`toolUseResult` 里与 `content` 重复的大段值换成引用。日志 `tool_results_deduplicated` 记改写行数与前后字节。
+
+数据库文件以 `auto_vacuum = FULL` 运行：删除释放的页面在提交时还给文件系统，文件大小跟着活数据走。模式记在文件头里；打开时发现不是 FULL（此前建的文件）就一次性 `VACUUM` 转换，日志 `database_compacted` 记前后字节、空闲页与耗时。转换失败（通常是磁盘放不下临时副本）记 `database_compaction_failed`，数据库照常可用，下次打开再试。daemon、Mac、iOS 共用这一段。
 
 `summary` 和 `item` 列保存由共享 Transport encoder 生成的 JSON BLOB。Summary 中的 Subagent lineage 包含 Thread source、父 Session ID、深度、昵称、职责、Agent path 和 Subagent kind。日期使用带毫秒的 RFC 3339 UTC（`2026-08-22T00:27:36.266Z`），helper → daemon、daemon ↔ Mac、daemon → Relay → iPhone 和 BLOB 同一精度，同秒内的记录在三端都按时间而不是 id 排序；键稳定排序。
 
@@ -79,6 +83,7 @@ IPC `get_settings` / `set_settings` 传的是整份 `DaemonSettings`（Transport
 ## 保存与保留策略
 
 - daemon、Mac 和 iOS 不按天数或最后活动时间自动清理 Session。
+- 删除释放的空间随提交还给磁盘（见上文 `auto_vacuum`），不留空闲页。
 - daemon 的单条删除和清空历史是业务删除入口；Mac/iOS 随后用新快照收敛。
 - 删除 Lumi 数据不会删除 Codex rollout 或 Codex 自身历史。
 - iOS 用户移除一个 Mac 时，删除该通道的凭据、连接和 SQLite 缓存文件；Settings > Clear received data 清空全部通道缓存（不写墓碑、不清 `processed_events`）并重新索取 index。
@@ -106,14 +111,15 @@ IPC `get_settings` / `set_settings` 传的是整份 `DaemonSettings`（Transport
 | --- | --- | --- |
 | `ingest_hook` | helper 转发一次 hook 调用：`{createdAt, agent, env 白名单, data 原始字节}`（payload 的 JSON 渲染只进 helper 帧日志，不进帧）。daemon 反序列化 payload、经 `RichSourceCatchUp` 追平 transcript / rollout 增量、归并 hook、识别 AaaS 标题并逐事件应用（游标由 daemon 单一持有，不再过 IPC；冷启动大历史内部交给串行回填队列）。响应只是告知——helper 超时后 daemon 照常完成 | 短连接请求（helper 超时 2s） |
 | `list_sessions` | 查询全部 Summary（对账索引） | 短连接请求 |
-| `get_session` | 分页查询一个 Session 的 Timeline（全量只按单 Session 传输） | 短连接请求 |
+| `get_session` | 分页查询一个 Session 的 Timeline，行是镜像行（经内容预算裁剪）；全量只按单 Session 传输 | 短连接请求 |
+| `get_timeline_items {sessionID, itemIDs}` | 一个 Session 里指定行的完整形态（不裁剪）；Mac 打开 Raw Data 时对裁剪行逐行请求，不落缓存 | 短连接请求（15s） |
 | `delete_session` | 删除一个 Session 并留下 tombstone | 短连接请求 |
 | `mark_session_reviewed` | 人打开了 Session：清除 `needsReview` | 短连接请求 |
 | `mark_session_hidden_in_notch` | 人在 Notch 点了 Archive：置 `hiddenInNotch`（仅 Notch 隐藏；新 prompt 或会话重启时由 reducer 清除） | 短连接请求 |
 | `reingest_session` | 用 transcript / rollout 从头重算一个 Session：清掉该 Session 的 summary / timeline / cursor（不留 tombstone），全量重读 rich source，回放 hook-only 的 session marker（`session_ended` 恢复 completed）与标题 / lineage，游标推到 EOF；Claude 父 Session 连同 sidechain 子 Agent 一起重建，用户已删除（tombstone）的子 Agent 保持删除；返回重建后的 SessionDetail。不走事件流：调用方把返回的 detail 写入本地缓存并跟一次对账，daemon 把重建的每个 Session 作为未请求的 `session_full` 推给已同步 iPhone | 短连接请求（15s） |
 | `clear_history` | 删除全部 Session 并留下 tombstone | 短连接请求 |
 | `health` | daemon 状态：版本、可执行文件指纹、进程身份 `process`（`instanceID` / pid / `startedAt` / 可执行路径；旧 daemon 没有这个字段）、运行时长、计数、socket、`relayConnected` | 短连接请求；Mac 重装后的验证也用它直接探测 |
-| `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
+| `subscribe` | 全部 Session 共用的本地流：Agent 事件（`event`，其中的行经内容预算裁剪），以及不经事件的 summary 变化（`summary`：已查看、Notch 归档——包括 iPhone 发来的已查看） | Mac App 持久连接 |
 | `relay_status` | daemon 的 Relay Host 状态：已连接、Host ID、Relay URL、错误、已配对设备（含是否已钉住公钥） | Mac App 侧栏 / 工具栏（30 秒轮询；配对页可见时由 `relay_pairing_state` 代替） |
 | `relay_pairing_start` | 开始一个新配对会话：daemon 生成 nonce 与承诺，向 Relay 建会话、领 6 位配对码；返回 `{sessionID, code, relayURL, expiresAt}`（上一个会话随之取消） | 短连接请求（进入配对页、New code、结果显示完） |
 | `relay_pairing_state` | 当前配对会话：code、relayURL、expiresAt、`expiredAt`（码已到期，会话保留到用户换码或离开）、`pending {deviceName, sas}`（iPhone 已提交）、`outcome`（Paired / declined）；没有会话时为空 | Mac App 配对页（可见时 1 秒轮询） |
@@ -154,7 +160,7 @@ sequenceDiagram
 
 Mac Session 内容只有三种外部刷新入口，全量同步只按单 Session 维度传输（对账）：
 
-1. **启动 / 事件流重连**：先读 Mac SQLite，再做一次对账——`health` + `list_sessions` 索引，summary 与本地不一致或本地缺失的 Session 逐个用 `get_session` 分页拉全量并 `replaceSession` 原子替换，索引之外的本地 Session 用 `pruneSessions` 裁掉（不写墓碑）。
+1. **启动 / 事件流重连**：先读 Mac SQLite，再做一次对账——`health` + `list_sessions` 索引，summary 与本地不一致或本地缺失的 Session 逐个用 `get_session` 分页拉整本镜像行并 `replaceSession` 原子替换，索引之外的本地 Session 用 `pruneSessions` 裁掉（不写墓碑）。缓存文件是新的（首次安装、换了缓存文件）时这一步就是整库重建。
 2. **手动 Refresh**：同一段对账；索引一致时不拉取任何 Session。
 3. **Agent 事件**：从持久订阅流收到事件，50ms 合并后增量写入缓存。
 
@@ -238,7 +244,7 @@ sequenceDiagram
 
 **请求生命周期**：iPhone 每个请求记录最近一片到达的时间，30 秒无进展才算超时；第一次超时换新 `requestID` 重发（daemon 按「设备 + kind + Session」去重，排队的旧项被顶掉、在途的旧项在下一片前停下），第二次只放弃这一个请求并发 `cancel_request`，其他在途请求与已收到的片都保留。离开详情页自动取消该 Session 的翻页与取条目请求。index 请求保持原规则：第二次超时后暂停 10 秒再开新会话。iPhone 丢弃不在 pending 里的 `requestID` 的分片。
 
-**内容预算**：daemon 发往 Relay 的每条 timeline 行有 64 KB 编码预算（`RelayContentBudget`）：工具 / 上下文 / 配置的 `content` 置空，消息 / 推理 / 错误文本截断，标 `truncated: true`；daemon 与 Mac 自己的行不变。iPhone 在详情里按需 `fetch_timeline_items` 取完整行；镜像端的 upsert 规则是「裁剪副本不覆盖完整副本」（SQL 与 `SessionDetailReduction.merge` 同一条）。
+**内容预算**：发往 iPhone 的行与发往 Mac 的一样是镜像行（见「一致性规则 › 镜像行」）；iPhone 在详情里按需 `fetch_timeline_items` 取完整行，取回的完整行落进 iPhone 缓存。
 
 - payload 明文在加密前做 zlib 压缩；daemon 为每台 iPhone 使用各自通道会话的密钥、不同密文和独立 sequence；sequence 区间在发送前写入 `relay-host-state.json`（空洞合法、复用致命）。daemon 用一条串行发送循环、两条道：小项（索引、`session_info` / `session_removed` / 事件推送、health、usage / plan usage 应答）与大块（尾页、更早页、补尾、取条目，一个 Session 一项）交替出队，道内 FIFO。每个应答记一条 `request_answered`（kind、session、items、parts、ciphertext_bytes、prepare_ms、send_ms、path、cancelled）。
 - 每次 `sync_index` 打开一个新的通道会话（两端各出一把一次性钥匙，会话密钥只在内存里，见 [Relay、配对与安全设计](relay-pairing-security.md#通道会话)），**并绑定它走的链路**（Relay 或局域网直连）：这个会话的每一帧只走这条链路，换链路就是新会话。应答和推送（events / info / removed / health）只发给会话已打开、index 已发出的设备；Relay 对离线设备丢帧，设备重连、Host 上线或重连、回到前台、序号断档、下拉刷新时都重新 `sync_index`。iPhone 开新会话时把还没等到应答的请求带过去重发。
@@ -266,9 +272,19 @@ sequenceDiagram
 
 幂等保证针对相同 Event ID。Hook 与 rollout 对同一语义事件生成不同 ID，当前没有跨来源内容级去重。
 
+### 镜像行与同 ID 取舍
+
+只有 daemon 保存每一行的完整形态。daemon 发给任何镜像的行——Mac 走 IPC（`get_session`、`subscribe`），iPhone 走 Relay——都先经同一份内容预算（`TimelineContentBudget`，Transport）：编码后超过 64 KiB 的行，工具 / 上下文 / 配置的 `content` 置空，消息 / 推理 / 错误文本截到 48 KiB，标 `truncated: true`；只有摘要行本身超限时摘要再截到 4 KiB。列表、Notch、Inspector 只用摘要与元数据，不受影响；要看整行的地方（Mac 的 Raw Data、iPhone 的活动详情）按需向 daemon 取：Mac 用 `get_timeline_items`（不落缓存），iPhone 用 `fetch_timeline_items`（落缓存）。
+
+同一个 id 的两份行由一条规则取舍（`SessionDetailReduction.supersedes`，内存折叠与 SQLite upsert 共用，SQLite 端在事务里解码现有行再判断）：
+
+- 时间更早的不覆盖更晚的。
+- 裁剪行只在它恰好是现有完整行裁剪后的样子时让位——完整行留着。
+- 其余情况新到的覆盖：同一 id 先以小的完整行入库、后来变大被裁剪（hook 先写工具结果、transcript 后写同 id），裁剪的新版本照常替换旧的小版本。
+
 ### 分页
 
-- 单页 Timeline 最大 500 项；Mac 对账默认按 200 拉取，收到 `response_too_large` 时降到 25 重试该页。
+- 单页 Timeline 最大 500 项；Mac 对账默认按 200 拉取，收到 `response_too_large` 时页大小除以 8（200 → 25 → 3 → 1）重试该页，一行一页仍超限才报错。
 - Mac 和 iOS 从本地 SQLite 读取详情时同样循环分页；iOS 内存里的 `SessionDetail` 由分片组装、事件归约（`SessionDetailReduction`）维护。
 - 单个本地 frame 仍受 8 MiB 上限约束；跨进程不再存在"整库一帧"的载荷。
 
@@ -287,7 +303,7 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 ## 缓存与读取策略
 
 - Mac UI 不直接查询 daemon；它观察 `MacSessionStore`，列表来自本地 SQLite，详情按需从本地 SQLite 读取。
-- Session 详情在内存里只有一份：store 持有一个按最近使用排序的有界集合（默认 8 个），每个条目都是完整的 Session（Summary、Turns、整条 Timeline），没有尾巴、裁剪版或半加载的条目。一个 Session 要么整条在内存里，要么不在；不在的从 SQLite 分页读出后进入集合，最久未用的被挤出。当前选中的 Session 固定不被挤出。
+- Session 详情在内存里只有一份：store 持有一个按最近使用排序的有界集合（默认 8 个），每个条目都是完整的 Session（Summary、Turns、整条 Timeline 的镜像行），没有尾巴、只装了一段或半加载的条目。一个 Session 要么整条在内存里，要么不在；不在的从 SQLite 分页读出后进入集合，最久未用的被挤出。当前选中的 Session 固定不被挤出。
 - 已在内存里的 Session 不重读数据库：daemon 事件先写 SQLite，再按批折叠进内存副本（Summary 走共享 reducer，Timeline 按 id 合并，Turns 重新投影）；对账整段替换时用 daemon 页面直接换掉内存副本；每次 reload 都用 SQLite 当下的 Summary 行覆盖内存副本的 Summary（过滤判定以 SQLite 为准）。`discard` 事件直接移除内存副本；被删除、被剪除、被过滤隐藏而离开可见列表的 Session 也随之移除。
 - 详情分 500 项多次读，不在一个事务里。每次写 SQLite 都推进一个 epoch；一次读跨越了写入就重读一次，再次跨越则保留并记 warning，不让内存副本悄悄少一行。
 - Notch 只读 Mac 已同步缓存。每次刷新必取两组 Session 的详情，不受上限约束：当前路由（详情页、turn 卡片）的 Session；最近 5 分钟内停止工作（完成、失败、中断、等待中转为空闲）且停止状态还没带着活动行出现过的顶层 Session，它们的 Turn End / 失败只能从活动行里发现。停止状态一旦带着活动行出现过，该 Session 即视为已结算，不再取详情。剩余名额（总上限 6）给 Running / Waiting 的顶层 Session，最近活动在前，用于行下的活动行。其余 Session 只用 Summary 渲染（无最近活动行、无当前 Turn，模型取列表的 model stamp）。已列出父 Session 的子代理不取详情。打开一个只有 Summary 的 Session 详情页会立即触发一次刷新，不等下一次数据变化。
@@ -310,10 +326,11 @@ helper 发起的丢弃（`AgentIngressEvent.disposition == .discard`）走同一
 
 ## 当前容量边界
 
-- 本地 frame：8 MiB；daemon 发送侧超限改发 `response_too_large`，客户端降低分页重试。
+- 本地 frame：8 MiB；daemon 发送侧超限改发 `response_too_large`，客户端降低分页重试；`get_timeline_items` 一次只取一行，单行仍超限时把错误显示给用户。
+- 镜像行：单行编码后 64 KiB（`TimelineContentBudget`），Mac 与 iPhone 相同。
 - Relay HTTP body：64 KiB。
 - Relay WebSocket 消息：二进制，`u32 BE 头长度 ‖ 路由头 JSON ‖ 原始密文`，Worker 只解析头；单条上限 2 MiB，超限 Worker 回 `{type:"error",code:"frame_too_large"}` 而不断线；文本路由帧（1.3 及更早的客户端）以 4004 关闭，客户端据此停止重连并提示更新。
-- 远程载荷按**编码后** 1 MB 贪心装满分片（index 按条目、事件按批、Session 按行），压缩后仍超过 1.4 MB 的片再对半切；单条 timeline 行在 Relay 副本里有 64 KB 内容预算，超出的裁剪并标 `truncated`，完整内容按需取（`session_items` 的单条硬上限 1 MB，仍超的照常裁剪）。
+- 远程载荷按**编码后** 1 MB 贪心装满分片（index 按条目、事件按批、Session 按行），压缩后仍超过 1.4 MB 的片再对半切；单条 timeline 行按镜像行预算裁剪，完整内容按需取（`session_items` 的单条硬上限 1 MB，仍超的照常裁剪）。
 - 尾页 / 更早页默认 80 行，上限 500。
 - Session list 请求上限：10,000。
 - Timeline 单页上限：500（IPC）；Mac 对账默认 200。

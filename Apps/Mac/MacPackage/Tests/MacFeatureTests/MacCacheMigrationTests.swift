@@ -4,70 +4,56 @@ import Testing
 
 private func makeRoot() throws -> URL {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("lumi-cache-migration-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(
-        at: root.appendingPathComponent("Mac", isDirectory: true),
-        withIntermediateDirectories: true
-    )
+        .appendingPathComponent("lumi-cache-retire-\(UUID().uuidString)", isDirectory: true)
+    for directory in ["Mac", "Storage"] {
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(directory, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+    }
     return root
 }
 
-@Test func cacheMigrationMovesAndRenamesTrioThenRemovesLegacyDirectory() throws {
+@Test func retiredCachesAreDeletedWithSidecarsAndEmptyDirectories() throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
+    let storage = root.appendingPathComponent("Storage/cache.sqlite").path
     let legacy = root.appendingPathComponent("Mac/sessions.sqlite3").path
-    let new = root.appendingPathComponent("Storage/cache.sqlite").path
-    for suffix in ["", "-wal", "-shm"] {
-        try Data(("db" + suffix).utf8).write(to: URL(fileURLWithPath: legacy + suffix))
+    for path in [storage, legacy] {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            try Data(("db" + suffix).utf8).write(to: URL(fileURLWithPath: path + suffix))
+        }
     }
+    // The current cache shares `Storage/` with the retired one.
+    let current = root.appendingPathComponent("Storage/session-cache.sqlite").path
+    try Data("current".utf8).write(to: URL(fileURLWithPath: current))
 
-    MacSessionStore.migrateLegacyCache(from: legacy, to: new)
+    MacSessionStore.discardRetiredCaches([storage, legacy])
 
     let manager = FileManager.default
-    for suffix in ["", "-wal", "-shm"] {
-        #expect(try Data(contentsOf: URL(fileURLWithPath: new + suffix)) == Data(("db" + suffix).utf8))
-        #expect(!manager.fileExists(atPath: legacy + suffix))
+    for path in [storage, legacy] {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            #expect(!manager.fileExists(atPath: path + suffix))
+        }
     }
     #expect(!manager.fileExists(atPath: root.appendingPathComponent("Mac").path))
+    #expect(try Data(contentsOf: URL(fileURLWithPath: current)) == Data("current".utf8))
 
-    // Idempotent once the legacy files are gone.
-    MacSessionStore.migrateLegacyCache(from: legacy, to: new)
-    #expect(manager.fileExists(atPath: new))
+    // Idempotent once the files are gone.
+    MacSessionStore.discardRetiredCaches([storage, legacy])
+    #expect(manager.fileExists(atPath: current))
 }
 
-@Test func cacheMigrationDeletesLegacyWhenNewCacheAlreadyExists() throws {
+@Test func retiringKeepsDirectoryWithForeignContent() throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let legacy = root.appendingPathComponent("Mac/sessions.sqlite3").path
-    let new = root.appendingPathComponent("Storage/cache.sqlite").path
-    try FileManager.default.createDirectory(
-        at: root.appendingPathComponent("Storage", isDirectory: true),
-        withIntermediateDirectories: true
-    )
-    try Data("legacy".utf8).write(to: URL(fileURLWithPath: legacy))
-    try Data("legacy-wal".utf8).write(to: URL(fileURLWithPath: legacy + "-wal"))
-    try Data("new".utf8).write(to: URL(fileURLWithPath: new))
-
-    MacSessionStore.migrateLegacyCache(from: legacy, to: new)
-
-    let manager = FileManager.default
-    #expect(try Data(contentsOf: URL(fileURLWithPath: new)) == Data("new".utf8))
-    #expect(!manager.fileExists(atPath: legacy))
-    #expect(!manager.fileExists(atPath: legacy + "-wal"))
-    #expect(!manager.fileExists(atPath: root.appendingPathComponent("Mac").path))
-}
-
-@Test func cacheMigrationKeepsLegacyDirectoryWithForeignContent() throws {
-    let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let legacy = root.appendingPathComponent("Mac/sessions.sqlite3").path
-    let new = root.appendingPathComponent("Storage/cache.sqlite").path
     try Data("db".utf8).write(to: URL(fileURLWithPath: legacy))
     let foreign = root.appendingPathComponent("Mac/notes.txt")
     try Data("keep".utf8).write(to: foreign)
 
-    MacSessionStore.migrateLegacyCache(from: legacy, to: new)
+    MacSessionStore.discardRetiredCaches([legacy])
 
-    #expect(FileManager.default.fileExists(atPath: new))
+    #expect(!FileManager.default.fileExists(atPath: legacy))
     #expect(FileManager.default.fileExists(atPath: foreign.path))
 }

@@ -254,8 +254,8 @@ private func hookFrame(_ fields: [String: Any]) -> Data {
 
     let sessionID = SessionID("huge")
     let date = Date(timeIntervalSince1970: 1_700_000_000)
-    // Ten 1 MiB items: one 500-limit page overflows the 8 MiB frame,
-    // a 5-item page fits.
+    // Ten 1 MiB rows. `get_session` serves them trimmed, so a page of all
+    // ten fits; asking for all ten whole overflows the 8 MiB frame.
     for index in 0..<10 {
         _ = try await repository.apply(AgentIngressEvent(
             eventID: EventID("huge-event-\(index)"),
@@ -277,19 +277,23 @@ private func hookFrame(_ fields: [String: Any]) -> Data {
     }
 
     let oversized = try DaemonIPCClient().request(
-        IPCRequest(operation: .getSession, sessionID: sessionID, limit: 500),
+        IPCRequest(
+            operation: .getTimelineItems,
+            sessionID: sessionID,
+            itemIDs: (0..<10).map { TimelineItemID("huge-item-\($0)") }
+        ),
         socketPath: socketPath,
         timeout: .seconds(15)
     )
     #expect(oversized.failure?.code == "response_too_large")
 
     let paged = try DaemonIPCClient().request(
-        IPCRequest(operation: .getSession, sessionID: sessionID, limit: 5),
+        IPCRequest(operation: .getSession, sessionID: sessionID, limit: 500),
         socketPath: socketPath,
         timeout: .seconds(15)
     )
-    #expect(paged.session?.timeline.count == 5)
-    #expect(paged.session?.nextCursor != nil)
+    #expect(paged.session?.timeline.count == 10)
+    #expect(paged.session?.timeline.allSatisfy(\.isTruncated) == true)
 }
 
 @Test func unavailableUnixSocketReturnsAnErrorWithoutLeakingPromises() {
@@ -1371,4 +1375,76 @@ private func rawUnixConnect(_ socketPath: String) -> Int32 {
     #expect(engine.takeVerdict(for: sessionID) == nil)
     let stored = try await repository.sessionDetail(id: sessionID, cursor: nil, limit: 1)?.summary
     #expect(stored?.hiddenByFilter == true)
+}
+
+// MARK: Mirror rows over IPC
+
+private func bulkyToolEvent(_ id: String, session: SessionID) -> AgentIngressEvent {
+    AgentIngressEvent(
+        eventID: EventID("event-\(id)"),
+        sessionID: session,
+        agent: .claude,
+        occurredAt: Date(timeIntervalSince1970: 100),
+        lifecycle: .running,
+        phase: .executing,
+        timelineItem: TimelineItem(
+            id: TimelineItemID(id),
+            sessionID: session,
+            occurredAt: Date(timeIntervalSince1970: 100),
+            payload: .tool(ToolTimelinePayload(
+                name: "Read", summary: "[Image]",
+                content: .string(String(repeating: "x", count: 200_000)),
+                status: .succeeded, toolUseID: id
+            ))
+        )
+    )
+}
+
+@Test func getSessionServesTrimmedRowsAndGetTimelineItemsTheWholeOnes() async throws {
+    let repository = InMemorySessionRepository()
+    let service = DaemonService(repository: repository, socketPath: "/tmp/lumi.sock", executableHash: "test-hash")
+    let session = SessionID("mirror")
+    let event = bulkyToolEvent("tool:mirror:t1:result", session: session)
+    let whole = try #require(event.timelineItem)
+    #expect(try await repository.apply(event))
+
+    let page = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getSession, sessionID: session)))
+    #expect(page.payload.session?.timeline == [TimelineContentBudget.trimmed(whole)])
+    #expect(page.payload.session?.timeline.first?.isTruncated == true)
+
+    let rows = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .getTimelineItems, sessionID: session, itemIDs: [whole.id]
+    )))
+    #expect(rows.payload.session?.timeline == [whole])
+
+    let unnamed = await service.handle(TransportEnvelope(payload: IPCRequest(operation: .getTimelineItems, sessionID: session)))
+    #expect(unnamed.payload.failure?.code == "missing_item_ids")
+    let gone = await service.handle(TransportEnvelope(payload: IPCRequest(
+        operation: .getTimelineItems, sessionID: SessionID("gone"), itemIDs: [whole.id]
+    )))
+    #expect(gone.payload.failure?.code == "session_not_found")
+}
+
+@Test func theEventStreamCarriesTrimmedRows() async throws {
+    let hub = DaemonSubscriptionHub()
+    let running = try await makeSocketServer(hub: hub)
+    defer { running.task.cancel() }
+
+    let capture = StreamCapture()
+    let subscriber = DaemonEventSubscriber()
+    try subscriber.start(
+        socketPath: running.socketPath,
+        onEvent: { capture.append($0) },
+        onSummary: { _ in },
+        onHealth: { _ in capture.recordHealth() },
+        onDisconnect: { capture.recordDisconnect() }
+    )
+    try await waitUntil("subscriber ack") { capture.snapshot.health >= 1 }
+
+    let event = bulkyToolEvent("tool:stream:t1:result", session: SessionID("stream"))
+    hub.publish(event)
+    try await waitUntil("event delivered") { capture.snapshot.events.count == 1 }
+    let delivered = try #require(capture.snapshot.events.first?.timelineItem)
+    #expect(delivered == TimelineContentBudget.trimmed(try #require(event.timelineItem)))
+    #expect(delivered.isTruncated)
 }

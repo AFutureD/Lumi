@@ -6,7 +6,7 @@ describe("shared transport fixture", () => {
   it("accepts the Swift package routing header", () => {
     const body = Uint8Array.from(atob(fixture.ciphertext), (c) => c.charCodeAt(0));
     const frame = parseRelayRoutingFrame(fixture, body.byteLength);
-    expect(frame.version).toEqual({ major: 1, minor: 4 });
+    expect(frame.version).toEqual({ major: 1, minor: 5 });
     expect(frame.hostID).toBe("host-fixture");
     expect(frame.deviceID).toBe("device-fixture");
     expect(frame.sequence).toBe(42);
@@ -16,7 +16,7 @@ describe("shared transport fixture", () => {
 
 describe("binary frames", () => {
   const header = {
-    version: { major: 1, minor: 4 },
+    version: { major: 1, minor: 5 },
     hostID: "host-fixture",
     deviceID: "device-fixture",
     sequence: 7,

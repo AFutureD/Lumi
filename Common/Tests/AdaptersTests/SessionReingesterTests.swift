@@ -405,3 +405,40 @@ private func claudeTranscript(session: String, prompt: String) -> [[String: Any]
     #expect(rebuilt.detail.summary.title == "Locate the tests")
     #expect(rebuilt.detail.summary.lineage?.parentSessionID == sid)
 }
+
+@Test func claudeScreenshotResultKeepsOneCopyOfTheImage() throws {
+    let session = "cccccccc-9999-aaaa-bbbb-cccccccccccc"
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("\(session).jsonl").path
+    let image = String(repeating: "iVBORw0KGgo", count: 200)
+    let records: [[String: Any]] = [
+        ["type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1", "timestamp": "2026-11-11T10:00:00.000Z", "cwd": "/tmp/proj",
+         "origin": ["kind": "human"],
+         "message": ["role": "user", "content": "look"]],
+        ["type": "assistant", "uuid": "a1", "sessionId": session, "timestamp": "2026-11-11T10:00:01.000Z",
+         "message": ["role": "assistant", "model": "claude-opus-4-7", "stop_reason": "tool_use", "content": [
+            ["type": "tool_use", "id": "toolu_1", "name": "Read", "input": ["file_path": "/tmp/shot.png"]],
+         ]]],
+        ["type": "user", "uuid": "u2", "sessionId": session, "timestamp": "2026-11-11T10:00:02.000Z",
+         "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "toolu_1", "content": [
+            ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": image]],
+         ]]]],
+         "toolUseResult": ["type": "image", "file": ["base64": image, "type": "image/png", "originalSize": 2048]]],
+    ]
+    try jsonl(records).write(toFile: path, atomically: true, encoding: .utf8)
+
+    let read = try RichSourceReader.read(path: path, sessionID: SessionID(session), adapter: ClaudeAdapter(), fromOffset: 0)
+    let result = try #require(read.events.compactMap(\.timelineItem).first {
+        $0.id == TimelineItemIDs.toolResult(SessionID(session), toolUseID: "toolu_1")
+    })
+    guard case let .tool(tool) = result.payload, case let .object(content)? = tool.content,
+          case let .object(record)? = content["toolUseResult"], case let .object(file)? = record["file"] else {
+        Issue.record("tool result lost its shape")
+        return
+    }
+    #expect(file["base64"] == .object(["lumi.sameAs": .string("/content/0/source/data")]))
+    #expect(file["originalSize"] == .number(2048))
+    #expect(String(data: try JSONEncoder().encode(tool.content), encoding: .utf8)!.components(separatedBy: image).count == 2)
+}
