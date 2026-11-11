@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-12
+
 ### Session 活动
 
 - Activity 每一行的文字现在直接从记录读出，记录里不再另存这一行文字。Claude 的工具调用优先显示 Agent 自己写的说明，没有再显示命令、文件路径、搜索词或网址。
@@ -225,7 +227,8 @@ v0.3.1 与 v0.3.2 的发布都在 CI 的 Mac 测试一步失败（Xcode 26.6 对
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/AFutureD/Lumi/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/AFutureD/Lumi/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AFutureD/Lumi/compare/v0.2.0...v0.2.1
