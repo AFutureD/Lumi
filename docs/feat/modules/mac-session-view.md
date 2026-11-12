@@ -59,7 +59,7 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 - 顶栏：品牌图标、“Lumi”标题、一枚锁形“保持展开”开关（与 Notch 设置里的 Stay expanded 同一状态）和设置按钮；设置按钮打开主 App 的“Settings > Notch”，不在 Notch 内维护第二套设置页。
 - 正在工作的 Session 在标题下多一行最近活动（类别标签 + 这条活动的那一行文字）。
 - 带 Subagent 的 Session 在标题下多一条可点开的 Subagent 计数条（子 Agent 的子 Agent 也算在同一条里）：运行中默认展开成胶囊，其他状态默认折叠；点击胶囊直接打开该 Subagent；悬停在带 Subagent 的行上时，这一行显示为一张卡片。
-- Session 的 Turn 结束或失败时 Notch 自动展开并短暂提示；回合开始不自动展开。
+- Session 的 Turn 结束或失败时 Notch 自动展开并短暂提示；回合开始不自动展开。Turn 正常结束但名下还有 Subagent 在跑时先不提示，见 [MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)。
 - 收起：鼠标移出刘海形状即收起，开启保持展开时除外；展开状态下按 Esc 也收起。Notch 没有全局快捷键，也不响应拖到它上面的文件。
 - 完整展示规则见 [MAC-R-014](#mac-r-014-notch-显示-session-当前状态)，可用选项见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)。
 
@@ -74,13 +74,18 @@ Lumi 在一台 Mac 上聚合多个 Agent 的多个 Session。主窗口使用与 
 
 Mac Session 列表、详情、Notch 和 iPhone 用同一套五档状态颜色回答“该先看哪条”：
 
-- 蓝 · Running：Agent 正在工作（含启动和上下文压缩）。
+- 蓝 · Running：Agent 正在工作（含启动和上下文压缩）；或者它自己的 Turn 已结束，但它启动的 Subagent 还在跑——这次请求还没做完。
 - 橙 · Waiting for input：Turn 停在等待你审批或回答，人不处理就不会继续。
-- 绿 · 待查看：Turn 已结束，但你还没打开过这条 Session——它就是下一条该看的。
-- 灰 · Completed：Turn 已结束且你看过了，或 Session 处于空闲。
+- 绿 · 待查看：Main Session 的 Turn 已结束，名下也没有 Subagent 在跑，但你还没打开过它——它就是下一条该看的。
+- 灰 · Completed：Turn 已结束且你看过了，或 Session 处于空闲；Subagent 结束后直接是这一档。
 - 红 · Failed / Interrupted：失败或被中断。
 
 在 Mac 列表点击某行，或从 Notch、iPhone 打开详情，都算“看过”，绿色随即降为灰色并同步到所有端；见 [MAC-R-019](#mac-r-019-打开-session-即视为已查看)。
+
+和 Subagent 有关的两条：
+
+- Session 自己的 Turn 已正常结束、停在提示符，而名下还有 Subagent 在跑时，它仍是 Running，状态文字只写 `Running`；它们都停下后才回到待查看或 Completed（[MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。Session 自己还在 Turn 中、在等待审批、失败、中断或已退出时，各按自己的档显示。
+- Subagent 自己没有待查看：绿色只出现在 Main Session 上（[MAC-R-030](#mac-r-030-subagent-没有待查看)）。
 
 Mac 主窗口的状态视觉：
 
@@ -128,7 +133,7 @@ Mac 主窗口的状态视觉：
 
 ### 从 Notch 归档 Session
 
-- 入口：在 Notch 展开列表中，悬停到一条 Turn 已结束的 Session 行上（等待查看、已关闭、失败或中断都算），行尾的相对时间原地换成归档按钮。
+- 入口：在 Notch 展开列表中，悬停到一条 Turn 已结束的 Session 行上（等待查看、已关闭、失败或中断都算），行尾的相对时间原地换成归档按钮。名下还有 Subagent 在跑、仍显示 Running 的 Session 不算已结束，没有归档按钮（[MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
 - 点击后该 Session 立即从 Notch 的列表和计数里消失；带 Subagent 的 Session 整组一起消失，回来时也整组一起回来。
 - 归档只影响 Notch：主窗口和已连接 iPhone 照常显示这个 Session，历史也不删除。
 - 回来条件：你在该 Session 里发出新请求（或它重新启动）时，它自动回到 Notch。不手动归档的话，超过七天没有活动的 Session 也会自动离开 Notch 列表。
@@ -298,14 +303,19 @@ Activity 标题右侧有两枚下拉按钮：
 
 - 条件：Mac、Notch 或 iPhone 显示一个 Session 的当前状态。
 - 行为：
-  - 五档映射——Starting、Running、Compacting 使用蓝色（Agent 在工作）；Turn 停在等待审批或回答时使用橙色（人不处理就不会继续）；Turn 已结束但还没被打开过时使用绿色（待查看）；Turn 已结束且已查看，或 Session 空闲时使用灰色；Failed 和 Interrupted 使用红色。
-  - 命令行回到提示符等待下一条指令的 Session 按“已结束”档显示（绿或灰，状态文字为 Completed），不算等待审批。
+  - 五档映射：
+    - 蓝：Starting、Running、Compacting（Agent 在工作）；Turn 已结束但名下还有 Subagent 在跑的 Session 也是蓝色（[MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
+    - 橙：Turn 停在等待审批或回答（人不处理就不会继续）。
+    - 绿：Main Session 的 Turn 已结束但还没被打开过（待查看）。
+    - 灰：Turn 已结束且已查看，或 Session 空闲；已结束的 Subagent 也是灰色（[MAC-R-030](#mac-r-030-subagent-没有待查看)）。
+    - 红：Failed 和 Interrupted。
+  - 命令行回到提示符等待下一条指令的 Session 按“已结束”档显示（绿或灰，状态文字为 Completed），不算等待审批；名下还有 Subagent 在跑时除外，它是蓝色 Running（[MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
   - 颜色不影响列表排序。
-- 结果：用户在三个界面看到相同的状态颜色语义；绿色专指“已结束但还没看过”，看过即降灰（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
+- 结果：用户在三个界面看到相同的状态颜色语义；绿色专指“Main Session 已结束但还没看过”，看过即降灰（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
 - 限制或例外：
   - 三个界面共用同一套设计系统取值：Mac 主窗口使用浅色值（Session 详情列固定浅色外观）；Notch 使用独立的深色取值（默认 Solid 表面为纯黑实色面板，便于与刘海无缝衔接；用户也可在设置中改为 Translucent 或 Liquid Glass 材质，见 [MAC-R-015](#mac-r-015-notch-设置集中在主-app)）；iPhone 随系统外观在浅色 / 深色两组值之间切换。
   - 蓝、橙、绿三档的状态点在 Mac 主窗口和 Notch 带光晕呼吸，灰与红为实心；iPhone 的状态标记是实心图标（Failed / Interrupted 显示为感叹号标记），不带呼吸光晕。
-  - Mac Inspector Overview 的 Lifecycle 字段显示原始生命周期，停在提示符的 Session 在该字段显示 Waiting For Input 而非 Completed。
+  - Mac Inspector Overview 的 Lifecycle 字段显示 Session 自己的原始生命周期：停在提示符的 Session 在该字段显示 Waiting For Input 而非 Completed，名下有 Subagent 在跑时也一样。
   - Notch 列表里 Turn 已结束的行标题降为次级亮度，状态点仍按本档显示，Agent 标签不变。
   - Activity 与 Notch 里的消息类别标签在三档注意力级别下都带 0.5 pt 描边（L1 灰描边、L2 同色淡描边、L3 同色深描边），只靠标签样式区分层级。
   - Mac 列表选中行使用中性灰底，文字颜色不变。
@@ -320,9 +330,10 @@ Activity 标题右侧有两枚下拉按钮：
   - 带 Subagent 的 Session 不论处于哪一档都在标题下保留一条 Subagent 计数条（叠放的状态点按 running → waiting → failed → done 排列，文案为 `N subagents` 加各非零档的数量，单数写 `1 subagent`）；蓝色档默认展开成胶囊（状态点 + 名称 + 已运行时长，按同样顺序自由换行），其他档默认折叠。
   - 点计数条切换展开 / 折叠，这一行的选择在它的状态档变化前一直保留，状态档变化后回到默认；点击胶囊打开该 Subagent 的详情。悬停在带 Subagent 的行上时该行以卡片底色高亮，位置与尺寸不变。
   - Turn 正常完成时 Notch 自动展开、显示约 6 秒回合完成卡片（标题、Turn complete 与用时、tokens / context 胶囊、最后一条助手消息摘要、Jump to Agent 按钮；点卡片本身进入该 Session 详情）后自动收回；Turn 以失败或中断收尾时不出卡片，而是自动展开并短暂显示错误提示（标题 + 错误摘要，约 3 秒）后收回。
+  - 同一个 Turn 被续上后再次结束（Agent 接着报告 Subagent 的结果，或排队的请求接着执行）时，同样按这次结束的方式提示一次。
   - 自动收回只收自动展开的面板：用户悬停期间、或用 Show Notch 手动展开后，面板不会被自动收回。手动展开的面板和悬停展开的一样，鼠标移出即收起，除非打开了保持展开。失败提示会等用户离开后再呈现；回合完成卡片在面板打开期间仍会临时覆盖列表内容。正在查看某条 Notch 详情时，完成卡片不打断当前页面；面板一旦收起，详情页就结束，之后的完成卡片照常出现。
   - 手动收起：鼠标移出刘海形状（保持展开开启时除外），或在展开状态下按 Esc。没有全局快捷键；文件拖到 Notch 上不会展开。
-  - 不触发提示的情形：新用户消息（回合开始）不改变 Notch 显示；子代理的回合边界属于父级的内部进度，单个工具调用的失败属于常规噪音；App 启动后约 6 秒内以及首次加载的历史数据同样不触发。
+  - 不触发提示的情形：新用户消息（回合开始）不改变 Notch 显示；Turn 正常结束但名下还有 Subagent 在跑时不出回合完成卡片（[MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）；子代理的回合边界属于父级的内部进度，单个工具调用的失败属于常规噪音；App 启动后约 6 秒内以及首次加载的历史数据同样不触发。
 - 结果：用户不打开主窗口也能判断 Session 正在做什么以及当前请求是什么；已结束的 Turn 和已关闭的会话留在列表里，直到被归档或超过七天没有新活动。
 - 限制或例外：
   - 超过七天没有活动的 Session 自动移出列表和计数，没有单独入口找回（主窗口照常显示）；跨过七天边界的移出要等下一次数据变化才生效，不是即时的。
@@ -375,17 +386,21 @@ Activity 标题右侧有两枚下拉按钮：
 - 条件：Codex 或 Claude Code 为 Main Session 启动一个 Subagent，Lumi 收到该 Subagent 的身份和任务活动。
 - 行为：
   - Subagent 有独立名称时显示该名称；未单独命名时显示昵称与任务路径摘要。
-  - Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随子代理的启动与结束（结束后为 Completed，不会显示为等待输入）。
+  - Claude 的 Subagent 以启动时的任务描述为标题（没有描述时显示 agent 类型），其 Activity 来自子代理自己的对话记录，生命周期跟随子代理的启动与结束：结束后为 Completed，不会显示为等待输入，也没有待查看档（[MAC-R-030](#mac-r-030-subagent-没有待查看)）；所属 Session 退出时还在跑的，变为红色 Interrupted（[MAC-R-031](#mac-r-031-claude-session-退出时名下还在跑的-subagent-一并结束)）。
   - 为执行任务提供给 Subagent 的父 Session 历史只作为其工作背景，不作为 Subagent 标题，也不重复进入其 Activity。
 - 结果：用户在父子层级中能按任务辨认 Subagent，打开详情时只看到该 Subagent 实际开始工作后的活动。
 - 限制或例外：缺少父子关系的旧格式或孤立 Subagent 仍保留在顶层；其可用身份信息不足时显示通用 Subagent 名称。旧版本记录的 Claude Session 没有子行——选中该 Session 点工具栏 Refresh 即可从本机对话记录补出它的 Subagent。
 
 ### MAC-R-019 打开 Session 即视为已查看
 
-- 条件：一条 Session 的 Turn 已结束且还没被打开过（状态为绿色待查看）。
+- 条件：一条 Main Session 的 Turn 已结束且还没被打开过（状态为绿色待查看）。
 - 行为：在 Mac 列表点击该行（重复点击已选中的行同样生效），或在 Notch 打开它的详情，都把它标记为已查看；主窗口详情或 Notch 详情开着期间新结束的 Turn 也立即视为已查看。标记写入 daemon 和 Mac 本地副本，并同步到已连接 iPhone。
 - 结果：绿色降为灰色，三个界面一致；列表里剩下的绿色就是还没看过的 Session。
-- 限制或例外：在 iPhone 上打开 Session 同样清除该标记——iPhone 把「已查看」发回 Mac，Mac 写入后同步到所有端（[IOS-R-013](./iphone-live-view.md#ios-r-013-iphone-打开即视为已查看)）。该 Session 下一个 Turn 结束时会重新变绿。刷新重算不重置此标记（[MAC-R-009](#mac-r-009-mac-界面只有三种同步入口)）。
+- 限制或例外：
+  - 在 iPhone 上打开 Session 同样清除该标记——iPhone 把「已查看」发回 Mac，Mac 写入后同步到所有端（[IOS-R-013](./iphone-live-view.md#ios-r-013-iphone-打开即视为已查看)）。
+  - 该 Session 下一个 Turn 结束时会重新变绿。刷新重算不重置此标记（[MAC-R-009](#mac-r-009-mac-界面只有三种同步入口)）。
+  - Turn 已结束、因名下 Subagent 还在跑而显示 Running 的 Session，这时打开它不算已查看。Subagent 停下时它回到待查看：主窗口详情或 Notch 详情正开着它，就和详情开着期间结束的 Turn 一样立即视为已查看、直接是灰色；没开着就是绿色（[MAC-R-029](#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
+  - Subagent 没有待查看，打开它不改变任何标记（[MAC-R-030](#mac-r-030-subagent-没有待查看)）。
 
 ### MAC-R-020 启动时自动更新已安装的 Hook helper
 
@@ -495,6 +510,52 @@ Activity 标题右侧有两枚下拉按钮：
   - 超大内容先显示截短副本，再换成完整内容，见 [MAC-R-026](#mac-r-026-超大内容只在-daemon-保存完整版)。
   - Codex 查看过的图片读的是那个路径上现在的文件；文件已不在原处时这一区显示 `The image is no longer at` 加路径。
   - Preview 不翻译、不改写内容；记录里可能出现路径、凭据或环境信息，见 [MAC-R-003](#mac-r-003-展示活动并保留-session-诊断数据)。
+
+### MAC-R-029 名下有 Subagent 在跑的 Session 仍是 Running
+
+- 条件：一条 Session 自己的 Turn 已正常结束、停在提示符，而它启动的 Subagent（含 Subagent 的 Subagent）里至少有一个还在工作或在等待审批。Claude Code 把 Subagent 放到后台运行时就是这种情形。
+- 行为：
+  - 这条 Session 在 Mac 列表、详情、Notch 和 iPhone 都按蓝色 Running 显示，状态文字只写 `Running`，不带阶段。
+  - Notch 列表里这一行不显示最近活动那一行，Subagent 胶囊照蓝色档默认展开；行尾没有归档按钮；Notch 详情的 ELAPSED 继续计时。
+  - Notch 不弹回合完成卡片，iPhone 不发 Completed 推送。
+  - 全部 Subagent 停下后，这条 Session 回到已结束档（待查看或 Completed，见 [MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
+  - Claude Code 会在每个 Subagent 停下后让这条 Session 接着报告它的结果。名下已经没有 Subagent 在跑的那一次结束，Notch 才弹回合完成卡片、iPhone 才收到推送；还有别的 Subagent 在跑时结束的那几轮同样不提示。
+- 结果：Subagent 还在跑时，Session 不会显示成已完成；一次请求在做完时提示一次。
+- 限制或例外：
+  - 只改变停在提示符的 Session。自己还在 Turn 中的 Session 照常显示 `Running · 阶段` 和最近活动；等待审批的仍是橙色。
+  - Turn 以失败或中断收尾时照常显示红色并提示，不等 Subagent；这样的行在 Notch 可以归档。
+  - 已经退出的 Session 保持 Completed，不因 Subagent 回到 Running（[MAC-R-031](#mac-r-031-claude-session-退出时名下还在跑的-subagent-一并结束)）。
+  - Subagent 全部停下、而 Session 没有再开新一轮时，状态直接回到已结束档，不补发卡片或推送。
+  - 显示 Running 期间打开这条 Session 不算已查看（[MAC-R-019](#mac-r-019-打开-session-即视为已查看)）。
+  - 刚启动、还没有任何活动的 Subagent 不算在跑。
+  - 后台运行的命令不是 Subagent：只剩后台命令在跑时，Session 仍按已结束显示。
+  - Mac Inspector Overview 的 Lifecycle、Turn Phase 和 Needs Attention 显示这条 Session 自己的原始状态，不随 Subagent 变化。
+  - Claude Code 被强制结束时，它的 Subagent 没有结束记录，会停在 Running，这条 Session 也因此一直显示 Running；恢复办法见[用户摩擦点](../friction-points.md#session-一直显示-running)。
+
+### MAC-R-030 Subagent 没有待查看
+
+- 条件：一个 Subagent 的 Turn 结束。
+- 行为：Subagent 结束后直接是灰色 Completed。它在主窗口的 Subagent 行与折叠簇圆点、Notch 的胶囊与计数条、iPhone 的标签与计数条上都不出现绿色。
+- 结果：绿色只出现在 Main Session 上；看过 Main Session 之后，它下面不会留着没清掉的绿点。
+- 限制或例外：
+  - 等待审批的 Subagent 仍是橙色，失败或被中断的仍是红色。
+  - 父 Session 已不在列表、独立成行的 Subagent 同样没有待查看。
+  - 升级到这一版时，已保存的 Subagent 身上的待查看标记一次性清除。
+
+### MAC-R-031 Claude Session 退出时名下还在跑的 Subagent 一并结束
+
+- 条件：一条 Claude Code Session 名下还有 Subagent 显示为在工作或等待审批，并且出现下面两种情况之一：
+  - 这条 Session 结束了（例如在 Paseo 里归档这个 agent）。
+  - 这条 Session 在 Claude Code 里重新启动或被恢复（resume），而 Subagent 的最后一条记录早于这次启动。
+- 行为：这些 Subagent（含 Subagent 的 Subagent）在数秒内变为红色 Interrupted。
+- 结果：已经退出的 Session 下面不会留着一直显示 Running 的 Subagent；被强制结束过的 Session 在 Claude Code 里恢复后，上一次留下的 Subagent 不会再让它停在 Running。
+- 限制或例外：
+  - 只对 Claude Code 生效。
+  - 中断一条 Session（Esc）不触发：后台 Subagent 会继续运行，照常显示 Running；前台 Subagent 随这次中断自己变为 Interrupted。
+  - 手动停掉一个后台 Subagent 时，它自己变为 Interrupted，不涉及这条规则。
+  - 用 `/clear` 结束的 Session 不触发，名下的 Subagent 保持原来的状态。
+  - Claude Code 被强制结束、之后这条 Session 也没有在 Claude Code 里恢复时，Subagent 停在 Running；恢复办法见[用户摩擦点](../friction-points.md#session-一直显示-running)。
+  - 需要 daemon 在运行；升级到这一版后，daemon 启动时会把已保存的这类 Subagent 一并处理。
 
 ## 空状态与故障
 

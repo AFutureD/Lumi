@@ -138,6 +138,39 @@ private func channel(_ host: String, sessions: [SessionDetail], online: Bool = t
     #expect(SessionListPresentation.filter(items, excludingHosts: [], excludingStatuses: [.completed], query: "").map(\.sessionID.rawValue).sorted() == ["r", "w"])
 }
 
+// A session parked at its prompt is not finished while a subagent it spawned
+// is still at work: the row, the Status filter and the detail header all
+// read Running, off the channel's own sessions.
+@Test func aParkedParentWithAWorkingSubagentReadsRunning() {
+    let state = channel("Mac", sessions: [
+        session("p", title: "Parent", lifecycle: .waitingForInput, phase: .idle, needsReview: true, activityAgo: 30),
+        session("busy", title: "busy", parent: "p", activityAgo: 5),
+        session("done", title: "done", lifecycle: .completed, phase: .idle, needsReview: true, parent: "p", activityAgo: 40),
+        session("q", title: "Quiet", lifecycle: .waitingForInput, phase: .idle, needsReview: true, activityAgo: 50),
+        session("idle", title: "idle", lifecycle: .completed, phase: .idle, parent: "q", activityAgo: 60),
+    ])
+    let items = SessionListPresentation.items(from: [state])
+    #expect(items.map(\.title) == ["Parent", "Quiet"])
+    #expect(items.map(\.tone) == [.blue, .green])
+    #expect(items.map(\.statusLabel) == ["Running", "Completed"])
+    #expect(items.map(\.statusGroup) == [.running, .completed])
+    // The chips keep their own tiers.
+    #expect(items[0].subagents.map(\.name) == ["busy", "done"])
+
+    let parent = try! #require(state.sessions.first { $0.summary.id == SessionID("p") })
+    let header = SessionDetailPresentationBuilder.make(detail: parent).header
+    #expect(header.tone == .blue)
+    #expect(header.statusText == "Running")
+
+    // The subagent stops: the same sessions read Completed, still unreviewed.
+    let stopped = channel("Mac", sessions: state.sessions.map { detail in
+        detail.summary.id == SessionID("busy")
+            ? session("busy", title: "busy", lifecycle: .completed, phase: .idle, parent: "p", activityAgo: 1)
+            : detail
+    })
+    #expect(SessionListPresentation.items(from: [stopped]).first { $0.title == "Parent" }?.tone == .green)
+}
+
 @Test func aFilterGroupNeverEmpties() {
     let all = SessionStatusGroup.allCases
     var deselected: Set<SessionStatusGroup> = []

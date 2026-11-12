@@ -28,7 +28,8 @@ struct MacChannelState: Sendable {
     /// The latest index was reconciled and every fetch it needed has landed.
     let hasCompleteSync: Bool
     /// Every session cached for this Mac (loaded from disk at launch, kept
-    /// current by the sync), online or not.
+    /// current by the sync), online or not — each marked with whether its
+    /// subagents are still at work (see `init`).
     let sessions: [SessionDetail]
     /// When the last complete sync landed (persists across launches).
     let lastSyncAt: Date?
@@ -42,6 +43,47 @@ struct MacChannelState: Sendable {
     var usage: UsageSnapshot? = nil
     /// The Usage tab's Plan cards for this Mac — memory only (`fetch_plan_usage`).
     var planUsage: PlanUsageSnapshot? = nil
+
+    /// Every channel state is built here, and this is where the iPhone
+    /// reads which sessions still have a subagent at work
+    /// (`SessionHierarchy.markingWorkingSubagents`): off all of this Mac's
+    /// cached sessions, so the list, the chips and the detail header — all
+    /// fed from `sessions` — resolve the same status.
+    init(
+        hostID: HostID,
+        displayName: String,
+        relayURL: URL,
+        pairedAt: Date,
+        isConnected: Bool,
+        isHostOnline: Bool,
+        connectionPath: MacConnectionPath? = nil,
+        accessRevoked: Bool,
+        hasCompleteSync: Bool,
+        sessions: [SessionDetail],
+        lastSyncAt: Date?,
+        lastError: String?,
+        health: DaemonHealth?,
+        hasLoadedCache: Bool,
+        usage: UsageSnapshot? = nil,
+        planUsage: PlanUsageSnapshot? = nil
+    ) {
+        self.hostID = hostID
+        self.displayName = displayName
+        self.relayURL = relayURL
+        self.pairedAt = pairedAt
+        self.isConnected = isConnected
+        self.isHostOnline = isHostOnline
+        self.connectionPath = connectionPath
+        self.accessRevoked = accessRevoked
+        self.hasCompleteSync = hasCompleteSync
+        self.sessions = SessionHierarchy.markingWorkingSubagents(sessions)
+        self.lastSyncAt = lastSyncAt
+        self.lastError = lastError
+        self.health = health
+        self.hasLoadedCache = hasLoadedCache
+        self.usage = usage
+        self.planUsage = planUsage
+    }
 
     var isOnline: Bool { isConnected && isHostOnline }
     /// Sessions the lists show: the cache, always — staleness is shown per
@@ -396,7 +438,12 @@ final class RelayDeviceController {
     /// Opening a session on the iPhone counts as reviewing it everywhere:
     /// the row turns grey here at once, and the daemon is told so the Mac,
     /// the Notch and other iPhones follow.
+    ///
+    /// A session its subagents keep Running holds the flag underneath;
+    /// opening it to watch them is not looking at a finished request
+    /// (`SessionSummary.isReviewedByOpening`, read off the marked state).
     func markReviewed(hostID: HostID, id: SessionID) {
+        guard session(hostID: hostID, id: id)?.summary.isReviewedByOpening == true else { return }
         if previewStates != nil {
             previewStates = previewStates?.map { state in
                 guard state.hostID == hostID else { return state }

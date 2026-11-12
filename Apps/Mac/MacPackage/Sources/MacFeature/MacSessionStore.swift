@@ -259,7 +259,7 @@ public final class MacSessionStore {
             do {
                 let detail = try await loadDetail(sessionID)
                 guard pendingSelectionID == sessionID else { return }
-                if let detail { detailCache.insert(detail) } else { detailCache.evict(sessionID) }
+                if let detail { detailCache.insert(listMarked(detail)) } else { detailCache.evict(sessionID) }
                 notifyObservers()
             } catch {
                 cacheError = "Unable to read the macOS sync database: \(error)"
@@ -315,7 +315,7 @@ public final class MacSessionStore {
                    let detail = try await fetchFullDetail(id: sessionID) {
                     try await cache.replaceSession(detail)
                     noteCacheWrite()
-                    detailCache.replaceIfPresent(detail)
+                    detailCache.replaceIfPresent(listMarked(detail))
                     invalidateModelStamp(sessionID)
                     convertLog.info("session_refreshed", metadata: .fields([
                         "session": sessionID.rawValue,
@@ -334,9 +334,14 @@ public final class MacSessionStore {
     /// The human opened the session: clear its review flag in the in-memory
     /// list at once (the tier steps down while they look), then in the local
     /// cache and the daemon so every mirror agrees.
+    ///
+    /// A session its subagents keep Running holds the flag underneath;
+    /// opening it to watch them is not looking at a finished request, so
+    /// the green tier is still there when they stop
+    /// (`SessionSummary.isReviewedByOpening`).
     public func markSessionReviewed(_ sessionID: SessionID) {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
-              sessions[index].needsReview else { return }
+              sessions[index].isReviewedByOpening else { return }
         sessions[index] = sessions[index].reviewed
         detailCache.patchSummary(sessionID) { $0.reviewed }
         notifyObservers(dataChanged: true)
@@ -450,7 +455,7 @@ public final class MacSessionStore {
                 continue
             }
             do {
-                guard let detail = try await loadDetail(id) else { continue }
+                guard let detail = try await loadDetail(id).map({ listMarked($0) }) else { continue }
                 detailCache.insert(detail)
                 details.append(detail)
             } catch {
@@ -580,7 +585,7 @@ public final class MacSessionStore {
             // The resident copy, if any, takes the daemon's whole page; an
             // absent session stays absent rather than pulling every
             // reconciled session into memory.
-            detailCache.replaceIfPresent(detail)
+            detailCache.replaceIfPresent(listMarked(detail))
             // The replace may have rewritten model-configuration items; the
             // stamp is re-read from the cache on the reload below.
             invalidateModelStamp(id)
@@ -758,7 +763,13 @@ public final class MacSessionStore {
             // and a future "show hidden" toggle only needs to skip this line —
             // but reach neither the list nor the Notch, which both feed from
             // `sessions`.
-            let visible = SessionSummary.visible(try await cache.listSessions(limit: 10_000))
+            //
+            // Which sessions still have a subagent at work is read here, off
+            // every cached session before any is hidden, and nowhere else on
+            // the Mac: the list, the detail pane and the Notch all take the
+            // mark from `sessions`.
+            let cached = SessionHierarchy.markingWorkingSubagents(try await cache.listSessions(limit: 10_000))
+            let visible = SessionSummary.visible(cached)
             let hiddenByFilter = SessionSummary.filterHiddenIDs(visible)
             let updated = visible.filter { !hiddenByFilter.contains($0.id) }
             try await refreshModelStamps(for: updated, events: appliedEvents)
@@ -773,7 +784,7 @@ public final class MacSessionStore {
             // a miss pages it in.
             if let selectedID, detailCache.touch(selectedID) == nil {
                 if let detail = try await loadDetail(selectedID) {
-                    detailCache.insert(detail)
+                    detailCache.insert(listMarked(detail, in: summariesByID))
                     detailChanged = true
                 }
             }
@@ -1007,6 +1018,28 @@ public final class MacSessionStore {
                 return detail
             }
         }
+    }
+
+    /// A detail read on its own — paged from the cache database or fetched
+    /// whole from the daemon — carries a stored summary, which never says
+    /// whether subagents are still at work. It takes that mark from the
+    /// list, the one place it is read (`reloadFromCache`), before it becomes
+    /// resident; the next reload's fold keeps the two in step. Inside a
+    /// reload the list being built is passed in — `sessions` is still the
+    /// previous one there.
+    private func listMarked(
+        _ detail: SessionDetail,
+        in summaries: [SessionID: SessionSummary]? = nil
+    ) -> SessionDetail {
+        let listed = summaries.map { $0[detail.summary.id] } ?? sessions.first { $0.id == detail.summary.id }
+        let working = listed?.hasWorkingSubagents ?? false
+        guard detail.summary.hasWorkingSubagents != working else { return detail }
+        return SessionDetail(
+            summary: detail.summary.withWorkingSubagents(working),
+            turns: detail.turns,
+            timeline: detail.timeline,
+            nextCursor: detail.nextCursor
+        )
     }
 
     /// Every write to the cache database passes here, so an in-flight detail

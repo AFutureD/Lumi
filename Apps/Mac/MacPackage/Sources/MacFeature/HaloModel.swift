@@ -42,6 +42,9 @@ struct HaloSession: Identifiable, Equatable, Sendable {
     let lifecycle: SessionLifecycle
     let phase: TurnPhase
     let needsReview: Bool
+    /// A subagent of this session is still at work
+    /// (`SessionSummary.hasWorkingSubagents`, marked by the store).
+    let hasWorkingSubagents: Bool
     let currentUserMessage: String?
     let lastActivityAt: Date
     let startedAt: Date
@@ -64,20 +67,51 @@ struct HaloSession: Identifiable, Equatable, Sendable {
     let detailLoaded: Bool
 
     var statusText: String {
-        "\(SessionStatusTone.displayLifecycle(lifecycle: lifecycle, phase: phase).displayName) · \(phase.displayName)"
+        SessionStatusTone.statusText(
+            lifecycle: lifecycle,
+            phase: phase,
+            hasWorkingSubagents: hasWorkingSubagents
+        )
     }
 
     var statusTone: SessionStatusTone {
-        SessionStatusTone.resolve(lifecycle: lifecycle, phase: phase, needsReview: needsReview)
+        SessionStatusTone.resolve(
+            lifecycle: lifecycle,
+            phase: phase,
+            needsReview: needsReview,
+            hasWorkingSubagents: hasWorkingSubagents
+        )
     }
 
     var isChild: Bool { groupID != nil }
 
+    /// Parked at its prompt with subagents still at work: the request is
+    /// still running, whatever the session's own last turn says
+    /// (`SessionStatusTone.isKeptRunningBySubagents`). The mark alone does
+    /// not say so — a session mid-turn, failed or ended can carry it too.
+    var isKeptRunningBySubagents: Bool {
+        SessionStatusTone.isKeptRunningBySubagents(
+            lifecycle: lifecycle,
+            phase: phase,
+            hasWorkingSubagents: hasWorkingSubagents
+        )
+    }
+
     /// Archive affordance and "Turn complete" state: the newest turn is closed
-    /// or the session itself is no longer running a turn.
+    /// or the session itself is no longer running a turn — unless its
+    /// subagents keep it running.
     var turnEnded: Bool {
+        if isKeptRunningBySubagents { return false }
         if let currentTurn { return !currentTurn.isOpen }
         return !lifecycle.isLive || (lifecycle == .waitingForInput && phase == .idle)
+    }
+
+    /// The extra activity line under a working (blue-tier) row — waiting
+    /// and finished rows stay single-line. A session its subagents keep
+    /// running has no activity of its own to show (its last row is the turn
+    /// end); the subagent pills under it say what is running.
+    var activityLine: HaloActivityRow? {
+        statusTone == .blue && !isKeptRunningBySubagents ? recentRows.last : nil
     }
 
     var lastAssistantMessage: String? {
@@ -104,9 +138,11 @@ struct HaloSession: Identifiable, Equatable, Sendable {
     }
 
     /// Elapsed for the current turn (or the session when no turn is known).
+    /// While subagents are still at work the request is still running, so
+    /// the clock keeps going past the session's own turn end.
     func elapsedText(now: Date) -> String {
         let start = currentTurn?.startedAt ?? startedAt
-        let end = currentTurn?.endedAt ?? (lifecycle.isLive ? now : lastActivityAt)
+        let end = isKeptRunningBySubagents ? now : (currentTurn?.endedAt ?? (lifecycle.isLive ? now : lastActivityAt))
         return SessionElapsedFormatter.string(from: max(0, end.timeIntervalSince(start)))
     }
 
@@ -359,6 +395,7 @@ enum HaloSnapshot {
                 lifecycle: summary.lifecycle,
                 phase: summary.phase,
                 needsReview: summary.needsReview,
+                hasWorkingSubagents: summary.hasWorkingSubagents,
                 currentUserMessage: prompt.map(normalized),
                 lastActivityAt: summary.lastActivityAt,
                 startedAt: summary.startedAt,
@@ -408,6 +445,17 @@ extension HaloSession {
 }
 
 /// Only L3 rows (USER / TURN END / FAILED / ABORTED) may reach the Notch.
+///
+/// A turn boundary is news in two shapes:
+///
+/// - a row the previous snapshot did not hold, and
+/// - a turn-end row it did hold, ended again. A Turn has one turn-end row
+///   (`turn_end:<session>:<turn>`); when the Turn resumes — a task
+///   notification bringing a subagent's result, a queued prompt — and ends a
+///   second time, that row is rewritten in place with the later time. It
+///   counts only if the session was at work in the previous snapshot: the
+///   same end reported twice (transcript record, then the Stop hook, at
+///   slightly different times) finds the session already stopped.
 enum HaloActivityDiff {
     static func turnEvents(
         previous: [HaloSession],
@@ -422,17 +470,27 @@ enum HaloActivityDiff {
             // An orphan promoted to top level still notifies.
             if let groupID = session.groupID, listedIDs.contains(groupID) { continue }
             guard let old = previousByID[session.id] else { continue }
-            let seen = Set(old.recentRows.map(\.id))
-            for row in session.recentRows where !seen.contains(row.id) && row.level == .l3 {
-                // A session entering the working set arrives with its whole
-                // recent window at once. Rows no newer than the last activity
-                // its summary already reported are that backfill, not news;
-                // a prompt and turn end that landed since still notify.
-                if !old.detailLoaded, row.occurredAt <= old.lastActivityAt { continue }
+            let seenAt = Dictionary(old.recentRows.map { ($0.id, $0.occurredAt) }, uniquingKeysWith: { first, _ in first })
+            for row in session.recentRows where row.level == .l3 {
+                if let previousEnd = seenAt[row.id] {
+                    guard row.tag != .user, row.occurredAt > previousEnd, old.statusTone == .blue else { continue }
+                } else if !old.detailLoaded, row.occurredAt <= old.lastActivityAt {
+                    // A session entering the working set arrives with its whole
+                    // recent window at once. Rows no newer than the last activity
+                    // its summary already reported are that backfill, not news;
+                    // a prompt and turn end that landed since still notify.
+                    continue
+                }
                 switch row.tag {
                 case .user:
                     events.append(.init(sessionID: session.id, kind: .started, row: row))
                 case .turnEnd:
+                    // A turn that ends leaving the session parked while
+                    // its subagents are still at work has not finished the
+                    // request: no "Turn complete" yet. The end that leaves
+                    // none at work comes later — the same row, ended again
+                    // — and notifies then.
+                    if session.isKeptRunningBySubagents { continue }
                     events.append(.init(sessionID: session.id, kind: .ended, row: row))
                 case .turnFailed, .aborted:
                     // A failed tool call (`.failed`, Exec lane) is routine,

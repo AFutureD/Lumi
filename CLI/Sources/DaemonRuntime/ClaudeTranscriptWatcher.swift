@@ -20,6 +20,11 @@ private let lifecycleLog = Logger(label: "lifecycle")
 /// session stays Running forever. Unlike `CodexRolloutWatcher` it never scans
 /// a directory: only sessions already in the repository and still active are
 /// polled, so there is no first-run baseline to establish.
+///
+/// The same pass closes the subagents a gone process left behind
+/// (`ClaudeSubagentIdentity.leftBehindAt`): they write nothing when their
+/// process exits or is killed, so nothing else would ever stop them reading
+/// Running — and keeping their parked parent Running with them.
 public actor ClaudeTranscriptWatcher: Service {
     private let repository: any SessionRepository
     private let homeDirectory: URL
@@ -68,6 +73,83 @@ public actor ClaudeTranscriptWatcher: Service {
                 log.error("claude_watcher_scan_failed", metadata: .fields(["session": summary.id.rawValue, "error": error]))
             }
         }
+        guard !Task.isCancelled else { return }
+        await closeSubagentsLeftBehind(among: summaries)
+    }
+
+    /// After the transcripts are caught up — so a subagent's last records
+    /// are in before it is closed — every Claude subagent that still reads
+    /// as at work is checked against its owning session's process
+    /// (`ClaudeSubagentIdentity.leftBehindAt`). One state-only event closes
+    /// it, `interrupted · idle`, through the same path as every event, so
+    /// the mirrors close it too. The event id is fresh each time: the check
+    /// is a state, and a subagent rebuilt from its transcript must be
+    /// closable again.
+    private func closeSubagentsLeftBehind(among listed: [SessionSummary]) async {
+        let candidates = listed.filter { $0.agent == .claudeSubagent && Self.isActive($0) }
+        guard !candidates.isEmpty else { return }
+        do {
+            // The pass above may have moved any of them; read them again.
+            let summaries = try await repository.listSessions(limit: 10_000)
+            let byID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var markersByOwner: [SessionID: ClaudeSubagentIdentity.ProcessMarkers] = [:]
+            for candidate in candidates {
+                guard !Task.isCancelled else { return }
+                guard let subagent = byID[candidate.id], subagent.isAtWork,
+                      let owner = ClaudeSubagentIdentity.processOwner(of: subagent, in: byID) else { continue }
+                let markers: ClaudeSubagentIdentity.ProcessMarkers
+                if let known = markersByOwner[owner.id] {
+                    markers = known
+                } else {
+                    markers = try await processMarkers(of: owner.id)
+                    markersByOwner[owner.id] = markers
+                }
+                guard let closedAt = ClaudeSubagentIdentity.leftBehindAt(subagent, owner: owner, markers: markers) else {
+                    continue
+                }
+                let event = AgentIngressEvent(
+                    eventID: EventID("claude-subagent-left-behind:\(subagent.id.rawValue):\(UUID().uuidString)"),
+                    sessionID: subagent.id,
+                    agent: .claudeSubagent,
+                    occurredAt: closedAt,
+                    lifecycle: .interrupted,
+                    phase: .idle
+                )
+                let applied = try await repository.apply(event)
+                if applied { onEvent(event) }
+                log.info("subagent_closed_with_its_process", metadata: .fields([
+                    "session": subagent.id.rawValue,
+                    "owner": owner.id.rawValue,
+                    "owner_lifecycle": owner.lifecycle.rawValue,
+                    "owner_started": markers.startSource ?? "-",
+                    "owner_ended": markers.endReason ?? "-",
+                    "applied": applied,
+                ]))
+            }
+        } catch {
+            log.error("claude_watcher_close_failed", metadata: .fields(["error": error]))
+        }
+    }
+
+    /// The owning session's latest start and end, read from its two marker
+    /// rows (one row per kind, rewritten by each newer start / end).
+    private func processMarkers(of owner: SessionID) async throws -> ClaudeSubagentIdentity.ProcessMarkers {
+        let startedID = TimelineItemIDs.sessionMarker(owner, .sessionStarted)
+        let endedID = TimelineItemIDs.sessionMarker(owner, .sessionEnded)
+        let rows = try await repository.timelineItems(id: owner, itemIDs: [startedID, endedID])?.timeline ?? []
+        func marker(_ id: TimelineItemID) -> (at: Date, detail: String?)? {
+            guard let item = rows.first(where: { $0.id == id }),
+                  case let .sessionMarker(payload) = item.payload else { return nil }
+            return (item.occurredAt, payload.detail)
+        }
+        let started = marker(startedID)
+        let ended = marker(endedID)
+        return ClaudeSubagentIdentity.ProcessMarkers(
+            startedAt: started?.at,
+            startSource: started?.detail,
+            endedAt: ended?.at,
+            endReason: ended?.detail
+        )
     }
 
     /// A session whose transcript can still change without a hook arriving.

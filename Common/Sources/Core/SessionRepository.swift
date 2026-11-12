@@ -147,10 +147,6 @@ public enum SessionReduction {
         let phase = shouldUpdateState
             ? (event.phase ?? current?.phase ?? .idle)
             : (current?.phase ?? .idle)
-        // Sticky until the human opens the session; `markSessionReviewed`
-        // is the only thing that clears it.
-        let endsTurn = if case .turnEnd = event.timelineItem?.payload { true } else { false }
-        let needsReview = endsTurn || (current?.needsReview ?? false)
         // Sticky until the human engages the session again, under the same
         // predicate that resurrects a deleted one.
         let hiddenInNotch = event.resurrectsHiddenSession
@@ -163,16 +159,6 @@ public enum SessionReduction {
         // resurrection does not clear either.
         let hiddenByFilter = current?.hiddenByFilter ?? false
         let filterEvaluated = current?.filterEvaluated ?? false
-        // The tiers a human should act on: approval orange, unreviewed green,
-        // failure red.
-        let needsAttention = switch SessionStatusTone.resolve(
-            lifecycle: lifecycle,
-            phase: phase,
-            needsReview: needsReview
-        ) {
-        case .orange, .green, .red: true
-        case .blue, .gray: false
-        }
         let isIdentityOnly = event.title != nil
             && event.workspace == nil
             && event.lifecycle == nil
@@ -192,6 +178,31 @@ public enum SessionReduction {
             demotesSubagent ? current!.agent : event.agent
         } else {
             current?.agent ?? event.agent
+        }
+        let lineage = eventLineage ?? current?.lineage
+        // "Not looked at yet" belongs to the session the human asked for. A
+        // subagent's turn end is its parent's internal progress, so a
+        // subagent thread never carries the flag — whichever event tells the
+        // reduction it is one, including a late lineage. On a main session
+        // the flag is sticky until the human opens it; `markSessionReviewed`
+        // is the only thing that clears it.
+        let endsTurn = if case .turnEnd = event.timelineItem?.payload { true } else { false }
+        let needsReview = SessionSummary.isSubagentThread(agent: agent, lineage: lineage)
+            ? false
+            : endsTurn || (current?.needsReview ?? false)
+        // The tiers a human should act on, read from the session's own
+        // state: approval orange, unreviewed green, failure red. Subagents
+        // still working under a parked parent are no part of this bit — a
+        // store derives that from the sessions it holds
+        // (`SessionSummary.hasWorkingSubagents`), a reduction sees one.
+        let needsAttention = switch SessionStatusTone.resolve(
+            lifecycle: lifecycle,
+            phase: phase,
+            needsReview: needsReview,
+            hasWorkingSubagents: false
+        ) {
+        case .orange, .green, .red: true
+        case .blue, .gray: false
         }
         let agentName = agent.rawValue
             .replacingOccurrences(of: "_", with: " ")
@@ -241,9 +252,13 @@ public enum SessionReduction {
             hiddenInNotch: hiddenInNotch,
             hiddenByFilter: hiddenByFilter,
             filterEvaluated: filterEvaluated,
-            lineage: eventLineage ?? current?.lineage,
+            lineage: lineage,
             firstTurnAt: firstTurnAt,
-            aaas: aaas
+            aaas: aaas,
+            // Derived by the store from its subagent sessions; an event
+            // about this session says nothing about them, so the mark rides
+            // through until the store reads it again.
+            hasWorkingSubagents: current?.hasWorkingSubagents ?? false
         )
     }
 
@@ -261,7 +276,7 @@ public enum SessionReduction {
         guard current?.filterEvaluated != true else { return false }
         guard case let .message(message)? = event.timelineItem?.payload,
               message.role == .user else { return false }
-        return summary.lineage?.parentSessionID == nil && !summary.agent.isSubagent
+        return !summary.isSubagentThread
     }
 }
 

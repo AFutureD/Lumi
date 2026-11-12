@@ -21,7 +21,7 @@ flowchart LR
 
 - **用户相关数据**：Session 标题、Agent、主 Session / Subagent 类型、Subagent 父子关系、工作目录、生命周期、阶段、用户/Assistant 消息、工具状态、计划、子 Agent、错误、模型配置、内部上下文和消耗指标，以及两个由用户操作产生的标记——已查看（清除绿色待查看，[MAC-R-019](modules/mac-session-view.md#mac-r-019-打开-session-即视为已查看)）和 Notch 归档（[MAC-R-014](modules/mac-session-view.md#mac-r-014-notch-显示-session-当前状态)）。
 - **创建来源**：安装了 Lumi Hook 的 Codex 或 Claude Code Session，在产生新活动时进入 Lumi；首次进入会连同已有的完整对话记录一起导入（[MAC-R-024](modules/mac-session-view.md#mac-r-024-session-随-agent-活动进入-lumi)）。
-- **更新来源**：Agent 的 Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或时间线。运行中的 Session 另有一条不依赖 Hook 的更新路径：daemon 每隔约 2 秒跟进 Agent 的本机对话记录（Claude 与 Codex 都是），所以用户中止一个回合后——在 CLI 里按 Esc 中止 Claude，或在 Codex / 包装应用里中断 Codex——即使 Agent 不再上报任何事件，Session 也会在数秒内变为中断（红色）；Claude 中止前最后设置的标题一并生效。
+- **更新来源**：Agent 的 Session 身份提供 Main Session 标题、Subagent 自身名称或任务身份，以及两者的父子关系；用户消息、Assistant 回复、工具调用、计划变化、子 Agent 活动、模型或线程设置变化、上下文压缩、内部推理、Token 使用、完成、中断或错误更新对应状态或时间线。运行中的 Session 另有一条不依赖 Hook 的更新路径：daemon 每隔约 2 秒跟进 Agent 的本机对话记录（Claude 与 Codex 都是），所以用户中止一个回合后——在 CLI 里按 Esc 中止 Claude，或在 Codex / 包装应用里中断 Codex——即使 Agent 不再上报任何事件，Session 也会在数秒内变为中断（红色）；Claude 中止前最后设置的标题一并生效。Claude Code Session 结束时，它名下仍显示在跑的 Subagent 一并变为 Interrupted（[MAC-R-031](modules/mac-session-view.md#mac-r-031-claude-session-退出时名下还在跑的-subagent-一并结束)）。一条 Session 是否因 Subagent 还在跑而显示 Running 不单独保存：Mac 和 iPhone 各自从已同步的 Subagent 状态读出（[MAC-R-029](modules/mac-session-view.md#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
 - **主要消费者**：Mac 主窗口、Notch、在线的已配对 iPhone，以及回合结束时的推送提醒（[IOS-R-016](modules/iphone-live-view.md#ios-r-016-关键时刻推送提醒)）。
 - **保留方式**：不按时间自动删除；用户可删除单条或清空全部。
 - **展示边界**：主活动时间线显示属于当前 Session 的消息、工具、计划、子 Agent、错误和已进入时间线的未知记录；Subagent 为执行任务获得的父 Session 历史不重复显示为自身活动。模型配置、内部上下文与消耗指标按类别保留最新记录，不混入 Activity。Mac Session 详情的 Inspector 与 iPhone 详情的 Info Tab 展示这些诊断数据。规则见 [MAC-R-018](modules/mac-session-view.md#mac-r-018-subagent-使用自己的标题与活动)。
@@ -39,7 +39,7 @@ Mac 界面的外部内容只在三种时机同步：App 启动、用户手动刷
 
 ### 删除
 
-- **单条删除**：用户在 Mac 选择 Session，通过删除图标（Delete Session）并确认后，daemon、Mac 和已连接 iPhone 移除同一 Session（当时不在线的 iPhone 在重连对账时移除）。删除 Main Session 会连带删除挂在它下面的全部 Subagent（含 Subagent 的 Subagent）；单独删除一个 Subagent 不影响父级。
+- **单条删除**：用户在 Mac 选择 Session，通过删除图标（Delete Session）并确认后，daemon、Mac 和已连接 iPhone 移除同一 Session（当时不在线的 iPhone 在重连对账时移除）。删除 Main Session 会连带删除挂在它下面的全部 Subagent（含 Subagent 的 Subagent）；单独删除一个 Subagent 不删除父级；父级若是因为它还在跑才显示 Running，会回到已结束档（[MAC-R-029](modules/mac-session-view.md#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
 - **全部清空**：用户在“Settings > Daemon”确认清空后，全部 Lumi Session 被清空。
 - **删除后的新事件**：被动到达的旧活动不会让已删除 Session 重新出现；同一 Session 再次被人使用（新的用户请求，或会话重新启动）时它会回来。
 - **外部影响**：Agent 自身 Session 和日志不被删除。

@@ -1,3 +1,4 @@
+import Core
 import Transport
 import Foundation
 
@@ -65,6 +66,76 @@ public enum ClaudeSubagentIdentity {
             agentRole: nonEmpty(agentType) ?? nonEmpty(meta?.agentType),
             subagentKind: "claude_agent"
         )
+    }
+
+    /// What the daemon knows about the process that runs a Claude session's
+    /// subagents: the session's latest start and end, as its own markers
+    /// record them (`source` / `reason` in `detail`).
+    public struct ProcessMarkers: Equatable, Sendable {
+        public let startedAt: Date?
+        public let startSource: String?
+        public let endedAt: Date?
+        public let endReason: String?
+
+        public init(startedAt: Date? = nil, startSource: String? = nil, endedAt: Date? = nil, endReason: String? = nil) {
+            self.startedAt = startedAt
+            self.startSource = startSource
+            self.endedAt = endedAt
+            self.endReason = endReason
+        }
+    }
+
+    /// The Claude session whose process runs this subagent: the top of its
+    /// lineage. `nil` when the chain leaves the given sessions, loops, or
+    /// ends on anything but a main Claude session.
+    public static func processOwner(of subagent: SessionSummary, in byID: [SessionID: SessionSummary]) -> SessionSummary? {
+        var visited: Set<SessionID> = [subagent.id]
+        var current = subagent
+        while let parentID = current.lineage?.parentSessionID {
+            guard visited.insert(parentID).inserted, let parent = byID[parentID] else { return nil }
+            current = parent
+        }
+        return current.agent == .claude ? current : nil
+    }
+
+    /// The moment a subagent that still reads as at work is known to have
+    /// stopped with its process — or `nil` while that process may be alive.
+    ///
+    /// Claude Code runs subagents inside the session's own process and
+    /// writes nothing for them when that process goes away (verified against
+    /// 2.1.322: a background subagent cut off by the exit leaves no closing
+    /// transcript record, no `SubagentStop`, no `finished` in its meta). Two
+    /// facts about the owning session say the process is gone:
+    ///
+    /// - It ended and has not started again. The subagent stopped no later
+    ///   than its own last record. An end by `/clear` is not one: the
+    ///   process lives on under a new session.
+    /// - It started (`startup` / `resume`) after the subagent's last record:
+    ///   a new process cannot own a subagent that was running before it.
+    ///   This is what closes the subagents of a process that was killed
+    ///   without ever reporting its end. A `compact` restart is the same
+    ///   process and closes nothing.
+    ///
+    /// A state, not a moment: the caller asks again on every pass, so a
+    /// subagent rebuilt from its transcript (which holds no end) is closed
+    /// again. An interrupt of the session is deliberately no trigger —
+    /// background subagents outlive it, and a foreground one writes its own
+    /// marker.
+    public static func leftBehindAt(
+        _ subagent: SessionSummary,
+        owner: SessionSummary,
+        markers: ProcessMarkers
+    ) -> Date? {
+        guard subagent.agent == .claudeSubagent, subagent.isAtWork else { return nil }
+        if let startedAt = markers.startedAt,
+           markers.startSource == "startup" || markers.startSource == "resume",
+           startedAt > subagent.lastActivityAt {
+            return startedAt
+        }
+        if owner.lifecycle == .completed, let endedAt = markers.endedAt, markers.endReason != "clear" {
+            return max(endedAt, subagent.lastActivityAt)
+        }
+        return nil
     }
 
     /// List title: the spawn description, else the agent type.

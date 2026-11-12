@@ -30,12 +30,13 @@ private func summary(
     _ id: String,
     title: String = "Session title",
     lifecycle: SessionLifecycle = .running,
+    phase: TurnPhase = .idle,
     firstTurnAt: Date? = now,
     parent: String? = nil
 ) -> SessionSummary {
     SessionSummary(
         id: SessionID(id), agent: .claude, title: title,
-        lifecycle: lifecycle, phase: .idle,
+        lifecycle: lifecycle, phase: phase,
         startedAt: now, updatedAt: now, lastActivityAt: now,
         lineage: parent.map { SessionLineage(parentSessionID: SessionID($0)) },
         firstTurnAt: firstTurnAt
@@ -123,6 +124,39 @@ private func summary(
         retainedParents: [SessionID("parent")], lastPushAt: [:], now: now
     )
     #expect(candidates.map(\.sessionID) == [SessionID("lone")])
+}
+
+@Test func aTurnThatEndsWhileSubagentsWorkWaitsForThem() {
+    func candidates(
+        _ outcome: TurnOutcome,
+        child lifecycle: SessionLifecycle,
+        _ phase: TurnPhase = .idle,
+        main: SessionLifecycle = .waitingForInput
+    ) -> [SessionID] {
+        let notable = PushNotificationPolicy.notableEvents(
+            [event("end", session: "main", payload: .turnEnd(TurnEndTimelinePayload(outcome: outcome)))],
+            now: now
+        )
+        let summaries = [
+            SessionID("main"): summary("main", lifecycle: main),
+            SessionID("child"): summary("child", lifecycle: lifecycle, phase: phase, parent: "main"),
+        ]
+        return PushNotificationPolicy.candidates(
+            notable: notable, summaries: summaries,
+            retainedParents: Set(summaries.keys), lastPushAt: [:], now: now
+        ).map(\.sessionID)
+    }
+    // The request is not finished: no "Completed" alert yet.
+    #expect(candidates(.completed, child: .running, .thinking).isEmpty)
+    #expect(candidates(.completed, child: .waitingForInput, .waitingForApproval).isEmpty)
+    // Every subagent stopped: the turn that ends now is the one that alerts.
+    #expect(candidates(.completed, child: .completed) == [SessionID("main")])
+    #expect(candidates(.completed, child: .interrupted) == [SessionID("main")])
+    // A failed or aborted turn alerts whatever the subagents are doing.
+    #expect(candidates(.failed, child: .running, .thinking) == [SessionID("main")])
+    #expect(candidates(.aborted, child: .running, .thinking) == [SessionID("main")])
+    // So does a session that has already ended: nothing will end after it.
+    #expect(candidates(.completed, child: .running, .thinking, main: .completed) == [SessionID("main")])
 }
 
 @Test func provisionalAndUnknownSessionsStayQuiet() {

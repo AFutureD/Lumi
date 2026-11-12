@@ -461,6 +461,114 @@ private func jsonLines(_ objects: [[String: Any]]) -> String {
     #expect(ClaudeSubagentIdentity.transcriptPath(parentTranscriptPath: transcript.path, parent: SessionID(session), agentID: agentID) == agentTranscript.path)
 }
 
+// Claude Code runs subagents inside the session's process and writes nothing
+// for them when that process goes away: a background subagent cut off by the
+// exit would read Running for good, and keep a parked parent Running with
+// it. The transcript watcher closes them on its next pass.
+@Test func subagentsLeftBehindByAGoneProcessAreClosed() async throws {
+    let harness = try Harness()
+    defer { harness.tearDown() }
+    let session = "4ddc6ed1-2c10-4d9c-9b88-d36994bf2ad9"
+    let projectDir = harness.home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    let transcript = projectDir.appendingPathComponent("\(session).jsonl")
+    let agentDir = projectDir.appendingPathComponent("\(session)/subagents", isDirectory: true)
+    try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+    let watcher = ClaudeTranscriptWatcher(
+        repository: harness.repository, homeDirectory: harness.home,
+        onEvent: { harness.recorder.append($0) }
+    )
+    let parentID = SessionID(session)
+    let base: [String: Any] = ["session_id": session, "transcript_path": transcript.path, "cwd": "/tmp/proj", "prompt_id": "p1"]
+    func hook(_ fields: [String: Any]) async throws {
+        _ = try await harness.ingest(base.merging(fields) { $1 }, agent: .claude)
+    }
+    /// A background subagent: started, one record written, never stopped.
+    func startSubagent(_ agentID: String, at time: String) async throws -> SessionID {
+        try """
+        {"agentType":"general-purpose","description":"probe \(agentID)","toolUseId":"toolu_\(agentID)","spawnDepth":1,"requestShape":"background"}
+        """.write(to: agentDir.appendingPathComponent("agent-\(agentID).meta.json"), atomically: true, encoding: .utf8)
+        try jsonLines([[
+            "type": "user", "uuid": "s-\(agentID)", "isSidechain": true, "agentId": agentID, "sessionId": session,
+            "promptId": "agent-prompt", "timestamp": "2026-11-12T\(time).000Z", "cwd": "/tmp/proj",
+            "message": ["role": "user", "content": "run date ten times"],
+        ]]).write(to: agentDir.appendingPathComponent("agent-\(agentID).jsonl"), atomically: true, encoding: .utf8)
+        try await hook(["hook_event_name": "SubagentStart", "agent_id": agentID, "agent_type": "general-purpose",
+                        "timestamp": "2026-11-12T\(time).100Z"])
+        return ClaudeSubagentIdentity.sessionID(parent: parentID, agentID: agentID)
+    }
+    func summaries() async throws -> [SessionID: SessionSummary] {
+        Dictionary(uniqueKeysWithValues: try await harness.repository.listSessions(limit: 100).map { ($0.id, $0) })
+    }
+    func closings(of id: SessionID) -> [AgentIngressEvent] {
+        harness.recorder.events.filter { $0.sessionID == id && $0.lifecycle == .interrupted }
+    }
+
+    try jsonLines([[
+        "type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1",
+        "timestamp": "2026-11-12T11:06:40.000Z", "cwd": "/tmp/proj",
+        "origin": ["kind": "human"],
+        "message": ["role": "user", "content": "start a background agent"],
+    ]]).write(to: transcript, atomically: true, encoding: .utf8)
+    try await hook(["hook_event_name": "SessionStart", "source": "startup", "timestamp": "2026-11-12T11:06:39.000Z"])
+    try await hook(["hook_event_name": "UserPromptSubmit", "prompt": "start a background agent",
+                    "timestamp": "2026-11-12T11:06:40.100Z"])
+    let first = try await startSubagent("a38c7751eb1bdfacc", at: "11:06:46")
+    // The session's own turn ends; the background subagent works on.
+    try await hook(["hook_event_name": "Stop", "last_assistant_message": "main done", "timestamp": "2026-11-12T11:06:48.000Z"])
+
+    // Parked with a subagent at work: every end reads the session Running,
+    // and the watcher has nothing to close — the process is alive.
+    await watcher.scanOnce()
+    var sessions = try await summaries()
+    #expect(sessions[parentID]?.lifecycle == .waitingForInput)
+    #expect(sessions[first]?.lifecycle == .running)
+    #expect(SessionHierarchy.markingWorkingSubagents(Array(sessions.values)).first { $0.id == parentID }?.statusTone == .blue)
+    #expect(closings(of: first).isEmpty)
+
+    // The process exits. Nothing is written for the subagent.
+    try await hook(["hook_event_name": "SessionEnd", "reason": "other", "timestamp": "2026-11-12T11:07:28.396Z"])
+    #expect(try await summaries()[first]?.lifecycle == .running)
+    await watcher.scanOnce()
+    sessions = try await summaries()
+    #expect(sessions[parentID]?.lifecycle == .completed)
+    let closed = try #require(sessions[first])
+    #expect(closed.lifecycle == .interrupted)
+    #expect(closed.phase == .idle)
+    #expect(closed.statusTone == .red)
+    #expect(!closed.needsReview)
+    // Identity is what the subagent's own events made it.
+    #expect(closed.title == "probe a38c7751eb1bdfacc")
+    #expect(closed.lineage?.parentSessionID == parentID)
+    // One state-only event, sent on like any other so the mirrors apply it.
+    #expect(closings(of: first).count == 1)
+    #expect(closings(of: first).first?.timelineItem == nil)
+    // Another pass closes nothing twice.
+    await watcher.scanOnce()
+    #expect(closings(of: first).count == 1)
+
+    // The session is resumed in a new process, which starts its own subagent.
+    try await hook(["hook_event_name": "SessionStart", "source": "resume", "timestamp": "2026-11-12T11:20:00.000Z"])
+    let second = try await startSubagent("b0000000000000002", at: "11:20:05")
+    await watcher.scanOnce()
+    #expect(try await summaries()[second]?.lifecycle == .running)
+    #expect(closings(of: second).isEmpty)
+
+    // That process is killed without reporting its end; later the session is
+    // resumed once more. The new process cannot own the old subagent.
+    try await hook(["hook_event_name": "Stop", "last_assistant_message": "parked", "timestamp": "2026-11-12T11:20:10.000Z"])
+    await watcher.scanOnce()
+    sessions = try await summaries()
+    #expect(sessions[second]?.lifecycle == .running)
+    #expect(SessionHierarchy.sessionsWithWorkingSubagents(Array(sessions.values)) == [parentID])
+    try await hook(["hook_event_name": "SessionStart", "source": "resume", "timestamp": "2026-11-12T12:00:00.000Z"])
+    await watcher.scanOnce()
+    sessions = try await summaries()
+    #expect(sessions[second]?.lifecycle == .interrupted)
+    #expect(SessionHierarchy.sessionsWithWorkingSubagents(Array(sessions.values)).isEmpty)
+    // The first one stays as it was closed.
+    #expect(closings(of: first).count == 1)
+}
+
 @Test func coldStartWithALargeHistoryDelegatesTheReplayToTheBackfill() async throws {
     let harness = try Harness(maximumInlineHistoryBytes: 16)
     defer { harness.tearDown() }

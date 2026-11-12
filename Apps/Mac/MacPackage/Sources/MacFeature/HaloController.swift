@@ -642,10 +642,8 @@ private struct HaloSessionRow: View {
     @State private var hovering = false
 
     /// The design gives the extra activity line to working (blue-tier) rows
-    /// only — waiting and finished rows stay single-line.
-    private var latestActivity: HaloActivityRow? {
-        session.statusTone == .blue ? session.recentRows.last : nil
-    }
+    /// only (`HaloSession.activityLine`).
+    private var latestActivity: HaloActivityRow? { session.activityLine }
 
     var body: some View {
         Button(action: onOpen) {

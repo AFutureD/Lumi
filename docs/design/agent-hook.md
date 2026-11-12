@@ -120,6 +120,59 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 - 早于 `origin` 字段的历史 transcript（旧版 Claude Code 所写）回放时开不出 Turn；不为旧数据保留启发式兜底。
 - steering（Turn 进行中用户再输入）开新 Turn，旧 Turn 不再收口——与 `prompt_id` 时代一致。
 
+## Subagent 与父 Session 的状态
+
+Subagent 是独立的子 Session（`claude_subagent` / `codex_subagent`，`lineage.parentSessionID` 指向父级）。它自己的 lifecycle 是「这个 subagent 在做什么」的唯一记录；父级的显示状态从这里派生，不另存一份。
+
+### 契约
+
+| 事实 | 规则 | 落点 |
+| --- | --- | --- |
+| subagent 没有未读 | subagent 线程（`agent.isSubagent` 或 lineage 带 parent）的 `needsReview` 恒为 false；迟到的 lineage 也会把已置的标记拿掉 | `SessionReduction.summary` |
+| 父级因 subagent 仍算 Running | 父级自身为 `waitingForInput · idle`，且任一后代（任意深度）处于工作态时，tone 为蓝、显示 lifecycle 为 running、状态文字只写 `Running`。`completed` 不升级；橙、红不变 | `SessionStatusTone.resolve(…hasWorkingSubagents:)` |
+| 工作态 | running / compacting，或 waitingForInput 且 phase ≠ idle。`starting` 不算 | `SessionStatusTone.isAtWork` |
+| 派生在哪里做 | 不落库、不进协议。每一端在产出会话列表的唯一出口，对它持有的全部 Session 算一次并标到 `SessionSummary.hasWorkingSubagents` 上；单独读出的详情在进入驻留前取列表的标记 | `SessionHierarchy.markingWorkingSubagents`；Mac `MacSessionStore.reloadFromCache` 与 `listMarked`，iPhone `MacChannelState.init` |
+| 已查看 | 被 subagent 抬成蓝色的父级（`waitingForInput · idle` 且 `hasWorkingSubagents`）打开时不消费 `needsReview`，subagent 停下即变绿；其余情形照旧，有标记就消费 | `SessionSummary.isReviewedByOpening`；`MacSessionStore.markSessionReviewed`、`RelayDeviceController.markReviewed` |
+| 完成提示 | Turn 正常结束而名下有 subagent 在工作时，不推送、不弹 Notch 回合完成卡片；失败 / 中断照常 | `PushNotificationPolicy.candidates`、`HaloActivityDiff.turnEvents` |
+| 同一 Turn 再次结束 | 一个 Turn 只有一条 turn-end 行（`turn_end:<session>:<turn>`），续跑后再次结束是原地改写。Notch 把「id 已见过、时间更晚、且上一帧 Session 为蓝色」的 turn-end 行当作新的结束；同一次结束被两路先后上报时上一帧已不是蓝色，不重复 | `HaloActivityDiff.turnEvents` |
+| 进程不在了就收口 | 仍处于工作态的 `claude_subagent`，其所属主 Session 的进程已知不在时，补一条只带状态的事件 `interrupted · idle`。每轮扫描都重新判断 | `ClaudeSubagentIdentity.leftBehindAt`，`ClaudeTranscriptWatcher.closeSubagentsLeftBehind` |
+
+`needsAttention` 仍由 reducer 按 Session 自身状态计算（传 `hasWorkingSubagents: false`）：reducer 一次只看一条 Session。
+
+### 进程不在了：两条依据
+
+Claude 的 subagent 运行在主 Session 的进程里。`leftBehindAt` 读主 Session（lineage 顶端的 `claude` Session）的两条 marker 行——最近一次 `session_started` 与 `session_ended`，各一行、被更新的一次原地改写——给出收口时刻：
+
+| 依据 | 收口时刻 | 不算的情况 |
+| --- | --- | --- |
+| 主 Session 为 `completed` 且有 `session_ended` | max(结束时刻, subagent 最后一条状态断言)——进程退出过程中还可能再写一条 | `reason == "clear"`：进程还在，只是换了 Session |
+| `session_started`（`startup` / `resume`）晚于 subagent 最后一条状态断言 | 这次启动的时刻。新进程不可能拥有在它之前就在跑的 subagent；这一条收掉「进程被强杀、没有 `SessionEnd`」留下的 subagent | `compact`：同一进程 |
+
+放在 watcher 而不是 `SessionEnd` hook 的一次性处理里，因为它是状态而不是事件：
+
+- 先追平 sidechain transcript 再收口，subagent 最后几条记录不会丢（收口后它不再被轮询）。
+- reingest 会把 subagent 从 transcript 重放回 running（transcript 里没有结束记录）；下一轮扫描重新收口。因此事件 ID 每次新取，不做去重——判断本身幂等：收口后不再处于工作态。
+- 升级前留下的存量由同一条规则在 daemon 启动后的第一轮扫描处理，不需要迁移。
+
+事件走正常管道发布，镜像同样收口。
+
+### 用真实会话验证过的信号
+
+Claude Code 2.1.322，经 Paseo 驱动：
+
+| 场景 | subagent 留下的信号 | Lumi 的结果 |
+| --- | --- | --- |
+| 中断父级，后台 subagent 在跑 | 无；subagent 继续执行并照常写 transcript | 仍为 running——正确，不能收口 |
+| 中断父级，前台 subagent 在跑 | sidechain transcript 写入中断标记 | transcript 路径已收为 interrupted |
+| `TaskStop` 停掉后台 subagent | sidechain transcript 写入中断标记 | 同上 |
+| 父进程退出（Paseo 归档），后台 subagent 在跑 | 无：在途工具以退出码 137 结束，没有终态记录、没有 `SubagentStop`、meta 没有 `finished`；父级有 `SessionEnd(reason: other)` | 由上面的规则收口 |
+
+未验证：`/clear` 之后后台 subagent 是否存活（所以不收口）；`resume` 时旧进程是否仍在运行同一 Session（若在，它的 subagent 会被收口，下一条状态断言按状态时钟把它带回 running）。
+
+sidechain 的 `agent-<id>.meta.json` 里另有 `requestShape`（`foreground` / `background`）、`finished`、`stoppedByUser`、`toolUseId`。当前规则不读它们：`finished` 并非每个版本、每种启动方式都写，不能作为收口依据。
+
+Codex 不做收口：子线程正常结束后停在 `waitingForInput · idle`，不属于工作态。
+
 ## Hook 事件映射（Codex 与 Claude 同构）
 
 | Hook | lifecycle | phase | Turn | Timeline item |
@@ -134,7 +187,7 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 | `Stop(last_assistant_message)` | Waiting For Input | Idle | 收口当前 Turn：endedAt/outcome=completed/lastAssistantMessage | `turnEnd(completed, message)` |
 | `StopFailure`（Claude） | Failed | Idle | 收口当前 Turn：outcome=failed | `turnEnd(failed, error_type · error_message)` |
 | `PreCompact(trigger)` / `PostCompact` | Compacting / Running | Compacting / Thinking | — | `sessionMarker(compactionStarted/Ended)` |
-| `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)`；Claude 且会话仍临时（无 Turn、无 transcript）→ 改为 `disposition: .discard`（删除 + 墓碑，无 item） |
+| `SessionEnd(reason)` | Completed | Idle | — | `sessionMarker(sessionEnded)`；Claude 且会话仍临时（无 Turn、无 transcript）→ 改为 `disposition: .discard`（删除 + 墓碑，无 item）；名下仍在工作的 Claude subagent 由 watcher 在下一轮收口（见「Subagent 与父 Session 的状态」） |
 | `InstructionsLoaded`（Claude） | — | — | — | `context(instructions)`，content = `{file_path, load_reason}` |
 | `ConfigChange` / `CwdChanged`（Claude） | — | — | — | `config(config_change / cwd_changed)`，content = `{file_path, source}` / `{old_cwd, new_cwd}`；CwdChanged 同时更新 workspace |
 | `Notification(agent_needs_input / permission_prompt / idle_prompt)`（Claude） | Waiting For Input | Waiting For Approval / Idle | — | 无 |
@@ -371,7 +424,9 @@ hook 入口按 provider 类型化（`CodexHookPayload` / `ClaudeHookPayload`，�
 ## 当前限制
 
 - hook 触发的追平与 watcher 轮询（2 秒）之间存在最多一个轮询周期的可见性延迟。
-- 父 Session 被中断时，仍在运行的 Subagent 子 Session 不会级联收口（sidechain transcript 不写中断标记），停留在 running 直至手动 reingest。
+- Claude Code 进程被强制结束（不触发 `SessionEnd`）时，仍在工作的 subagent 没有任何结束信号，子 Session 停在 running；父级若停在 `waitingForInput · idle`，也因此一直显示 Running。同一 Session 之后再次启动（`startup` / `resume`）或正常结束时收口；一直不再打开则没有信号。不做按静默时长的判定：单次工具调用可以静默十分钟以上。
+- Subagent 全部结束而父级没有再开新一轮时，父级直接回到已结束档，不补发完成提示（提示由新的 TURN END 行触发）。Claude Code 会用 task notification 让父级续跑一轮，正常流程不受影响。
+- 后台运行的命令（`run_in_background` 的 Bash）不建模：只剩后台命令在跑时，Session 按已结束显示。
 - rollout / transcript 格式不是稳定 API；未知或变化字段必须默认忽略。
 - helper 没有磁盘队列；daemon 不在时的 hook 帧不重放。
 - Codex 0.150 新增 `Interrupt` hook（低延迟收口中断 Turn）；等发布版成为基线后加入 `HookEventName` 与安装器注册，在此之前中断收口由 rollout watcher 承担。

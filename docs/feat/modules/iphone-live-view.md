@@ -135,9 +135,12 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 ### IOS-R-009 Session 状态颜色与 Mac 一致
 
 - 条件：iPhone 显示来自任意已配对 Mac 的 Session。
-- 行为：列表状态胶囊与详情状态胶囊遵循五档梯级 [MAC-R-013](./mac-session-view.md#mac-r-013-session-状态颜色跨端一致)，包括绿色“已结束但还没看过”档。
+- 行为：列表状态胶囊与详情状态胶囊遵循五档梯级 [MAC-R-013](./mac-session-view.md#mac-r-013-session-状态颜色跨端一致)，包括绿色“已结束但还没看过”档。名下还有 Subagent 在跑的 Session 仍是 Running（[MAC-R-029](./mac-session-view.md#mac-r-029-名下有-subagent-在跑的-session-仍是-running)），并归入 `Status` 过滤的 Running 组；Subagent 标签没有绿色（[MAC-R-030](./mac-session-view.md#mac-r-030-subagent-没有待查看)）。
 - 结果：切换 Mac 通道或查看同一 Session 的不同客户端时，颜色含义不变。
-- 限制或例外：绿色标记在任一端打开即清除——Mac 侧见 [MAC-R-019](./mac-session-view.md#mac-r-019-打开-session-即视为已查看)，iPhone 侧见 [IOS-R-013](#ios-r-013-iphone-打开即视为已查看)。
+- 限制或例外：
+  - 绿色标记在任一端打开即清除——Mac 侧见 [MAC-R-019](./mac-session-view.md#mac-r-019-打开-session-即视为已查看)，iPhone 侧见 [IOS-R-013](#ios-r-013-iphone-打开即视为已查看)。因名下 Subagent 还在跑而显示 Running 的 Session，打开它不清除；Subagent 停下后它在 iPhone 上显示为绿色，再打开一次才清除。
+  - 这样一条 Running 的 Session，列表行里的最近活动仍是它自己的最后一条（回合结束）。
+  - 详情 Info 的 Lifecycle、Turn Phase 和 Needs Attention 显示 Session 自己的原始状态，不随 Subagent 变化。
 
 ### IOS-R-010 Session 内容缓存在本机
 
@@ -186,7 +189,12 @@ iPhone 经 Relay（默认内置，也可自托管）与一台或多台 Mac 建�
 - 条件：iPhone 允许了通知权限，且至少配对了一台 Mac。
 - 行为：Session 回合结束、失败或被中断时，Mac 的 daemon 让 Relay 向这台 iPhone 发一条系统通知（带默认提示音）：标题是 Session 标题（过长时截断并加省略号），副标题是它的状态（Completed / Failed / Interrupted，与列表状态胶囊同一套词）；同一 Session 的多条提醒在通知中心叠成一组。App 在前台时不弹横幅——列表本来就在实时更新。
 - 结果：App 挂起或未打开也能第一时间知道哪个 Session 需要回来看；点通知直接落在那个 Session 的详情页，打开即视为已查看（[IOS-R-013](#ios-r-013-iphone-打开即视为已查看)），这个 Session 已送达的通知同时清掉。
-- 限制或例外：通知的标题和状态以明文经 Relay 转发，Relay 不把它们写入存储（运行日志只记录长度），Session 的完整内容仍走端到端加密通道。提醒只发给这台 Mac 点过 Match 的 iPhone——Paired iPhones 里显示 Unverified 的（Mac 没批准过、或钥匙被中转服务换过）和 Session 内容一样收不到（[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。子 Agent 的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。同一 Session 的提醒有数秒冷却；超过约两分钟才补录到达的旧回合不再提醒；还没在任何界面出现过的 Session 不提醒；回合开始不提醒。在 Mac 上撤销这台 iPhone 后提醒立即停止；Mac 离线（daemon 没在跑）时没有提醒来源。
+- 限制或例外：
+  - 内容边界：通知的标题和状态以明文经 Relay 转发，Relay 不把它们写入存储（运行日志只记录长度），Session 的完整内容仍走端到端加密通道。
+  - 发给谁：提醒只发给这台 Mac 点过 Match 的 iPhone——Paired iPhones 里显示 Unverified 的（Mac 没批准过、或钥匙被中转服务换过）和 Session 内容一样收不到（[IOS-R-014](#ios-r-014-配对时两端比对数字mac-点-match-才生效)）。在 Mac 上撤销这台 iPhone 后提醒立即停止；Mac 离线（daemon 没在跑）时没有提醒来源。
+  - Subagent 还在跑：回合正常结束、Session 停在提示符，但名下还有 Subagent 在跑时不提醒；名下已经没有 Subagent 在跑的那一次结束才提醒。失败或中断照常提醒（[MAC-R-029](./mac-session-view.md#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
+  - Subagent 自己的回合不提醒——父 Session 已不在列表的孤儿子 Agent 例外，它在列表里也独立成行（同 [IOS-R-011](#ios-r-011-subagent-收成父-session-的标签)）。
+  - 不提醒的其他情形：同一 Session 的提醒有数秒冷却；超过约两分钟才补录到达的旧回合；还没在任何界面出现过的 Session；回合开始。
 
 ### IOS-R-017 用量与套餐额度只读且不缓存
 

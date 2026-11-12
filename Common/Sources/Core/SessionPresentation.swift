@@ -91,7 +91,8 @@ public extension SessionSummary {
 public struct SessionListRowPresentation: Equatable, Sendable {
     public let title: String
     public let agent: String
-    /// `Running · Responding` — display lifecycle · phase.
+    /// `Running · Responding` — display lifecycle · phase
+    /// (`SessionSummary.statusText`).
     public let status: String
     /// Part of the row diff: `needsReview` changes the tone without changing
     /// the status text (green ⇄ gray), so text alone under-reports changes.
@@ -100,7 +101,7 @@ public struct SessionListRowPresentation: Equatable, Sendable {
     public init(session: SessionSummary) {
         title = SessionListRowPresentation.normalizedTitle(session.title)
         agent = session.agent.displayName
-        status = "\(session.displayLifecycle.displayName) · \(session.phase.displayName)"
+        status = session.statusText
         tone = session.statusTone
     }
 

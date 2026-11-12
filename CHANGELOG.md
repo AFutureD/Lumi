@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Session 状态
+
+- 名下还有 Subagent 在跑的 Session 仍显示 Running：Session 自己的回合结束、但它启动的 Subagent（常见于 Claude Code 的后台 Subagent）还在工作或等待审批时，Mac 列表、详情、Notch 和 iPhone 都按蓝色 Running 显示，状态文字只写 `Running`；它们都停下后才回到待查看或 Completed。此前回合一结束就显示已完成。
+- 这种情况下不再提前提示完成：Notch 不弹回合完成卡片，iPhone 不发 Completed 推送，等 Session 报告 Subagent 结果的那一轮结束时再提示。回合失败或被中断照常提示。显示 Running 期间打开这条 Session 不算已查看，Subagent 停下后它照常变绿。
+- Subagent 不再有待查看：Subagent 结束后直接是灰色 Completed，绿色只出现在 Main Session 上。此前 Subagent 的绿点只有点开它自己才会消失，看过父 Session 也一直留着。升级时已保存的 Subagent 待查看标记一次性清除。
+- Claude Code 已经不在时，它名下还在跑的 Subagent 在数秒内变为 Interrupted：Session 结束时（例如在 Paseo 里归档），或被强制结束后这条 Session 重新启动、恢复时。此前这些 Subagent 没有任何结束记录，会一直显示 Running。升级后已保存的这类 Subagent 一并处理。
+- [Lumi for Mac] - 修复：同一个回合被续上后再次结束时（Agent 接着报告 Subagent 的结果，或排队的请求接着执行），Notch 没有回合完成卡片，也没有失败提示。
+- Lumi for Mac、Lumi for iPhone 与 daemon 一起发布；本地协议不变。
+
 ## [0.3.5] - 2026-11-12
 
 v0.3.4 的发布在 CI 的 Relay 检查一步失败（Relay 测试里写死的协议号没有随 1.6 更新），流程随即取消，没有发出安装包；修好后以 0.3.5 发出。Relay 本身这一版没有改动。

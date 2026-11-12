@@ -64,6 +64,19 @@ App 启动时会自动重装版本过期或起不来的已安装 daemon（[MAC-R
 
 **完成信号**：连接错误消失，列表与 daemon 当前数据一致。
 
+## Session 一直显示 Running
+
+**用户会看到**：一条 Claude Code Session 早就停在提示符，在 Mac 列表、Notch 和 iPhone 却一直是蓝色 Running；展开它，下面有一个 Subagent 同样一直显示 Running，持续时间不停地走。
+
+**常见原因**：Claude Code 被强制结束（进程被杀、崩溃、机器重启），没有留下结束记录。它的 Subagent 因此停在 Running，父 Session 也跟着显示 Running（[MAC-R-029](modules/mac-session-view.md#mac-r-029-名下有-subagent-在跑的-session-仍是-running)）。
+
+**恢复步骤**（任选其一）：
+
+1. 在 Claude Code（或承载它的应用，如 Paseo）里恢复这条 Session。数秒内，上一次留下的 Subagent 变为 Interrupted，父 Session 回到已结束档（[MAC-R-031](modules/mac-session-view.md#mac-r-031-claude-session-退出时名下还在跑的-subagent-一并结束)）。
+2. 不打算再用这条 Session：在 Mac 列表选中那个 Subagent 行，点 Delete Session 并确认。父 Session 随即回到已结束档。
+
+**完成信号**：父 Session 的状态点不再是蓝色，Subagent 簇里没有蓝点。
+
 ## Session 标题停在默认值
 
 **用户会看到**：Agent 侧已经有可识别标题，但 Lumi 列表仍显示默认标题（`Codex Session` / `Claude Session`），或 Subagent 没有挂在 Main Session 下。

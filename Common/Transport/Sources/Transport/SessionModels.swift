@@ -381,6 +381,15 @@ public struct SessionSummary: Codable, Hashable, Sendable {
     /// sessions ingested before ownership existed and for sessions only ever
     /// seen by a watcher (no hook frame to detect from).
     public let aaas: SessionAaaS?
+    /// A subagent this session spawned — at any depth — is still at work.
+    ///
+    /// Derived, never stored and never sent: the fact lives in the subagent
+    /// sessions themselves, so each end reads it off the sessions it holds
+    /// (`SessionHierarchy.markingWorkingSubagents`) at the one place it
+    /// produces its session list. It is absent from `CodingKeys`; a decoded
+    /// or freshly reduced summary says `false` until its store marks it.
+    /// Part of equality, so a row repaints when its subagents stop.
+    public let hasWorkingSubagents: Bool
 
     public init(
         id: SessionID,
@@ -399,7 +408,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         filterEvaluated: Bool = false,
         lineage: SessionLineage? = nil,
         firstTurnAt: Date? = nil,
-        aaas: SessionAaaS? = nil
+        aaas: SessionAaaS? = nil,
+        hasWorkingSubagents: Bool = false
     ) {
         self.id = id
         self.agent = agent
@@ -418,6 +428,7 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         self.lineage = lineage
         self.firstTurnAt = firstTurnAt
         self.aaas = aaas
+        self.hasWorkingSubagents = hasWorkingSubagents
     }
 
     /// The same summary with the review flag and its derived attention bit
@@ -440,7 +451,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             filterEvaluated: filterEvaluated,
             lineage: lineage,
             firstTurnAt: firstTurnAt,
-            aaas: aaas
+            aaas: aaas,
+            hasWorkingSubagents: hasWorkingSubagents
         )
     }
 
@@ -463,7 +475,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             filterEvaluated: filterEvaluated,
             lineage: lineage,
             firstTurnAt: firstTurnAt,
-            aaas: aaas
+            aaas: aaas,
+            hasWorkingSubagents: hasWorkingSubagents
         )
     }
 
@@ -486,7 +499,8 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             filterEvaluated: filterEvaluated,
             lineage: lineage,
             firstTurnAt: firstTurnAt,
-            aaas: aaas
+            aaas: aaas,
+            hasWorkingSubagents: hasWorkingSubagents
         )
     }
 
@@ -509,8 +523,44 @@ public struct SessionSummary: Codable, Hashable, Sendable {
             filterEvaluated: evaluated,
             lineage: lineage,
             firstTurnAt: firstTurnAt,
-            aaas: aaas
+            aaas: aaas,
+            hasWorkingSubagents: hasWorkingSubagents
         )
+    }
+
+    /// The same summary with the derived subagent mark replaced.
+    public func withWorkingSubagents(_ working: Bool) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            agent: agent,
+            title: title,
+            workspace: workspace,
+            lifecycle: lifecycle,
+            phase: phase,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            lastActivityAt: lastActivityAt,
+            needsAttention: needsAttention,
+            needsReview: needsReview,
+            hiddenInNotch: hiddenInNotch,
+            hiddenByFilter: hiddenByFilter,
+            filterEvaluated: filterEvaluated,
+            lineage: lineage,
+            firstTurnAt: firstTurnAt,
+            aaas: aaas,
+            hasWorkingSubagents: working
+        )
+    }
+
+    /// A subagent thread: a session another session spawned. Either fact
+    /// says so — the agent kind, or a lineage naming a parent (a Codex child
+    /// thread can be seen as plain `codex` until its lineage arrives).
+    public var isSubagentThread: Bool {
+        Self.isSubagentThread(agent: agent, lineage: lineage)
+    }
+
+    public static func isSubagentThread(agent: AgentKind, lineage: SessionLineage?) -> Bool {
+        agent.isSubagent || lineage?.parentSessionID != nil
     }
 
     /// A provisional session: the agent process is up but no Turn has started
@@ -575,6 +625,32 @@ public struct SessionSummary: Codable, Hashable, Sendable {
         case lineage
         case firstTurnAt
         case aaas
+    }
+
+    /// Strict, as the synthesized decoding was: every stored field must be
+    /// present. `hasWorkingSubagents` is not a key — a decoded summary is
+    /// unmarked.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decode(SessionID.self, forKey: .id),
+            agent: try c.decode(AgentKind.self, forKey: .agent),
+            title: try c.decode(String.self, forKey: .title),
+            workspace: try c.decodeIfPresent(String.self, forKey: .workspace),
+            lifecycle: try c.decode(SessionLifecycle.self, forKey: .lifecycle),
+            phase: try c.decode(TurnPhase.self, forKey: .phase),
+            startedAt: try c.decode(Date.self, forKey: .startedAt),
+            updatedAt: try c.decode(Date.self, forKey: .updatedAt),
+            lastActivityAt: try c.decode(Date.self, forKey: .lastActivityAt),
+            needsAttention: try c.decode(Bool.self, forKey: .needsAttention),
+            needsReview: try c.decode(Bool.self, forKey: .needsReview),
+            hiddenInNotch: try c.decode(Bool.self, forKey: .hiddenInNotch),
+            hiddenByFilter: try c.decode(Bool.self, forKey: .hiddenByFilter),
+            filterEvaluated: try c.decode(Bool.self, forKey: .filterEvaluated),
+            lineage: try c.decodeIfPresent(SessionLineage.self, forKey: .lineage),
+            firstTurnAt: try c.decodeIfPresent(Date.self, forKey: .firstTurnAt),
+            aaas: try c.decodeIfPresent(SessionAaaS.self, forKey: .aaas)
+        )
     }
 }
 

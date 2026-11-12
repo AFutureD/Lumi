@@ -384,6 +384,31 @@ public actor SQLiteSessionRepository: SessionRepository {
                 "ms": LogClock.milliseconds(since: started),
             ]))
         }
+        // A subagent never carries "not looked at yet" (`SessionReduction`).
+        // Stored subagents drop the flag, and the attention bit is
+        // re-derived from what is left of the ladder (approval, failure) —
+        // the resolver's own conditions, in SQL: a migration must not decode
+        // a summary, or a field added later would fail it on an old file.
+        // Each store sweeps its own rows; a mirror holding an older copy
+        // agrees with the daemon after its next reconcile.
+        migrator.registerMigration("lumi-v15-subagents-never-need-review") { db in
+            try db.execute(sql: """
+                UPDATE sessions SET summary =
+                    CAST(json_set(
+                        CAST(summary AS TEXT),
+                        '$.needsReview', json('false'),
+                        '$.needsAttention',
+                        CASE WHEN (json_extract(CAST(summary AS TEXT), '$.lifecycle') = 'waiting_for_input'
+                                   AND json_extract(CAST(summary AS TEXT), '$.phase') != 'idle')
+                               OR json_extract(CAST(summary AS TEXT), '$.lifecycle') IN ('failed', 'interrupted')
+                             THEN json('true') ELSE json('false') END
+                    ) AS BLOB)
+                WHERE json_extract(CAST(summary AS TEXT), '$.needsReview') = 1
+                  AND (json_extract(CAST(summary AS TEXT), '$.agent') IN ('claude_subagent', 'codex_subagent')
+                       OR json_extract(CAST(summary AS TEXT), '$.lineage.parentSessionID') IS NOT NULL)
+                """)
+            dbLog.info("subagent_review_flags_cleared", metadata: .fields(["sessions": db.changesCount]))
+        }
         try migrator.migrate(database)
         Self.ensureAutoVacuum(database, path: path)
     }

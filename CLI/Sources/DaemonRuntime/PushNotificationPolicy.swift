@@ -62,7 +62,14 @@ public enum PushNotificationPolicy {
     /// Stage two: one candidate per session (the latest notable event wins),
     /// suppressing subagents whose parent is still retained (their turn ends
     /// are the parent's process noise), provisional sessions (never shown in
-    /// any UI), and sessions inside their cooldown window.
+    /// any UI), sessions inside their cooldown window — and a turn that
+    /// ended leaving the session parked while its subagents are still at
+    /// work (`SessionSummary.isKeptRunningBySubagents`): the request is not
+    /// finished, every surface still shows the session Running, and the
+    /// end that leaves no subagent at work alerts. A failed or aborted turn
+    /// alerts whatever the subagents are doing, and so does a session that
+    /// has already ended. `summaries` must be every retained session — the
+    /// subagents are read from it.
     public static func candidates(
         notable: [NotableEvent],
         summaries: [SessionID: SessionSummary],
@@ -79,10 +86,15 @@ public enum PushNotificationPolicy {
         // group) never alerts: it reaches no UI on any device, and the alert
         // title would leak a title the iPhone was never sent.
         let hiddenByFilter = SessionSummary.filterHiddenIDs(Array(summaries.values))
+        let stillWorking = SessionHierarchy.sessionsWithWorkingSubagents(Array(summaries.values))
         return latest.values.compactMap { event in
             guard let summary = summaries[event.sessionID], !summary.isProvisional,
                   !hiddenByFilter.contains(event.sessionID) else { return nil }
             if let parent = summary.lineage?.parentSessionID, retainedParents.contains(parent) { return nil }
+            if event.tag == .turnEnd,
+               summary.withWorkingSubagents(stillWorking.contains(event.sessionID)).isKeptRunningBySubagents {
+                return nil
+            }
             if let last = lastPushAt[event.sessionID], now.timeIntervalSince(last) < cooldown { return nil }
             return Candidate(
                 sessionID: event.sessionID,

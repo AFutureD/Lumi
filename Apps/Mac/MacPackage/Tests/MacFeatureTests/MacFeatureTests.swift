@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import Core
 import DesignSystem
+import Persistence
 import Transport
 import NookApp
 @testable import MacFeature
@@ -500,11 +501,19 @@ private let nookNow = Date(timeIntervalSince1970: 100)
 @Test func nookSubagentDisclosureFollowsTheLifecycleUntilToggled() {
     let parentID = SessionID("parent")
     func item(_ lifecycle: SessionLifecycle, phase: TurnPhase) -> HaloListItem {
+        // As the store hands them over: marked with whether subagents are
+        // still at work. A finished parent's subagent has finished too —
+        // one still running would keep the parent in the Running tier.
+        let childDone = lifecycle != .running
         let rows = HaloSnapshot.make(
-            summaries: [
+            summaries: SessionHierarchy.markingWorkingSubagents([
                 nookSummary(id: "parent", lifecycle: lifecycle, phase: phase, updatedAt: 30),
-                hierarchySummary(id: "child", parentID: "parent", updatedAt: 29),
-            ],
+                hierarchySummary(
+                    id: "child", parentID: "parent",
+                    lifecycle: childDone ? .completed : .running, phase: childDone ? .idle : .thinking,
+                    updatedAt: 29
+                ),
+            ]),
             details: [:]
         )
         return HaloSnapshot.listItems(from: rows)[0]
@@ -617,6 +626,8 @@ private func nookRow(
 private func nookSession(
     _ rows: [HaloActivityRow],
     lifecycle: SessionLifecycle = .running,
+    phase: TurnPhase = .thinking,
+    hasWorkingSubagents: Bool = false,
     id: String = "session",
     parentID: SessionID? = nil,
     lastActivityAt: Date = Date(timeIntervalSince1970: 0),
@@ -628,8 +639,9 @@ private func nookSession(
         agent: .codex,
         workspace: nil,
         lifecycle: lifecycle,
-        phase: .thinking,
+        phase: phase,
         needsReview: false,
+        hasWorkingSubagents: hasWorkingSubagents,
         currentUserMessage: "Build it",
         lastActivityAt: lastActivityAt,
         startedAt: Date(timeIntervalSince1970: 0),
@@ -662,6 +674,132 @@ private func nookSession(
     // Unchanged rows never re-fire, and unknown sessions are ignored.
     #expect(HaloActivityDiff.turnEvents(previous: [after], current: [after]).isEmpty)
     #expect(HaloActivityDiff.turnEvents(previous: [], current: [after]).isEmpty)
+}
+
+// A turn that ends while the session's subagents are still at work has not
+// finished the request: the session reads Running and no card pops.
+@Test func nookHoldsTheTurnCompleteCardWhileSubagentsAreAtWork() {
+    let before = nookSession([nookRow("u1", .user)])
+    let parked = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnEnd)],
+        lifecycle: .waitingForInput, phase: .idle, hasWorkingSubagents: true
+    )
+    #expect(HaloActivityDiff.turnEvents(previous: [before], current: [parked]).isEmpty)
+    #expect(parked.statusTone == .blue)
+    #expect(parked.statusText == "Running")
+    #expect(parked.isWorkingInNotch)
+    // Not "Turn complete", and nothing to archive yet.
+    #expect(!parked.turnEnded)
+    // Its last row is the turn end — not an activity to show under a
+    // running row; the subagent pills say what is running.
+    #expect(parked.activityLine == nil)
+
+    // Only the parked case is special. A session in the middle of its own
+    // turn with a (foreground) subagent at work is an ordinary running row…
+    let midTurn = nookSession(
+        [nookRow("u1", .user), nookRow("t1", .tool)],
+        lifecycle: .running, phase: .executing, hasWorkingSubagents: true
+    )
+    #expect(!midTurn.isKeptRunningBySubagents)
+    #expect(midTurn.activityLine?.id == "t1")
+    // …and one that ended or failed is finished, whatever its subagents do:
+    // it can be archived, and a turn end still in flight notifies.
+    let exited = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnEnd)],
+        lifecycle: .completed, phase: .idle, hasWorkingSubagents: true
+    )
+    #expect(exited.turnEnded)
+    #expect(HaloActivityDiff.turnEvents(previous: [before], current: [exited]).map(\.kind) == [.ended])
+
+    // The subagents stop and the session reports their results. That is the
+    // same Turn ending again, so its one turn-end row is rewritten in place
+    // with the later time — and now it notifies.
+    let finished = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnEnd, at: 60)],
+        lifecycle: .waitingForInput, phase: .idle
+    )
+    let events = HaloActivityDiff.turnEvents(previous: [parked], current: [finished])
+    #expect(events.map(\.kind) == [.ended])
+    #expect(events.map(\.row.id) == ["e1"])
+    #expect(finished.turnEnded)
+    // Once: the same end reported a second time, a moment later, finds the
+    // session already stopped.
+    let reportedAgain = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnEnd, at: 61)],
+        lifecycle: .waitingForInput, phase: .idle
+    )
+    #expect(HaloActivityDiff.turnEvents(previous: [finished], current: [reportedAgain]).isEmpty)
+
+    // A failed turn notifies whatever the subagents are doing.
+    let failed = nookSession(
+        [nookRow("u1", .user), nookRow("f1", .turnFailed)],
+        lifecycle: .failed, phase: .idle, hasWorkingSubagents: true
+    )
+    #expect(HaloActivityDiff.turnEvents(previous: [before], current: [failed]).map(\.kind) == [.failed])
+    #expect(failed.turnEnded)
+}
+
+// A Turn has one turn-end row. A Turn that resumes and ends again — a queued
+// prompt, a task notification — rewrites that row in place; the session was
+// at work in between, so each end notifies, in whatever way it ends.
+@Test func nookNotifiesWhenTheSameTurnEndsAgain() {
+    let ended = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnEnd, at: 10)],
+        lifecycle: .waitingForInput, phase: .idle
+    )
+    let resumed = nookSession(ended.recentRows, lifecycle: .running)
+    #expect(HaloActivityDiff.turnEvents(previous: [ended], current: [resumed]).isEmpty)
+
+    let endedAgain = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnEnd, at: 40)],
+        lifecycle: .waitingForInput, phase: .idle
+    )
+    #expect(HaloActivityDiff.turnEvents(previous: [resumed], current: [endedAgain]).map(\.kind) == [.ended])
+
+    let failedAgain = nookSession(
+        [nookRow("u1", .user), nookRow("e1", .turnFailed, at: 40)],
+        lifecycle: .failed, phase: .idle
+    )
+    #expect(HaloActivityDiff.turnEvents(previous: [resumed], current: [failedAgain]).map(\.kind) == [.failed])
+
+    // A user row is never "sent again", and an unchanged end stays quiet.
+    let sameRows = nookSession(
+        [nookRow("u1", .user, at: 5), nookRow("e1", .turnEnd, at: 10)],
+        lifecycle: .waitingForInput, phase: .idle
+    )
+    #expect(HaloActivityDiff.turnEvents(previous: [resumed], current: [sameRows]).isEmpty)
+}
+
+// The mark comes from the store's session list; the Notch rows and the
+// window rows resolve the same tier from it.
+@Test func aParkedParentWithAWorkingSubagentReadsRunningEverywhere() {
+    let marked = SessionHierarchy.markingWorkingSubagents([
+        hierarchySummary(id: "parent", lifecycle: .waitingForInput, phase: .idle, needsReview: true, updatedAt: 30),
+        hierarchySummary(id: "busy", parentID: "parent", updatedAt: 29),
+        hierarchySummary(id: "done", parentID: "parent", lifecycle: .completed, phase: .idle, updatedAt: 28),
+        hierarchySummary(id: "quiet", lifecycle: .waitingForInput, phase: .idle, needsReview: true, updatedAt: 20),
+        hierarchySummary(id: "idle-child", parentID: "quiet", lifecycle: .completed, phase: .idle, updatedAt: 19),
+    ])
+
+    let items = HaloSnapshot.listItems(from: HaloSnapshot.make(summaries: marked, details: [:]))
+    #expect(items.map(\.session.statusTone) == [.blue, .green])
+    #expect(items.map(\.session.statusText) == ["Running", "Completed · Idle"])
+    // Running rows show their subagents; the pills carry their own tiers.
+    #expect(HaloSubagentDisclosure().isExpanded(items[0]))
+    #expect(!HaloSubagentDisclosure().isExpanded(items[1]))
+    #expect(items[0].subagentTones == [.blue, .gray])
+    // Both are working rows for the Notch's detail budget.
+    #expect(HaloSnapshot.detailIDs(summaries: marked, route: .list, now: Date(timeIntervalSince1970: 31))
+        .contains(SessionID("parent")))
+
+    let rows = SessionListModel.rows(
+        sessions: marked, filter: "", modelStamps: [:],
+        isExpanded: { _, tone in SessionListModel.expandsByDefault(tone) }
+    )
+    #expect(rows.map(\.id.rawValue) == ["parent", "quiet"])
+    #expect(rows.map(\.tone) == [.blue, .green])
+    #expect(rows.map(\.status) == ["Running", "Completed · Idle"])
+    #expect(rows.map(\.isExpanded) == [true, false])
 }
 
 @Test func nookTurnEventsSkipListedSubagentsAndRowBackfills() {
@@ -1267,6 +1405,126 @@ private func hierarchySummary(
         needsReview: needsReview,
         lineage: lineage
     )
+}
+
+// MARK: - Subagents still at work, read where the list is built
+
+// The store reads "a subagent is still at work" once, off its cached
+// sessions, where it builds the list. The detail pane (and the Notch, which
+// feeds from the same two) must resolve the very same status — whichever way
+// the detail came to be resident.
+@Test @MainActor
+func aParkedSessionReadsRunningInListAndDetailWhileItsSubagentWorks() async throws {
+    let (store, directory) = try macStoreFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let parentID = SessionID("main")
+    let childID = SessionID("main:agent:a1")
+    func childEvent(_ event: String, at: TimeInterval, _ lifecycle: SessionLifecycle, _ phase: TurnPhase) -> AgentIngressEvent {
+        AgentIngressEvent(
+            eventID: EventID(event), sessionID: childID, agent: .claudeSubagent,
+            occurredAt: Date(timeIntervalSince1970: at), title: "probe", lifecycle: lifecycle, phase: phase,
+            lineage: SessionLineage(threadSource: "subagent", parentSessionID: parentID, subagentDepth: 1)
+        )
+    }
+    func parked(_ event: String, at: TimeInterval) -> AgentIngressEvent {
+        AgentIngressEvent(
+            eventID: EventID(event), sessionID: parentID, turnID: TurnID("turn-p1"), agent: .claude,
+            occurredAt: Date(timeIntervalSince1970: at), lifecycle: .waitingForInput, phase: .idle,
+            timelineItem: TimelineItem(
+                id: TimelineItemIDs.turnEnd(parentID, turnID: TurnID("turn-p1")), sessionID: parentID,
+                turnID: TurnID("turn-p1"), occurredAt: Date(timeIntervalSince1970: at),
+                payload: .turnEnd(TurnEndTimelinePayload(outcome: .completed, message: "started it"))
+            )
+        )
+    }
+    func listed() throws -> SessionSummary { try #require(store.sessions.first { $0.id == parentID }) }
+
+    // The session is the lead before its subagent exists: its detail is
+    // resident, and takes later changes through the reload's fold.
+    store.enqueueAgentEvent(macStartEvent("main", event: "p-start", at: 100))
+    store.enqueueAgentEvent(macPromptEvent("main", event: "p1", at: 101))
+    await store.flushPendingEventsForTesting()
+    #expect(store.selectedSession?.summary.id == parentID)
+
+    // Its turn ends while the background subagent works on.
+    store.enqueueAgentEvent(childEvent("c-start", at: 102, .running, .thinking))
+    store.enqueueAgentEvent(parked("p-end", at: 103))
+    await store.flushPendingEventsForTesting()
+    var row = try listed()
+    #expect(row.hasWorkingSubagents)
+    #expect(row.statusTone == .blue)
+    #expect(row.statusText == "Running")
+    #expect(row.needsReview)
+    #expect(store.selectedSession?.summary == row)
+
+    // Opening it to watch the subagent is not looking at a finished request.
+    store.markSessionReviewed(parentID)
+    #expect(try listed().needsReview)
+
+    // A detail paged in on its own (the Notch's working set) agrees too.
+    let paged = try await store.cachedSessionDetails(ids: [parentID, childID])
+    #expect(paged.first { $0.summary.id == parentID }?.summary == row)
+
+    // The subagent stops: now the request is finished and waits to be seen.
+    store.enqueueAgentEvent(childEvent("c-end", at: 110, .completed, .idle))
+    await store.flushPendingEventsForTesting()
+    row = try listed()
+    #expect(!row.hasWorkingSubagents)
+    #expect(row.statusTone == .green)
+    #expect(row.statusText == "Completed · Idle")
+    #expect(store.selectedSession?.summary == row)
+    // The subagent itself never asks to be looked at.
+    #expect(store.sessions.first { $0.id == childID }?.statusTone == .gray)
+
+    store.markSessionReviewed(parentID)
+    #expect(try listed().statusTone == .gray)
+    #expect(store.selectedSession?.summary.statusTone == .gray)
+}
+
+// A store that starts on a cache already holding a parked session and its
+// working subagent: the first list and the first resident detail agree.
+@Test @MainActor
+func theFirstLoadMarksTheLeadDetailLikeItsRow() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("lumi-mac-store-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cachePath = directory.appendingPathComponent("cache.sqlite3").path
+    let parentID = SessionID("main")
+    let at = Date(timeIntervalSince1970: 200)
+    do {
+        let cache = try SQLiteSessionRepository(path: cachePath)
+        try await cache.replaceSession(SessionDetail(
+            summary: SessionSummary(
+                id: parentID, agent: .claude, title: "Main", lifecycle: .waitingForInput, phase: .idle,
+                startedAt: at, updatedAt: at, lastActivityAt: at, needsReview: true, firstTurnAt: at
+            ),
+            timeline: []
+        ))
+        try await cache.replaceSession(SessionDetail(
+            summary: SessionSummary(
+                id: SessionID("main:agent:a1"), agent: .claudeSubagent, title: "probe",
+                lifecycle: .running, phase: .executing,
+                startedAt: at, updatedAt: at, lastActivityAt: at.addingTimeInterval(-1),
+                lineage: SessionLineage(threadSource: "subagent", parentSessionID: parentID, subagentDepth: 1),
+                firstTurnAt: at
+            ),
+            timeline: []
+        ))
+    }
+    let store = MacSessionStore(
+        socketPath: directory.appendingPathComponent("missing.sock").path,
+        cachePath: cachePath
+    )
+    // Any applied event runs the reload that builds the first list.
+    store.enqueueAgentEvent(macConfigEvent("main", event: "cfg", at: 201, model: "claude-opus"))
+    await store.flushPendingEventsForTesting()
+
+    let row = try #require(store.sessions.first { $0.id == parentID })
+    #expect(row.statusTone == .blue)
+    let lead = try #require(store.selectedSession)
+    #expect(lead.summary.id == parentID)
+    #expect(lead.summary == row)
 }
 
 // MARK: - Provisional sessions in the Mac store
