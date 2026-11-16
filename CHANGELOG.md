@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-17
+
 ### Session 状态
 
 - 名下还有 Subagent 在跑的 Session 仍显示 Running：Session 自己的回合结束、但它启动的 Subagent（常见于 Claude Code 的后台 Subagent）还在工作或等待审批时，Mac 列表、详情、Notch 和 iPhone 都按蓝色 Running 显示，状态文字只写 `Running`；它们都停下后才回到待查看或 Completed。此前回合一结束就显示已完成。
@@ -248,7 +250,8 @@ v0.3.1 与 v0.3.2 的发布都在 CI 的 Mac 测试一步失败（Xcode 26.6 对
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/AFutureD/Lumi/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/AFutureD/Lumi/compare/v0.3.3...v0.3.5
 [0.3.3]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/AFutureD/Lumi/compare/v0.2.1...v0.3.0
