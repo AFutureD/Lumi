@@ -122,9 +122,24 @@ public protocol SessionRepository: Sendable {
 }
 
 public enum SessionReduction {
+    /// What the store applying an event knows about the turn end it carries
+    /// — the one fact about a turn end the event cannot tell by itself.
+    public enum TurnEndRecord: Sendable {
+        /// The store holds no row for this turn's end: it hears of it now.
+        case new
+        /// The row is already there. Either the same end reported again by
+        /// the other route (hook and transcript share the row), or the turn
+        /// went on and ends once more.
+        case recorded
+        /// The caller reduces without the session's rows — a mirror holding
+        /// a summary only, or a loaded window the row may lie outside.
+        case unknown
+    }
+
     public static func summary(
         applying event: AgentIngressEvent,
-        to current: SessionSummary?
+        to current: SessionSummary?,
+        turnEnd: TurnEndRecord = .unknown
     ) -> SessionSummary {
         // Two clocks, one rule: an event may only gate the fields it asserts.
         //
@@ -186,7 +201,28 @@ public enum SessionReduction {
         // reduction it is one, including a late lineage. On a main session
         // the flag is sticky until the human opens it; `markSessionReviewed`
         // is the only thing that clears it.
-        let endsTurn = if case .turnEnd = event.timelineItem?.payload { true } else { false }
+        //
+        // Only a turn end that is news raises it, and whether it is news is
+        // a question about the record, not the clock:
+        // - never recorded → news, however old its timestamp (a late first
+        //   report is still the first);
+        // - already recorded and the session at work → the turn went on and
+        //   ends again: news;
+        // - already recorded and the session parked → the same end from the
+        //   slower route (the hook closed the turn, its terminal record
+        //   reached the transcript afterwards, or the reverse). The human
+        //   may have looked since; a repeat must not undo that.
+        // A caller without the rows falls back to the clock: an end the
+        // state clock has already passed is taken for a repeat.
+        let endsTurn: Bool = if case .turnEnd = event.timelineItem?.payload {
+            switch turnEnd {
+            case .new: true
+            case .recorded: current?.isAtWork ?? true
+            case .unknown: shouldUpdateState
+            }
+        } else {
+            false
+        }
         let needsReview = SessionSummary.isSubagentThread(agent: agent, lineage: lineage)
             ? false
             : endsTurn || (current?.needsReview ?? false)
@@ -329,7 +365,13 @@ public actor InMemorySessionRepository: SessionRepository {
         eventIDs.insert(event.eventID)
 
         let current = sessions[event.sessionID]
-        var summary = SessionReduction.summary(applying: event, to: current)
+        let turnEnd: SessionReduction.TurnEndRecord = if let item = event.timelineItem,
+            timeline[event.sessionID]?.contains(where: { $0.id == item.id }) == true {
+            .recorded
+        } else {
+            .new
+        }
+        var summary = SessionReduction.summary(applying: event, to: current, turnEnd: turnEnd)
         if SessionReduction.startsFilterEvaluation(summary, from: current, event: event) {
             // Latch first — even without an evaluator installed — so every
             // mirror converges; the parked verdict frame must carry it too.

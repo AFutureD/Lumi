@@ -16,7 +16,9 @@ public struct DaemonConfiguration: Hashable, Sendable {
     /// `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`): every
     /// project's transcripts and subagent sidechains.
     public let claudeProjectsDirectory: URL
-    public let rolloutPollIntervalSeconds: Double
+    /// How often the session watchers take a full inventory of their roots
+    /// — the slow resync behind the file-system events that drive them.
+    public let sourceReconcileIntervalSeconds: Double
     /// How often the usage scanner re-lists the transcript roots.
     public let usagePollIntervalSeconds: Double
     /// Cached models.dev `api.json` (`Lumen/models-dev.json`). `LUMI_MODEL_PRICES=0`
@@ -66,7 +68,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
         codexSessionsDirectory: URL,
         codexArchivedSessionsDirectory: URL? = nil,
         claudeProjectsDirectory: URL? = nil,
-        rolloutPollIntervalSeconds: Double = 2,
+        sourceReconcileIntervalSeconds: Double = 30,
         usagePollIntervalSeconds: Double = 30,
         modelPricesPath: String? = nil,
         modelPricesFetchEnabled: Bool = true,
@@ -97,7 +99,7 @@ public struct DaemonConfiguration: Hashable, Sendable {
             ?? codexSessionsDirectory.deletingLastPathComponent().appendingPathComponent("archived_sessions", isDirectory: true)
         self.claudeProjectsDirectory = claudeProjectsDirectory
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
-        self.rolloutPollIntervalSeconds = rolloutPollIntervalSeconds
+        self.sourceReconcileIntervalSeconds = sourceReconcileIntervalSeconds
         self.usagePollIntervalSeconds = usagePollIntervalSeconds
         self.modelPricesPath = modelPricesPath ?? daemonDirectory.appendingPathComponent("models-dev.json").path
         self.modelPricesFetchEnabled = modelPricesFetchEnabled

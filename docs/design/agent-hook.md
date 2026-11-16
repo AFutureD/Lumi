@@ -113,7 +113,7 @@ hook 与 transcript 的分工（`rich` = 该 Session 的 transcript 可读）：
 
 - hook 事件不自带 Turn 身份：统一挂到 `HookIngestService` 从增量追平带回的 `HookIngestOptions.currentTurnID`；只有完全没有 transcript 数据可用（`currentTurnID` 为空且非 rich——文件未落盘、读失败降级、冷启动委托回填）才退回 `prompt_id`。
 - rich 时 `UserPromptSubmit` 不建 Turn、不写 prompt——它对注入式续跑同样触发，其文本不能覆盖人类 prompt；开 Turn 全部交给 transcript。
-- `Stop` / `StopFailure` 始终收口当前 Turn：终态记录可能晚于 hook 落盘，而停在 waitingForInput·idle 或 failed 的 Session 不再被 watcher 轮询，hook 是唯一有保证的收口。两路 turnEnd 落同一 item id（`turn_end:<s>:<turn>`）与同一 outcome，先后到达幂等。
+- `Stop` / `StopFailure` 始终收口当前 Turn：终态记录可能晚于 hook 落盘，hook 不等它。记录随后被 watcher 读到时，两路 turnEnd 落同一 item id（`turn_end:<s>:<turn>`）与同一 outcome，先后到达幂等。
 
 已知取舍：
 
@@ -132,10 +132,11 @@ Subagent 是独立的子 Session（`claude_subagent` / `codex_subagent`，`linea
 | 父级因 subagent 仍算 Running | 父级自身为 `waitingForInput · idle`，且任一后代（任意深度）处于工作态时，tone 为蓝、显示 lifecycle 为 running、状态文字只写 `Running`。`completed` 不升级；橙、红不变 | `SessionStatusTone.resolve(…hasWorkingSubagents:)` |
 | 工作态 | running / compacting，或 waitingForInput 且 phase ≠ idle。`starting` 不算 | `SessionStatusTone.isAtWork` |
 | 派生在哪里做 | 不落库、不进协议。每一端在产出会话列表的唯一出口，对它持有的全部 Session 算一次并标到 `SessionSummary.hasWorkingSubagents` 上；单独读出的详情在进入驻留前取列表的标记 | `SessionHierarchy.markingWorkingSubagents`；Mac `MacSessionStore.reloadFromCache` 与 `listMarked`，iPhone `MacChannelState.init` |
+| 待查看只由新的回合结束置位 | 一条回合结束是不是新的，问的是记录，不是时间。写入它的仓库看这条回合结束行（`turn_end:<s>:<turn>`，hook 与 transcript 两路共用）是否已经存在：不存在——第一次听说，置位，哪怕时间戳比状态时钟旧；已存在且 Session 正在工作——同一个 Turn 续跑后再次结束，置位；已存在且 Session 停着——同一次结束由另一路再报一遍，不置位，用户在这之间可能已经看过。手里没有这些行的归并方（只持有摘要的镜像）退回按时间判断：状态时钟已经越过的回合结束当作重复 | `SessionReduction.TurnEndRecord`；`SQLiteSessionRepository.apply`、`InMemorySessionRepository.apply`、`SessionDetailReduction.applying` |
 | 已查看 | 被 subagent 抬成蓝色的父级（`waitingForInput · idle` 且 `hasWorkingSubagents`）打开时不消费 `needsReview`，subagent 停下即变绿；其余情形照旧，有标记就消费 | `SessionSummary.isReviewedByOpening`；`MacSessionStore.markSessionReviewed`、`RelayDeviceController.markReviewed` |
 | 完成提示 | Turn 正常结束而名下有 subagent 在工作时，不推送、不弹 Notch 回合完成卡片；失败 / 中断照常 | `PushNotificationPolicy.candidates`、`HaloActivityDiff.turnEvents` |
 | 同一 Turn 再次结束 | 一个 Turn 只有一条 turn-end 行（`turn_end:<session>:<turn>`），续跑后再次结束是原地改写。Notch 把「id 已见过、时间更晚、且上一帧 Session 为蓝色」的 turn-end 行当作新的结束；同一次结束被两路先后上报时上一帧已不是蓝色，不重复 | `HaloActivityDiff.turnEvents` |
-| 进程不在了就收口 | 仍处于工作态的 `claude_subagent`，其所属主 Session 的进程已知不在时，补一条只带状态的事件 `interrupted · idle`。每轮扫描都重新判断 | `ClaudeSubagentIdentity.leftBehindAt`，`ClaudeTranscriptWatcher.closeSubagentsLeftBehind` |
+| 进程不在了就收口 | 仍处于工作态的 `claude_subagent`，其所属主 Session 的进程已知不在时，补一条只带状态的事件 `interrupted · idle`。在答案可能变化时重新判断：主 Session 的开始或结束标记变化、subagent 自己的记录被应用（`noteApplied`），以及每次全量清点 | `ClaudeSubagentIdentity.leftBehindAt`，`ClaudeTranscriptWatcher.closeSubagentsLeftBehind` |
 
 `needsAttention` 仍由 reducer 按 Session 自身状态计算（传 `hasWorkingSubagents: false`）：reducer 一次只看一条 Session。
 
@@ -150,9 +151,9 @@ Claude 的 subagent 运行在主 Session 的进程里。`leftBehindAt` 读主 Se
 
 放在 watcher 而不是 `SessionEnd` hook 的一次性处理里，因为它是状态而不是事件：
 
-- 先追平 sidechain transcript 再收口，subagent 最后几条记录不会丢（收口后它不再被轮询）。
-- reingest 会把 subagent 从 transcript 重放回 running（transcript 里没有结束记录）；下一轮扫描重新收口。因此事件 ID 每次新取，不做去重——判断本身幂等：收口后不再处于工作态。
-- 升级前留下的存量由同一条规则在 daemon 启动后的第一轮扫描处理，不需要迁移。
+- 先追平 sidechain transcript 再收口，subagent 最后几条记录在收口之前入库。
+- reingest 会把 subagent 从 transcript 重放回 running（transcript 里没有结束记录）；下一次全量清点重新收口。因此事件 ID 每次新取，不做去重——判断本身幂等：收口后不再处于工作态。
+- 升级前留下的存量由同一条规则在 daemon 启动后的第一次全量清点处理，不需要迁移。
 
 事件走正常管道发布，镜像同样收口。
 
@@ -295,23 +296,47 @@ hook 帧在 daemon 内应答仍有延迟预算，不做无界工作：daemon 没
 - **跨来源可去重的 Timeline item ID**（`TimelineItemIDs`）：`marker:<s>:<kind>`、`user_prompt:<s>:<turn>`、`tool:<s>:<toolUseID>:call|result`、`subagent:<s>:<agent>:<phase>`、`turn_end:<s>:<turn>`、`diagnostic:<s>:<key>`。同一逻辑消息经 hook 与 transcript 两路到达时落到同一存储行。
 - 其他 item：`<eventID>:timeline`。
 
+## 文件变化从哪里来
+
+两个 watcher 都不轮询文件。`SourceFileMonitor` 把三种信号并进一个收件箱，watcher 一次取走一批：
+
+| 信号 | 来源 | 告诉 watcher 什么 | 听不到什么 |
+| --- | --- | --- | --- |
+| 目录事件 | `DirectoryEvents`（FSEvents，按文件粒度） | 根目录下新建了文件；文件被写过，并且写入方关闭了它 | 写入方一直开着文件追加时的每一次写入：关闭之前没有任何事件 |
+| 文件事件 | `FileWatchSet`（kqueue，每个文件一个描述符） | 被盯的文件的每一次写入；文件被删除或改名 | 没被盯的文件 |
+| 对账时钟 | 慢定时器，默认 30 秒 | 该做一次全量清点了 | — |
+
+前两种是边沿：及时，允许丢。第三种是电平：它把「丢了一个事件」的代价限制为晚一个周期，而不是漏读。目录事件自己报告丢失（`MustScanSubDirs` / `UserDropped` / `KernelDropped` / `RootChanged` / `EventIdsWrapped`）时，立即请求一次全量清点。
+
+共同规则：
+
+- **事件只是提示。** 一个事件只说「看看这个路径」。读多少由游标决定；文件大小在读之前现取，从不采用清点或事件里带的数值。重复或过期的提示因此无害。
+- **先听再点。** 启动时先开目录事件，再做第一次全量清点：清点期间落盘的写入，要么被这次清点读到，要么在之后被事件报告。
+- **合批。** 收到信号后等 200 ms 再取走整批。Agent 流式输出时每秒追加多次，一批读一次。
+- **盯哪些文件，看文件，不看 Session。** 被盯的是最近 24 小时内写过的文件，最近写入的优先，直到描述符预算用完。等输入的 Session 仍开着自己的文件，可能不经 hook 再次写入，所以显示的状态不参与这个决定。窗口之外的文件仍会被读到——在下一次清点，而不是立即。
+- **预算。** launchd 启动 agent 时的描述符软上限是 256。daemon 启动时把它抬到 4096，把余量的一半平分给两个 watcher，每个最多盯 256 个文件（`OpenFileLimit`）。超出预算时最久没动静的文件让位：这只改变多快听到它的写入，不改变 Session 的状态。
+- **空闲。** 没有文件在写时，watcher 停在等待里，只有对账时钟触发。全量清点是一次 `fts` 遍历，只用遍历自带的 `stat`。
+- **清点现取，只有用量扫描复用。** watcher 的每次全量清点都自己走一遍根目录：清点决定读什么、盯什么，写入之前取的结果找不到这次写入。用量扫描不赶时间，10 秒内直接用 watcher 刚走过的那一遍（`SourceInventory`），不再重复走。一批信号里点名的文件，即使同批做了全量清点也照样逐个读。
+
+实测依据（macOS 27 / APFS）：Codex 在整个 Session 期间保持 rollout 打开，这期间目录事件一条都没有；Claude Code 每次写完就关闭 transcript，目录事件每次都到。规则不依赖这两个习惯：哪一种写入方式，被盯的文件都听得到。
+
 ## rollout watcher
 
-`CodexRolloutWatcher`（daemon 内，常驻）兜住没有任何 hook 的 rollout 写入。典型场景即诱因 bug：中断把 `turn_aborted` 写进 rollout 的时刻晚于最后一次 hook，且中断不触发 hook——没有 watcher，该会话永远停在 running·thinking。
+`CodexRolloutWatcher`（daemon 内，常驻）兜住没有任何 hook 的 rollout 写入。典型场景即诱因 bug：中断把 `turn_aborted` 写进 rollout 的时刻晚于最后一次 hook，且中断不触发 hook——没有 watcher，该会话永远停在 running·thinking。Hook 未获 Codex 信任的 Session 也只能从这里进入 Lumi。
 
-### 扫描范围
+### 范围与触发
 
-- 根目录默认 `~/.codex/sessions`，也可通过 `CODEX_HOME` 改变。
-- 递归查找非隐藏 `.jsonl` 普通文件。
-- 默认每 2 秒轮询；最低实际间隔 250ms。
-- daemon 启动后的第一次 scan 检查所有文件，以恢复 daemon 离线期间追加的内容。
-- 后续只处理新文件或文件尺寸变化的文件。
+- 根目录默认 `~/.codex/sessions`，也可通过 `CODEX_HOME` 改变；只看非隐藏的 `.jsonl` 普通文件。
+- 新 rollout 出现 → 目录事件 → 读取，并从此盯住这个文件。
+- 被盯的 rollout 被写入 → 文件事件 → 从游标续读。
+- 启动时与每次对账 → 全量清点。daemon 启动后的第一次清点检查所有文件，以恢复 daemon 离线期间追加的内容；之后只处理尺寸与上次读到时不同的文件。
+- rollout 被压缩（`.jsonl.zst`）或归档移走 → 文件事件报告它不在了，退出被盯集合。
 
 ### 增量归并
 
-扫描走与 hook 路径、backfill 完全相同的 `RichSourceCatchUp` 例程：取游标 → 读（32 MiB 尾部截断）→ 跨行共享 `RolloutReadState`（Turn 归属、tool 配对、channel 仲裁）→ 逐事件应用 → 存游标。watcher 特有的两个前置：
+读取走与 hook 路径、backfill 完全相同的 `RichSourceCatchUp` 例程：取游标 → 读（32 MiB 尾部截断）→ 跨行共享 `RolloutReadState`（Turn 归属、tool 配对、channel 仲裁）→ 逐事件应用 → 存游标。watcher 特有的两个前置：
 
-- **Session 解析**：游标里的 session id，或读文件头部 `session_meta` 窥探；两者皆无则本轮跳过（下轮文件增长后重试）。
+- **Session 解析**：游标里的 session id，或读文件头部 `session_meta` 窥探；两者皆无则这一次不认领（文件下一次写入或下一次清点时重试）。
 - **thread-spawn 门**：为 subagent 生成的全新 rollout 先整本复刻父历史；首条 `session_meta` 带 `source.subagent.thread_spawn` 时，在 `inter_agent_communication_metadata(trigger_turn)` 出现前什么都不摄取；出现后只应用 meta 行并把游标直接推到触发点，其余交给常规追平。
 
 游标每文件保存 path、byte offset、文件大小、session id、更新时间；只提交以换行结束的完整行。文件截断且小于旧 offset 时从 0 重新解析（游标里的旧 session id 一并作废），幂等表负责拒绝已处理 Event ID。
@@ -320,7 +345,7 @@ hook 帧在 daemon 内应答仍有延迟预算，不做无界工作：daemon 没
 
 第一次建立基线时（`rollout_baseline_initialized` 未置位），对每个现有 JSONL：
 
-1. **已有游标的文件跳过**——它已在被读取，首次 scan 会从游标续读（顺带收掉无 hook 的尾巴）。升级路径的关键：hook 驱动摄取早于常驻 watcher 的库里全是这种文件，把它们打成忽略会 tombstone 活会话。
+1. **已有游标的文件跳过**——它已在被读取，第一次清点会从游标续读（顺带收掉无 hook 的尾巴）。升级路径的关键：hook 驱动摄取早于常驻 watcher 的库里全是这种文件，把它们打成忽略会 tombstone 活会话。
 2. 否则读文件头部（128 KiB、最多 100 行）找 `session_meta` ID；**库里已知该 Session** 的（hook-only 摄取、从未认领游标），以真实 session id 把游标存到 EOF，watcher 从此接管增量。
 3. 只有库里从未见过的 Session 才写入 `ignored_sessions`、以哨兵 id 把游标停在 EOF——避免首装时导入 Lumi 之前的全部历史。
 4. 写入 `rollout_baseline_initialized = 1`。
@@ -329,20 +354,26 @@ hook 帧在 daemon 内应答仍有延迟预算，不做无界工作：daemon 没
 
 ## Claude transcript watcher
 
-`ClaudeTranscriptWatcher`（daemon 内，常驻）弥补 hook 驱动读取的盲区：**用户中断不触发任何 hook**，此后写入 transcript 的一切（中断标记、`custom-title`、最后的 assistant 输出）在下一个 hook 到来前都不可见；用户就此弃置的 Session 会永远停在 Running。两个 watcher 都没有环境变量开关——它们是正确性保障的一部分，不是可选项。
+`ClaudeTranscriptWatcher`（daemon 内，常驻）弥补 hook 驱动读取的盲区：**用户中断不触发任何 hook**，此后写入 transcript 的一切（中断标记、`custom-title`、最后的 assistant 输出）在下一个 hook 到来前都不可见；用户就此弃置的 Session 会永远停在 Running。daemon 不在时错过的 hook 留下同样的缺口。两个 watcher 都没有环境变量开关——它们是正确性保障的一部分，不是可选项。
 
-与 rollout watcher 不同，它不扫描目录、没有首次基线问题：
+两条规则决定读什么：
 
-- 每个轮询周期（默认 2 秒）取 `listSessions`，只轮询**活跃**的 Claude Session——`starting` / `running` / `compacting`，以及 `waitingForInput` 且 phase 非 `idle`（审批悬挂时按 Esc 同样只写标记）。停在 `waitingForInput · idle` 的已完成 Session 不轮询：它的下一次 transcript 写入必然伴随 `UserPromptSubmit` hook。
-- transcript 路径来自该 Session 的 cursor；从未成功读过的 Session（启动数秒即被中断，hook 触发时文件尚未落盘）退回 `RichSourceLocator` 按 cwd slug 推导。Subagent 子 Session 由 `<parent>:agent:<id>` 解析出父路径推导 sidechain transcript。
+| 规则 | 内容 |
+| --- | --- |
+| 读哪些 Session | 只读仓库里已有的 Session。transcript 用路径指明自己属于谁：`<session>.jsonl`，或 subagent 的 `<parent>/subagents/agent-<id>.jsonl`；仓库不认识的不读。Claude Session 只经 hook 进入 Lumi，所以没有首次基线问题 |
+| 读哪些写入 | 已知 Session 的 transcript 一变化就读，不看 Session 的状态。停着或已结束的 Session 文件在动，说明写入方还活着。启动后的第一次清点因此也补上 daemon 离线期间写入的内容 |
+
+- 根目录是 `~/.claude/projects`（或 `$CLAUDE_CONFIG_DIR/projects`）。
+- 工作中的 Session——`starting` / `running` / `compacting`，以及 `waitingForInput` 且 phase 非 `idle`（审批悬挂时按 Esc 同样只写标记）——在每次全量清点时另按自己的 cursor 读一次，因为它的 transcript 可能不在根目录下。Subagent 子 Session 由 `<parent>:agent:<id>` 从父路径推出 sidechain transcript。盯不盯它的文件仍按共同规则：只看这个文件最近有没有写过。
+- 还没被读过的 Session（没有 cursor）不去找文件：它的 transcript 一出现在根目录下，就按文件名对上。没有 Turn、也没有 transcript 的临时 Session 因此不占任何定时检查。
+- 反过来的顺序同样成立：transcript 先出现、Session 还不在仓库里时，这个文件按当时的大小搁置；Session 的第一条事件一被应用（`noteApplied`），watcher 立即重读它，不等文件再动。
+- 游标已在文件末尾的 transcript 不打开。
 - 读取复用 `RichSourceCatchUp`（cursor 增量、32 MiB 尾部截断、open Turn 归属），与 hook 触发的追平共享同一 cursor——两路并发读同一增量时靠 processed event 去重收敛。
-- 文件尺寸未变化的路径跳过（同 rollout watcher 的 `scannedFileSizes`）。
-- Session 一旦被标记 Interrupted 便退出活跃集，不再被轮询。
 - hook 触发的追平、两个 watcher 与回填队列共用同一段追平例程（`RichSourceCatchUp`：取游标 → 读 → 应用 → 存游标；从字节 0 读时不继承最新 Turn ID，由历史自己的 Turn 标记归属）。多路并发最多重复读一段增量，靠事件幂等收敛。
 
 ## Codex state 元数据
 
-daemon 与 Hook helper 以只读方式打开 `${CODEX_HOME:-~/.codex}/state_5.sqlite`，用 `threads.id` 与 rollout / Hook 的 Session ID 关联。数据库不可用或查不到记录时，事件处理继续进行：首次未知身份使用 Codex 默认值，已经同步过的 Subagent 类型和 lineage 不会被普通 rollout 事件降级。watcher 会周期比对已纳入 Lumi 的 Session，只同步变化的标题、Agent 类型和 Subagent 关系；每次实际变化使用新的幂等事件，因此 `A → B → A` 仍可正确回退。这类身份更新推进记录时钟 `updatedAt`（同步可见）但不推进状态时钟 `lastActivityAt`，不会改变活动排序。
+daemon 与 Hook helper 以只读方式打开 `${CODEX_HOME:-~/.codex}/state_5.sqlite`，用 `threads.id` 与 rollout / Hook 的 Session ID 关联。数据库不可用或查不到记录时，事件处理继续进行：首次未知身份使用 Codex 默认值，已经同步过的 Subagent 类型和 lineage 不会被普通 rollout 事件降级。身份有两个来源文件：`state_5.sqlite`（连同它的 `-wal`）与 `session_index.jsonl`（显式 thread name，优先）。rollout watcher 盯着这些文件，变化时比对已纳入 Lumi 的 Session；由文件变化触发的比对，做完一次后停 2 秒再接下一次（Codex 在一个 Turn 的每一步都写数据库）。每次全量清点也比对一次，不受这 2 秒限制。两个入口不交叠：比对中途再来的请求，在这一次结束后紧接着补跑一遍。只同步变化的标题、Agent 类型和 Subagent 关系；每次实际变化使用新的幂等事件，因此 `A → B → A` 仍可正确回退。这类身份更新推进记录时钟 `updatedAt`（同步可见）但不推进状态时钟 `lastActivityAt`，不会改变活动排序。
 
 | `threads` 字段 | 可用维度 | 当前处理 |
 | --- | --- | --- |
@@ -423,7 +454,10 @@ hook 入口按 provider 类型化（`CodexHookPayload` / `ClaudeHookPayload`，�
 
 ## 当前限制
 
-- hook 触发的追平与 watcher 轮询（2 秒）之间存在最多一个轮询周期的可见性延迟。
+- 没有 hook 送达的写入由文件事件驱动读取，合批等待 200 ms。文件不在被盯集合内（超出 24 小时窗口或描述符预算）时，最迟晚一个对账周期（30 秒）。
+- rollout 被移走时（Codex 归档到 `archived_sessions`，或原地压缩为 `.jsonl.zst`），移走之前没有读完的尾部无法补读：cursor 按路径记，watcher 不读归档目录与压缩文件。写入之后 200 ms 的合批窗口内就被移走的尾部同样读不到。
+- 同一路径被换成另一个文件时只按大小判断：新文件恰好与上次读到的大小相同会被跳过，更大时从旧 offset 续读。cursor 不记文件身份（device + inode）；Agent 的这两类文件都只追加，尚未见到替换。
+- 没有收到 `SessionEnd` 的临时 Session（无 Turn、无 transcript）留在库里，列表不显示它，也不占任何定时检查。
 - Claude Code 进程被强制结束（不触发 `SessionEnd`）时，仍在工作的 subagent 没有任何结束信号，子 Session 停在 running；父级若停在 `waitingForInput · idle`，也因此一直显示 Running。同一 Session 之后再次启动（`startup` / `resume`）或正常结束时收口；一直不再打开则没有信号。不做按静默时长的判定：单次工具调用可以静默十分钟以上。
 - Subagent 全部结束而父级没有再开新一轮时，父级直接回到已结束档，不补发完成提示（提示由新的 TURN END 行触发）。Claude Code 会用 task notification 让父级续跑一轮，正常流程不受影响。
 - 后台运行的命令（`run_in_background` 的 Bash）不建模：只剩后台命令在跑时，Session 按已结束显示。

@@ -569,6 +569,83 @@ private func jsonLines(_ objects: [[String: Any]]) -> String {
     #expect(closings(of: first).count == 1)
 }
 
+// The same closing, with no pass to wait for: the daemon hands every applied
+// event to the watcher (`noteApplied`), which judges when the answer can have
+// changed — here, the moment the session's end marker lands.
+@Test func aLeftBehindSubagentIsClosedWhenItsSessionEndsWithoutWaitingForAPass() async throws {
+    let harness = try Harness()
+    defer { harness.tearDown() }
+    let session = "5eed6ed1-2c10-4d9c-9b88-d36994bf2ad9"
+    let projectDir = harness.home.appendingPathComponent(".claude/projects/-tmp-proj", isDirectory: true)
+    let transcript = projectDir.appendingPathComponent("\(session).jsonl")
+    let agentDir = projectDir.appendingPathComponent("\(session)/subagents", isDirectory: true)
+    try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+    let repository = harness.repository
+    let recorder = harness.recorder
+    // The reconcile clock is out of reach: only `noteApplied` can explain a
+    // closing after the first pass.
+    let watcher = ClaudeTranscriptWatcher(
+        repository: repository, homeDirectory: harness.home,
+        reconcileIntervalSeconds: 3_600,
+        onEvent: { recorder.append($0) }
+    )
+    let running = Task { try await watcher.run() }
+    defer { running.cancel() }
+
+    let parentID = SessionID(session)
+    let agentID = "c0ffee51eb1bdfacc"
+    let childID = ClaudeSubagentIdentity.sessionID(parent: parentID, agentID: agentID)
+    let base: [String: Any] = ["session_id": session, "transcript_path": transcript.path, "cwd": "/tmp/proj", "prompt_id": "p1"]
+    /// A hook, and — as the daemon's publish path does — every event it
+    /// applied handed on to the watcher.
+    func hook(_ fields: [String: Any]) async throws {
+        let before = recorder.events.count
+        _ = try await harness.ingest(base.merging(fields) { $1 }, agent: .claude)
+        recorder.events.dropFirst(before).forEach { watcher.noteApplied($0) }
+    }
+    @Sendable func lifecycle(_ id: SessionID) async throws -> SessionLifecycle? {
+        try await repository.sessionSummary(id: id)?.lifecycle
+    }
+
+    try jsonLines([[
+        "type": "user", "uuid": "u1", "sessionId": session, "promptId": "p1",
+        "timestamp": "2026-11-12T11:06:40.000Z", "cwd": "/tmp/proj",
+        "origin": ["kind": "human"],
+        "message": ["role": "user", "content": "start a background agent"],
+    ]]).write(to: transcript, atomically: true, encoding: .utf8)
+    try await hook(["hook_event_name": "SessionStart", "source": "startup", "timestamp": "2026-11-12T11:06:39.000Z"])
+    try await hook(["hook_event_name": "UserPromptSubmit", "prompt": "start a background agent",
+                    "timestamp": "2026-11-12T11:06:40.100Z"])
+    try """
+    {"agentType":"general-purpose","description":"probe","toolUseId":"toolu_1","spawnDepth":1,"requestShape":"background"}
+    """.write(to: agentDir.appendingPathComponent("agent-\(agentID).meta.json"), atomically: true, encoding: .utf8)
+    try jsonLines([[
+        "type": "user", "uuid": "s1", "isSidechain": true, "agentId": agentID, "sessionId": session,
+        "promptId": "agent-prompt", "timestamp": "2026-11-12T11:06:46.000Z", "cwd": "/tmp/proj",
+        "message": ["role": "user", "content": "run date ten times"],
+    ]]).write(to: agentDir.appendingPathComponent("agent-\(agentID).jsonl"), atomically: true, encoding: .utf8)
+    try await hook(["hook_event_name": "SubagentStart", "agent_id": agentID, "agent_type": "general-purpose",
+                    "timestamp": "2026-11-12T11:06:46.100Z"])
+    try await hook(["hook_event_name": "Stop", "last_assistant_message": "main done", "timestamp": "2026-11-12T11:06:48.000Z"])
+
+    // The process is alive: the subagent's own records change nothing.
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(try await lifecycle(childID) == .running)
+
+    // The process exits. Nothing is written for the subagent; the session's
+    // end marker is the only thing that moved.
+    try await hook(["hook_event_name": "SessionEnd", "reason": "other", "timestamp": "2026-11-12T11:07:28.396Z"])
+    let deadline = ContinuousClock.now + .seconds(10)
+    while try await lifecycle(childID) != .interrupted {
+        try #require(ContinuousClock.now < deadline, "the subagent is closed when its session's end lands")
+        try await Task.sleep(for: .milliseconds(25))
+    }
+    #expect(try await lifecycle(parentID) == .completed)
+    #expect(recorder.events.filter { $0.sessionID == childID && $0.lifecycle == .interrupted }.count == 1)
+    running.cancel()
+    _ = await running.result
+}
+
 @Test func coldStartWithALargeHistoryDelegatesTheReplayToTheBackfill() async throws {
     let harness = try Harness(maximumInlineHistoryBytes: 16)
     defer { harness.tearDown() }

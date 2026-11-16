@@ -16,8 +16,9 @@ private let lifecycleLog = Logger(label: "lifecycle")
 /// trees), so usage covers sessions Lumi never saw — filtered ghosts,
 /// history from before Lumi was installed, runs on other machines synced
 /// into `~/.claude`. Each file has its own cursor, keyed by inode so a
-/// rollout Codex archives continues where it left off; a poll only opens
-/// files whose size or mtime moved, and a file whose leading bytes changed
+/// rollout Codex archives continues where it left off; a poll lists the
+/// roots in one cheap walk (`jsonlFiles`) and only opens files whose size
+/// or mtime moved, and a file whose leading bytes changed
 /// is read again from the start. Not latency-bound: the page tolerates a
 /// poll interval of tens of seconds, and the first full scan of a large
 /// history yields between files so hook ingest stays responsive.
@@ -52,6 +53,7 @@ public actor UsageScanService: Service {
     /// band: the band is part of the bucket key and is decided once, here.
     private let priceTable: @Sendable () async -> ModelPriceTable
     private let pollIntervalSeconds: Double
+    private let inventory: SourceInventory?
     /// `(size, mtime)` of every file the store already holds, by identity:
     /// loaded from the store once, then kept in step as files are read.
     private var known: [String: Known] = [:]
@@ -64,12 +66,14 @@ public actor UsageScanService: Service {
         roots: [Root],
         store: any UsageStore,
         priceTable: @escaping @Sendable () async -> ModelPriceTable = { .builtin },
-        pollIntervalSeconds: Double = 30
+        pollIntervalSeconds: Double = 30,
+        inventory: SourceInventory? = nil
     ) {
         self.roots = roots
         self.store = store
         self.priceTable = priceTable
         self.pollIntervalSeconds = pollIntervalSeconds
+        self.inventory = inventory
     }
 
     public func run() async throws {
@@ -235,15 +239,19 @@ public actor UsageScanService: Service {
 
     /// The root's `.jsonl` files with the identity, size and mtime the
     /// change detection keys on.
+    ///
+    /// The listing is the shared inventory when one is given: the session
+    /// watchers walk two of these roots on the same slow cadence, and a walk
+    /// they took within the last few seconds is used instead of repeated.
     private func files(in root: Root) -> [Candidate] {
-        jsonlFiles(under: root.directory).map { file in
-            let path = root.directory.appendingPathComponent(file.relativePath).path
-            return Candidate(
-                identity: UsageFileIdentity.identity(source: root.source, attributes: file.attributes, path: path),
-                path: path,
+        let rootPath = root.directory.path
+        return (inventory?.files(under: root.directory) ?? jsonlFiles(under: root.directory)).map { file in
+            Candidate(
+                identity: UsageFileIdentity.identity(source: root.source, device: file.device, inode: file.inode),
+                path: rootPath + "/" + file.relativePath,
                 source: root.source,
-                size: (file.attributes[.size] as? NSNumber)?.uint64Value ?? 0,
-                modifiedAt: file.attributes[.modificationDate] as? Date ?? Date(timeIntervalSince1970: 0)
+                size: file.size,
+                modifiedAt: file.modifiedAt
             )
         }
     }

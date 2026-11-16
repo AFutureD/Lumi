@@ -884,20 +884,30 @@ private final class MutableThreadIdentityProvider: CodexThreadIdentityProviding,
         if case let .turnEnd(end) = item.payload { end.outcome == .aborted } else { false }
     } == true)
 
-    // A parked finished session is not polled, even with a marker in its file.
+    // A parked finished session is outside the working set, yet a write to
+    // its transcript is read all the same: the file moving means a live
+    // writer, whatever the session's state reads.
     let parked = SessionID("aaaa1111-0000-0000-0000-000000000002")
-    try Data("""
-    {"type":"user","sessionId":"\(parked.rawValue)","timestamp":"2026-08-20T09:50:00Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
-
-    """.utf8).write(to: projectDir.appendingPathComponent("\(parked.rawValue).jsonl"))
     _ = try await repository.apply(AgentIngressEvent(
         eventID: EventID("seed-parked"), sessionID: parked, agent: .claude,
         occurredAt: Date(timeIntervalSince1970: 1_787_219_000), workspace: "/tmp/project",
         lifecycle: .waitingForInput, phase: .idle
     ))
+    try Data("""
+    {"type":"user","sessionId":"\(parked.rawValue)","timestamp":"2026-08-20T09:50:00Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+
+    """.utf8).write(to: projectDir.appendingPathComponent("\(parked.rawValue).jsonl"))
+    // A transcript whose session the repository does not hold is left alone:
+    // Claude sessions enter Lumi through hooks only.
+    let stranger = SessionID("aaaa1111-0000-0000-0000-000000000003")
+    try Data("""
+    {"type":"user","sessionId":"\(stranger.rawValue)","promptId":"p9","timestamp":"2026-08-20T09:51:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"Never seen by a hook"}}
+
+    """.utf8).write(to: projectDir.appendingPathComponent("\(stranger.rawValue).jsonl"))
     await watcher.scanOnce()
-    let untouched = try await repository.sessionDetail(id: parked, cursor: nil, limit: 100)
-    #expect(untouched?.summary.lifecycle == .waitingForInput)
+    let followed = try await repository.sessionDetail(id: parked, cursor: nil, limit: 100)
+    #expect(followed?.summary.lifecycle == .interrupted)
+    #expect(try await repository.sessionSummary(id: stranger) == nil)
 }
 
 @Test func backfillQueueRebuildsAColdSessionAndYieldsToNewerHookState() async throws {

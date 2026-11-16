@@ -166,7 +166,7 @@ flowchart TD
 2. 打开并迁移 daemon SQLite。
 3. 第一次运行时把已存在 rollout 文件标为基线，不导入旧 Session。
 4. 启动 Unix socket，socket 权限设为 `0600`。
-5. 启动 rollout watcher，默认每 2 秒检查文件尺寸变化。
+5. 启动 rollout watcher 与 Claude transcript watcher：各自先开文件系统事件，再做一次全量清点；之后由事件驱动，默认每 30 秒对账一次（见 [Agent Hook 设计](agent-hook.md)「文件变化从哪里来」）。
 6. 从 Keychain 加载（或创建并注册）Relay host 凭据，建立 Host WSS，订阅自己的事件流；`DaemonHealth.relayConnected` 随连接状态变化（`LUMI_RELAY=0` 可关闭）。
 
 ### macOS App

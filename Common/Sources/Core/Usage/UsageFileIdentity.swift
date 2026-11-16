@@ -17,7 +17,13 @@ public enum UsageFileIdentity {
         let device = (attributes[.systemNumber] as? NSNumber)?.int64Value
         let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
         guard let device, let inode else { return "\(source.rawValue):path:\(path)" }
-        return "\(source.rawValue):\(device):\(inode)"
+        return identity(source: source, device: device, inode: inode)
+    }
+
+    /// The same identity from a `stat` result (`st_dev`, `st_ino`). Stored
+    /// cursors key on this string, so both spellings must stay identical.
+    public static func identity(source: AgentProvider, device: Int64, inode: UInt64) -> String {
+        "\(source.rawValue):\(device):\(inode)"
     }
 
     /// SHA-256 of the first `length` bytes, or `nil` when the file no longer

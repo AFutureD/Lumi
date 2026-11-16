@@ -581,7 +581,19 @@ public actor SQLiteSessionRepository: SessionRepository {
                 arguments: [event.sessionID.rawValue]
             )
             let current = try currentData.map { try decoder.decode(SessionSummary.self, from: $0) }
-            var summary = SessionReduction.summary(applying: event, to: current)
+            // Whether the row this event carries is already stored decides
+            // if a turn end is news (`SessionReduction.TurnEndRecord`); only
+            // a turn end asks.
+            var turnEnd = SessionReduction.TurnEndRecord.new
+            if let item = event.timelineItem, case .turnEnd = item.payload {
+                let recorded = try Bool.fetchOne(
+                    db,
+                    sql: "SELECT EXISTS(SELECT 1 FROM timeline WHERE id = ?)",
+                    arguments: [item.id.rawValue]
+                ) ?? false
+                if recorded { turnEnd = .recorded }
+            }
+            var summary = SessionReduction.summary(applying: event, to: current, turnEnd: turnEnd)
             // The one-shot filter verdict, committed atomically with the
             // event carrying the session's first user message. Latch first —
             // the parked verdict frame must carry it so mirrors converge.

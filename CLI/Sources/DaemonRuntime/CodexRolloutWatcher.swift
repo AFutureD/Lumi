@@ -9,40 +9,102 @@ import Foundation
 private let log = Logger(label: "agent")
 private let lifecycleLog = Logger(label: "lifecycle")
 
+/// Keeps Codex sessions in step with their rollout files when no hook says
+/// so: a `turn_aborted` written after the last hook, a session whose hooks
+/// are not trusted, everything written while the daemon was away.
+///
+/// It does not poll. `SourceFileMonitor` tells it which rollouts moved:
+///
+/// - a rollout appears → directory event → the file is read and, from then
+///   on, watched;
+/// - a watched rollout is written → file event → it is read from its cursor
+///   (Codex holds a rollout open for the whole session, so only a file-level
+///   watch hears these writes);
+/// - every `reconcileIntervalSeconds`, and once at launch → a full
+///   inventory, which is also what finds a lost event and what was written
+///   while the daemon was down.
+///
+/// Which rollouts are watched is a question about the file, not the session:
+/// the ones written within `hotWindowSeconds`, most recent first, up to the
+/// monitor's descriptor budget. A session waiting for input keeps its file
+/// open and may write again without a hook, so its displayed state never
+/// decides this. A rollout outside the window is still read — at the next
+/// inventory instead of at once.
+///
+/// Thread identities (titles, subagent lineage) come from Codex's own
+/// `state_5.sqlite` and `session_index.jsonl`. Those files are watched too
+/// and a change synchronizes, at most once per `identitySyncSpacing`; every
+/// inventory synchronizes regardless.
 public actor CodexRolloutWatcher: Service {
     private let rootDirectory: URL
     private let repository: any SessionRepository
     private let threadIdentities: any CodexThreadIdentityProviding
     private let adapter: CodexAdapter
-    private let pollIntervalSeconds: Double
     /// One capped read per scan; a gap larger than this goes to the backfill
     /// worker whole instead of being tail-trimmed.
     private let maximumIncrementBytes = 32 * 1024 * 1024
     private let backfill: TranscriptBackfillQueue?
+    private let inventory: SourceInventory?
     private let onEvent: @Sendable (AgentIngressEvent) -> Void
+    private let monitor: SourceFileMonitor
+    private let hotWindowSeconds: Double
+    /// Codex's own identity stores, watched like rollouts.
+    private let identitySources: [String]
+    private let identitySyncSpacing: Duration
+    private let identityChanges: AsyncStream<Void>
+    private let identityChanged: AsyncStream<Void>.Continuation
     private var scannedFileSizes: [String: UInt64] = [:]
+    /// One synchronization at a time, whichever of the two callers asks: a
+    /// second request while one runs is served by running again afterwards,
+    /// never by a second pass interleaved with the first.
+    private var identitySyncInFlight = false
+    private var identitySyncRequested = false
+    /// How many full passes have finished — the first is the launch pass.
+    private(set) var completedPasses = 0
     private static let ignoredExistingSession = SessionID("lumi-ignored-existing-session")
 
+    /// - Parameters:
+    ///   - reconcileIntervalSeconds: how often a full inventory runs.
+    ///   - hotWindowSeconds: a rollout written this recently is watched.
+    ///   - watchLimit: how many files may be watched at once.
+    ///   - inventory: a walk shared with the other slow passes; `nil` walks
+    ///     the root itself every time.
     public init(
         rootDirectory: URL,
         repository: any SessionRepository,
         threadIdentities: (any CodexThreadIdentityProviding)? = nil,
-        pollIntervalSeconds: Double = 2,
+        reconcileIntervalSeconds: Double = 30,
+        hotWindowSeconds: Double = 24 * 60 * 60,
+        watchLimit: Int = 256,
+        identitySyncSpacingSeconds: Double = 2,
         backfill: TranscriptBackfillQueue? = nil,
+        inventory: SourceInventory? = nil,
         onEvent: @escaping @Sendable (AgentIngressEvent) -> Void = { _ in }
     ) {
         self.rootDirectory = rootDirectory
         self.repository = repository
         self.backfill = backfill
-        let resolvedThreadIdentities = threadIdentities ?? CodexThreadIdentityStore(
-            databasePath: rootDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("state_5.sqlite")
-                .path
-        )
+        self.inventory = inventory
+        let codexHome = rootDirectory.deletingLastPathComponent()
+        let databasePath = codexHome.appendingPathComponent("state_5.sqlite").path
+        let resolvedThreadIdentities = threadIdentities ?? CodexThreadIdentityStore(databasePath: databasePath)
         self.threadIdentities = resolvedThreadIdentities
         adapter = CodexAdapter(threads: resolvedThreadIdentities)
-        self.pollIntervalSeconds = pollIntervalSeconds
+        self.hotWindowSeconds = hotWindowSeconds
+        identitySources = [
+            databasePath,
+            databasePath + "-wal",
+            codexHome.appendingPathComponent("session_index.jsonl").path,
+        ]
+        identitySyncSpacing = .milliseconds(Int64(max(0, identitySyncSpacingSeconds) * 1_000))
+        (identityChanges, identityChanged) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        let rootPath = rootDirectory.path
+        monitor = SourceFileMonitor(
+            root: rootDirectory,
+            accepts: { isSourceFile($0, underRoot: rootPath) },
+            reconcileInterval: .milliseconds(Int64(max(1, reconcileIntervalSeconds) * 1_000)),
+            watchLimit: watchLimit
+        )
         self.onEvent = onEvent
     }
 
@@ -50,28 +112,122 @@ public actor CodexRolloutWatcher: Service {
         // Idempotent after Lumen's eager call: the baseline flag short-circuits.
         // Kept here so the Service alone is complete (tests, future callers).
         try await prepareInitialBaseline()
+        // Listen first, then take inventory: a write that lands during the
+        // pass is either seen by it or announced after it.
+        let listening = monitor.start()
         lifecycleLog.info("rollout_watcher_started", metadata: .fields([
             "root": rootDirectory,
-            "poll_seconds": pollIntervalSeconds,
+            "directory_events": listening,
+            "reconcile_seconds": Int(monitor.reconcileInterval / .seconds(1)),
+            "watch_limit": monitor.watchLimit,
         ]))
-        await pollUntilShutdown(everySeconds: pollIntervalSeconds) { await self.scanOnce() }
+        await scanOnce()
+        await cancelWhenGracefulShutdown {
+            await withDiscardingTaskGroup { group in
+                group.addTask { await self.monitor.runReconcileClock() }
+                group.addTask { await self.runIdentitySync() }
+                group.addTask {
+                    while let batch = await self.monitor.next() {
+                        await self.handle(batch)
+                    }
+                }
+            }
+        }
+        monitor.stop()
         lifecycleLog.info("rollout_watcher_stopped")
     }
 
+    /// One full pass over an inventory taken now — the level-triggered
+    /// resync: identities, the watch set, then every rollout whose size is
+    /// not the one last read. Runs at launch, on the reconcile clock, and
+    /// when directory events were dropped. Public so tests and the first
+    /// launch can drive it.
     public func scanOnce() async {
         await synchronizeThreadIdentities()
-        guard FileManager.default.fileExists(atPath: rootDirectory.path) else { return }
-        let files = rolloutFiles()
-        for (fileURL, fileSize) in files {
-            guard !Task.isCancelled else { continue }
-            guard needsScan(path: fileURL.path, fileSize: fileSize) else { continue }
-            do {
-                if try await scan(fileURL, fileSize: fileSize) {
-                    markScanned(path: fileURL.path, fileSize: fileSize)
-                }
-            } catch {
-                log.error("rollout_scan_failed", metadata: .fields(["path": fileURL.path, "error": error]))
+        let files = inventory?.freshFiles(under: rootDirectory) ?? jsonlFiles(under: rootDirectory)
+        let root = rootDirectory.path
+
+        // Watch before reading, for the same reason the directory events
+        // start before the inventory: a write that lands while a file is
+        // being read must still be announced.
+        let cutoff = Date().addingTimeInterval(-hotWindowSeconds)
+        var watched = identitySources.map { (path: $0, activity: Date.distantFuture) }
+        watched += files
+            .filter { $0.modifiedAt >= cutoff }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .map { (path: root + "/" + $0.relativePath, activity: $0.modifiedAt) }
+        monitor.setWatched(watched)
+
+        var present: Set<String> = []
+        present.reserveCapacity(files.count)
+        for file in files {
+            guard !Task.isCancelled else { return }
+            let path = root + "/" + file.relativePath
+            present.insert(path)
+            guard needsScan(path: path, fileSize: file.size) else { continue }
+            await scanFile(atPath: path)
+        }
+        scannedFileSizes = scannedFileSizes.filter { present.contains($0.key) }
+        completedPasses += 1
+        log.debug("rollout_reconciled", metadata: .fields([
+            "files": files.count,
+            "watched": monitor.watchedCount,
+        ]))
+    }
+
+    /// The edge-triggered half: the files the monitor named, nothing else.
+    private func handle(_ batch: SourceFileMonitor.Batch) async {
+        if batch.fullPass {
+            await scanOnce()
+        }
+        // Named files are read even after a full pass: each read asks for
+        // the size again, and one already at that size costs a lookup.
+        var identityMoved = false
+        for path in batch.paths {
+            guard !Task.isCancelled else { return }
+            if identitySources.contains(path) {
+                identityMoved = true
+            } else {
+                // A rollout: the directory events are filtered to them, and
+                // nothing else but the identity stores is watched. Being
+                // written now, so it is watched first and read second — a
+                // write that lands during the read is then announced.
+                monitor.ensureWatched(path)
+                await scanFile(atPath: path)
             }
+        }
+        if identityMoved { identityChanged.yield() }
+    }
+
+    /// Synchronizes on a change of Codex's identity stores, then holds off
+    /// for `identitySyncSpacing`: Codex writes its database on every step of
+    /// a turn, and one synchronization per burst is enough. A change that
+    /// arrives during the hold is kept and served after it.
+    private func runIdentitySync() async {
+        for await _ in identityChanges {
+            await synchronizeThreadIdentities()
+            do {
+                try await Task.sleep(for: identitySyncSpacing)
+            } catch {
+                return
+            }
+        }
+    }
+
+    /// Reads one rollout if its size is not the one last read. The size is
+    /// asked for here, never taken from an inventory or an event.
+    private func scanFile(atPath path: String) async {
+        guard let fileSize = currentFileSize(atPath: path) else {
+            scannedFileSizes[path] = nil
+            return
+        }
+        guard needsScan(path: path, fileSize: fileSize) else { return }
+        do {
+            if try await scan(path: path, fileSize: fileSize) {
+                markScanned(path: path, fileSize: fileSize)
+            }
+        } catch {
+            log.error("rollout_scan_failed", metadata: .fields(["path": path, "error": error]))
         }
     }
 
@@ -83,50 +239,47 @@ public actor CodexRolloutWatcher: Service {
     /// and skip their unread tails.
     public func prepareInitialBaseline() async throws {
         guard try await !repository.isRolloutBaselineInitialized() else { return }
-        let files = rolloutFiles()
+        let files = jsonlFiles(under: rootDirectory)
+        let root = rootDirectory.path
         lifecycleLog.info("rollout_baseline_initializing", metadata: .fields(["files": files.count]))
-        for (fileURL, fileSize) in files {
+        for file in files {
+            let path = root + "/" + file.relativePath
+            let fileSize = file.size
             // A cursor means this file is already being read; the first scan
             // resumes from it (and picks up any hook-less tail).
-            if try await repository.rolloutCursor(path: fileURL.path) != nil { continue }
-            let sessionID = existingSessionID(in: fileURL)
+            if try await repository.rolloutCursor(path: path) != nil { continue }
+            let sessionID = existingSessionID(atPath: path)
             if let sessionID,
                try await repository.sessionSummary(id: sessionID) != nil {
                 // Known session without a cursor: its history arrived over
                 // hooks; the watcher takes over from EOF.
                 try await repository.saveRolloutCursor(RolloutCursor(
-                    path: fileURL.path,
+                    path: path,
                     byteOffset: fileSize,
                     fileSize: fileSize,
                     sessionID: sessionID
                 ))
-                markScanned(path: fileURL.path, fileSize: fileSize)
+                markScanned(path: path, fileSize: fileSize)
                 continue
             }
             if let sessionID {
                 try await repository.markSessionIgnored(sessionID)
             }
             try await repository.saveRolloutCursor(RolloutCursor(
-                path: fileURL.path,
+                path: path,
                 byteOffset: fileSize,
                 fileSize: fileSize,
                 sessionID: Self.ignoredExistingSession
             ))
-            markScanned(path: fileURL.path, fileSize: fileSize)
+            markScanned(path: path, fileSize: fileSize)
         }
         try await repository.markRolloutBaselineInitialized()
     }
 
-    /// Rejoined onto the configured root: cursor rows key by path string.
-    private func rolloutFiles() -> [(URL, UInt64)] {
-        jsonlFiles(under: rootDirectory).map { file in
-            (rootDirectory.appendingPathComponent(file.relativePath), (file.attributes[.size] as? NSNumber)?.uint64Value ?? 0)
-        }
-    }
-
-    /// The first scan after every daemon launch checks every rollout so events
-    /// written while it was offline are recovered. Later polls only touch new
-    /// or size-changed files, avoiding a SQLite cursor lookup per old Session.
+    /// The first pass after every daemon launch checks every rollout so events
+    /// written while it was offline are recovered. Later passes only touch
+    /// new or size-changed files, avoiding a SQLite cursor lookup per old
+    /// Session.
     private func needsScan(path: String, fileSize: UInt64) -> Bool {
         scannedFileSizes[path] != fileSize
     }
@@ -135,7 +288,24 @@ public actor CodexRolloutWatcher: Service {
         scannedFileSizes[path] = fileSize
     }
 
+    /// Brings titles and lineage in line with Codex's own stores. Called by
+    /// the full pass and by the identity-change loop; the two never overlap.
+    /// A snapshot read before a suspension would otherwise be applied after
+    /// a newer one, putting an old title back.
     private func synchronizeThreadIdentities() async {
+        if identitySyncInFlight {
+            identitySyncRequested = true
+            return
+        }
+        identitySyncInFlight = true
+        defer { identitySyncInFlight = false }
+        repeat {
+            identitySyncRequested = false
+            await synchronizeThreadIdentitiesOnce()
+        } while identitySyncRequested && !Task.isCancelled
+    }
+
+    private func synchronizeThreadIdentitiesOnce() async {
         do {
             let summaries = try await repository.listSessions(limit: 10_000)
                 .filter { $0.agent.provider == .codex }
@@ -195,9 +365,9 @@ public actor CodexRolloutWatcher: Service {
     /// Catch a rollout file up to EOF through `RichSourceCatchUp` — the same
     /// increment routine as the hook path, so cross-line state (turn
     /// attribution, tool pairing, channel arbitration) is identical whether
-    /// a record arrives via a hook-triggered read or this poll.
-    private func scan(_ url: URL, fileSize: UInt64) async throws -> Bool {
-        let path = url.path
+    /// a record arrives via a hook-triggered read or this watcher. `false`
+    /// when the file cannot be claimed yet and must be looked at again.
+    private func scan(path: String, fileSize: UInt64) async throws -> Bool {
         let cursor = try await repository.rolloutCursor(path: path)
 
         if cursor?.sessionID == Self.ignoredExistingSession {
@@ -223,8 +393,8 @@ public actor CodexRolloutWatcher: Service {
         guard fileSize > offset else { return true }
 
         // The session id keys the cursor and the read; a file whose head has
-        // no `session_meta` yet is retried on a later poll.
-        guard let sessionID = knownSessionID ?? existingSessionID(in: url) else {
+        // no `session_meta` yet is retried on its next write.
+        guard let sessionID = knownSessionID ?? existingSessionID(atPath: path) else {
             log.debug("rollout_scan_no_session_meta", metadata: .fields(["path": path]))
             return false
         }
@@ -246,7 +416,7 @@ public actor CodexRolloutWatcher: Service {
         // history first; nothing may be ingested until the trigger record
         // marks where the subagent's own work starts.
         if offset == 0 {
-            switch try Self.initialSubagentHistory(url: url) {
+            switch try Self.initialSubagentHistory(path: path) {
             case .waitingForTrigger:
                 log.debug("rollout_scan_waiting_for_subagent_trigger", metadata: .fields(["path": path]))
                 return false
@@ -288,8 +458,8 @@ public actor CodexRolloutWatcher: Service {
         return true
     }
 
-    private static func initialSubagentHistory(url: URL) throws -> InitialSubagentHistory {
-        let handle = try FileHandle(forReadingFrom: url)
+    private static func initialSubagentHistory(path: String) throws -> InitialSubagentHistory {
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
         defer { try? handle.close() }
         guard let data = try handle.readToEnd(), !data.isEmpty else { return .none }
 
@@ -330,8 +500,8 @@ public actor CodexRolloutWatcher: Service {
         return isThreadSpawn ? .waitingForTrigger : .none
     }
 
-    private func existingSessionID(in url: URL) -> SessionID? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    private func existingSessionID(atPath path: String) -> SessionID? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: 128 * 1024), !data.isEmpty else { return nil }
         for line in data.split(separator: 0x0A).prefix(100) {

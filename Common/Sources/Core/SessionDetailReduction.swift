@@ -21,7 +21,20 @@ public enum SessionDetailReduction {
     /// reaches this fold.
     public static func applying(_ events: [AgentIngressEvent], to detail: SessionDetail) -> SessionDetail {
         guard !events.isEmpty else { return detail }
-        let summary = events.reduce(detail.summary) { SessionReduction.summary(applying: $1, to: $0) }
+        // A row the loaded timeline holds is recorded. One it does not hold
+        // may be new or may lie outside the loaded window, so that question
+        // stays open (`SessionReduction.TurnEndRecord.unknown`).
+        var held = Set(detail.timeline.map(\.id))
+        var summary = detail.summary
+        for event in events {
+            let turnEnd: SessionReduction.TurnEndRecord = if let item = event.timelineItem, held.contains(item.id) {
+                .recorded
+            } else {
+                .unknown
+            }
+            summary = SessionReduction.summary(applying: event, to: summary, turnEnd: turnEnd)
+            if let item = event.timelineItem { held.insert(item.id) }
+        }
         let timeline = merge(events.compactMap(\.timelineItem), into: detail.timeline)
         return SessionDetail(
             summary: summary,

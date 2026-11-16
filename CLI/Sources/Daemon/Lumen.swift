@@ -91,20 +91,40 @@ enum LumenMain {
         )
         // Both watchers are load-bearing correctness, not options: hook-less
         // tail writes (a Codex `turn_aborted` after an interrupt, a Claude
-        // Esc marker) only reach the store through them.
+        // Esc marker) only reach the store through them. They are driven by
+        // file-system events, one watched descriptor per file that may still
+        // be written — so the descriptor limit launchd starts an agent with
+        // (256) is raised first, and the watch budget follows from what the
+        // process actually got.
+        let openFileLimit = OpenFileLimit.raise(to: 4_096)
+        let watchLimit = OpenFileLimit.watchBudget(limit: openFileLimit, watchers: 2)
+        // The usage scan reuses the walk a watcher just took of the same
+        // transcript root instead of repeating it.
+        let sourceInventory = SourceInventory()
         let watcher = CodexRolloutWatcher(
             rootDirectory: configuration.codexSessionsDirectory,
             repository: repository,
-            pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
+            reconcileIntervalSeconds: configuration.sourceReconcileIntervalSeconds,
+            watchLimit: watchLimit,
             backfill: backfill,
+            inventory: sourceInventory,
             onEvent: publish
         )
         let claudeWatcher = ClaudeTranscriptWatcher(
             repository: repository,
-            pollIntervalSeconds: configuration.rolloutPollIntervalSeconds,
+            projectsDirectory: configuration.claudeProjectsDirectory,
+            reconcileIntervalSeconds: configuration.sourceReconcileIntervalSeconds,
+            watchLimit: watchLimit,
             backfill: backfill,
+            inventory: sourceInventory,
             onEvent: publish
         )
+        // Every applied event, whichever path applied it: the Claude watcher
+        // judges left-behind subagents when a session's markers or a
+        // subagent's own records move, not on a timer.
+        subscriptions.subscribe { message in
+            if case let .event(event) = message { claudeWatcher.noteApplied(event) }
+        }
         let server = DaemonServer(socketPath: configuration.socketPath, service: service)
         // The Relay host lives here, not in the Mac app: paired iPhones keep
         // syncing while the app is closed. Credentials are the daemon's own
@@ -157,7 +177,8 @@ enum LumenMain {
             ],
             store: usageStore,
             priceTable: { await modelPrices.current().table },
-            pollIntervalSeconds: configuration.usagePollIntervalSeconds
+            pollIntervalSeconds: configuration.usagePollIntervalSeconds,
+            inventory: sourceInventory
         )
         await service.attachUsage(UsageReporting(store: usageStore, scanner: usageScanner, prices: modelPrices))
         // Settings: the daemon's own table. A `plan-usage-settings.json`
@@ -184,7 +205,7 @@ enum LumenMain {
         await service.attachPlanUsage(planUsage)
 
         // Ordered, before anything serves: the baseline must exist before a
-        // hook frame or the poll loop can touch rollout cursors, and the
+        // hook frame or the watcher can touch rollout cursors, and the
         // eager listen means a bad socket path fails the launch outright.
         do {
             try await watcher.prepareInitialBaseline()
@@ -209,6 +230,8 @@ enum LumenMain {
             "relay": relay == nil ? "off" : configuration.relayURL.absoluteString,
             "direct": relay != nil && configuration.directEnabled ? "on" : "off",
             "plan_usage": configuration.planUsageFetchEnabled ? "on" : "off",
+            "open_files": openFileLimit,
+            "watch_limit": watchLimit,
             "log_level": logConfiguration.minimumLevel.label.lowercased(),
             "log_directory": logConfiguration.directory,
         ]))
