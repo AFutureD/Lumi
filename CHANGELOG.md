@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 会话查看
+
+- [Lumi for Mac] - 有 Session 在运行时，Lumi 不再持续占用 CPU：Notch 里状态点的呼吸动画改由系统播放，此前 App 每一帧都要重新布局并渲染整个 Notch 面板。同样条件下实测 App 的 CPU 从约 10% 降到 1% 以下；呼吸效果不变。
+
 ## [0.3.6] - 2026-11-17
 
 ### Session 状态

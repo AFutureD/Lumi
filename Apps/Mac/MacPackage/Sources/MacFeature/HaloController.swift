@@ -617,12 +617,36 @@ private struct HaloAgentChip: View {
 
 /// 8px tier dot with a 3px halo; only in-progress tiers (Running / Waiting)
 /// carry the halo and breathe, Completed and Failed are solid.
+///
+/// The AppKit dot (`StatusDotView`), the one the main window draws: its halo
+/// breathes as a Core Animation layer animation, which the system plays once
+/// it is committed. A SwiftUI `repeatForever` animation is evaluated in this
+/// process on every frame instead — and the Notch shows a breathing dot for
+/// as long as any Session runs, so that cost never stopped.
 private struct HaloStatusDot: View {
     let tone: SessionStatusTone
     var size: CGFloat = DS.StatusDot.notchSize
 
     var body: some View {
-        DesignStatusDot(tone.darkStyle.dot, size: size, haloWidth: DS.StatusDot.notchHalo)
+        Dot(style: tone.darkStyle.dot, size: size)
+            .frame(width: size, height: size)
+            // The dot sits inside buttons; a click on it belongs to them.
+            .allowsHitTesting(false)
+    }
+
+    private struct Dot: NSViewRepresentable {
+        let style: DesignStatusDotStyle
+        let size: CGFloat
+
+        func makeNSView(context: Context) -> StatusDotView {
+            let view = StatusDotView(size: size, haloWidth: DS.StatusDot.notchHalo)
+            view.configure(style, animated: false)
+            return view
+        }
+
+        func updateNSView(_ view: StatusDotView, context: Context) {
+            view.configure(style)
+        }
     }
 }
 

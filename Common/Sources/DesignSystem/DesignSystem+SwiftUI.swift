@@ -57,11 +57,6 @@ public extension DesignTagStyle {
     var ringColor: Color { Color(ring) }
 }
 
-public extension DesignStatusDotStyle {
-    var swiftUIColor: Color { Color(color) }
-    var haloColor: Color { Color(halo) }
-}
-
 public extension DesignStatusPillStyle {
     var fillColor: Color { Color(fill) }
     var ringColor: Color { Color(ring) }
@@ -98,55 +93,6 @@ public struct DesignTag: View {
             .frame(height: DesignSystem.Tag.height)
             .background(style.fillColor, in: shape)
             .overlay { shape.strokeBorder(style.ringColor, lineWidth: DesignSystem.Tag.ring) }
-    }
-}
-
-// MARK: - 2.7 Status dot
-
-/// The status dot in its three forms. Hollow draws a 1.5px ring; solid
-/// fills; breathing fills and pulses a halo (`haloWidth` each side) between
-/// full and `DesignSystem.Opacity.breathingHalo` every 0.8s.
-public struct DesignStatusDot: View {
-    public let style: DesignStatusDotStyle
-    public var size: Double = DesignSystem.StatusDot.size
-    public var haloWidth: Double = DesignSystem.StatusDot.halo
-    @State private var breathing = false
-
-    public init(
-        _ style: DesignStatusDotStyle,
-        size: Double = DesignSystem.StatusDot.size,
-        haloWidth: Double = DesignSystem.StatusDot.halo
-    ) {
-        self.style = style
-        self.size = size
-        self.haloWidth = haloWidth
-    }
-
-    public var body: some View {
-        ZStack {
-            if style.breathes {
-                Circle()
-                    .fill(style.haloColor)
-                    .frame(width: size + haloWidth * 2, height: size + haloWidth * 2)
-                    .opacity(breathing ? DesignSystem.Opacity.breathingHalo : 1)
-            }
-            if style.isHollow {
-                Circle()
-                    .strokeBorder(style.swiftUIColor, lineWidth: DesignSystem.StatusDot.hollowRing)
-                    .frame(width: size, height: size)
-            } else {
-                Circle()
-                    .fill(style.swiftUIColor)
-                    .frame(width: size, height: size)
-            }
-        }
-        .frame(width: size, height: size)
-        .onAppear { breathing = style.breathes }
-        .onChange(of: style.form) { _, _ in breathing = style.breathes }
-        .animation(
-            style.breathes ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
-            value: breathing
-        )
     }
 }
 
