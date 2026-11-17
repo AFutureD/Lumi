@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-11-17
+
 ### 会话查看
 
 - [Lumi for Mac] - 有 Session 在运行时，Lumi 不再持续占用 CPU：Notch 里状态点的呼吸动画改由系统播放，此前 App 每一帧都要重新布局并渲染整个 Notch 面板。同样条件下实测 App 的 CPU 从约 10% 降到 1% 以下；呼吸效果不变。
@@ -254,7 +256,8 @@ v0.3.1 与 v0.3.2 的发布都在 CI 的 Mac 测试一步失败（Xcode 26.6 对
 
 - 由 tag 驱动的发布流水线。
 
-[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/AFutureD/Lumi/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/AFutureD/Lumi/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/AFutureD/Lumi/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/AFutureD/Lumi/compare/v0.3.3...v0.3.5
 [0.3.3]: https://github.com/AFutureD/Lumi/compare/v0.3.0...v0.3.3
